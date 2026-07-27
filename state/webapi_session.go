@@ -86,8 +86,12 @@ type WebAPISession struct {
 	aliasMu      sync.Mutex
 	imLog        map[string][]WebAPIStoredIM
 	imLogMu      sync.Mutex
-	logger       *slog.Logger // Logger for debugging
-	listeners    sync.WaitGroup
+	// rateAlertStatus is the rate limit status this client was last told about,
+	// zero until it has been told anything. See ObserveRateAlert.
+	rateAlertStatus wire.RateLimitStatus
+	rateAlertMu     sync.Mutex
+	logger          *slog.Logger // Logger for debugging
+	listeners       sync.WaitGroup
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -99,6 +103,35 @@ type WebAPISession struct {
 // IsExpired checks if the session has expired.
 func (s *WebAPISession) IsExpired() bool {
 	return time.Now().After(s.ExpiresAt)
+}
+
+// ObserveRateAlert records status as the rate limit status this web client was
+// last told about, and reports whether it differs from the one before it.
+//
+// The client's rate limit alert is sticky — it dismisses only on a "clear" that
+// follows a "limit" — so the server has to push exactly the transitions, and a
+// transition has to be measured per web client rather than off the OSCAR rate
+// state. That state belongs to the account, not to this session: a second
+// browser tab holds its own aimsid and its own WebAPISession over the same
+// state.Session, and an OSCAR client's ObserveRateChanges ticker runs against it
+// too. Any of them can consume a limited -> clear transition before this client
+// hears about it, which would leave this client's alert stuck up forever.
+func (s *WebAPISession) ObserveRateAlert(status wire.RateLimitStatus) bool {
+	s.rateAlertMu.Lock()
+	defer s.rateAlertMu.Unlock()
+
+	prev := s.rateAlertStatus
+	if prev == 0 {
+		// A client that has been told nothing renders no alert, which is what
+		// clear means.
+		prev = wire.RateLimitStatusClear
+	}
+	if prev == status {
+		return false
+	}
+
+	s.rateAlertStatus = status
+	return true
 }
 
 // Aliases returns this session owner's private buddy aliases, keyed by normalized
@@ -595,6 +628,15 @@ func (m *WebAPISessionManager) GetSession(ctx context.Context, aimsid string) (*
 		return nil, ErrWebAPISessionExpired
 	}
 
+	// A rate-limit disconnect (EvaluateRateLimit -> Session.CloseSession) closes
+	// every instance for the account while this web session is still unexpired.
+	// The aimsid must stop resolving at that point, otherwise a client told to
+	// disconnect could keep issuing charged requests against a dead session (the
+	// reaper only removes it on time expiry, up to a TTL later).
+	if session.OSCARSession != nil && session.OSCARSession.IsClosed() {
+		return nil, ErrWebAPISessionExpired
+	}
+
 	return session, nil
 }
 
@@ -666,13 +708,17 @@ func (m *WebAPISessionManager) Run(ctx context.Context) {
 	}
 }
 
-// reapExpired removes every expired session and tears it down.
+// reapExpired removes every dead session and tears it down. A session is dead
+// once it has passed its expiry, or once its underlying OSCAR session has been
+// closed out from under it (e.g. by a rate-limit disconnect) — the latter is
+// already rejected by GetSession, and reaping it here frees the entry promptly
+// rather than leaving it until time expiry.
 func (m *WebAPISessionManager) reapExpired() {
 	m.mu.Lock()
 	now := time.Now()
 	var expired []*WebAPISession
 	for aimsid, session := range m.sessions {
-		if now.After(session.ExpiresAt) {
+		if now.After(session.ExpiresAt) || (session.OSCARSession != nil && session.OSCARSession.IsClosed()) {
 			delete(m.sessions, aimsid)
 			expired = append(expired, session)
 		}

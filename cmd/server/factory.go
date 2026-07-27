@@ -605,6 +605,7 @@ func WebAPI(deps Container) *webapi.Server {
 		FeedbagService:     deps.feedbagSvc,
 		DirSearchService:   foodgroup.NewODirService(logger, deps.sqLiteUserStore),
 		IconSource:         iconSource,
+		SNACRateLimits:     deps.snacRateLimits,
 	}
 	// Pass SQLiteUserStore as the API key validator (it implements middleware.APIKeyValidator)
 	return webapi.NewServer(deps.cfg.WebAPIListeners, logger, handler, deps.sqLiteUserStore, deps.webAPISessionManager)
