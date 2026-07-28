@@ -2,7 +2,6 @@ package oscar
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 
@@ -40,9 +39,10 @@ type ChatSessionManager interface {
 	RemoveUserFromAllChats(user state.IdentScreenName)
 }
 
-// RateLimitUpdater provides rate limit updates for subscribed rate limit classes.
+// RateLimitUpdater runs the per-account rate limit monitor that broadcasts rate
+// limit transitions to every instance in a session.
 type RateLimitUpdater interface {
-	RateLimitUpdates(ctx context.Context, instance *state.SessionInstance, now time.Time) []wire.SNACMessage
+	MonitorRateLimits(ctx context.Context, session *state.Session)
 }
 
 type AuthService interface {

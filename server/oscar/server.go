@@ -300,6 +300,8 @@ func (s oscarServer) connectToOSCARService(
 			}
 			// periodically decay warning level
 			go s.lowerWarnLevel(ctx, instance)
+			// broadcast rate limit transitions to every instance on the account
+			go s.rateLimitUpdater.MonitorRateLimits(ctx, instance.Session())
 			return nil
 		}); err != nil {
 			return err
@@ -350,6 +352,16 @@ func (s oscarServer) connectToOSCARService(
 		defer func() {
 			instance.CloseInstance()
 		}()
+
+		// A chat session is a Session of its own, with its own rate limit states
+		// and subscriptions, so it needs its own monitor — the BOS session's
+		// cannot see these states.
+		if err := instance.Session().RunOnce(func() error {
+			go s.rateLimitUpdater.MonitorRateLimits(ctx, instance.Session())
+			return nil
+		}); err != nil {
+			return err
+		}
 
 		go s.receiveSessMessages(ctx, instance, flapc)
 	default:
@@ -640,14 +652,6 @@ func (s oscarServer) dispatchIncomingMessages(
 				s.logger.DebugContext(ctx, "keepalive heartbeat")
 			default:
 				return fmt.Errorf("got unknown FLAP frame type. flap: %v", flap)
-			}
-		case <-time.After(1 * time.Second):
-			updates := s.rateLimitUpdater.RateLimitUpdates(ctx, instance, time.Now())
-			for _, update := range updates {
-				if err := flapc.SendSNAC(update.Frame, update.Body); err != nil {
-					middleware.LogRequestError(ctx, s.logger, update.Frame, err)
-					return err
-				}
 			}
 		case <-instance.Closed():
 			// add logoff reason to clients that support multi-conn

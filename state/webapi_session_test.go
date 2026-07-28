@@ -291,35 +291,52 @@ func TestWebAPISessionManager_CreateAfterShutdown(t *testing.T) {
 	assert.ErrorIs(t, err, ErrWebAPISessionManagerClosed)
 }
 
-// The rate limit alert is per web client, so the transition that drives it has
-// to be tracked per web client too: the OSCAR rate state these sessions sit on
-// is shared by the whole account, and whoever reads it first would otherwise
-// consume the transition the other one is waiting for.
-func TestWebAPISession_ObserveRateAlert(t *testing.T) {
-	t.Run("a client that has been told nothing is already clear", func(t *testing.T) {
-		sess := &WebAPISession{}
-		assert.False(t, sess.ObserveRateAlert(wire.RateLimitStatusClear))
+// A broadcast rate limit SNAC surfaces to the client only for the IM class: the
+// web client renders any rateLimit event as the conversation-window alert. Code 1
+// (a class-params change) is not a status transition and is dropped.
+func TestWebAPISession_handleRateLimitUpdate(t *testing.T) {
+	const imClass = wire.RateLimitClassID(3)
+
+	newSession := func() *WebAPISession {
+		return &WebAPISession{
+			IMRateClassID: imClass,
+			EventQueue:    types.NewEventQueue(10),
+			logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+	}
+
+	rateSNAC := func(classID uint16, code uint16) wire.SNACMessage {
+		return wire.SNACMessage{
+			Frame: wire.SNACFrame{FoodGroup: wire.OService, SubGroup: wire.OServiceRateParamChange},
+			Body:  wire.SNAC_0x01_0x0A_OServiceRateParamsChange{Code: code, Rate: wire.RateParamsSNAC{ID: classID}},
+		}
+	}
+
+	t.Run("IM-class transitions become rateLimit events", func(t *testing.T) {
+		sess := newSession()
+		sess.handleSNACMessage(rateSNAC(uint16(imClass), 3)) // limited
+		sess.handleSNACMessage(rateSNAC(uint16(imClass), 4)) // clear
+
+		events := sess.EventQueue.GetAllEvents()
+		require.Len(t, events, 2)
+		assert.Equal(t, "limit", events[0].Data.(types.RateLimitEvent).Classes[0].Status)
+		assert.Equal(t, "clear", events[1].Data.(types.RateLimitEvent).Classes[0].Status)
 	})
 
-	t.Run("only changes are reported", func(t *testing.T) {
-		sess := &WebAPISession{}
+	t.Run("other classes and non-status codes are ignored", func(t *testing.T) {
+		sess := newSession()
+		sess.handleSNACMessage(rateSNAC(1, 3))               // class 1 limited: not the IM class
+		sess.handleSNACMessage(rateSNAC(uint16(imClass), 1)) // IM class param change, not a status
 
-		assert.True(t, sess.ObserveRateAlert(wire.RateLimitStatusLimited))
-		assert.False(t, sess.ObserveRateAlert(wire.RateLimitStatusLimited))
-		assert.True(t, sess.ObserveRateAlert(wire.RateLimitStatusClear))
-		assert.False(t, sess.ObserveRateAlert(wire.RateLimitStatusClear))
+		assert.Empty(t, sess.EventQueue.GetAllEvents())
 	})
 
-	t.Run("two sessions on one account track their alerts independently", func(t *testing.T) {
-		tabA, tabB := &WebAPISession{}, &WebAPISession{}
+	t.Run("a session with no IM class disables the alert", func(t *testing.T) {
+		sess := newSession()
+		sess.IMRateClassID = 0
+		sess.handleSNACMessage(rateSNAC(uint16(imClass), 3))
 
-		// Only tab A is told it is limited.
-		assert.True(t, tabA.ObserveRateAlert(wire.RateLimitStatusLimited))
-
-		// The account recovers. Tab B has no alert up, so the clear is not news
-		// to it — and consuming it must not cost tab A its own clear.
-		assert.False(t, tabB.ObserveRateAlert(wire.RateLimitStatusClear))
-		assert.True(t, tabA.ObserveRateAlert(wire.RateLimitStatusClear))
+		assert.Empty(t, sess.EventQueue.GetAllEvents())
 	})
 }
 

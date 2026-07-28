@@ -95,9 +95,16 @@ type Session struct {
 	instances        map[uint8]*SessionInstance
 	instancesOrdered []*SessionInstance
 
-	initOnce      sync.Once
+	initOnce sync.Once
+	// what RunOnce's fn returned, so every caller learns the outcome, not just
+	// the one that ran fn
+	initErr       error
 	onSessCloseFn func()
-	nowFn         func() time.Time
+	// closeCh is closed once the account's last instance departs, so per-account
+	// goroutines can stop with the session. closed guards its one-time close.
+	closeCh chan struct{}
+	closed  bool
+	nowFn   func() time.Time
 }
 
 // NewSession creates a new Session for a user.
@@ -107,6 +114,7 @@ func NewSession() *Session {
 		instances:        make(map[uint8]*SessionInstance),
 		instancesOrdered: make([]*SessionInstance, 0),
 		onSessCloseFn:    func() {},
+		closeCh:          make(chan struct{}),
 		nowFn:            time.Now,
 	}
 }
@@ -120,6 +128,10 @@ func NewSession() *Session {
 func (s *Session) AddInstance() *SessionInstance {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+
+	if s.closed {
+		return nil
+	}
 
 	instance := &SessionInstance{
 		session:           s,
@@ -169,10 +181,36 @@ func (s *Session) Instances() []*SessionInstance {
 	return instances
 }
 
+// removeInstanceAndMaybeClose removes instance and reports whether it was the
+// last one, marking the session closed in the same critical section that made it
+// empty. Doing both under one lock is what makes AddInstance's closed check
+// meaningful: a sign-on racing the departure either takes the lock first (and
+// keeps the session alive) or finds it closed and is refused.
+func (s *Session) removeInstanceAndMaybeClose(instance *SessionInstance) bool {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	s.removeInstanceLocked(instance)
+
+	if len(s.instances) > 0 {
+		return false
+	}
+	if !s.closed {
+		s.closed = true
+		close(s.closeCh)
+	}
+	return true
+}
+
 // RemoveInstance removes an instance from the session group.
 func (s *Session) RemoveInstance(instance *SessionInstance) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
+	s.removeInstanceLocked(instance)
+}
+
+// removeInstanceLocked removes an instance. The caller must hold s.mutex.
+func (s *Session) removeInstanceLocked(instance *SessionInstance) {
 	delete(s.instances, instance.instanceNum)
 	for i, inst := range s.instancesOrdered {
 		if inst == instance {
@@ -424,50 +462,6 @@ func (s *Session) EvaluateRateLimit(now time.Time, rateClassID wire.RateLimitCla
 	return status
 }
 
-// RecoverRateLimits recomputes, for each rate class the session is currently
-// limited on, whether enough time has elapsed since the last charged request for
-// the moving average to climb back above the clear threshold, and returns the
-// classes whose status changed (in practice, limited -> clear).
-//
-// Unlike EvaluateRateLimit it does not treat the call as a new request: LastTime
-// is preserved, so successive calls measure the full elapsed time since the last
-// real request rather than the (small) gap between calls. This mirrors how OSCAR's
-// ObserveRateChanges detects recovery on its ticker, and is what lets a repeated
-// poll surface the clear. Classes that are not currently limited are left
-// untouched, so a poll never perturbs a class the user is actively spending.
-func (s *Session) RecoverRateLimits(now time.Time) []RateClassState {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	var changed []RateClassState
-	for i := range s.rateLimitStates {
-		rc := &s.rateLimitStates[i]
-		if !rc.LimitedNow {
-			continue
-		}
-
-		status, newLevel := wire.CheckRateLimit(rc.LastTime, now, rc.RateClass, rc.CurrentLevel, rc.LimitedNow)
-		// Recovery only. A poll must never escalate a limited class: a short
-		// elapsed gap can make CheckRateLimit report disconnect, but an idle
-		// session recovering is not abuse, and disconnect is enforced by
-		// EvaluateRateLimit on real requests instead. While limitedNow the only
-		// non-escalating outcome CheckRateLimit yields is clear, so that is the
-		// sole transition acted on; a still-limited class is left untouched (its
-		// CurrentLevel keeps recovering from the same base, as in
-		// ObserveRateChanges).
-		if status != wire.RateLimitStatusClear {
-			continue
-		}
-
-		rc.CurrentStatus = status
-		rc.CurrentLevel = newLevel
-		rc.LimitedNow = false
-		changed = append(changed, *rc)
-	}
-
-	return changed
-}
-
 // ObserveRateChanges updates rate limit states and returns changes.
 func (s *Session) ObserveRateChanges(now time.Time) (classDelta []RateClassState, stateDelta []RateClassState) {
 	s.mutex.Lock()
@@ -625,6 +619,11 @@ func (s *Session) WarningCh() chan uint16 {
 
 // CloseSession closes all instances in the session.
 func (s *Session) CloseSession() {
+	// Mark closed before tearing the instances down: AddInstance refuses a closed
+	// session, so a sign-on landing mid-teardown builds a fresh Session rather
+	// than joining this one.
+	s.markClosed()
+
 	s.mutex.RLock()
 	instances := make([]*SessionInstance, 0, len(s.instances))
 	for _, instance := range s.instances {
@@ -644,15 +643,54 @@ func (s *Session) OnSessionClose(fn func()) {
 	s.onSessCloseFn = fn
 }
 
+// Closed returns a channel that is closed once the account's last instance has
+// departed. Unlike OnSessionClose (a single-slot callback), any number of
+// per-account goroutines can select on it.
+func (s *Session) Closed() <-chan struct{} {
+	return s.closeCh
+}
+
+// IsClosed is the non-blocking counterpart of Closed.
+func (s *Session) IsClosed() bool {
+	select {
+	case <-s.closeCh:
+		return true
+	default:
+		return false
+	}
+}
+
+// markClosed closes the session's Closed channel exactly once.
+func (s *Session) markClosed() {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
+	close(s.closeCh)
+}
+
 // RunOnce executes the given function once across all invocations. Used to
 // run arbitrary code that must only run once when the first session instance
 // connects. The function must not block.
+//
+// If fn returns an error the session is closed, because init is one-shot: fn
+// starts the account's per-session goroutines (rate limit monitor, warning decay)
+// and will not run again, so a half-initialized session that later instances
+// attach to would run without them for its whole life. Closing it makes the next
+// sign-on build a fresh Session.
+//
+// The error is reported to every caller, not just the one that ran fn — a
+// concurrent caller must not read a failed init as success. sync.Once establishes
+// the happens-before edge that makes initErr safe to read after Do returns.
 func (s *Session) RunOnce(fn func() error) error {
-	var err error
 	s.initOnce.Do(func() {
-		err = fn()
+		if s.initErr = fn(); s.initErr != nil {
+			s.CloseSession()
+		}
 	})
-	return err
+	return s.initErr
 }
 
 // SetNowFn sets the function used to get the current time. This is useful for testing.
@@ -1188,10 +1226,7 @@ func (s *SessionInstance) CloseInstance() {
 	s.mutex.Unlock()
 
 	// remove the instance now so that the function has an updated view of the world
-	s.session.RemoveInstance(s)
-
-	count := s.session.InstanceCount()
-	if count == 0 {
+	if s.session.removeInstanceAndMaybeClose(s) {
 		s.session.mutex.RLock()
 		onSessCloseFn := s.session.onSessCloseFn
 		s.session.mutex.RUnlock()
@@ -1304,8 +1339,7 @@ func (s *SessionInstance) closeOnly() {
 	s.closed = true
 	s.mutex.Unlock()
 
-	s.session.RemoveInstance(s)
-	if s.session.InstanceCount() == 0 {
+	if s.session.removeInstanceAndMaybeClose(s) {
 		s.session.mutex.RLock()
 		onSessCloseFn := s.session.onSessCloseFn
 		s.session.mutex.RUnlock()

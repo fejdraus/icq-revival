@@ -21,6 +21,27 @@ import (
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
+// noopRateLimitUpdater satisfies RateLimitUpdater without running the monitor.
+type noopRateLimitUpdater struct{}
+
+func (noopRateLimitUpdater) MonitorRateLimits(context.Context, *state.Session) {}
+
+// recordingRateLimitUpdater reports which sessions the monitor was started for.
+type recordingRateLimitUpdater struct {
+	monitored chan *state.Session
+}
+
+func newRecordingRateLimitUpdater() recordingRateLimitUpdater {
+	return recordingRateLimitUpdater{monitored: make(chan *state.Session, 1)}
+}
+
+func (r recordingRateLimitUpdater) MonitorRateLimits(_ context.Context, session *state.Session) {
+	select {
+	case r.monitored <- session:
+	default:
+	}
+}
+
 func TestServer_ListenAndServeAndShutdown(t *testing.T) {
 	var mu sync.Mutex
 	var received []string
@@ -234,9 +255,10 @@ func TestOscarServer_RouteConnection_Auth_BUCP(t *testing.T) {
 		}, nil)
 
 	rt := oscarServer{
-		authService:   authService,
-		logger:        slog.Default(),
-		ipRateLimiter: NewIPRateLimiter(rate.Every(1*time.Minute), 10, 1*time.Minute),
+		rateLimitUpdater: noopRateLimitUpdater{},
+		authService:      authService,
+		logger:           slog.Default(),
+		ipRateLimiter:    NewIPRateLimiter(rate.Every(1*time.Minute), 10, 1*time.Minute),
 	}
 	assert.NoError(t, rt.routeConnection(context.Background(), clientFake, config.Listener{BOSAdvertisedHostPlain: "localhost:5190"}))
 
@@ -309,9 +331,10 @@ func TestOscarServer_RouteConnection_Auth_FLAP(t *testing.T) {
 		}, nil)
 
 	rt := oscarServer{
-		authService:   authService,
-		logger:        slog.Default(),
-		ipRateLimiter: NewIPRateLimiter(rate.Every(1*time.Minute), 10, 1*time.Minute),
+		rateLimitUpdater: noopRateLimitUpdater{},
+		authService:      authService,
+		logger:           slog.Default(),
+		ipRateLimiter:    NewIPRateLimiter(rate.Every(1*time.Minute), 10, 1*time.Minute),
 	}
 	assert.NoError(t, rt.routeConnection(context.Background(), clientFake, config.Listener{BOSAdvertisedHostPlain: "localhost:5190"}))
 
@@ -425,6 +448,7 @@ func TestOscarServer_RouteConnection_BOS(t *testing.T) {
 	}
 
 	rt := oscarServer{
+		rateLimitUpdater:   noopRateLimitUpdater{},
 		authService:        authService,
 		snacHandler:        handler,
 		logger:             slog.Default(),
@@ -538,6 +562,7 @@ func TestOscarServer_RouteConnection_BOS_MultiSessionSignoff(t *testing.T) {
 	}
 
 	rt := oscarServer{
+		rateLimitUpdater:   noopRateLimitUpdater{},
 		authService:        authService,
 		snacHandler:        handler,
 		logger:             slog.Default(),
@@ -611,8 +636,9 @@ func TestOscarServer_RouteConnection_BOS_MaxConcurrentSessionsReached(t *testing
 		Return(state.ServerCookie{Service: wire.BOS}, nil)
 
 	rt := oscarServer{
-		authService: authService,
-		logger:      slog.Default(),
+		rateLimitUpdater: noopRateLimitUpdater{},
+		authService:      authService,
+		logger:           slog.Default(),
 	}
 	assert.NoError(t, rt.routeConnection(context.Background(), clientFake, config.Listener{}))
 
@@ -621,6 +647,10 @@ func TestOscarServer_RouteConnection_BOS_MaxConcurrentSessionsReached(t *testing
 
 func TestOscarServer_RouteConnection_Chat(t *testing.T) {
 	instance := state.NewSession().AddInstance()
+
+	// Without a monitor of its own, a chat client that subscribes over this
+	// connection is never told its rate limit status changed.
+	rateLimitUpdater := newRecordingRateLimitUpdater()
 
 	clientConn, serverConn := net.Pipe()
 	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:8080")
@@ -713,6 +743,7 @@ func TestOscarServer_RouteConnection_Chat(t *testing.T) {
 	}
 
 	rt := oscarServer{
+		rateLimitUpdater:   rateLimitUpdater,
 		authService:        authService,
 		snacHandler:        handler,
 		logger:             slog.Default(),
@@ -724,6 +755,13 @@ func TestOscarServer_RouteConnection_Chat(t *testing.T) {
 	assert.NoError(t, rt.routeConnection(context.Background(), clientFake, config.Listener{}))
 
 	wg.Wait()
+
+	select {
+	case monitored := <-rateLimitUpdater.monitored:
+		assert.Same(t, instance.Session(), monitored, "the monitor must run against the chat session")
+	case <-time.After(2 * time.Second):
+		t.Fatal("no rate limit monitor was started for the chat session")
+	}
 }
 
 func TestOscarServer_RouteConnection_Admin(t *testing.T) {
@@ -808,6 +846,7 @@ func TestOscarServer_RouteConnection_Admin(t *testing.T) {
 	}
 
 	rt := oscarServer{
+		rateLimitUpdater:   noopRateLimitUpdater{},
 		authService:        authService,
 		snacHandler:        handler,
 		logger:             slog.Default(),
@@ -832,7 +871,8 @@ func Test_oscarServer_dispatchIncomingMessages_shutdownSignoff(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		srv := oscarServer{
-			logger: slog.Default(),
+			rateLimitUpdater: noopRateLimitUpdater{},
+			logger:           slog.Default(),
 		}
 		instance := state.NewSession().AddInstance()
 		instance.SetMultiConnFlag(wire.MultiConnFlagsRecentClient)
@@ -863,7 +903,8 @@ func Test_oscarServer_dispatchIncomingMessages_disconnect_old_client(t *testing.
 	go func() {
 		defer wg.Done()
 		srv := oscarServer{
-			logger: slog.Default(),
+			rateLimitUpdater: noopRateLimitUpdater{},
+			logger:           slog.Default(),
 		}
 		flapc := wire.NewFlapClient(0, serverConn, serverConn)
 		err := srv.dispatchIncomingMessages(ctx, wire.BOS, instance, flapc, serverConn, config.Listener{})
@@ -892,7 +933,8 @@ func Test_oscarServer_dispatchIncomingMessages_disconnect_new_client(t *testing.
 	go func() {
 		defer wg.Done()
 		srv := oscarServer{
-			logger: slog.Default(),
+			rateLimitUpdater: noopRateLimitUpdater{},
+			logger:           slog.Default(),
 		}
 		flapc := wire.NewFlapClient(0, serverConn, serverConn)
 		err := srv.dispatchIncomingMessages(ctx, wire.BOS, instance, flapc, serverConn, config.Listener{})
@@ -956,6 +998,7 @@ func Test_oscarServer_receiveSessMessages_BOS_integration(t *testing.T) {
 	chatSessionManager.EXPECT().RemoveUserFromAllChats(mock.Anything)
 
 	server := oscarServer{
+		rateLimitUpdater:   noopRateLimitUpdater{},
 		authService:        authService,
 		buddyListRegistry:  buddyListRegistry,
 		chatSessionManager: chatSessionManager,
@@ -1097,9 +1140,10 @@ func Test_oscarServer_receiveSessMessages_Chat_integration(t *testing.T) {
 		})
 
 	server := oscarServer{
-		authService:    authService,
-		onlineNotifier: onlineNotifier,
-		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		rateLimitUpdater: noopRateLimitUpdater{},
+		authService:      authService,
+		onlineNotifier:   onlineNotifier,
+		logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
 	// Fake client connection with address

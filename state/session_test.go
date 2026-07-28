@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/mk6i/open-oscar-server/wire"
@@ -790,45 +791,6 @@ func TestSession_EvaluateRateLimit_ObserveRateChanges(t *testing.T) {
 			have := instance.Session().EvaluateRateLimit(now, wire.RateLimitClassID(1))
 			assert.Equal(t, wire.RateLimitStatusClear, have)
 		}
-	})
-
-	t.Run("RecoverRateLimits clears an idle limited class without counting as a request", func(t *testing.T) {
-		now := time.Now()
-
-		sess := NewSession()
-		sess.AddInstance()
-		sess.SetRateClasses(now, rateClasses)
-
-		rateClass := rateClasses.Get(3)
-
-		// Drive the class into the limited state.
-		var status wire.RateLimitStatus
-		for status != wire.RateLimitStatusLimited {
-			now = now.Add(1 * time.Second)
-			status = sess.EvaluateRateLimit(now, rateClass.ID)
-		}
-
-		// Shortly after, the class is still limited: RecoverRateLimits reports no
-		// transition and, crucially, does not advance LastTime (so it is not
-		// charged as a request).
-		now = now.Add(1 * time.Second)
-		assert.Empty(t, sess.RecoverRateLimits(now))
-		assert.Equal(t, wire.RateLimitStatusLimited, sess.RateLimitStates()[rateClass.ID-1].CurrentStatus)
-
-		// After a long idle gap the moving average clears; the transition is
-		// reported exactly once.
-		now = now.Add(1 * time.Hour)
-		changed := sess.RecoverRateLimits(now)
-		if assert.Len(t, changed, 1) {
-			assert.Equal(t, rateClass.ID, changed[0].ID)
-			assert.Equal(t, wire.RateLimitStatusClear, changed[0].CurrentStatus)
-			assert.False(t, changed[0].LimitedNow)
-		}
-
-		// Once cleared, further polls report nothing.
-		now = now.Add(1 * time.Second)
-		assert.Empty(t, sess.RecoverRateLimits(now))
-		assert.Equal(t, wire.RateLimitStatusClear, sess.RateLimitStates()[rateClass.ID-1].CurrentStatus)
 	})
 }
 
@@ -1908,6 +1870,105 @@ func TestSession_RunOnce(t *testing.T) {
 		assert.Error(t, err)
 		assert.Equal(t, expectedErr, err)
 	})
+
+	// Init is one-shot, so a session that failed to initialize must not linger for
+	// later instances to attach to.
+	t.Run("closes the session when the function fails", func(t *testing.T) {
+		s := NewSession()
+		instance := s.AddInstance()
+
+		err := s.RunOnce(func() error {
+			return assert.AnError
+		})
+
+		assert.Error(t, err)
+		assert.True(t, s.IsClosed(), "session should be closed after a failed init")
+		assert.True(t, instance.IsClosed(), "instances should be torn down with the session")
+	})
+
+	t.Run("leaves the session open when the function succeeds", func(t *testing.T) {
+		s := NewSession()
+		s.AddInstance()
+
+		assert.NoError(t, s.RunOnce(func() error { return nil }))
+		assert.False(t, s.IsClosed())
+	})
+
+	// A failed init tears the session down, so a caller that did not run fn must
+	// still learn it failed rather than sign a client on to a session whose
+	// instances have just been closed underneath it.
+	t.Run("reports the init error to every caller", func(t *testing.T) {
+		s := NewSession()
+		s.AddInstance()
+
+		first := s.RunOnce(func() error { return assert.AnError })
+		second := s.RunOnce(func() error { return nil })
+
+		assert.ErrorIs(t, first, assert.AnError)
+		assert.ErrorIs(t, second, assert.AnError, "the caller that did not run fn must not read failure as success")
+	})
+
+	// Two instances can be added to a fresh session and reach RunOnce
+	// concurrently. Whichever one loses the race still has a client to sign on,
+	// and must be told the session is not usable.
+	t.Run("reports the init error to a concurrent caller", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			s := NewSession()
+			s.AddInstance()
+			s.AddInstance()
+
+			var wg sync.WaitGroup
+			errs := make([]error, 2)
+			for i := range errs {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					errs[i] = s.RunOnce(func() error { return assert.AnError })
+				}()
+			}
+			wg.Wait()
+
+			for i, err := range errs {
+				assert.ErrorIs(t, err, assert.AnError, "caller %d", i)
+			}
+		})
+	})
+}
+
+// An instance added to a closed session is live but orphaned: Closed() has
+// already fired, so the per-account goroutines that select on it — the rate limit
+// monitor above all — have exited, and RunOnce is spent so nothing restarts them.
+// AddInstance must refuse, so AddSession can fall through to the tombstone wait it
+// already implements.
+func TestSession_AddInstance_RefusesClosedSession(t *testing.T) {
+	s := NewSession()
+	first := s.AddInstance()
+
+	// Stand in for OServiceService.MonitorRateLimits: a per-account goroutine
+	// started from RunOnce that runs until the session closes.
+	require.NoError(t, s.RunOnce(func() error { return nil }))
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		<-s.Closed()
+	}()
+
+	// The account's last instance departs, closing the session and stopping the
+	// monitor. This is the moment AddSession's IsClosed check races.
+	first.CloseInstance()
+	select {
+	case <-monitorDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("monitor did not exit when the session closed")
+	}
+
+	assert.Nil(t, s.AddInstance(), "AddInstance must refuse a closed session")
+
+	// RunOnce is spent, so an instance that did attach could never start a
+	// replacement monitor.
+	ran := false
+	assert.NoError(t, s.RunOnce(func() error { ran = true; return nil }))
+	assert.False(t, ran)
 }
 
 func TestSession_CloseInstance(t *testing.T) {

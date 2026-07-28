@@ -18,6 +18,24 @@ import (
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
+// nopOServiceService satisfies OServiceService without running the rate limit
+// monitor, for signon tests that only need Signon's RunOnce to not panic.
+type nopOServiceService struct{}
+
+func (nopOServiceService) ClientOnline(context.Context, uint16, wire.SNAC_0x01_0x02_OServiceClientOnline, *state.SessionInstance) error {
+	return nil
+}
+
+func (nopOServiceService) IdleNotification(context.Context, *state.SessionInstance, wire.SNAC_0x01_0x11_OServiceIdleNotification) error {
+	return nil
+}
+
+func (nopOServiceService) MonitorRateLimits(context.Context, *state.Session) {}
+
+func (nopOServiceService) ServiceRequest(context.Context, uint16, *state.SessionInstance, wire.SNACFrame, wire.SNAC_0x01_0x04_OServiceServiceRequest, config.Listener) (wire.SNACMessage, error) {
+	return wire.SNACMessage{}, nil
+}
+
 func TestOSCARProxy_RecvClientCmd_AddBuddy(t *testing.T) {
 	cases := []struct {
 		// name is the unit test name
@@ -6983,6 +7001,7 @@ func TestOSCARProxy_Signon(t *testing.T) {
 				TOCConfigStore:     tocCfg,
 				FeedbagService:     fbSvc,
 				FeedbagManager:     fbMgr,
+				OServiceService:    nopOServiceService{},
 			}
 			sess, msg := svc.Signon(ctx, tc.givenCmd,
 				func(ctx context.Context, instance *state.SessionInstance) error { return nil },

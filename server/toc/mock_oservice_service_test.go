@@ -172,6 +172,52 @@ func (_c *mockOServiceService_IdleNotification_Call) RunAndReturn(run func(ctx c
 	return _c
 }
 
+// MonitorRateLimits provides a mock function for the type mockOServiceService
+func (_mock *mockOServiceService) MonitorRateLimits(ctx context.Context, session *state.Session) {
+	_mock.Called(ctx, session)
+	return
+}
+
+// mockOServiceService_MonitorRateLimits_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MonitorRateLimits'
+type mockOServiceService_MonitorRateLimits_Call struct {
+	*mock.Call
+}
+
+// MonitorRateLimits is a helper method to define mock.On call
+//   - ctx context.Context
+//   - session *state.Session
+func (_e *mockOServiceService_Expecter) MonitorRateLimits(ctx interface{}, session interface{}) *mockOServiceService_MonitorRateLimits_Call {
+	return &mockOServiceService_MonitorRateLimits_Call{Call: _e.mock.On("MonitorRateLimits", ctx, session)}
+}
+
+func (_c *mockOServiceService_MonitorRateLimits_Call) Run(run func(ctx context.Context, session *state.Session)) *mockOServiceService_MonitorRateLimits_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *state.Session
+		if args[1] != nil {
+			arg1 = args[1].(*state.Session)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *mockOServiceService_MonitorRateLimits_Call) Return() *mockOServiceService_MonitorRateLimits_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *mockOServiceService_MonitorRateLimits_Call) RunAndReturn(run func(ctx context.Context, session *state.Session)) *mockOServiceService_MonitorRateLimits_Call {
+	_c.Run(run)
+	return _c
+}
+
 // ServiceRequest provides a mock function for the type mockOServiceService
 func (_mock *mockOServiceService) ServiceRequest(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, listener config.Listener) (wire.SNACMessage, error) {
 	ret := _mock.Called(ctx, service, instance, inFrame, inBody, listener)

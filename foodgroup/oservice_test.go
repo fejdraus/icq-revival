@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -3059,361 +3060,200 @@ func TestOServiceService_SetPrivacyFlags(t *testing.T) {
 	svc.SetPrivacyFlags(context.Background(), body)
 }
 
-func TestOServiceService_RateLimitUpdates(t *testing.T) {
-	rateClasses := [5]wire.RateClass{
-		{
-			ID:              1,
-			WindowSize:      80,
-			ClearLevel:      2500,
-			AlertLevel:      2000,
-			LimitLevel:      1500,
-			DisconnectLevel: 800,
-			MaxLevel:        6000,
-		},
-		{
-			ID:              2,
-			WindowSize:      80,
-			ClearLevel:      3000,
-			AlertLevel:      2000,
-			LimitLevel:      1500,
-			DisconnectLevel: 1000,
-			MaxLevel:        6000,
-		},
-		{
-			ID:              3,
-			WindowSize:      20,
-			ClearLevel:      5100,
-			AlertLevel:      5000,
-			LimitLevel:      4000,
-			DisconnectLevel: 3000,
-			MaxLevel:        6000,
-		},
-		{
-			ID:              4,
-			WindowSize:      20,
-			ClearLevel:      5500,
-			AlertLevel:      5300,
-			LimitLevel:      4200,
-			DisconnectLevel: 3000,
-			MaxLevel:        8000,
-		},
-		{
-			ID:              5,
-			WindowSize:      10,
-			ClearLevel:      5500,
-			AlertLevel:      5300,
-			LimitLevel:      4200,
-			DisconnectLevel: 3000,
-			MaxLevel:        8000,
-		},
+func TestOServiceService_MonitorRateLimits(t *testing.T) {
+	now := time.Now()
+
+	sess := state.NewSession()
+	sess.SetRateClasses(now, wire.DefaultRateLimitClasses())
+	inst1 := sess.AddInstance()
+	inst2 := sess.AddInstance()
+
+	classID := wire.RateLimitClassID(3)
+	sess.SubscribeRateLimits([]wire.RateLimitClassID{classID})
+
+	// A clock shared with the monitor goroutine so the test controls when
+	// ObserveRateChanges sees recovery.
+	var clockMu sync.Mutex
+	clockNow := now
+	setClock := func(v time.Time) {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		clockNow = v
 	}
 
 	svc := OServiceService{
-		cfg:    config.Config{},
-		logger: slog.Default(),
+		logger:                   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		rateLimitMonitorInterval: time.Millisecond,
+		timeNow: func() time.Time {
+			clockMu.Lock()
+			defer clockMu.Unlock()
+			return clockNow
+		},
 	}
 
-	t.Run("(win aim 1.x) transition state from clear > alert > limited > clear, then change rate limit param", func(t *testing.T) {
-		now := time.Now()
-		instance := newTestInstance("me")
-		instance.Session().SetRateClasses(now, wire.NewRateLimitClasses(rateClasses))
-
-		classId := wire.RateLimitClassID(3)
-		instance.Session().SubscribeRateLimits([]wire.RateLimitClassID{classId})
-
-		// get into an alert state
-		maxTries := 4
-		for i := 1; i <= maxTries; i++ {
-			now = now.Add(time.Millisecond)
-			if s := instance.Session().EvaluateRateLimit(now, classId); s == wire.RateLimitStatusAlert {
-				break
+	recv := func(inst *state.SessionInstance) wire.SNAC_0x01_0x0A_OServiceRateParamsChange {
+		t.Helper()
+		select {
+		case msg := <-inst.ReceiveMessage():
+			assert.Equal(t, wire.OServiceRateParamChange, msg.Frame.SubGroup)
+			body, ok := msg.Body.(wire.SNAC_0x01_0x0A_OServiceRateParamsChange)
+			if !ok {
+				t.Fatalf("unexpected body type %T", msg.Body)
 			}
-			if i == maxTries {
-				t.Fail()
-				return
-			}
+			return body
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for a relayed rate limit SNAC")
+			return wire.SNAC_0x01_0x0A_OServiceRateParamsChange{}
 		}
+	}
 
-		outputSNACs := svc.RateLimitUpdates(context.Background(), instance, now)
-		expect := wire.SNACMessage{
-			Frame: wire.SNACFrame{
-				FoodGroup: wire.OService,
-				SubGroup:  wire.OServiceRateParamChange,
-				RequestID: wire.ReqIDFromServer,
-			},
-			Body: wire.SNAC_0x01_0x0A_OServiceRateParamsChange{
-				Code: 2,
-				Rate: wire.RateParamsSNAC{
-					ID:              3,
-					WindowSize:      20,
-					ClearLevel:      5100,
-					AlertLevel:      5000,
-					LimitLevel:      4000,
-					DisconnectLevel: 3000,
-					CurrentLevel:    4886,
-					MaxLevel:        6000,
-				},
-			},
+	// Drive the IM class into the limited state.
+	driveTime := now
+	var status wire.RateLimitStatus
+	for i := 0; status != wire.RateLimitStatusLimited; i++ {
+		if i > 100 {
+			t.Fatal("class never reached the limited state")
 		}
-		assert.Equal(t, expect, outputSNACs[0])
+		driveTime = driveTime.Add(time.Millisecond)
+		status = sess.EvaluateRateLimit(driveTime, classID)
+	}
+	setClock(driveTime)
 
-		// get into a rate-limited state
-		maxTries = 4
-		for i := 1; i <= maxTries; i++ {
-			now = now.Add(time.Millisecond)
-			if s := instance.Session().EvaluateRateLimit(now, classId); s == wire.RateLimitStatusLimited {
-				break
-			}
-			if i == maxTries {
-				t.Fail()
-				return
-			}
-		}
-
-		outputSNACs = svc.RateLimitUpdates(context.Background(), instance, now)
-		expect = wire.SNACMessage{
-			Frame: wire.SNACFrame{
-				FoodGroup: wire.OService,
-				SubGroup:  wire.OServiceRateParamChange,
-				RequestID: wire.ReqIDFromServer,
-			},
-			Body: wire.SNAC_0x01_0x0A_OServiceRateParamsChange{
-				Code: 3,
-				Rate: wire.RateParamsSNAC{
-					ID:              3,
-					WindowSize:      20,
-					ClearLevel:      5100,
-					AlertLevel:      5000,
-					LimitLevel:      4000,
-					DisconnectLevel: 3000,
-					CurrentLevel:    3978,
-					MaxLevel:        6000,
-				},
-			},
-		}
-		assert.Equal(t, expect, outputSNACs[0])
-
-		// simulate waiting a minute for the clear threshold
-		now = now.Add(time.Minute)
-
-		// verify that the clear threshold has been reached
-		outputSNACs = svc.RateLimitUpdates(context.Background(), instance, now)
-		expect = wire.SNACMessage{
-			Frame: wire.SNACFrame{
-				FoodGroup: wire.OService,
-				SubGroup:  wire.OServiceRateParamChange,
-				RequestID: wire.ReqIDFromServer,
-			},
-			Body: wire.SNAC_0x01_0x0A_OServiceRateParamsChange{
-				Code: 4,
-				Rate: wire.RateParamsSNAC{
-					ID:              3,
-					WindowSize:      20,
-					ClearLevel:      5100,
-					AlertLevel:      5000,
-					LimitLevel:      4000,
-					DisconnectLevel: 3000,
-					CurrentLevel:    6000,
-					MaxLevel:        6000,
-				},
-			},
-		}
-		assert.Equal(t, expect, outputSNACs[0])
-
-		// verify rate class param changes are detected
-		classesCopy := rateClasses
-		classesCopy[2].DisconnectLevel--
-		instance.Session().SetRateClasses(now, wire.NewRateLimitClasses(classesCopy))
-
-		outputSNACs = svc.RateLimitUpdates(context.Background(), instance, now)
-		expect = wire.SNACMessage{
-			Frame: wire.SNACFrame{
-				FoodGroup: wire.OService,
-				SubGroup:  wire.OServiceRateParamChange,
-				RequestID: wire.ReqIDFromServer,
-			},
-			Body: wire.SNAC_0x01_0x0A_OServiceRateParamsChange{
-				Code: 1,
-				Rate: wire.RateParamsSNAC{
-					ID:              3,
-					WindowSize:      20,
-					ClearLevel:      5100,
-					AlertLevel:      5000,
-					LimitLevel:      4000,
-					DisconnectLevel: 2999,
-					CurrentLevel:    6000,
-					MaxLevel:        6000,
-				},
-			},
-		}
-		assert.Equal(t, expect, outputSNACs[0])
+	// Stop the monitor at test end by closing the account's session.
+	t.Cleanup(func() {
+		inst1.CloseInstance()
+		inst2.CloseInstance()
 	})
+	go svc.MonitorRateLimits(context.Background(), sess)
 
-	t.Run("(win aim > 1.x) transition state from clear > alert > limited > clear", func(t *testing.T) {
-		now := time.Now()
-		instance := newTestInstance("me")
-		instance.Session().SetRateClasses(now, wire.NewRateLimitClasses(rateClasses))
+	// The transition is observed once for the account and broadcast to every
+	// instance — the multi-connection bug the monitor fixes.
+	for _, inst := range []*state.SessionInstance{inst1, inst2} {
+		body := recv(inst)
+		assert.Equal(t, uint16(3), body.Code) // limited
+		assert.Equal(t, uint16(classID), body.Rate.ID)
+	}
 
-		var versions [wire.MDir + 1]uint16
-		versions[wire.OService] = 3
-		instance.SetFoodGroupVersions(versions)
+	// After a long idle gap the moving average clears; both instances are told.
+	setClock(driveTime.Add(time.Minute))
+	for _, inst := range []*state.SessionInstance{inst1, inst2} {
+		body := recv(inst)
+		assert.Equal(t, uint16(4), body.Code) // clear
+	}
+}
 
-		classId := wire.RateLimitClassID(3)
-		instance.Session().SubscribeRateLimits([]wire.RateLimitClassID{classId})
+// The monitor is started from a RunOnce block owned by whichever connection
+// signed on first. That connection departing must not take rate limit eventing
+// down with it.
+func TestOServiceService_MonitorRateLimits_outlivesTheInstanceThatStartedIt(t *testing.T) {
+	now := time.Now()
 
-		// get into an alert state
-		maxTries := 4
-		for i := 1; i <= maxTries; i++ {
-			now = now.Add(time.Millisecond)
-			if s := instance.Session().EvaluateRateLimit(now, classId); s == wire.RateLimitStatusAlert {
-				break
+	sess := state.NewSession()
+	sess.SetRateClasses(now, wire.DefaultRateLimitClasses())
+	inst1 := sess.AddInstance()
+
+	classID := wire.RateLimitClassID(3)
+	sess.SubscribeRateLimits([]wire.RateLimitClassID{classID})
+
+	var clockMu sync.Mutex
+	clockNow := now
+	setClock := func(v time.Time) {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		clockNow = v
+	}
+
+	svc := OServiceService{
+		logger:                   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		rateLimitMonitorInterval: time.Millisecond,
+		timeNow: func() time.Time {
+			clockMu.Lock()
+			defer clockMu.Unlock()
+			return clockNow
+		},
+	}
+
+	// The first instance on the account starts the monitor, as RunOnce does.
+	go svc.MonitorRateLimits(context.Background(), sess)
+
+	// A second connection joins, then the one that started the monitor departs.
+	inst2 := sess.AddInstance()
+	t.Cleanup(inst2.CloseInstance)
+	inst1.CloseInstance()
+	require.False(t, sess.IsClosed(), "the account is still online via inst2")
+
+	recv := func() wire.SNAC_0x01_0x0A_OServiceRateParamsChange {
+		t.Helper()
+		select {
+		case msg := <-inst2.ReceiveMessage():
+			assert.Equal(t, wire.OServiceRateParamChange, msg.Frame.SubGroup)
+			body, ok := msg.Body.(wire.SNAC_0x01_0x0A_OServiceRateParamsChange)
+			if !ok {
+				t.Fatalf("unexpected body type %T", msg.Body)
 			}
-			if i == maxTries {
-				t.Fail()
-				return
-			}
+			return body
+		case <-time.After(2 * time.Second):
+			t.Fatal("surviving instance got no rate limit update after the starting instance left")
+			return wire.SNAC_0x01_0x0A_OServiceRateParamsChange{}
 		}
+	}
 
-		outputSNACs := svc.RateLimitUpdates(context.Background(), instance, now)
-		expect := wire.SNACMessage{
-			Frame: wire.SNACFrame{
-				FoodGroup: wire.OService,
-				SubGroup:  wire.OServiceRateParamChange,
-				RequestID: wire.ReqIDFromServer,
-			},
-			Body: wire.SNAC_0x01_0x0A_OServiceRateParamsChange{
-				Code: 2,
-				Rate: wire.RateParamsSNAC{
-					ID:              3,
-					WindowSize:      20,
-					ClearLevel:      5100,
-					AlertLevel:      5000,
-					LimitLevel:      4000,
-					DisconnectLevel: 3000,
-					CurrentLevel:    4886,
-					MaxLevel:        6000,
-					V2Params: &struct {
-						LastTime      uint32
-						DroppingSNACs uint8
-					}{
-						DroppingSNACs: 0,
-					},
-				},
-			},
+	driveTime := now
+	var status wire.RateLimitStatus
+	for i := 0; status != wire.RateLimitStatusLimited; i++ {
+		if i > 100 {
+			t.Fatal("class never reached the limited state")
 		}
-		assert.Equal(t, expect, outputSNACs[0])
+		driveTime = driveTime.Add(time.Millisecond)
+		status = sess.EvaluateRateLimit(driveTime, classID)
+	}
+	setClock(driveTime)
 
-		// get into a rate-limited state
-		maxTries = 4
-		for i := 1; i <= maxTries; i++ {
-			now = now.Add(time.Millisecond)
-			if s := instance.Session().EvaluateRateLimit(now, classId); s == wire.RateLimitStatusLimited {
-				break
-			}
-			if i == maxTries {
-				t.Fail()
-				return
-			}
-		}
+	body := recv()
+	assert.Equal(t, uint16(3), body.Code) // limited
+	assert.Equal(t, uint16(classID), body.Rate.ID)
 
-		outputSNACs = svc.RateLimitUpdates(context.Background(), instance, now)
-		expect = wire.SNACMessage{
-			Frame: wire.SNACFrame{
-				FoodGroup: wire.OService,
-				SubGroup:  wire.OServiceRateParamChange,
-				RequestID: wire.ReqIDFromServer,
-			},
-			Body: wire.SNAC_0x01_0x0A_OServiceRateParamsChange{
-				Code: 3,
-				Rate: wire.RateParamsSNAC{
-					ID:              3,
-					WindowSize:      20,
-					ClearLevel:      5100,
-					AlertLevel:      5000,
-					LimitLevel:      4000,
-					DisconnectLevel: 3000,
-					CurrentLevel:    3978,
-					MaxLevel:        6000,
-					V2Params: &struct {
-						LastTime      uint32
-						DroppingSNACs uint8
-					}{
-						DroppingSNACs: 1,
-					},
-				},
-			},
-		}
-		assert.Equal(t, expect, outputSNACs[0])
+	// Recovery reaches the surviving instance too.
+	setClock(driveTime.Add(time.Minute))
+	assert.Equal(t, uint16(4), recv().Code) // clear
+}
 
-		// simulate waiting a minute for the clear threshold
-		now = now.Add(time.Minute)
+// The monitor's lifetime tracks the account, not the connection that started it:
+// the WebAPI server runs it with a server-lifetime context, so closing the
+// session is the only thing that stops it once the account has signed off.
+func TestOServiceService_MonitorRateLimits_exitsWhenAccountEmpty(t *testing.T) {
+	sess := state.NewSession()
+	sess.SetRateClasses(time.Now(), wire.DefaultRateLimitClasses())
+	inst := sess.AddInstance()
 
-		// verify that the clear threshold has been reached
-		outputSNACs = svc.RateLimitUpdates(context.Background(), instance, now)
-		expect = wire.SNACMessage{
-			Frame: wire.SNACFrame{
-				FoodGroup: wire.OService,
-				SubGroup:  wire.OServiceRateParamChange,
-				RequestID: wire.ReqIDFromServer,
-			},
-			Body: wire.SNAC_0x01_0x0A_OServiceRateParamsChange{
-				Code: 4,
-				Rate: wire.RateParamsSNAC{
-					ID:              3,
-					WindowSize:      20,
-					ClearLevel:      5100,
-					AlertLevel:      5000,
-					LimitLevel:      4000,
-					DisconnectLevel: 3000,
-					CurrentLevel:    6000,
-					MaxLevel:        6000,
-					V2Params: &struct {
-						LastTime      uint32
-						DroppingSNACs uint8
-					}{
-						DroppingSNACs: 0,
-						LastTime:      60,
-					},
-				},
-			},
-		}
-		assert.Equal(t, expect, outputSNACs[0])
+	svc := OServiceService{
+		logger:                   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		rateLimitMonitorInterval: time.Millisecond,
+		timeNow:                  time.Now,
+	}
 
-		// verify rate class param changes are detected
-		classesCopy := rateClasses
-		classesCopy[2].DisconnectLevel--
-		instance.Session().SetRateClasses(now, wire.NewRateLimitClasses(classesCopy))
+	done := make(chan struct{})
+	go func() {
+		// A context that is never cancelled — like the WebAPI server's
+		// shutdownCtx before shutdown — so only Session.Closed() can stop it.
+		svc.MonitorRateLimits(context.Background(), sess)
+		close(done)
+	}()
 
-		outputSNACs = svc.RateLimitUpdates(context.Background(), instance, now)
-		expect = wire.SNACMessage{
-			Frame: wire.SNACFrame{
-				FoodGroup: wire.OService,
-				SubGroup:  wire.OServiceRateParamChange,
-				RequestID: wire.ReqIDFromServer,
-			},
-			Body: wire.SNAC_0x01_0x0A_OServiceRateParamsChange{
-				Code: 1,
-				Rate: wire.RateParamsSNAC{
-					ID:              3,
-					WindowSize:      20,
-					ClearLevel:      5100,
-					AlertLevel:      5000,
-					LimitLevel:      4000,
-					DisconnectLevel: 2999,
-					CurrentLevel:    6000,
-					MaxLevel:        6000,
-					V2Params: &struct {
-						LastTime      uint32
-						DroppingSNACs uint8
-					}{
-						DroppingSNACs: 0,
-						LastTime:      0,
-					},
-				},
-			},
-		}
-		assert.Equal(t, expect, outputSNACs[0])
-	})
+	// While an instance is present, the monitor keeps running.
+	select {
+	case <-done:
+		t.Fatal("monitor exited while an instance was still present")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	// Closing the account's last instance closes the session; the monitor exits.
+	inst.CloseInstance()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("monitor did not exit after the account's last instance left")
+	}
 }
 
 func TestOServiceService_RateParamsSubAdd(t *testing.T) {

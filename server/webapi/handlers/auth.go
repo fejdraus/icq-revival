@@ -26,6 +26,7 @@ type AuthHandler struct {
 
 type OServiceService interface {
 	ClientOnline(ctx context.Context, service uint16, inBody wire.SNAC_0x01_0x02_OServiceClientOnline, instance *state.SessionInstance) error
+	RateParamsSubAdd(ctx context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x01_0x08_OServiceRateParamsSubAdd)
 }
 
 // ClientLoginRequest represents the request body for clientLogin.

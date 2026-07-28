@@ -132,8 +132,6 @@ func TestRateLimitMiddleware_OSCAR(t *testing.T) {
 		requests int
 		// wantCalls is how many of those requests reach the handler
 		wantCalls int
-		// wantEvents are the rateLimit event statuses pushed to the session
-		wantEvents []string
 		// wantRetryAfter is the Retry-After header on the final rejection, "" for
 		// a rejection that carries none
 		wantRetryAfter string
@@ -151,9 +149,6 @@ func TestRateLimitMiddleware_OSCAR(t *testing.T) {
 			subGroup:  wire.ICBMChannelMsgToHost,
 			requests:  5,
 			wantCalls: 1,
-			// clear -> limit on the second request; the rest stay limited and
-			// so push nothing further.
-			wantEvents: []string{"limit"},
 			// retryAfterFor rounds the sub-second wait these tight classes need
 			// up to the minRetryAfter floor.
 			wantRetryAfter: "1",
@@ -165,22 +160,18 @@ func TestRateLimitMiddleware_OSCAR(t *testing.T) {
 			// the 7th request drives the average below DisconnectLevel
 			requests:  7,
 			wantCalls: 1,
-			// EvaluateRateLimit closes the session on disconnect, so the event
-			// is best-effort; it is queued but the client may never fetch it.
-			wantEvents: []string{"limit", "disconnect"},
 			// a disconnected session has no aimsid left to retry with
 			wantRetryAfter: "",
 		},
 		{
-			// The client renders the rateLimit event as an IM alert inside a
-			// conversation window, so a class the IM path does not spend is
-			// enforced without one.
-			name:           "a class the alert cannot describe is limited silently",
+			// A non-IM class is enforced the same way. The middleware only ever
+			// rejects; notifying the client is the per-account monitor's job, and
+			// it surfaces only the IM class to the alert.
+			name:           "a non-IM class is still enforced",
 			foodGroup:      wire.Feedbag,
 			subGroup:       wire.FeedbagInsertItem,
 			requests:       5,
 			wantCalls:      1,
-			wantEvents:     nil,
 			wantRetryAfter: "1",
 		},
 		{
@@ -212,7 +203,9 @@ func TestRateLimitMiddleware_OSCAR(t *testing.T) {
 			}
 
 			assert.Equal(t, tt.wantCalls, calls)
-			assert.Equal(t, tt.wantEvents, rateLimitEventStatuses(t, session))
+			// The middleware enforces the limit but never pushes rate limit
+			// events; that is the per-account monitor's responsibility.
+			assert.Empty(t, rateLimitEventStatuses(t, session))
 
 			if tt.wantCalls < tt.requests {
 				assertRateLimited(t, last, tt.wantRetryAfter)
@@ -223,109 +216,49 @@ func TestRateLimitMiddleware_OSCAR(t *testing.T) {
 	}
 }
 
-// The client only dismisses its rate limit alert when it receives a "clear"
-// event, and only pushes on a transition, so a recovering session must produce
-// exactly one clear.
-func TestRateLimitMiddleware_OSCAR_pushesClearOnRecovery(t *testing.T) {
-	session := newTestWebAPISession(t, tightRateLimitClasses())
-	middleware := newTestRateLimitMiddleware()
+// The monitor broadcasts transitions, not current state, so without a seed a
+// session signing on mid-limit shows no banner while its sends are rejected — and
+// the client's alert is sticky, so the eventual "clear" has nothing to dismiss.
+func TestSeedRateLimitAlert(t *testing.T) {
+	imClass, ok := wire.DefaultSNACRateLimits().RateClassLookup(wire.ICBM, wire.ICBMChannelMsgToHost)
+	require.True(t, ok)
 
-	handler := middleware.OSCAR(wire.ICBM, wire.ICBMChannelMsgToHost)(
-		func(w http.ResponseWriter, r *http.Request, s *state.WebAPISession) {})
+	// limitedSession returns a session on an account already in the limited state.
+	limitedSession := func(t *testing.T) *state.WebAPISession {
+		t.Helper()
 
-	// Trip the limit.
-	for range 3 {
-		handler(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/im/sendIM", nil), session)
+		session := newTestWebAPISession(t, tightRateLimitClasses())
+		sess := session.OSCARSession.Session()
+		for i := 0; sess.RateLimitStates()[imClass-1].CurrentStatus != wire.RateLimitStatusLimited; i++ {
+			require.Less(t, i, 100, "class never reached the limited state")
+			sess.EvaluateRateLimit(time.Now(), imClass)
+		}
+		return session
 	}
-	assert.Equal(t, []string{"limit"}, rateLimitEventStatuses(t, session))
 
-	// Let the moving average recover past ClearLevel. See tightRateLimitClasses
-	// for why this is a short wait rather than a stubbed clock.
-	time.Sleep(250 * time.Millisecond)
+	t.Run("a session starting on a limited account is told", func(t *testing.T) {
+		session := limitedSession(t)
 
-	rec := httptest.NewRecorder()
-	handler(rec, httptest.NewRequest(http.MethodGet, "/im/sendIM", nil), session)
+		seedRateLimitAlert(session, imClass)
 
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, []string{"limit", "clear"}, rateLimitEventStatuses(t, session))
-}
-
-// A session that trips the limit and then goes idle must still be told it
-// recovered: the fetchEvents poll carries the clear even though no charged
-// request arrives to recompute the status.
-func TestRateLimitMiddleware_RecoverOnPoll(t *testing.T) {
-	session := newTestWebAPISession(t, tightRateLimitClasses())
-	middleware := newTestRateLimitMiddleware()
-
-	oscar := middleware.OSCAR(wire.ICBM, wire.ICBMChannelMsgToHost)(
-		func(w http.ResponseWriter, r *http.Request, s *state.WebAPISession) {})
-
-	// Trip the limit.
-	for range 3 {
-		oscar(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/im/sendIM", nil), session)
-	}
-	assert.Equal(t, []string{"limit"}, rateLimitEventStatuses(t, session))
-
-	// Let the moving average recover past ClearLevel without sending anything.
-	// See tightRateLimitClasses for why this is a short wait, not a stubbed clock.
-	time.Sleep(250 * time.Millisecond)
-
-	calls := 0
-	poll := middleware.RecoverOnPoll(func(w http.ResponseWriter, r *http.Request, s *state.WebAPISession) {
-		calls++
+		assert.Equal(t, []string{"limit"}, rateLimitEventStatuses(t, session))
 	})
 
-	// The poll surfaces the clear and still serves the handler.
-	poll(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/aim/fetchEvents", nil), session)
-	assert.Equal(t, 1, calls)
-	assert.Equal(t, []string{"limit", "clear"}, rateLimitEventStatuses(t, session))
+	t.Run("a session starting on a clear account is told nothing", func(t *testing.T) {
+		session := newTestWebAPISession(t, tightRateLimitClasses())
 
-	// A second poll after recovery pushes nothing further.
-	poll(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/aim/fetchEvents", nil), session)
-	assert.Equal(t, 2, calls)
-	assert.Equal(t, []string{"limit", "clear"}, rateLimitEventStatuses(t, session))
-}
+		seedRateLimitAlert(session, imClass)
 
-// Two browser tabs on one account share a single set of rate limit states, so
-// whichever of them polls first observes the underlying limited -> clear
-// transition. The tab that never showed an alert must not be able to consume the
-// recovery the limited tab is waiting for.
-func TestRateLimitMiddleware_RecoverOnPoll_perClientTransitions(t *testing.T) {
-	instance := newTestOSCARInstance(t, tightRateLimitClasses())
-	tabA := newTestWebAPISessionOn("aimsid-a", instance)
-	tabB := newTestWebAPISessionOn("aimsid-b", instance)
+		assert.Empty(t, rateLimitEventStatuses(t, session))
+	})
 
-	middleware := newTestRateLimitMiddleware()
-	send := middleware.OSCAR(wire.ICBM, wire.ICBMChannelMsgToHost)(
-		func(w http.ResponseWriter, r *http.Request, s *state.WebAPISession) {})
-	poll := middleware.RecoverOnPoll(
-		func(w http.ResponseWriter, r *http.Request, s *state.WebAPISession) {})
+	t.Run("a zero class id disables the alert", func(t *testing.T) {
+		session := limitedSession(t)
 
-	// Tab A trips the limit and raises the alert.
-	for range 3 {
-		send(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/im/sendIM", nil), tabA)
-	}
-	assert.Equal(t, []string{"limit"}, rateLimitEventStatuses(t, tabA))
+		seedRateLimitAlert(session, 0)
 
-	// Tab B polls while the account is still limited. The budget is shared, so
-	// tab B really cannot send either — but it is idle, and a poll is not a
-	// request it made, so it is not told to stop chatting.
-	poll(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/aim/fetchEvents", nil), tabB)
-	assert.Empty(t, rateLimitEventStatuses(t, tabB))
-
-	// Let the moving average recover past ClearLevel. See tightRateLimitClasses
-	// for why this is a short wait rather than a stubbed clock.
-	time.Sleep(250 * time.Millisecond)
-
-	// Tab B's idle poll observes the recovery first. It has no alert up, so there
-	// is still nothing to tell it.
-	poll(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/aim/fetchEvents", nil), tabB)
-	assert.Empty(t, rateLimitEventStatuses(t, tabB))
-
-	// Tab A still gets its clear on the next poll, even though tab B already
-	// consumed the transition it would otherwise have been derived from.
-	poll(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/aim/fetchEvents", nil), tabA)
-	assert.Equal(t, []string{"limit", "clear"}, rateLimitEventStatuses(t, tabA))
+		assert.Empty(t, rateLimitEventStatuses(t, session))
+	})
 }
 
 // Retry-After must name a wait that actually clears the limit. A rejected

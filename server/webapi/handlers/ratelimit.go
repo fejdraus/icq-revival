@@ -38,27 +38,20 @@ type SessionHandlerFunc = func(http.ResponseWriter, *http.Request, *state.WebAPI
 // It lives alongside the handlers (rather than in the middleware package) so that
 // its rejection can be encoded through the same SendResponse path the handlers
 // use, honoring the request's JSON/JSONP/XML/AMF format.
+//
+// It only enforces the limit (the 430 rejection). Telling the client its status
+// changed is the job of OServiceService.MonitorRateLimits.
 type RateLimitMiddleware struct {
 	snacRateLimits wire.SNACRateLimits
-	// alertRateClassID is the only rate class that pushes a rateLimit event; see
-	// syncRateAlert. Zero when the SNAC table has no mapping for sending an IM,
-	// which disables the push rather than indexing a rate class that isn't there.
-	alertRateClassID wire.RateLimitClassID
-	logger           *slog.Logger
+	logger         *slog.Logger
 }
 
 // NewRateLimitMiddleware creates a RateLimitMiddleware. snacRateLimits is the
 // same SNAC-to-rate-class mapping the OSCAR and TOC servers use.
 func NewRateLimitMiddleware(snacRateLimits wire.SNACRateLimits, logger *slog.Logger) *RateLimitMiddleware {
-	alertRateClassID, ok := snacRateLimits.RateClassLookup(wire.ICBM, wire.ICBMChannelMsgToHost)
-	if !ok {
-		logger.Error("no rate class maps to sending an IM, rate limit events are disabled")
-	}
-
 	return &RateLimitMiddleware{
-		snacRateLimits:   snacRateLimits,
-		alertRateClassID: alertRateClassID,
-		logger:           logger,
+		snacRateLimits: snacRateLimits,
+		logger:         logger,
 	}
 }
 
@@ -85,7 +78,6 @@ func (l *RateLimitMiddleware) OSCAR(foodGroup uint16, subGroup uint16) func(Sess
 
 			sess := session.OSCARSession.Session()
 			status := sess.EvaluateRateLimit(time.Now(), rateClassID)
-			l.syncRateAlert(session, rateClassID, status)
 
 			// Disconnect is rejected alongside Limited: EvaluateRateLimit has
 			// already closed the account's OSCAR session by the time it returns,
@@ -114,69 +106,6 @@ func (l *RateLimitMiddleware) OSCAR(foodGroup uint16, subGroup uint16) func(Sess
 	}
 }
 
-// RecoverOnPoll re-evaluates rate limit recovery before serving a long poll and
-// pushes the "clear" that dismisses the client's alert once it recovers.
-//
-// OSCAR only recomputes rate limit status on a charged request (see OSCAR), so a
-// session that trips the limit and then goes idle would never learn it recovered,
-// and the client's alert is sticky until a "clear" arrives. fetchEvents is polled
-// continuously, so recovering here surfaces the clear without the user sending
-// anything; the push happens before next() so it rides out on this poll.
-//
-// Only a clear is pushed. A poll is not a request the user made, so it must not
-// raise an alert: the budget is account-wide, and syncing an idle tab up to a
-// limit another tab tripped would tell a user doing nothing to stop chatting. The
-// limit reaches a client on the request it actually rejects, in OSCAR.
-func (l *RateLimitMiddleware) RecoverOnPoll(next SessionHandlerFunc) SessionHandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request, session *state.WebAPISession) {
-		if l.alertRateClassID == 0 {
-			next(w, r, session)
-			return
-		}
-
-		sess := session.OSCARSession.Session()
-		sess.RecoverRateLimits(time.Now())
-		if status := sess.RateLimitStates()[l.alertRateClassID-1].CurrentStatus; status == wire.RateLimitStatusClear {
-			l.syncRateAlert(session, l.alertRateClassID, status)
-		}
-
-		next(w, r, session)
-	}
-}
-
-// syncRateAlert notifies the client that its rate limit status changed so it can
-// show (or dismiss) the rate limit alert. The disconnect push is best-effort:
-// EvaluateRateLimit closes the session before the queue drains.
-//
-// Only alertRateClassID pushes. The client throws away the class id the event
-// carries and feeds the status into a single alert rendered inside a
-// conversation window ("You have been rate limited. Wait for a few moments until
-// you can chat again."), so the one class it can truthfully describe is the one
-// sending an IM spends. Pushing for the others would pop a chat alert for a
-// buddy list edit while IMs still work, and let a "clear" on an unrelated class
-// dismiss an alert the IM class raised. They stay enforced, silently.
-func (l *RateLimitMiddleware) syncRateAlert(session *state.WebAPISession, classID wire.RateLimitClassID, status wire.RateLimitStatus) {
-	if classID != l.alertRateClassID {
-		return
-	}
-	name := rateLimitStatusName(status)
-	if name == "" {
-		return
-	}
-	if !session.ObserveRateAlert(status) {
-		return
-	}
-
-	session.EventQueue.Push(types.EventTypeRateLimit, types.RateLimitEvent{
-		Classes: []types.RateLimitClass{
-			{
-				ID:     int(classID),
-				Status: name,
-			},
-		},
-	})
-}
-
 // retryAfterFor returns how long the client must wait for its next request on
 // this class to clear the limit.
 //
@@ -199,6 +128,37 @@ func retryAfterFor(rcs state.RateClassState) time.Duration {
 	// fraction of a second reproduces the same never-clears loop. A class barely
 	// over its limit can compute to no wait at all, hence the floor.
 	return max(time.Duration((neededMs+999)/1000)*time.Second, minRetryAfter)
+}
+
+// seedRateLimitAlert raises the client's rate limit alert when a session starts
+// on an account that is already rate limited.
+//
+// The monitor broadcasts transitions, not current state, so a session signing on
+// mid-limit missed the one that raised the alert — and the client's alert is
+// sticky, so the eventual "clear" would arrive with nothing to dismiss. An OSCAR
+// client learns the current state from the rate params it gets at handshake; this
+// is the Web API's equivalent.
+//
+// Only the limited state is seeded: alert is a warning the user cannot act on,
+// and seeding clear would render nothing.
+func seedRateLimitAlert(session *state.WebAPISession, classID wire.RateLimitClassID) {
+	if classID == 0 {
+		return
+	}
+
+	status := session.OSCARSession.Session().RateLimitStates()[classID-1].CurrentStatus
+	if status != wire.RateLimitStatusLimited {
+		return
+	}
+
+	session.EventQueue.Push(types.EventTypeRateLimit, types.RateLimitEvent{
+		Classes: []types.RateLimitClass{
+			{
+				ID:     int(classID),
+				Status: rateLimitStatusName(status),
+			},
+		},
+	})
 }
 
 // rateLimitStatusName maps an OSCAR rate limit status onto the status string the

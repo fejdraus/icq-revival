@@ -36,6 +36,7 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		IconSource:       handler.IconSource,
 		Logger:           logger,
 		OServiceService:  handler.OServiceService,
+		SNACRateLimits:   handler.SNACRateLimits,
 	}
 
 	eventsHandler := &handlers.EventsHandler{
@@ -165,12 +166,8 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		mux.Handle("GET /aim/endSession", sessionRoute(sessionHandler.EndSession))
 
 		// Event fetching - uses aimsid for auth, no k required. This is the
-		// long-poll loop the client runs continuously; RecoverOnPoll uses it to
-		// surface a rate limit "clear" to an idle session that already recovered.
-		mux.Handle("GET /aim/fetchEvents", authMiddleware.AuthenticateFlexible(
-			authMiddleware.CORSMiddleware(
-				authMiddleware.RequireSession(sessionManager,
-					rateLimiter.RecoverOnPoll(eventsHandler.FetchEvents)))))
+		// long-poll loop the client runs continuously.
+		mux.Handle("GET /aim/fetchEvents", sessionRoute(eventsHandler.FetchEvents))
 
 		// Temp buddies are session-local rather than feedbag-backed, but they
 		// are the Web API's equivalent of the BUDDY temp buddy SNACs and are
@@ -309,6 +306,8 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 			}
 			// periodically decay warning level
 			go handler.LowerWarnLevel(shutdownCtx, instance)
+			// broadcast rate limit transitions to every instance on the account
+			go handler.OServiceService.MonitorRateLimits(shutdownCtx, instance.Session())
 			return nil
 		}
 	}

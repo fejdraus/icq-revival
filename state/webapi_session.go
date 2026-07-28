@@ -86,12 +86,12 @@ type WebAPISession struct {
 	aliasMu      sync.Mutex
 	imLog        map[string][]WebAPIStoredIM
 	imLogMu      sync.Mutex
-	// rateAlertStatus is the rate limit status this client was last told about,
-	// zero until it has been told anything. See ObserveRateAlert.
-	rateAlertStatus wire.RateLimitStatus
-	rateAlertMu     sync.Mutex
-	logger          *slog.Logger // Logger for debugging
-	listeners       sync.WaitGroup
+	// IMRateClassID is the rate class that sending an IM spends. The web client
+	// renders any rate limit event as the IM banner, so only this class's updates
+	// may reach it. Zero disables the alert.
+	IMRateClassID wire.RateLimitClassID
+	logger        *slog.Logger // Logger for debugging
+	listeners     sync.WaitGroup
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -103,35 +103,6 @@ type WebAPISession struct {
 // IsExpired checks if the session has expired.
 func (s *WebAPISession) IsExpired() bool {
 	return time.Now().After(s.ExpiresAt)
-}
-
-// ObserveRateAlert records status as the rate limit status this web client was
-// last told about, and reports whether it differs from the one before it.
-//
-// The client's rate limit alert is sticky — it dismisses only on a "clear" that
-// follows a "limit" — so the server has to push exactly the transitions, and a
-// transition has to be measured per web client rather than off the OSCAR rate
-// state. That state belongs to the account, not to this session: a second
-// browser tab holds its own aimsid and its own WebAPISession over the same
-// state.Session, and an OSCAR client's ObserveRateChanges ticker runs against it
-// too. Any of them can consume a limited -> clear transition before this client
-// hears about it, which would leave this client's alert stuck up forever.
-func (s *WebAPISession) ObserveRateAlert(status wire.RateLimitStatus) bool {
-	s.rateAlertMu.Lock()
-	defer s.rateAlertMu.Unlock()
-
-	prev := s.rateAlertStatus
-	if prev == 0 {
-		// A client that has been told nothing renders no alert, which is what
-		// clear means.
-		prev = wire.RateLimitStatusClear
-	}
-	if prev == status {
-		return false
-	}
-
-	s.rateAlertStatus = status
-	return true
 }
 
 // Aliases returns this session owner's private buddy aliases, keyed by normalized
@@ -276,14 +247,21 @@ func (s *WebAPISession) handleSNACMessage(msg wire.SNACMessage) {
 }
 
 // handleOServiceMessage handles OService SNAC messages relayed to the session's
-// own OSCAR instance. The only one we surface is OServiceUserInfoUpdate, which the
-// server relays to a user when their own user info changes (notably a buddy icon
-// upload or clear). The client re-renders its identity badge from myInfo events
-// only, so we translate this into a fresh myInfo.
+// own OSCAR instance.
 func (s *WebAPISession) handleOServiceMessage(msg wire.SNACMessage) {
-	if msg.Frame.SubGroup != wire.OServiceUserInfoUpdate {
-		return
+	switch msg.Frame.SubGroup {
+	case wire.OServiceUserInfoUpdate:
+		s.handleUserInfoUpdate(msg)
+	case wire.OServiceRateParamChange:
+		s.handleRateLimitUpdate(msg)
 	}
+}
+
+// handleUserInfoUpdate surfaces OServiceUserInfoUpdate, which the server relays to
+// a user when their own user info changes (notably a buddy icon upload or clear).
+// The client re-renders its identity badge from myInfo events only, so we
+// translate this into a fresh myInfo.
+func (s *WebAPISession) handleUserInfoUpdate(msg wire.SNACMessage) {
 	if !s.IsSubscribedTo("myInfo") && !s.IsSubscribedTo("presence") {
 		return
 	}
@@ -296,6 +274,42 @@ func (s *WebAPISession) handleOServiceMessage(msg wire.SNACMessage) {
 		return
 	}
 	s.EventQueue.Push(types.EventType("myInfo"), data)
+}
+
+// handleRateLimitUpdate translates a rate limit status change — broadcast by the
+// account's rate limit monitor — into a rateLimit event. Only the IM class is
+// surfaced, since the client feeds any rateLimit event into the
+// conversation-window alert. Code 1 is a class-params change, not a status
+// transition, and is ignored.
+func (s *WebAPISession) handleRateLimitUpdate(msg wire.SNACMessage) {
+	if s.IMRateClassID == 0 {
+		return
+	}
+	body, ok := msg.Body.(wire.SNAC_0x01_0x0A_OServiceRateParamsChange)
+	if !ok {
+		return
+	}
+	if wire.RateLimitClassID(body.Rate.ID) != s.IMRateClassID {
+		return
+	}
+
+	var status string
+	switch body.Code {
+	case 2:
+		status = "warn"
+	case 3:
+		status = "limit"
+	case 4:
+		status = "clear"
+	default:
+		return
+	}
+
+	s.EventQueue.Push(types.EventTypeRateLimit, types.RateLimitEvent{
+		Classes: []types.RateLimitClass{
+			{ID: int(body.Rate.ID), Status: status},
+		},
+	})
 }
 
 // handleICBMMessage handles ICBM (instant messaging) SNAC messages.

@@ -28,9 +28,12 @@ type SessionHandler struct {
 	IconSource       BuddyIconSource
 	Logger           *slog.Logger
 	OServiceService  OServiceService
-	FnSessCfg        func(sess *state.Session)
-	FnSessInit       func(instance *state.SessionInstance) func() error
-	FnInstanceClose  func(instance *state.SessionInstance) func()
+	// the same SNAC-to-rate-class mapping RateLimitMiddleware enforces against, so
+	// the class a session alerts on cannot drift from the one it is charged
+	SNACRateLimits  wire.SNACRateLimits
+	FnSessCfg       func(sess *state.Session)
+	FnSessInit      func(instance *state.SessionInstance) func() error
+	FnInstanceClose func(instance *state.SessionInstance) func()
 }
 
 // AuthService defines methods needed for authentication.
@@ -224,9 +227,8 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 
 	if err = instance.Session().RunOnce(h.FnSessInit(instance)); err != nil {
 		h.Logger.ErrorContext(context.Background(), "failed to init session", "err", err.Error())
-		// Nothing owns the instance yet, so close it here. Left open, it stays
-		// registered in the session manager, counting against the user's
-		// concurrent-instance budget until the server restarts.
+		// RunOnce has already closed the whole session; this is belt-and-braces,
+		// since CloseInstance is idempotent and nothing else owns the instance yet.
 		instance.CloseInstance()
 		h.sendError(w, r, http.StatusInternalServerError, "internal server error")
 		return
@@ -253,6 +255,23 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 		instance.CloseInstance()
 		h.sendError(w, r, http.StatusInternalServerError, "internal server error")
 		return
+	}
+
+	// The rate class sending an IM spends. Only its updates surface to the client's
+	// conversation-window alert, which renders any rateLimit event as the IM
+	// banner. A miss yields zero, which disables the alert rather than indexing a
+	// rate class that isn't there.
+	imRateClassID, ok := h.SNACRateLimits.RateClassLookup(wire.ICBM, wire.ICBMChannelMsgToHost)
+	if !ok {
+		h.Logger.ErrorContext(ctx, "no rate class maps to sending an IM, rate limit events are disabled")
+	}
+
+	// Subscribe the same way an OSCAR client does at handshake, so the per-account
+	// monitor broadcasts this class's transitions to this session.
+	if imRateClassID != 0 {
+		h.OServiceService.RateParamsSubAdd(ctx, instance, wire.SNAC_0x01_0x08_OServiceRateParamsSubAdd{
+			ClassIDs: []uint16{uint16(imRateClassID)},
+		})
 	}
 
 	// Create WebAPI session
@@ -322,6 +341,10 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 		}
 		return permitDenyData(reply.Items), nil
 	}
+
+	// Only IM-class rate limit updates should surface to the client alert.
+	session.IMRateClassID = imRateClassID
+	seedRateLimitAlert(session, imRateClassID)
 
 	// Now that every refresher callback is wired, start the OSCAR listener. Doing
 	// this inside CreateSession would race these assignments, since the goroutine

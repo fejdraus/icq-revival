@@ -2390,6 +2390,8 @@ func (s OSCARProxy) Signon(ctx context.Context, args []byte, recalcWarning func(
 		}
 		// periodically decay warning level
 		go lowerWarnLevel(ctx, instance)
+		// broadcast rate limit transitions to every instance on the account
+		go s.OServiceService.MonitorRateLimits(ctx, instance.Session())
 		return nil
 	}); err != nil {
 		return nil, s.runtimeErr(ctx, fmt.Errorf("Session.RunOnce: %w", err))

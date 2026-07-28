@@ -21,6 +21,8 @@ type OServiceService struct {
 	logger           *slog.Logger
 	snacRateLimits   wire.SNACRateLimits
 	timeNow          func() time.Time
+	// how often MonitorRateLimits observes changes; a field so tests can shorten it
+	rateLimitMonitorInterval time.Duration
 
 	chatRoomManager       ChatRoomRegistry
 	cookieIssuer          CookieBaker
@@ -48,18 +50,19 @@ func NewOServiceService(
 	feedbagManager FeedbagManager,
 ) *OServiceService {
 	return &OServiceService{
-		cookieIssuer:          cookieIssuer,
-		messageRelayer:        messageRelayer,
-		buddyBroadcaster:      newBuddyNotifier(bartItemManager, relationshipFetcher, messageRelayer, sessionRetriever),
-		cfg:                   cfg,
-		logger:                logger,
-		snacRateLimits:        snacRateLimits,
-		timeNow:               time.Now,
-		chatRoomManager:       chatRoomManager,
-		chatMessageRelayer:    chatMessageRelayer,
-		profileManager:        profileManager,
-		offlineMessageManager: offlineMessageManager,
-		feedbagManager:        feedbagManager,
+		cookieIssuer:             cookieIssuer,
+		messageRelayer:           messageRelayer,
+		buddyBroadcaster:         newBuddyNotifier(bartItemManager, relationshipFetcher, messageRelayer, sessionRetriever),
+		cfg:                      cfg,
+		logger:                   logger,
+		snacRateLimits:           snacRateLimits,
+		timeNow:                  time.Now,
+		rateLimitMonitorInterval: time.Second,
+		chatRoomManager:          chatRoomManager,
+		chatMessageRelayer:       chatMessageRelayer,
+		profileManager:           profileManager,
+		offlineMessageManager:    offlineMessageManager,
+		feedbagManager:           feedbagManager,
 	}
 }
 
@@ -474,40 +477,67 @@ func (s OServiceService) HostOnline(service uint16) wire.SNACMessage {
 	}
 }
 
-// RateLimitUpdates produces update messages reflecting any recent changes in
-// rate limit class params or rate limit states for the current session.
-// Changes are reported relative to the previous invocation for this session.
-// Only newly observed transitions or updated rate parameters will be included.
-func (s OServiceService) RateLimitUpdates(ctx context.Context, instance *state.SessionInstance, now time.Time) []wire.SNACMessage {
-	msgs := make([]wire.SNACMessage, 0, 5)
-	classDelta, stateDelta := instance.Session().ObserveRateChanges(now)
+// MonitorRateLimits observes account-wide rate limit changes on a fixed cadence
+// and broadcasts each transition to every instance in the session.
+//
+// Session.ObserveRateChanges is a single-consumer delta — it reports each
+// transition once, then overwrites its baseline — so one monitor per account is
+// the only correct consumer. The per-connection tickers it replaces raced for
+// that one delta and left all but one connection un-notified.
+//
+// Only classes a client on the account has subscribed to are broadcast. Fanout is
+// account-wide: the budget is shared, so a connection that spent nothing cannot
+// send either. That does mean an idle Web API tab raises its rate limit banner
+// when another tab spends the budget.
+//
+// Start it once per account from a Session.RunOnce block, with a server-lifetime
+// context; it runs until the session closes or that context is cancelled.
+func (s OServiceService) MonitorRateLimits(ctx context.Context, session *state.Session) {
+	ticker := time.NewTicker(s.rateLimitMonitorInterval)
+	defer ticker.Stop()
 
-	for _, curRate := range classDelta {
-		s.logger.DebugContext(ctx, "rate limit class changed", "class", curRate.ID)
-		msgs = append(msgs, buildRateLimitUpdate(1, curRate, instance, now))
-	}
+	for {
+		select {
+		case <-ctx.Done(): // server shutdown
+			return
+		case <-session.Closed(): // account signed off; a later sign-on starts a fresh monitor
+			return
+		case <-ticker.C:
+			now := s.timeNow()
+			classDelta, stateDelta := session.ObserveRateChanges(now)
+			if len(classDelta) == 0 && len(stateDelta) == 0 {
+				continue
+			}
+			instances := session.Instances()
 
-	for _, curRate := range stateDelta {
-		s.logger.DebugContext(ctx, "rate limit state changed",
-			"class", curRate.ID,
-			"state", curRate.CurrentStatus)
-		var code uint16
-		switch curRate.CurrentStatus {
-		case wire.RateLimitStatusLimited:
-			code = 3
-		case wire.RateLimitStatusAlert:
-			code = 2
-		case wire.RateLimitStatusClear:
-			code = 4
-		case wire.RateLimitStatusDisconnect:
-			s.logger.DebugContext(ctx, "rate limit status disconnected, no point in returning status update")
-			continue
+			for _, curRate := range classDelta {
+				s.logger.DebugContext(ctx, "rate limit class changed", "class", curRate.ID)
+				for _, inst := range instances {
+					inst.RelayMessageToInstance(buildRateLimitUpdate(1, curRate, inst, now))
+				}
+			}
+
+			for _, curRate := range stateDelta {
+				var code uint16
+				switch curRate.CurrentStatus {
+				case wire.RateLimitStatusLimited:
+					code = 3
+				case wire.RateLimitStatusAlert:
+					code = 2
+				case wire.RateLimitStatusClear:
+					code = 4
+				case wire.RateLimitStatusDisconnect:
+					continue // the connection is torn down anyway
+				}
+				s.logger.DebugContext(ctx, "rate limit state changed",
+					"class", curRate.ID,
+					"state", curRate.CurrentStatus)
+				for _, inst := range instances {
+					inst.RelayMessageToInstance(buildRateLimitUpdate(code, curRate, inst, now))
+				}
+			}
 		}
-
-		msgs = append(msgs, buildRateLimitUpdate(code, curRate, instance, now))
 	}
-
-	return msgs
 }
 
 // buildRateLimitUpdate constructs a SNAC message notifying the client of a rate limit

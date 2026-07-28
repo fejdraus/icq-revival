@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"math/rand"
 	"sync"
@@ -34,6 +35,185 @@ func TestInMemorySessionManager_AddSession(t *testing.T) {
 
 	assert.NotSame(t, sess1, sess2)
 	assert.Contains(t, sm.AllSessions(), sess2.Session())
+}
+
+// A closed session lingers in the store until RemoveSession runs, which Signout
+// only reaches at the END of onSessCloseFn. A sign-on landing in that window must
+// neither attach to the dead session (its RunOnce is spent, so no rate limit
+// monitor or warning decay) nor evict it and race ahead (the in-flight
+// UnregisterBuddyList would land after the fresh session registered itself). It
+// has to wait the teardown out, then build a fresh session.
+func TestInMemorySessionManager_AddSession_WaitsForClosedSessionTeardown(t *testing.T) {
+	for _, doMultiSess := range []bool{true, false} {
+		name := "multi-session client"
+		if !doMultiSess {
+			name = "single-session client"
+		}
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				sm := NewInMemorySessionManager(slog.Default())
+				ctx := context.Background()
+
+				var mu sync.Mutex
+				var events []string
+				record := func(event string) {
+					mu.Lock()
+					defer mu.Unlock()
+					events = append(events, event)
+				}
+
+				// Stands in for the servers' OnSessionClose: announce the
+				// departure, tear the account's registrations down, and only
+				// then Signout, whose last act is RemoveSession.
+				teardown := func(sess *Session) {
+					sess.OnSessionClose(func() {
+						record("teardown begin")
+						time.Sleep(time.Second) // BroadcastBuddyDeparted
+						record("unregister buddy list")
+						sm.RemoveSession(sess) // Signout
+					})
+				}
+
+				inst1, err := sm.AddSession(ctx, "user-screen-name", doMultiSess, teardown)
+				require.NoError(t, err)
+				inst1.SetSignonComplete()
+				dead := inst1.Session()
+
+				// The account's last instance departs, running onSessCloseFn on
+				// its own goroutine as a closing connection does.
+				wg := &sync.WaitGroup{}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					inst1.CloseInstance()
+				}()
+
+				// Let the teardown get under way and park mid-flight. The
+				// session is closed the moment its last instance departs, but
+				// the store still holds it — the tombstone window. It is not
+				// observable through AllSessions/RetrieveSession (both filter on
+				// live instances), which is why AddSession checks IsClosed.
+				synctest.Wait()
+				require.True(t, dead.IsClosed())
+				sm.mapMutex.RLock()
+				require.NotNil(t, sm.findRec(dead.IdentScreenName()), "tombstone should still be in the store")
+				sm.mapMutex.RUnlock()
+
+				inst2, err := sm.AddSession(ctx, "user-screen-name", doMultiSess, teardown)
+				record("signon complete")
+				require.NoError(t, err)
+				inst2.SetSignonComplete()
+				wg.Wait()
+
+				// The sign-on waited the whole teardown out. Without the wait,
+				// "signon complete" lands before "unregister buddy list" and
+				// that unregister wipes the buddy list the new session has
+				// already registered.
+				mu.Lock()
+				assert.Equal(t, []string{
+					"teardown begin",
+					"unregister buddy list",
+					"signon complete",
+				}, events)
+				mu.Unlock()
+
+				// And it got a fresh session rather than the tombstone, so its
+				// RunOnce is unspent and its per-account goroutines start.
+				assert.NotSame(t, dead, inst2.Session(), "must not attach to the closed session")
+				assert.False(t, inst2.Session().IsClosed())
+				assert.Contains(t, sm.AllSessions(), inst2.Session())
+
+				ran := false
+				require.NoError(t, inst2.Session().RunOnce(func() error { ran = true; return nil }))
+				assert.True(t, ran)
+			})
+		})
+	}
+}
+
+// The tombstone gate reads IsClosed and then adds an instance to the session it
+// just cleared, so a sign-on whose AddInstance lands as the last connection
+// departs can pass the gate and have the session close underneath it. The
+// instance is then live but orphaned: Closed() has fired, so the rate limit
+// monitor has exited, and RunOnce is spent so nothing restarts it.
+//
+// AddSession must never return an instance on a closed session.
+func TestInMemorySessionManager_AddSession_RacesLastInstanceDeparture(t *testing.T) {
+	const iterations = 20_000
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	for i := range iterations {
+		sm := NewInMemorySessionManager(logger)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+		// Stands in for the servers' OnSessionClose, whose last act is
+		// RemoveSession. Without it the tombstone wait has nothing to wake on.
+		teardown := func(sess *Session) {
+			sess.OnSessionClose(func() { sm.RemoveSession(sess) })
+		}
+
+		inst1, err := sm.AddSession(ctx, "user-screen-name", true, teardown)
+		require.NoError(t, err)
+		inst1.SetSignonComplete()
+		departing := inst1.Session()
+
+		// The account's last connection drops at the same moment a new one signs
+		// on. Neither path takes a lock the other holds: CloseInstance runs on a
+		// connection goroutine, AddSession under the per-user lock.
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			<-start
+			inst1.CloseInstance()
+		}()
+
+		var inst2 *SessionInstance
+		var addErr error
+		go func() {
+			defer wg.Done()
+			<-start
+			inst2, addErr = sm.AddSession(ctx, "user-screen-name", true, teardown)
+		}()
+
+		close(start)
+		wg.Wait()
+		cancel()
+
+		require.NoError(t, addErr, "iteration %d", i)
+		require.False(t, inst2.Session().IsClosed(),
+			"iteration %d: sign-on returned an instance on a closed session "+
+				"(same session as the departing connection: %t) — its rate limit "+
+				"monitor has already exited and RunOnce is spent",
+			i, inst2.Session() == departing)
+	}
+}
+
+// A teardown that never reaches RemoveSession must not wedge the sign-on
+// forever; the wait is bounded by the caller's context, as the single-session
+// displacement path already was.
+func TestInMemorySessionManager_AddSession_ClosedSessionTeardownTimesOut(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sm := NewInMemorySessionManager(slog.Default())
+
+		inst1, err := sm.AddSession(context.Background(), "user-screen-name", true)
+		require.NoError(t, err)
+		inst1.SetSignonComplete()
+
+		// No OnSessionClose is registered, so RemoveSession is never called and
+		// the tombstone stays in the store for good.
+		inst1.CloseInstance()
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		_, err = sm.AddSession(ctx, "user-screen-name", true)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	})
 }
 
 func TestInMemorySessionManager_AddSession_AppliesCfgToSession(t *testing.T) {

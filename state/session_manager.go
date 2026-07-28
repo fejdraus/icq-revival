@@ -210,6 +210,28 @@ func (s *InMemorySessionManager) AddSession(ctx context.Context, screenName Disp
 	active := s.findRec(screenName.IdentScreenName())
 	s.mapMutex.Unlock()
 
+	// A closed session is a tombstone: its last instance has departed (or its
+	// RunOnce init failed), but RemoveSession has not run yet — Signout only
+	// reaches it at the end of onSessCloseFn.
+	//
+	// Attaching to it is wrong: its RunOnce is spent and its per-account
+	// goroutines have exited, so the new instance would get no rate limit monitor
+	// or warning decay. Evicting it and racing ahead is wrong too: the teardown's
+	// UnregisterBuddyList and RemoveUserFromAllChats would land after the fresh
+	// session registered itself, leaving a signed-on user invisible to buddies.
+	//
+	// So wait the teardown out, as the single-session displacement path below
+	// does, then build a fresh session. RemoveSession is the last act of every
+	// onSessCloseFn, so the wait is bounded by the teardown and by ctx.
+	if active != nil && active.session.IsClosed() {
+		select {
+		case <-active.removed: // wait for RemoveSession to be called
+		case <-ctx.Done():
+			return nil, fmt.Errorf("waiting for closed session to be torn down: %w", ctx.Err())
+		}
+		active = nil
+	}
+
 	if active != nil {
 		if doMultiSess {
 			if !active.multiSession {
@@ -222,9 +244,18 @@ func (s *InMemorySessionManager) AddSession(ctx context.Context, screenName Disp
 				return nil, fmt.Errorf("%w: max instance(s) = %d", ErrMaxConcurrentSessionsReached, s.maxConcurrentSessions)
 			}
 
-			instance := active.session.AddInstance()
-
-			return instance, nil
+			// AddInstance refuses a session that closed after the tombstone
+			// check above — the account's last instance departed in the
+			// interim. Wait that teardown out and build a fresh session, as
+			// the tombstone path does.
+			if instance := active.session.AddInstance(); instance != nil {
+				return instance, nil
+			}
+			select {
+			case <-active.removed: // wait for RemoveSession to be called
+			case <-ctx.Done():
+				return nil, fmt.Errorf("waiting for closed session to be torn down: %w", ctx.Err())
+			}
 		} else {
 			// signal to callers that this session group has to go
 			active.session.CloseSession()

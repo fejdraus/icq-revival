@@ -6,10 +6,8 @@ package oscar
 
 import (
 	"context"
-	"time"
 
 	"github.com/mk6i/open-oscar-server/state"
-	"github.com/mk6i/open-oscar-server/wire"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -40,67 +38,48 @@ func (_m *mockRateLimitUpdater) EXPECT() *mockRateLimitUpdater_Expecter {
 	return &mockRateLimitUpdater_Expecter{mock: &_m.Mock}
 }
 
-// RateLimitUpdates provides a mock function for the type mockRateLimitUpdater
-func (_mock *mockRateLimitUpdater) RateLimitUpdates(ctx context.Context, instance *state.SessionInstance, now time.Time) []wire.SNACMessage {
-	ret := _mock.Called(ctx, instance, now)
-
-	if len(ret) == 0 {
-		panic("no return value specified for RateLimitUpdates")
-	}
-
-	var r0 []wire.SNACMessage
-	if returnFunc, ok := ret.Get(0).(func(context.Context, *state.SessionInstance, time.Time) []wire.SNACMessage); ok {
-		r0 = returnFunc(ctx, instance, now)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).([]wire.SNACMessage)
-		}
-	}
-	return r0
+// MonitorRateLimits provides a mock function for the type mockRateLimitUpdater
+func (_mock *mockRateLimitUpdater) MonitorRateLimits(ctx context.Context, session *state.Session) {
+	_mock.Called(ctx, session)
+	return
 }
 
-// mockRateLimitUpdater_RateLimitUpdates_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RateLimitUpdates'
-type mockRateLimitUpdater_RateLimitUpdates_Call struct {
+// mockRateLimitUpdater_MonitorRateLimits_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'MonitorRateLimits'
+type mockRateLimitUpdater_MonitorRateLimits_Call struct {
 	*mock.Call
 }
 
-// RateLimitUpdates is a helper method to define mock.On call
+// MonitorRateLimits is a helper method to define mock.On call
 //   - ctx context.Context
-//   - instance *state.SessionInstance
-//   - now time.Time
-func (_e *mockRateLimitUpdater_Expecter) RateLimitUpdates(ctx interface{}, instance interface{}, now interface{}) *mockRateLimitUpdater_RateLimitUpdates_Call {
-	return &mockRateLimitUpdater_RateLimitUpdates_Call{Call: _e.mock.On("RateLimitUpdates", ctx, instance, now)}
+//   - session *state.Session
+func (_e *mockRateLimitUpdater_Expecter) MonitorRateLimits(ctx interface{}, session interface{}) *mockRateLimitUpdater_MonitorRateLimits_Call {
+	return &mockRateLimitUpdater_MonitorRateLimits_Call{Call: _e.mock.On("MonitorRateLimits", ctx, session)}
 }
 
-func (_c *mockRateLimitUpdater_RateLimitUpdates_Call) Run(run func(ctx context.Context, instance *state.SessionInstance, now time.Time)) *mockRateLimitUpdater_RateLimitUpdates_Call {
+func (_c *mockRateLimitUpdater_MonitorRateLimits_Call) Run(run func(ctx context.Context, session *state.Session)) *mockRateLimitUpdater_MonitorRateLimits_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
 			arg0 = args[0].(context.Context)
 		}
-		var arg1 *state.SessionInstance
+		var arg1 *state.Session
 		if args[1] != nil {
-			arg1 = args[1].(*state.SessionInstance)
-		}
-		var arg2 time.Time
-		if args[2] != nil {
-			arg2 = args[2].(time.Time)
+			arg1 = args[1].(*state.Session)
 		}
 		run(
 			arg0,
 			arg1,
-			arg2,
 		)
 	})
 	return _c
 }
 
-func (_c *mockRateLimitUpdater_RateLimitUpdates_Call) Return(sNACMessages []wire.SNACMessage) *mockRateLimitUpdater_RateLimitUpdates_Call {
-	_c.Call.Return(sNACMessages)
+func (_c *mockRateLimitUpdater_MonitorRateLimits_Call) Return() *mockRateLimitUpdater_MonitorRateLimits_Call {
+	_c.Call.Return()
 	return _c
 }
 
-func (_c *mockRateLimitUpdater_RateLimitUpdates_Call) RunAndReturn(run func(ctx context.Context, instance *state.SessionInstance, now time.Time) []wire.SNACMessage) *mockRateLimitUpdater_RateLimitUpdates_Call {
-	_c.Call.Return(run)
+func (_c *mockRateLimitUpdater_MonitorRateLimits_Call) RunAndReturn(run func(ctx context.Context, session *state.Session)) *mockRateLimitUpdater_MonitorRateLimits_Call {
+	_c.Run(run)
 	return _c
 }
