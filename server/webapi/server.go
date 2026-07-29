@@ -185,6 +185,7 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		aimStub := &handlers.AimStubHandler{Logger: logger}
 		mux.Handle("GET /aim/setForwardDomain", stubRoute(aimStub.SetForwardDomain))
 		mux.Handle("GET /aim/getData", stubRoute(aimStub.GetData))
+		mux.Handle("GET /aim/reportAction", stubRoute(aimStub.ReportAction))
 
 		conversationStub := &handlers.ConversationStubHandler{
 			SessionManager: sessionManager,

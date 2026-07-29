@@ -694,6 +694,76 @@ func TestWebAPISession_FeedbagSNACInvalidatesAliasCache(t *testing.T) {
 	assert.Equal(t, "MIKE", arrive().Friendly)
 }
 
+// Permit/deny changes from another of the owner's clients arrive as an insert,
+// an update, or a delete, and all three have to refresh the client's privacy
+// state.
+func TestWebAPISession_FeedbagSNACRefreshesPermitDeny(t *testing.T) {
+	denyItem := wire.FeedbagItem{ClassID: wire.FeedbagClassIDDeny, Name: "blockeduser"}
+	buddyItem := wire.FeedbagItem{ClassID: wire.FeedbagClassIdBuddy, Name: "friend"}
+
+	tests := []struct {
+		name      string
+		subGroup  uint16
+		body      any
+		wantEvent bool
+	}{
+		{
+			name:      "insert relays an update body",
+			subGroup:  wire.FeedbagInsertItem,
+			body:      wire.SNAC_0x13_0x09_FeedbagUpdateItem{Items: []wire.FeedbagItem{denyItem}},
+			wantEvent: true,
+		},
+		{
+			name:      "update",
+			subGroup:  wire.FeedbagUpdateItem,
+			body:      wire.SNAC_0x13_0x09_FeedbagUpdateItem{Items: []wire.FeedbagItem{denyItem}},
+			wantEvent: true,
+		},
+		{
+			name:      "delete",
+			subGroup:  wire.FeedbagDeleteItem,
+			body:      wire.SNAC_0x13_0x0A_FeedbagDeleteItem{Items: []wire.FeedbagItem{denyItem}},
+			wantEvent: true,
+		},
+		{
+			name:      "buddy item only",
+			subGroup:  wire.FeedbagInsertItem,
+			body:      wire.SNAC_0x13_0x09_FeedbagUpdateItem{Items: []wire.FeedbagItem{buddyItem}},
+			wantEvent: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sess := &WebAPISession{
+				ScreenName: DisplayScreenName("me"),
+				EventQueue: types.NewEventQueue(10),
+				logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+				PermitDenyRefresher: func(_ context.Context) (interface{}, error) {
+					return map[string]any{"pdMode": "denySome"}, nil
+				},
+			}
+
+			sess.handleFeedbagMessage(wire.SNACMessage{
+				Frame: wire.SNACFrame{FoodGroup: wire.Feedbag, SubGroup: tt.subGroup},
+				Body:  tt.body,
+			})
+
+			var got int
+			for _, event := range sess.EventQueue.GetAllEvents() {
+				if event.Type == types.EventTypePermitDeny {
+					got++
+				}
+			}
+			if tt.wantEvent {
+				assert.Equal(t, 1, got)
+			} else {
+				assert.Zero(t, got)
+			}
+		})
+	}
+}
+
 // A session sees no SNAC for feedbag writes it makes itself, so the handlers that
 // perform those writes invalidate the cache directly.
 func TestWebAPISession_InvalidateAliases(t *testing.T) {

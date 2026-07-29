@@ -406,6 +406,12 @@ func (h *PreferenceHandler) SetPermitDeny(w http.ResponseWriter, r *http.Request
 
 	pdd := permitDenyData(fl.Items())
 
+	// The client reads the privacy state it renders (blocked buddies, the
+	// block/unblock menu label) only from the permitDeny event, and it sees no
+	// SNAC for the write it just made. Without this the block takes effect
+	// server-side but the UI keeps showing the buddy as unblocked.
+	session.EventQueue.Push(types.EventTypePermitDeny, pdd)
+
 	h.Logger.DebugContext(ctx, "permit/deny settings updated",
 		"screenName", session.ScreenName.String(),
 		"pdMode", pdd.PDMode,
@@ -421,7 +427,10 @@ func (h *PreferenceHandler) SetPermitDeny(w http.ResponseWriter, r *http.Request
 }
 
 func permitDenyData(fl []wire.FeedbagItem) PermitDenyData {
-	pdd := PermitDenyData{}
+	// A feedbag with no PD info item means no restrictions, the same default the
+	// feedbag store applies. The client drives its block flow off pdMode and
+	// sends no permit/deny change at all when the mode is absent.
+	pdd := PermitDenyData{PDMode: "permitAll"}
 	for _, item := range fl {
 		switch item.ClassID {
 		case wire.FeedbagClassIDDeny:

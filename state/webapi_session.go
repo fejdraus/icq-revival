@@ -536,21 +536,27 @@ func (s *WebAPISession) handleFeedbagMessage(msg wire.SNACMessage) {
 				s.EventQueue.Push(types.EventTypeBuddyList, map[string]interface{}{"groups": groups})
 			}
 		}
-		if msg.Frame.SubGroup == wire.FeedbagUpdateItem && s.PermitDenyRefresher != nil {
-			body, ok := msg.Body.(wire.SNAC_0x13_0x09_FeedbagUpdateItem)
-			if ok {
-				for _, item := range body.Items {
-					if item.ClassID == wire.FeedbagClassIDPermit ||
-						item.ClassID == wire.FeedbagClassIDDeny ||
-						item.ClassID == wire.FeedbagClassIdPdinfo {
-						pdd, err := s.PermitDenyRefresher(s.ctx)
-						if err != nil {
-							s.logger.Error("failed to refresh permit/deny after feedbag change", "err", err)
-						} else {
-							s.EventQueue.Push(types.EventTypePermitDeny, pdd)
-						}
-						break
+		if s.PermitDenyRefresher != nil {
+			// An insert and an update both relay an UpdateItem body; only a
+			// delete carries a DeleteItem body.
+			var items []wire.FeedbagItem
+			switch body := msg.Body.(type) {
+			case wire.SNAC_0x13_0x09_FeedbagUpdateItem:
+				items = body.Items
+			case wire.SNAC_0x13_0x0A_FeedbagDeleteItem:
+				items = body.Items
+			}
+			for _, item := range items {
+				if item.ClassID == wire.FeedbagClassIDPermit ||
+					item.ClassID == wire.FeedbagClassIDDeny ||
+					item.ClassID == wire.FeedbagClassIdPdinfo {
+					pdd, err := s.PermitDenyRefresher(s.ctx)
+					if err != nil {
+						s.logger.Error("failed to refresh permit/deny after feedbag change", "err", err)
+					} else {
+						s.EventQueue.Push(types.EventTypePermitDeny, pdd)
 					}
+					break
 				}
 			}
 		}

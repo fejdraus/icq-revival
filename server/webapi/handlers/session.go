@@ -478,6 +478,27 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 			if authToken != "" {
 				session.EventQueue.Push(types.EventTypePreference, prefPayload)
 			}
+		case types.EventTypePermitDeny:
+			// The client keeps its privacy state solely in the model this event
+			// populates. Both the block/unblock menu action and the "blocked"
+			// presence state read that model and no-op silently while it is
+			// empty, so the session has to start with one.
+			var pdPayload interface{} = PermitDenyData{PDMode: "permitAll"}
+			if authToken != "" && session.OSCARSession != nil {
+				pdd, err := session.PermitDenyRefresher(ctx)
+				if err != nil {
+					h.Logger.ErrorContext(ctx, "failed to get permit/deny settings", "err", err.Error())
+				} else {
+					pdPayload = pdd
+				}
+			}
+			if resp.Response.Data.Events == nil {
+				resp.Response.Data.Events = make(map[string]interface{})
+			}
+			resp.Response.Data.Events["permitDeny"] = pdPayload
+			if authToken != "" {
+				session.EventQueue.Push(types.EventTypePermitDeny, pdPayload)
+			}
 		}
 	}
 

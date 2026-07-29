@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
+	"github.com/mk6i/open-oscar-server/server/webapi/types"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -173,6 +175,66 @@ func TestEffectiveBuddyPrefs_AppliesDefaultsWhenNothingSet(t *testing.T) {
 	assert.Equal(t, 1, got["showGroups"], "showGroups should default to shown")
 	assert.Equal(t, 1, got["playIMSound"], "playIMSound defaults true")
 	assert.Equal(t, 0, got["sortBuddyList"], "sortBuddyList defaults false")
+}
+
+func TestPreferenceHandler_SetPermitDeny_QueuesPermitDenyEvent(t *testing.T) {
+	// The client renders blocked buddies from the permitDeny event alone, and it
+	// sees no SNAC for its own write, so the handler has to queue the new state.
+	fs := &MockFeedbagService{}
+	oscarInstance := state.NewSession().AddInstance()
+	sessionMgr, aimsid := createTestSessionManagerWithOSCAR("testuser", oscarInstance)
+
+	fs.On("Query", mock.Anything, oscarInstance, mock.Anything).
+		Return(wire.SNACMessage{Body: wire.SNAC_0x13_0x06_FeedbagReply{}}, nil)
+	fs.On("UpsertItem", mock.Anything, oscarInstance, mock.Anything, mock.Anything).
+		Return(nil, nil)
+
+	handler := &PreferenceHandler{
+		SessionManager: sessionMgr,
+		FeedbagService: fs,
+		Logger:         slog.Default(),
+	}
+
+	req, _ := http.NewRequest("GET", "/preference/setPermitDeny?aimsid="+aimsid+"&pdMode=denySome&pdBlock=BlockedUser", nil)
+	rr := httptest.NewRecorder()
+	requireSession(handler.SessionManager, handler.SetPermitDeny).ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	session, err := sessionMgr.GetSession(context.Background(), aimsid)
+	assert.NoError(t, err)
+
+	var pdd PermitDenyData
+	var found bool
+	for _, event := range session.EventQueue.GetAllEvents() {
+		if event.Type == types.EventTypePermitDeny {
+			pdd, found = event.Data.(PermitDenyData)
+		}
+	}
+	assert.True(t, found, "expected a permitDeny event to be queued")
+	assert.Equal(t, "denySome", pdd.PDMode)
+	assert.Equal(t, []string{"blockeduser"}, pdd.DenyList)
+}
+
+func TestPermitDenyData_DefaultsToPermitAllWithoutPDInfo(t *testing.T) {
+	got := permitDenyData([]wire.FeedbagItem{
+		{ClassID: wire.FeedbagClassIDDeny, Name: "blockeduser"},
+	})
+
+	assert.Equal(t, "permitAll", got.PDMode)
+	assert.Equal(t, []string{"blockeduser"}, got.DenyList)
+}
+
+func TestPermitDenyData_PDInfoModeWins(t *testing.T) {
+	var tlvs wire.TLVList
+	tlvs.Append(wire.NewTLVBE(wire.FeedbagAttributesPdMode, uint8(wire.FeedbagPDModePermitSome)))
+
+	got := permitDenyData([]wire.FeedbagItem{
+		{ClassID: wire.FeedbagClassIdPdinfo, TLVLBlock: wire.TLVLBlock{TLVList: tlvs}},
+		{ClassID: wire.FeedbagClassIDPermit, Name: "alloweduser"},
+	})
+
+	assert.Equal(t, "permitSome", got.PDMode)
+	assert.Equal(t, []string{"alloweduser"}, got.PermitList)
 }
 
 func TestPreferenceHandler_SetPreferences_NoOSCARSession(t *testing.T) {

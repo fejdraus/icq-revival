@@ -21,6 +21,16 @@ func (h *AimStubHandler) SetForwardDomain(w http.ResponseWriter, r *http.Request
 	SendResponse(w, r, resp, h.Logger)
 }
 
+// ReportAction acknowledges a client-side UI telemetry ping. The Web AIM client
+// fires this on menu clicks and similar interactions with an action param of the
+// form "type=click,id=block-user-chatmenu"; it ignores the response.
+func (h *AimStubHandler) ReportAction(w http.ResponseWriter, r *http.Request) {
+	resp := BaseResponse{}
+	resp.Response.StatusCode = 200
+	resp.Response.StatusText = "OK"
+	SendResponse(w, r, resp, h.Logger)
+}
+
 // GetData returns empty client-side data blobs (buddy list favorites, etc.).
 func (h *AimStubHandler) GetData(w http.ResponseWriter, r *http.Request) {
 	resp := BaseResponse{}
