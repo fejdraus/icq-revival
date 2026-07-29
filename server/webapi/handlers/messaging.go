@@ -63,6 +63,9 @@ func (h *MessagingHandler) SendIM(w http.ResponseWriter, r *http.Request, sess *
 
 	// Parse optional parameters
 	autoResponse := queryOrFormParam(r, "autoResponse") == "1"
+	// The client sets offlineIM once it believes the recipient is offline and
+	// storable; it sends the literal "true" rather than "1".
+	offlineIM := queryOrFormParam(r, "offlineIM") == "true" || queryOrFormParam(r, "offlineIM") == "1"
 
 	// Generate message cookie
 	var cookie [8]byte
@@ -87,9 +90,7 @@ func (h *MessagingHandler) SendIM(w http.ResponseWriter, r *http.Request, sess *
 	// The client sends t as the normalized aimId it keys the conversation by, so
 	// it is never a source of display names.
 	recipientIdent := state.NewIdentScreenName(recipient)
-	sess.AddStoredIM(recipientIdent.String(), sess.ScreenName.IdentScreenName().String(), message, messageID, nowSec)
 
-	// Recipient is online, deliver message
 	clientIM := wire.SNAC_0x04_0x06_ICBMChannelMsgToHost{
 		Cookie:       cookieUint64,
 		ChannelID:    wire.ICBMChannelIM,
@@ -111,6 +112,12 @@ func (h *MessagingHandler) SendIM(w http.ResponseWriter, r *http.Request, sess *
 		clientIM.Append(wire.NewTLVBE(wire.ICBMTLVAutoResponse, []byte{}))
 	}
 
+	// Without this directive the ICBM service rejects messages to offline
+	// recipients instead of storing them.
+	if offlineIM {
+		clientIM.Append(wire.NewTLVBE(wire.ICBMTLVStore, []byte{}))
+	}
+
 	frame := wire.SNACFrame{
 		FoodGroup: wire.ICBM,
 		SubGroup:  wire.ICBMChannelMsgToHost,
@@ -130,23 +137,29 @@ func (h *MessagingHandler) SendIM(w http.ResponseWriter, r *http.Request, sess *
 				switch errSn.Code {
 				case wire.ErrorCodeNotLoggedOn:
 					subCode, hasSubCode := errSn.Uint16BE(wire.ErrorTLVErrorSubcode)
-					if hasSubCode {
-						if subCode == wire.ICBMSubErrOfflineIMExceedMax {
-							h.Logger.DebugContext(r.Context(), "user's offline messages full")
-						}
+					if hasSubCode && subCode == wire.ICBMSubErrOfflineIMExceedMax {
+						h.Logger.DebugContext(ctx, "user's offline messages full")
+						h.sendUndeliverable(w, r, "recipient's offline message store is full")
 					} else {
-						h.Logger.DebugContext(r.Context(), "recipient offline")
+						h.Logger.DebugContext(ctx, "recipient offline")
+						h.sendUndeliverable(w, r, "recipient is offline and cannot receive offline messages")
 					}
 					return
 				case wire.ErrorCodeInLocalPermitDeny:
-					h.Logger.DebugContext(r.Context(), "you blocked this user")
+					h.Logger.DebugContext(ctx, "you blocked this user")
+					h.sendUndeliverable(w, r, "you have blocked this user")
 					return
 				}
 			}
+			h.Logger.DebugContext(ctx, "message rejected by ICBM service")
+			h.sendUndeliverable(w, r, "failed to send message")
+			return
 		case resp.Frame.FoodGroup == wire.ICBM && resp.Frame.SubGroup == wire.ICBMHostAck:
-			h.Logger.DebugContext(r.Context(), "received host ack")
+			h.Logger.DebugContext(ctx, "received host ack")
 		}
 	}
+
+	sess.AddStoredIM(recipientIdent.String(), sess.ScreenName.IdentScreenName().String(), message, messageID, nowSec)
 
 	recipientDisplay := h.resolveDisplayName(ctx, sess.OSCARSession, recipientIdent)
 	// The alias lives in the sender's feedbag, so unlike the display name it cannot
@@ -169,6 +182,19 @@ func (h *MessagingHandler) SendIM(w http.ResponseWriter, r *http.Request, sess *
 	response.Response.StatusCode = 200
 	response.Response.StatusText = "OK"
 	response.Response.Data = responseData
+	SendResponse(w, r, response, h.Logger)
+}
+
+// sendUndeliverable reports an IM the server accepted but could not deliver.
+//
+// The status travels in the envelope with HTTP 200, because the web client reads
+// response.statusCode and only recognizes 602/603 as "recipient offline or
+// blocked". Any other code, and an empty body most of all, falls through to its
+// generic "Bummer. Your message failed." alert.
+func (h *MessagingHandler) sendUndeliverable(w http.ResponseWriter, r *http.Request, statusText string) {
+	response := BaseResponse{}
+	response.Response.StatusCode = 602
+	response.Response.StatusText = statusText
 	SendResponse(w, r, response, h.Logger)
 }
 

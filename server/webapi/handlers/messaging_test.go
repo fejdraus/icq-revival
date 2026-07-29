@@ -274,6 +274,97 @@ func TestMessagingHandler_SendIM(t *testing.T) {
 	}
 }
 
+// The ICBM service refuses to store a message for an offline recipient unless the
+// store directive is present, so the client's offlineIM flag has to become one.
+func TestMessagingHandler_SendIM_OfflineIMSetsStoreTLV(t *testing.T) {
+	oscarInstance := state.NewSession().AddInstance()
+	icbmService := &MockICBMService{}
+
+	var sent wire.SNAC_0x04_0x06_ICBMChannelMsgToHost
+	icbmService.On("ChannelMsgToHost", mock.Anything, oscarInstance, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			sent = args.Get(3).(wire.SNAC_0x04_0x06_ICBMChannelMsgToHost)
+		}).
+		Return(nil, nil)
+
+	sessionMgr, aimsid := createTestSessionManagerWithOSCAR("testuser", oscarInstance)
+	handler := &MessagingHandler{
+		SessionManager: sessionMgr,
+		ICBMService:    icbmService,
+		LocateService:  stubLocateService(""),
+		FeedbagService: stubFeedbagService("recipient", ""),
+		Logger:         slog.Default(),
+	}
+
+	req, err := http.NewRequest("GET", "/im/sendIM?aimsid="+aimsid+"&t=recipient&message=hi&offlineIM=true", nil)
+	require.NoError(t, err)
+	rr := httptest.NewRecorder()
+	requireSession(handler.SessionManager, handler.SendIM).ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code)
+	_, hasStore := sent.Bytes(wire.ICBMTLVStore)
+	assert.True(t, hasStore)
+	icbmService.AssertExpectations(t)
+}
+
+// An undeliverable IM must still produce an envelope: the web client reads
+// response.statusCode, and an empty body leaves it with no status at all.
+func TestMessagingHandler_SendIM_UndeliverableReportsStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		errs wire.SNACError
+	}{
+		{
+			name: "RecipientOffline",
+			errs: wire.SNACError{Code: wire.ErrorCodeNotLoggedOn},
+		},
+		{
+			name: "OfflineInboxFull",
+			errs: wire.SNACError{
+				Code: wire.ErrorCodeNotLoggedOn,
+				TLVRestBlock: wire.TLVRestBlock{TLVList: wire.TLVList{
+					wire.NewTLVBE(wire.ErrorTLVErrorSubcode, wire.ICBMSubErrOfflineIMExceedMax),
+				}},
+			},
+		},
+		{
+			name: "SenderBlockedRecipient",
+			errs: wire.SNACError{Code: wire.ErrorCodeInLocalPermitDeny},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oscarInstance := state.NewSession().AddInstance()
+			icbmService := &MockICBMService{}
+			icbmService.On("ChannelMsgToHost", mock.Anything, oscarInstance, mock.Anything, mock.Anything).
+				Return(&wire.SNACMessage{
+					Frame: wire.SNACFrame{FoodGroup: wire.ICBM, SubGroup: wire.ICBMErr},
+					Body:  tt.errs,
+				}, nil)
+
+			sessionMgr, aimsid := createTestSessionManagerWithOSCAR("testuser", oscarInstance)
+			handler := &MessagingHandler{
+				SessionManager: sessionMgr,
+				ICBMService:    icbmService,
+				LocateService:  stubLocateService(""),
+				FeedbagService: stubFeedbagService("recipient", ""),
+				Logger:         slog.Default(),
+			}
+
+			req, err := http.NewRequest("GET", "/im/sendIM?aimsid="+aimsid+"&f=json&t=recipient&message=hi", nil)
+			require.NoError(t, err)
+			rr := httptest.NewRecorder()
+			requireSession(handler.SessionManager, handler.SendIM).ServeHTTP(rr, req)
+
+			require.Equal(t, http.StatusOK, rr.Code)
+			assert.Contains(t, rr.Body.String(), `"statusCode":602`)
+			assert.NotContains(t, rr.Body.String(), `"msgId"`)
+			icbmService.AssertExpectations(t)
+		})
+	}
+}
+
 func TestMessagingHandler_SendIM_POST(t *testing.T) {
 	oscarInstance := state.NewSession().AddInstance()
 	icbmService := &MockICBMService{}
