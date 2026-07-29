@@ -92,23 +92,30 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 	for _, l := range listeners {
 		mux := http.NewServeMux()
 
+		// CORSMiddleware wraps the auth layer rather than the other way around, so
+		// that responses the auth layer rejects (400 missing key, 403 bad key, 429
+		// rate limited) still carry Access-Control-Allow-Origin. A browser blocks a
+		// cross-origin response without that header, and the Web AIM client reads
+		// the resulting status-0 empty response as a CORS failure and permanently
+		// switches its whole request pipeline to JSONP.
+		//
 		// oscarRoute charges the request against the rate class for (foodGroup,
 		// subGroup) before the handler runs; sessionRoute and stubRoute reach no
 		// food group and so are not rate limited here.
 		oscarRoute := func(foodGroup uint16, subGroup uint16, h handlers.SessionHandlerFunc) http.Handler {
-			return authMiddleware.AuthenticateFlexible(
-				authMiddleware.CORSMiddleware(
+			return authMiddleware.CORSMiddleware(
+				authMiddleware.AuthenticateFlexible(
 					authMiddleware.RequireSession(sessionManager,
 						rateLimiter.OSCAR(foodGroup, subGroup)(h))))
 		}
 		sessionRoute := func(h handlers.SessionHandlerFunc) http.Handler {
-			return authMiddleware.AuthenticateFlexible(
-				authMiddleware.CORSMiddleware(
+			return authMiddleware.CORSMiddleware(
+				authMiddleware.AuthenticateFlexible(
 					authMiddleware.RequireSession(sessionManager, h)))
 		}
 		stubRoute := func(h http.HandlerFunc) http.Handler {
-			return authMiddleware.AuthenticateFlexible(
-				authMiddleware.CORSMiddleware(h))
+			return authMiddleware.CORSMiddleware(
+				authMiddleware.AuthenticateFlexible(h))
 		}
 
 		// Exact root only. Pattern "GET /" matches every GET path in Go 1.22+ (prefix /), which
@@ -158,8 +165,8 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		// Authenticated Web AIM API endpoints
 		// SessionInstance management - supports multiple auth methods (k, a, ts+sig_sha256).
 		mux.Handle("GET /aim/startSession",
-			authMiddleware.AuthenticateFlexible(
-				authMiddleware.CORSMiddleware(
+			authMiddleware.CORSMiddleware(
+				authMiddleware.AuthenticateFlexible(
 					http.HandlerFunc(sessionHandler.StartSession))))
 
 		// End session - uses aimsid for auth, no k required
@@ -236,8 +243,8 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		// OSCAR Bridge endpoint. Hands off to a BOS session rather than reaching
 		// a food group, so there is no OSCAR budget to charge.
 		mux.Handle("GET /aim/startOSCARSession",
-			authMiddleware.Authenticate(
-				authMiddleware.CORSMiddleware(
+			authMiddleware.CORSMiddleware(
+				authMiddleware.Authenticate(
 					http.HandlerFunc(oscarBridgeHandler.StartOSCARSession))))
 
 		// Expressions endpoint (for buddy icons, etc.).
@@ -260,11 +267,24 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		mux.Handle("GET /lifestream/getUserDetails", stubRoute(lifestreamStub.GetUserDetails))
 		mux.Handle("GET /lifestream/", stubRoute(lifestreamStub.EmptyOK))
 
+		// Go 1.22 patterns are method-exact, so an OPTIONS preflight matches none of
+		// the "GET /x" routes above and would otherwise fall through to the 404
+		// handler, failing the preflight. CORSMiddleware answers OPTIONS with a 204
+		// and the appropriate headers before ever reaching the handler below.
+		mux.Handle("OPTIONS /", authMiddleware.CORSMiddleware(
+			http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
+
 		// Unmatched paths (pattern "/" matches anything not covered by routes above).
-		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			logger.Debug("webapi 404", "method", r.Method, "path", r.URL.Path)
-			handlers.SendError(w, http.StatusNotFound, "not found")
-		}))
+		//
+		// Wrapped in CORS: the client probes endpoints this server does not
+		// implement (/service/getAttributes, /metrics/sendIM), and a 404 without
+		// Access-Control-Allow-Origin is blocked by the browser rather than read as
+		// a 404, which latches the client into JSONP for the rest of the session.
+		mux.Handle("/", authMiddleware.CORSMiddleware(
+			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				logger.Debug("webapi 404", "method", r.Method, "path", r.URL.Path)
+				handlers.SendError(w, r, http.StatusNotFound, "not found")
+			})))
 
 		servers = append(servers, &http.Server{
 			Addr:    l,

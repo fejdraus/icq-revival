@@ -40,7 +40,7 @@ func (h *BuddyListHandler) AddBuddy(w http.ResponseWriter, r *http.Request, sess
 	groupName := strings.TrimSpace(r.URL.Query().Get("group"))
 
 	if buddyName == "" {
-		h.sendError(w, http.StatusBadRequest, "missing buddy parameter")
+		h.sendError(w, r, http.StatusBadRequest, "missing buddy parameter")
 		return
 	}
 
@@ -90,7 +90,7 @@ func (h *BuddyListHandler) AddGroup(w http.ResponseWriter, r *http.Request, sess
 
 	groupName := strings.TrimSpace(r.URL.Query().Get("group"))
 	if groupName == "" {
-		h.sendError(w, http.StatusBadRequest, "missing group parameter")
+		h.sendError(w, r, http.StatusBadRequest, "missing group parameter")
 		return
 	}
 
@@ -198,7 +198,7 @@ func (h *BuddyListHandler) RemoveBuddy(w http.ResponseWriter, r *http.Request, s
 	allGroupsParam := r.URL.Query().Get("allGroups")
 	allGroups := allGroupsParam == "true" || allGroupsParam == "1"
 	if buddyName == "" {
-		h.sendError(w, http.StatusBadRequest, "missing buddy parameter")
+		h.sendError(w, r, http.StatusBadRequest, "missing buddy parameter")
 		return
 	}
 
@@ -241,7 +241,7 @@ func (h *BuddyListHandler) RemoveGroup(w http.ResponseWriter, r *http.Request, s
 
 	groupName := strings.TrimSpace(r.URL.Query().Get("group"))
 	if groupName == "" {
-		h.sendError(w, http.StatusBadRequest, "missing group parameter")
+		h.sendError(w, r, http.StatusBadRequest, "missing group parameter")
 		return
 	}
 
@@ -366,7 +366,7 @@ func (h *BuddyListHandler) AddTempBuddy(w http.ResponseWriter, r *http.Request, 
 
 	buddyNames := r.URL.Query()["t"]
 	if len(buddyNames) == 0 {
-		h.sendError(w, http.StatusBadRequest, "missing buddy names (t parameter)")
+		h.sendError(w, r, http.StatusBadRequest, "missing buddy names (t parameter)")
 		return
 	}
 
@@ -414,7 +414,7 @@ func (h *BuddyListHandler) RemoveTempBuddy(w http.ResponseWriter, r *http.Reques
 
 	buddyNames := r.URL.Query()["t"]
 	if len(buddyNames) == 0 {
-		h.sendError(w, http.StatusBadRequest, "missing buddy names (t parameter)")
+		h.sendError(w, r, http.StatusBadRequest, "missing buddy names (t parameter)")
 		return
 	}
 
@@ -458,7 +458,7 @@ func (h *BuddyListHandler) RenameGroup(w http.ResponseWriter, r *http.Request, s
 	oldGroup := strings.TrimSpace(r.URL.Query().Get("oldGroup"))
 	newGroup := strings.TrimSpace(r.URL.Query().Get("newGroup"))
 	if oldGroup == "" || newGroup == "" {
-		h.sendError(w, http.StatusBadRequest, "missing oldGroup or newGroup parameter")
+		h.sendError(w, r, http.StatusBadRequest, "missing oldGroup or newGroup parameter")
 		return
 	}
 
@@ -502,11 +502,11 @@ func (h *BuddyListHandler) MoveBuddy(w http.ResponseWriter, r *http.Request, ses
 	newGroup := strings.TrimSpace(r.URL.Query().Get("newGroup"))
 	beforeBuddy := strings.TrimSpace(r.URL.Query().Get("beforeBuddy"))
 	if buddyName == "" {
-		h.sendError(w, http.StatusBadRequest, "missing buddy parameter")
+		h.sendError(w, r, http.StatusBadRequest, "missing buddy parameter")
 		return
 	}
 	if groupName == "" {
-		h.sendError(w, http.StatusBadRequest, "missing group parameter")
+		h.sendError(w, r, http.StatusBadRequest, "missing group parameter")
 		return
 	}
 
@@ -549,7 +549,7 @@ func (h *BuddyListHandler) SetBuddyAttribute(w http.ResponseWriter, r *http.Requ
 	buddyName := strings.TrimSpace(r.URL.Query().Get("t"))
 	friendly := strings.TrimSpace(r.URL.Query().Get("friendly"))
 	if buddyName == "" {
-		h.sendError(w, http.StatusBadRequest, "missing t parameter")
+		h.sendError(w, r, http.StatusBadRequest, "missing t parameter")
 		return
 	}
 
@@ -591,7 +591,7 @@ func (h *BuddyListHandler) SetGroupAttribute(w http.ResponseWriter, r *http.Requ
 	groupName := strings.TrimSpace(query.Get("group"))
 	collapsedParam := strings.TrimSpace(query.Get("collapsed"))
 	if collapsedParam == "" {
-		h.sendError(w, http.StatusBadRequest, "missing collapsed parameter")
+		h.sendError(w, r, http.StatusBadRequest, "missing collapsed parameter")
 		return
 	}
 	collapsed := collapsedParam == "true" || collapsedParam == "1"
@@ -634,6 +634,6 @@ func (h *BuddyListHandler) pushBuddyListEvent(ctx context.Context, session *stat
 }
 
 // sendError is a convenience method that wraps the common SendError function.
-func (h *BuddyListHandler) sendError(w http.ResponseWriter, statusCode int, message string) {
-	SendError(w, statusCode, message)
+func (h *BuddyListHandler) sendError(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
+	SendError(w, r, statusCode, message)
 }

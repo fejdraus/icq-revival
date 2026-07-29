@@ -24,6 +24,10 @@ const (
 	ContextKeyAPIKey contextKey = "api_key"
 	// ContextKeyDevID is the context key for storing the developer ID.
 	ContextKeyDevID contextKey = "dev_id"
+	// contextKeyResolvedAPIKey caches an API key lookup across middlewares
+	// handling the same request. Unexported: it is an internal memo, not
+	// something handlers should read.
+	contextKeyResolvedAPIKey contextKey = "resolved_api_key"
 )
 
 // APIKeyValidator defines methods for validating Web API keys.
@@ -152,18 +156,18 @@ func (m *AuthMiddleware) RequireSession(sm WebAPISessionResolver, next func(http
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		aimsid := r.URL.Query().Get("aimsid")
 		if aimsid == "" {
-			m.sendSessionError(w, http.StatusBadRequest, "missing aimsid parameter")
+			m.sendSessionError(w, r, http.StatusBadRequest, "missing aimsid parameter")
 			return
 		}
 		session, err := sm.GetSession(r.Context(), aimsid)
 		if err != nil {
-			m.sendSessionError(w, http.StatusUnauthorized, "invalid or expired session")
+			m.sendSessionError(w, r, http.StatusUnauthorized, "invalid or expired session")
 			return
 		}
 		// startSession no longer creates sessions without an OSCAR instance, so a
 		// nil here is a server-side invariant violation, not a bad request.
 		if session.OSCARSession == nil {
-			m.sendSessionError(w, http.StatusInternalServerError, "internal server error")
+			m.sendSessionError(w, r, http.StatusInternalServerError, "internal server error")
 			return
 		}
 		_ = sm.TouchSession(r.Context(), aimsid)
@@ -171,19 +175,10 @@ func (m *AuthMiddleware) RequireSession(sm WebAPISessionResolver, next func(http
 	})
 }
 
-// sendSessionError writes a Web AIM API error envelope with the given HTTP status.
-func (m *AuthMiddleware) sendSessionError(w http.ResponseWriter, statusCode int, message string) {
-	body, err := json.Marshal(map[string]any{
-		"response": map[string]any{"statusCode": statusCode, "statusText": message},
-	})
-	if err != nil {
-		m.Logger.Error("failed to encode error response", "err", err.Error())
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	_, _ = w.Write(body)
+// sendSessionError writes a Web AIM API error envelope with the given HTTP
+// status, or as a JSONP callback when the client requested one.
+func (m *AuthMiddleware) sendSessionError(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
+	m.writeErrorEnvelope(w, r, statusCode, message, true)
 }
 
 // Authenticate is an HTTP middleware that validates API keys and enforces rate limits.
@@ -202,8 +197,8 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 		}
 
 		// Validate API key
+		key, r := m.resolveAPIKeyCached(r, apiKey)
 		ctx := r.Context()
-		key := m.resolveAPIKey(ctx, apiKey)
 		if key == nil {
 			m.Logger.DebugContext(ctx, "invalid API key attempted", "key", apiKey[:min(8, len(apiKey))]+"...")
 			m.sendErrorResponse(w, r, http.StatusForbidden, "invalid API key")
@@ -254,16 +249,29 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 	})
 }
 
-// CORSMiddleware handles CORS headers based on allowed origins for the API key.
+// CORSMiddleware emits CORS headers and answers preflight requests.
+//
+// It must be the OUTERMOST middleware on every route. A response that the auth
+// layer rejects still needs an Access-Control-Allow-Origin header: without one
+// the browser blocks the response, and the Web AIM client reads a status-0 empty
+// response as "CORS blocked" and permanently downgrades its whole request
+// pipeline to JSONP (aim.client.js onXhrFailed_ clears its useXhr flag and never
+// sets it again). A single 400/403/429 from the auth layer is enough to latch it.
+//
+// Running ahead of authentication means the key is not in the request context
+// yet, so this resolves it itself to find the key's origin allowlist. The lookup
+// is memoized on the request context, so the auth middleware downstream reuses it
+// rather than hitting the store a second time.
 func (m *AuthMiddleware) CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get API key from context (set by Authenticate middleware)
-		key, ok := r.Context().Value(ContextKeyAPIKey).(*state.WebAPIKey)
+		// Only the query parameter is consulted here: reading the form would
+		// consume a POST body before the handler sees it.
+		key, r := m.resolveAPIKeyCached(r, r.URL.Query().Get("k"))
 
-		// If no API key in context (e.g., using aimsid auth), allow all origins
-		// This is safe because the actual authentication is handled by the session
+		// If there is no API key (e.g. using aimsid auth), allow all origins.
+		// This is safe because the actual authentication is handled by the session.
 		var allowedOrigins []string
-		if ok && key != nil {
+		if key != nil {
 			allowedOrigins = key.AllowedOrigins
 		} else {
 			// For session-based auth without API key, allow all origins
@@ -273,6 +281,10 @@ func (m *AuthMiddleware) CORSMiddleware(next http.Handler) http.Handler {
 		}
 
 		origin := r.Header.Get("Origin")
+
+		// The response body varies with the request Origin, so it must not be
+		// cached under a single key across origins.
+		w.Header().Add("Vary", "Origin")
 
 		// Check if origin is allowed
 		if m.isOriginAllowed(origin, allowedOrigins) {
@@ -336,24 +348,40 @@ func (m *AuthMiddleware) isOriginAllowed(origin string, allowedOrigins []string)
 	return false
 }
 
-// sendErrorResponse sends a Web AIM API error envelope, with JSONP support when requested.
+// sendErrorResponse sends a Web AIM API error envelope, with JSONP support when
+// requested. The HTTP status stays 200 and the real status travels in the
+// envelope, which is where the Web AIM client reads it from.
 func (m *AuthMiddleware) sendErrorResponse(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
-	response := map[string]interface{}{
-		"response": map[string]interface{}{
-			"statusCode": statusCode,
-			"statusText": message,
-		},
+	m.writeErrorEnvelope(w, r, statusCode, message, false)
+}
+
+// writeErrorEnvelope marshals a Web AIM API error envelope and writes it as JSON
+// or, when the client asked for a callback, as JSONP.
+//
+// A JSONP error is always sent with HTTP 200 regardless of httpStatus: browsers
+// do not execute the body of a <script> tag that came back with a 4xx or 5xx, so
+// a status-carrying JSONP error never reaches the callback and surfaces in the
+// client as the generic "Failed to load script tag, probably malformed JS at
+// that url" instead of the real statusText.
+func (m *AuthMiddleware) writeErrorEnvelope(w http.ResponseWriter, r *http.Request, statusCode int, message string, httpStatus bool) {
+	envelope := map[string]any{
+		"statusCode": statusCode,
+		"statusText": message,
+	}
+	// The client indexes JSONP replies by response.requestId and discards any
+	// reply that lacks one, leaving the request pending until it times out.
+	if id := r.URL.Query().Get("r"); id != "" {
+		envelope["requestId"] = id
 	}
 
-	body, err := json.Marshal(response)
+	body, err := json.Marshal(map[string]any{"response": envelope})
 	if err != nil {
 		m.Logger.Error("failed to encode error response", "err", err.Error())
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	callback := jsonpCallback(r)
-	if callback != "" && isValidJSONPCallback(callback) {
+	if callback := jsonpCallback(r); callback != "" && isValidJSONPCallback(callback) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		_, _ = w.Write([]byte(callback))
 		_, _ = w.Write([]byte("("))
@@ -363,6 +391,9 @@ func (m *AuthMiddleware) sendErrorResponse(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	if httpStatus {
+		w.WriteHeader(statusCode)
+	}
 	_, _ = w.Write(body)
 }
 
@@ -418,7 +449,8 @@ func (m *AuthMiddleware) AuthenticateFlexible(next http.Handler) http.Handler {
 
 		// Priority 2: AOL token auth — user identity is in the token; k is optional.
 		if token := r.URL.Query().Get("a"); token != "" {
-			key := m.resolveAPIKey(ctx, r.URL.Query().Get("k"))
+			key, r := m.resolveAPIKeyCached(r, r.URL.Query().Get("k"))
+			ctx := r.Context()
 			if key == nil {
 				devKey := r.URL.Query().Get("k")
 				key = &state.WebAPIKey{
@@ -459,7 +491,8 @@ func (m *AuthMiddleware) AuthenticateFlexible(next http.Handler) http.Handler {
 			return
 		}
 
-		key := m.resolveAPIKey(ctx, apiKey)
+		key, r := m.resolveAPIKeyCached(r, apiKey)
+		ctx = r.Context()
 		if key == nil {
 			m.Logger.DebugContext(ctx, "invalid API key attempted", "key", apiKey[:min(8, len(apiKey))]+"...")
 			m.sendErrorResponse(w, r, http.StatusForbidden, "invalid API key")
@@ -508,6 +541,30 @@ func (m *AuthMiddleware) AuthenticateFlexible(next http.Handler) http.Handler {
 		// Pass to next handler with enriched context
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// resolvedAPIKey memoizes one API key lookup for the lifetime of a request.
+// A nil key is a cached result too: it records that devKey is unknown or
+// inactive, which is what lets the auth layer skip a repeat lookup.
+type resolvedAPIKey struct {
+	devKey string
+	key    *state.WebAPIKey
+}
+
+// resolveAPIKeyCached resolves devKey, reusing the result of an earlier lookup on
+// the same request. It returns the key (nil when devKey is empty, unknown, or
+// inactive) along with a request carrying the memoized result, which callers must
+// pass down the chain for the caching to take effect.
+func (m *AuthMiddleware) resolveAPIKeyCached(r *http.Request, devKey string) (*state.WebAPIKey, *http.Request) {
+	if devKey == "" {
+		return nil, r
+	}
+	if cached, ok := r.Context().Value(contextKeyResolvedAPIKey).(*resolvedAPIKey); ok && cached.devKey == devKey {
+		return cached.key, r
+	}
+	key := m.resolveAPIKey(r.Context(), devKey)
+	ctx := context.WithValue(r.Context(), contextKeyResolvedAPIKey, &resolvedAPIKey{devKey: devKey, key: key})
+	return key, r.WithContext(ctx)
 }
 
 func (m *AuthMiddleware) resolveAPIKey(ctx context.Context, devKey string) *state.WebAPIKey {

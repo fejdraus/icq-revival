@@ -41,7 +41,7 @@ func (h *ConversationStubHandler) MarkRead(w http.ResponseWriter, r *http.Reques
 func (h *ConversationStubHandler) FetchStoredIMs(w http.ResponseWriter, r *http.Request, sess *state.WebAPISession) {
 	partner := r.URL.Query().Get("to")
 	if partner == "" {
-		SendError(w, http.StatusBadRequest, "missing required parameter: to")
+		SendError(w, r, http.StatusBadRequest, "missing required parameter: to")
 		return
 	}
 

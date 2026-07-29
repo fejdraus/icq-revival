@@ -88,7 +88,7 @@ func (h *EventsHandler) FetchEvents(w http.ResponseWriter, r *http.Request, sess
 			events = []types.Event{}
 		} else {
 			h.Logger.ErrorContext(ctx, "failed to fetch events", "err", err.Error())
-			h.sendError(w, http.StatusInternalServerError, "failed to fetch events")
+			h.sendError(w, r, http.StatusInternalServerError, "failed to fetch events")
 			return
 		}
 	}
@@ -170,6 +170,6 @@ func (h *EventsHandler) FetchEvents(w http.ResponseWriter, r *http.Request, sess
 }
 
 // sendError is a convenience method that wraps the common SendError function.
-func (h *EventsHandler) sendError(w http.ResponseWriter, statusCode int, message string) {
-	SendError(w, statusCode, message)
+func (h *EventsHandler) sendError(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
+	SendError(w, r, statusCode, message)
 }

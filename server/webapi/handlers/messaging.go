@@ -51,13 +51,13 @@ func (h *MessagingHandler) SendIM(w http.ResponseWriter, r *http.Request, sess *
 	// Parse parameters
 	recipient := queryOrFormParam(r, "t")
 	if recipient == "" {
-		h.sendErrorResponse(w, http.StatusBadRequest, "missing required parameter: t (recipient)")
+		h.sendErrorResponse(w, r, http.StatusBadRequest, "missing required parameter: t (recipient)")
 		return
 	}
 
 	message := queryOrFormParam(r, "message")
 	if message == "" {
-		h.sendErrorResponse(w, http.StatusBadRequest, "missing required parameter: message")
+		h.sendErrorResponse(w, r, http.StatusBadRequest, "missing required parameter: message")
 		return
 	}
 
@@ -68,7 +68,7 @@ func (h *MessagingHandler) SendIM(w http.ResponseWriter, r *http.Request, sess *
 	var cookie [8]byte
 	if _, err := rand.Read(cookie[:]); err != nil {
 		h.Logger.ErrorContext(ctx, "failed to generate message cookie", "error", err)
-		h.sendErrorResponse(w, http.StatusInternalServerError, "internal server error")
+		h.sendErrorResponse(w, r, http.StatusInternalServerError, "internal server error")
 		return
 	}
 	cookieUint64 := binary.BigEndian.Uint64(cookie[:])
@@ -100,7 +100,7 @@ func (h *MessagingHandler) SendIM(w http.ResponseWriter, r *http.Request, sess *
 	// Add message data
 	frags, err := wire.ICBMFragmentList(message)
 	if err != nil {
-		h.sendErrorResponse(w, http.StatusInternalServerError, "failed to send message")
+		h.sendErrorResponse(w, r, http.StatusInternalServerError, "failed to send message")
 		return
 	}
 
@@ -119,7 +119,7 @@ func (h *MessagingHandler) SendIM(w http.ResponseWriter, r *http.Request, sess *
 	resp, err := h.ICBMService.ChannelMsgToHost(r.Context(), sess.OSCARSession, frame, clientIM)
 
 	if err != nil {
-		h.sendErrorResponse(w, http.StatusInternalServerError, "failed to send message")
+		h.sendErrorResponse(w, r, http.StatusInternalServerError, "failed to send message")
 		return
 	}
 
@@ -233,8 +233,8 @@ func (h *MessagingHandler) pushSenderWebAPIEvents(sess *state.WebAPISession, rec
 }
 
 // sendErrorResponse sends an error response in Web AIM API format
-func (h *MessagingHandler) sendErrorResponse(w http.ResponseWriter, statusCode int, errorText string) {
-	SendError(w, statusCode, errorText)
+func (h *MessagingHandler) sendErrorResponse(w http.ResponseWriter, r *http.Request, statusCode int, errorText string) {
+	SendError(w, r, statusCode, errorText)
 }
 
 // SetTyping handles the /im/setTyping endpoint for typing indicators
@@ -244,7 +244,7 @@ func (h *MessagingHandler) SetTyping(w http.ResponseWriter, r *http.Request, ses
 	// Parse parameters
 	recipient := r.URL.Query().Get("t")
 	if recipient == "" {
-		h.sendErrorResponse(w, http.StatusBadRequest, "missing required parameter: t (recipient)")
+		h.sendErrorResponse(w, r, http.StatusBadRequest, "missing required parameter: t (recipient)")
 		return
 	}
 
@@ -270,7 +270,7 @@ func (h *MessagingHandler) SetTyping(w http.ResponseWriter, r *http.Request, ses
 	}
 	if err := h.ICBMService.ClientEvent(ctx, sess.OSCARSession, wire.SNACFrame{}, inBody); err != nil {
 		h.Logger.ErrorContext(ctx, "failed to send typing notification", "error", err)
-		h.sendErrorResponse(w, http.StatusInternalServerError, "internal server error")
+		h.sendErrorResponse(w, r, http.StatusInternalServerError, "internal server error")
 		return
 	}
 

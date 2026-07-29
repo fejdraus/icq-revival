@@ -210,19 +210,11 @@ func (s *InMemorySessionManager) AddSession(ctx context.Context, screenName Disp
 	active := s.findRec(screenName.IdentScreenName())
 	s.mapMutex.Unlock()
 
-	// A closed session is a tombstone: its last instance has departed (or its
-	// RunOnce init failed), but RemoveSession has not run yet — Signout only
-	// reaches it at the end of onSessCloseFn.
-	//
-	// Attaching to it is wrong: its RunOnce is spent and its per-account
-	// goroutines have exited, so the new instance would get no rate limit monitor
-	// or warning decay. Evicting it and racing ahead is wrong too: the teardown's
-	// UnregisterBuddyList and RemoveUserFromAllChats would land after the fresh
-	// session registered itself, leaving a signed-on user invisible to buddies.
-	//
-	// So wait the teardown out, as the single-session displacement path below
-	// does, then build a fresh session. RemoveSession is the last act of every
-	// onSessCloseFn, so the wait is bounded by the teardown and by ctx.
+	// A closed session is a tombstone awaiting RemoveSession, the last act of
+	// onSessCloseFn. Attaching to it strands the new instance without the
+	// per-account goroutines its spent RunOnce would have started; evicting it
+	// early lets the teardown's UnregisterBuddyList and RemoveUserFromAllChats
+	// land after the fresh session registered. Wait it out.
 	if active != nil && active.session.IsClosed() {
 		select {
 		case <-active.removed: // wait for RemoveSession to be called

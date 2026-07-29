@@ -132,7 +132,7 @@ func SendResponse(w http.ResponseWriter, r *http.Request, data interface{}, logg
 
 	// If callback is provided, it's JSONP
 	if callback != "" {
-		sendJSONP(w, callback, data, logger)
+		sendJSONP(w, r, callback, data, logger)
 		return
 	}
 
@@ -146,18 +146,59 @@ func SendResponse(w http.ResponseWriter, r *http.Request, data interface{}, logg
 	sendJSON(w, data, logger)
 }
 
-// SendError sends an error response in the appropriate format.
-func SendError(w http.ResponseWriter, statusCode int, message string) {
+// SendError sends an error response in the format the client asked for.
+//
+// When the client requested JSONP, the error must be delivered as an executable
+// callback: a bare JSON body inside a <script> tag is a syntax error, which the
+// Web AIM client reports as the generic "Failed to load script tag, probably
+// malformed JS at that url" instead of the real statusText.
+func SendError(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
+	if callback := jsonpCallback(r); callback != "" && isValidCallback(callback) {
+		sendJSONPError(w, r, callback, statusCode, message)
+		return
+	}
+
 	// Try to detect format from Content-Type header if already set
 	contentType := w.Header().Get("Content-Type")
 
 	if strings.Contains(contentType, "amf") {
-		sendAMFError(w, nil, statusCode, message, nil)
+		sendAMFError(w, r, statusCode, message, nil)
 	} else if strings.Contains(contentType, "xml") {
 		sendXMLError(w, statusCode, message)
 	} else {
 		sendJSONError(w, statusCode, message)
 	}
+}
+
+// sendJSONPError writes an error envelope wrapped in the client's JSONP callback.
+//
+// The HTTP status is deliberately left at 200: browsers do not execute the body
+// of a <script> tag that came back with a 4xx or 5xx, so a status-carrying JSONP
+// error never reaches the callback at all. The real status travels in the
+// envelope, which is where the Web AIM client reads it from regardless.
+func sendJSONPError(w http.ResponseWriter, r *http.Request, callback string, statusCode int, message string) {
+	envelope := map[string]any{
+		"statusCode": statusCode,
+		"statusText": message,
+	}
+	// The client indexes JSONP replies by response.requestId and discards any
+	// reply that lacks one ("Request id is missing from the server response"),
+	// leaving the request pending until it times out.
+	if id := requestIDFromRequest(r); id != "" {
+		envelope["requestId"] = id
+	}
+
+	body, err := json.Marshal(map[string]any{"response": envelope})
+	if err != nil {
+		sendJSONError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/javascript")
+	_, _ = w.Write([]byte(callback))
+	_, _ = w.Write([]byte("("))
+	_, _ = w.Write(body)
+	_, _ = w.Write([]byte(");"))
 }
 
 // sendJSONError sends a JSON error response.
@@ -240,6 +281,9 @@ func sendXML(w http.ResponseWriter, data interface{}, logger *slog.Logger) {
 // jsonpCallback returns the JSONP callback name from the request.
 // Web AIM clients use the "c" query parameter; other callers may use "callback".
 func jsonpCallback(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
 	if callback := r.URL.Query().Get("c"); callback != "" {
 		return callback
 	}
@@ -247,8 +291,9 @@ func jsonpCallback(r *http.Request) string {
 }
 
 // sendJSONP sends a JSONP response with the specified callback.
-func sendJSONP(w http.ResponseWriter, callback string, data interface{}, logger *slog.Logger) {
-	// Validate callback to prevent XSS
+func sendJSONP(w http.ResponseWriter, r *http.Request, callback string, data interface{}, logger *slog.Logger) {
+	// Validate callback to prevent XSS. This is the one error here that cannot be
+	// delivered as JSONP: there is no callback name safe to write.
 	if !isValidCallback(callback) {
 		sendJSONError(w, http.StatusBadRequest, "invalid callback parameter")
 		return
@@ -259,7 +304,9 @@ func sendJSONP(w http.ResponseWriter, callback string, data interface{}, logger 
 		if logger != nil {
 			logger.Error("failed to marshal response", "err", err.Error())
 		}
-		sendJSONError(w, http.StatusInternalServerError, "internal server error")
+		// The client is on the <script> transport, so the error has to be
+		// executable JS for it to see anything but a load failure.
+		sendJSONPError(w, r, callback, http.StatusInternalServerError, "internal server error")
 		return
 	}
 

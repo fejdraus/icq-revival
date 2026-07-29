@@ -40,7 +40,7 @@ func (h *ExpressionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	target := r.URL.Query().Get("t")
 	if target == "" {
-		SendError(w, http.StatusBadRequest, "missing target")
+		SendError(w, r, http.StatusBadRequest, "missing target")
 		return
 	}
 	screenName := state.NewIdentScreenName(target)

@@ -482,8 +482,7 @@ func (s OServiceService) HostOnline(service uint16) wire.SNACMessage {
 //
 // Session.ObserveRateChanges is a single-consumer delta — it reports each
 // transition once, then overwrites its baseline — so one monitor per account is
-// the only correct consumer. The per-connection tickers it replaces raced for
-// that one delta and left all but one connection un-notified.
+// the only correct consumer.
 //
 // Only classes a client on the account has subscribed to are broadcast. Fanout is
 // account-wide: the budget is shared, so a connection that spent nothing cannot

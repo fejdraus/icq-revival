@@ -130,7 +130,7 @@ func (h *PreferenceHandler) SetPreferences(w http.ResponseWriter, r *http.Reques
 	item, err := buddyPrefsItem(ctx, h.FeedbagService, instance)
 	if err != nil {
 		h.Logger.ErrorContext(ctx, "failed to retrieve feedbag", "err", err.Error())
-		h.sendError(w, http.StatusInternalServerError, "failed to retrieve feedbag")
+		h.sendError(w, r, http.StatusInternalServerError, "failed to retrieve feedbag")
 		return
 	}
 
@@ -149,7 +149,7 @@ func (h *PreferenceHandler) SetPreferences(w http.ResponseWriter, r *http.Reques
 		frame := wire.SNACFrame{FoodGroup: wire.Feedbag, SubGroup: wire.FeedbagInsertItem}
 		if _, err := h.FeedbagService.UpsertItem(ctx, instance, frame, []wire.FeedbagItem{item}); err != nil {
 			h.Logger.ErrorContext(ctx, "failed to set preferences", "err", err.Error())
-			h.sendError(w, http.StatusInternalServerError, "failed to save preferences")
+			h.sendError(w, r, http.StatusInternalServerError, "failed to save preferences")
 			return
 		}
 
@@ -311,13 +311,13 @@ func (h *PreferenceHandler) SetPermitDeny(w http.ResponseWriter, r *http.Request
 	frame := wire.SNACFrame{FoodGroup: wire.Feedbag, SubGroup: wire.FeedbagQuery}
 	fb, err := h.FeedbagService.Query(r.Context(), session.OSCARSession, frame)
 	if err != nil {
-		h.sendError(w, http.StatusInternalServerError, "failed to retrieve feedbag")
+		h.sendError(w, r, http.StatusInternalServerError, "failed to retrieve feedbag")
 		return
 	}
 
 	reply, ok := fb.Body.(wire.SNAC_0x13_0x06_FeedbagReply)
 	if !ok {
-		h.sendError(w, http.StatusInternalServerError, "failed to retrieve feedbag")
+		h.sendError(w, r, http.StatusInternalServerError, "failed to retrieve feedbag")
 		return
 	}
 
@@ -338,7 +338,7 @@ func (h *PreferenceHandler) SetPermitDeny(w http.ResponseWriter, r *http.Request
 		case "permitOnList", "5":
 			fl.SetMode(uint8(wire.FeedbagPDModePermitOnList))
 		default:
-			h.sendError(w, http.StatusBadRequest, "invalid pdMode value")
+			h.sendError(w, r, http.StatusBadRequest, "invalid pdMode value")
 			return
 		}
 	}
@@ -389,7 +389,7 @@ func (h *PreferenceHandler) SetPermitDeny(w http.ResponseWriter, r *http.Request
 		frame := wire.SNACFrame{FoodGroup: wire.Feedbag, SubGroup: wire.FeedbagInsertItem}
 		if _, err := h.FeedbagService.UpsertItem(ctx, session.OSCARSession, frame, pending); err != nil {
 			h.Logger.ErrorContext(ctx, "failed to set PD mode", "err", err.Error())
-			h.sendError(w, http.StatusInternalServerError, "failed to update PD mode")
+			h.sendError(w, r, http.StatusInternalServerError, "failed to update PD mode")
 			return
 		}
 	}
@@ -399,7 +399,7 @@ func (h *PreferenceHandler) SetPermitDeny(w http.ResponseWriter, r *http.Request
 		body := wire.SNAC_0x13_0x0A_FeedbagDeleteItem{Items: pending}
 		if _, err := h.FeedbagService.DeleteItem(ctx, session.OSCARSession, frame, body); err != nil {
 			h.Logger.ErrorContext(ctx, "failed to set PD mode", "err", err.Error())
-			h.sendError(w, http.StatusInternalServerError, "failed to update PD mode")
+			h.sendError(w, r, http.StatusInternalServerError, "failed to update PD mode")
 			return
 		}
 	}
@@ -454,13 +454,13 @@ func (h *PreferenceHandler) GetPermitDeny(w http.ResponseWriter, r *http.Request
 	frame := wire.SNACFrame{FoodGroup: wire.Feedbag, SubGroup: wire.FeedbagQuery}
 	fb, err := h.FeedbagService.Query(r.Context(), session.OSCARSession, frame)
 	if err != nil {
-		h.sendError(w, http.StatusInternalServerError, "failed to retrieve feedbag")
+		h.sendError(w, r, http.StatusInternalServerError, "failed to retrieve feedbag")
 		return
 	}
 
 	reply, ok := fb.Body.(wire.SNAC_0x13_0x06_FeedbagReply)
 	if !ok {
-		h.sendError(w, http.StatusInternalServerError, "failed to retrieve feedbag")
+		h.sendError(w, r, http.StatusInternalServerError, "failed to retrieve feedbag")
 		return
 	}
 
@@ -479,7 +479,7 @@ func (h *PreferenceHandler) GetPermitDeny(w http.ResponseWriter, r *http.Request
 	SendResponse(w, r, response, h.Logger)
 }
 
-func (h *PreferenceHandler) sendError(w http.ResponseWriter, statusCode int, message string) {
+func (h *PreferenceHandler) sendError(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
 	// todo log
-	SendError(w, statusCode, message)
+	SendError(w, r, statusCode, message)
 }

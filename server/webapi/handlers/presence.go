@@ -105,7 +105,7 @@ func (h *PresenceHandler) GetPresence(w http.ResponseWriter, r *http.Request, se
 		// Get presence for specific users
 		users := strings.Split(targetUsers, ",")
 		if len(users) > maxPresenceTargets {
-			h.sendError(w, http.StatusBadRequest, fmt.Sprintf("too many screen names requested (max %d)", maxPresenceTargets))
+			h.sendError(w, r, http.StatusBadRequest, fmt.Sprintf("too many screen names requested (max %d)", maxPresenceTargets))
 			return
 		}
 		presenceList := make([]BuddyPresenceInfo, 0, len(users))
@@ -317,8 +317,8 @@ func isICQScreenName(screenName string) bool {
 }
 
 // sendError is a convenience method that wraps the common SendError function.
-func (h *PresenceHandler) sendError(w http.ResponseWriter, statusCode int, message string) {
-	SendError(w, statusCode, message)
+func (h *PresenceHandler) sendError(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
+	SendError(w, r, statusCode, message)
 }
 
 // SetState handles GET /presence/setState requests to update user's presence state.
@@ -354,7 +354,7 @@ func (h *PresenceHandler) SetState(w http.ResponseWriter, r *http.Request, sessi
 	case "dnd":
 		statusBitmask = wire.OServiceUserStatusDND
 	default:
-		h.sendError(w, http.StatusBadRequest, "invalid state parameter")
+		h.sendError(w, r, http.StatusBadRequest, "invalid state parameter")
 		return
 	}
 
@@ -449,7 +449,7 @@ func (h *PresenceHandler) SetProfile(w http.ResponseWriter, r *http.Request, ses
 
 	// Limit profile size (4KB max)
 	if len(profileText) > 4096 {
-		h.sendError(w, http.StatusBadRequest, "profile too large (max 4KB)")
+		h.sendError(w, r, http.StatusBadRequest, "profile too large (max 4KB)")
 		return
 	}
 
@@ -465,7 +465,7 @@ func (h *PresenceHandler) SetProfile(w http.ResponseWriter, r *http.Request, ses
 	}
 	if err := h.LocateService.SetInfo(ctx, instance, setInfo); err != nil {
 		h.Logger.ErrorContext(ctx, "failed to set profile", "err", err.Error())
-		h.sendError(w, http.StatusInternalServerError, "failed to save profile")
+		h.sendError(w, r, http.StatusInternalServerError, "failed to save profile")
 		return
 	}
 
@@ -526,7 +526,7 @@ func (h *PresenceHandler) Icon(w http.ResponseWriter, r *http.Request) {
 	iconType := r.URL.Query().Get("type")
 
 	if name == "" {
-		h.sendError(w, http.StatusBadRequest, "missing name parameter")
+		h.sendError(w, r, http.StatusBadRequest, "missing name parameter")
 		return
 	}
 

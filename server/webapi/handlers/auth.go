@@ -65,7 +65,7 @@ func (h *AuthHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 		tokenBytes, err = h.issueAuthCookie(loginID, devID)
 		if err != nil {
 			h.Logger.ErrorContext(ctx, "getToken: failed to issue token", "error", err, "loginId", loginID)
-			SendError(w, http.StatusInternalServerError, "internal server error")
+			SendError(w, r, http.StatusInternalServerError, "internal server error")
 			return
 		}
 	}
@@ -220,7 +220,7 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		var req ClientLoginRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			h.Logger.Error("failed to parse JSON clientLogin request", "error", err)
-			SendError(w, http.StatusBadRequest, "invalid JSON format")
+			SendError(w, r, http.StatusBadRequest, "invalid JSON format")
 			return
 		}
 		username = req.Username
@@ -229,7 +229,7 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		// Parse form-encoded or URL parameters
 		if err := r.ParseForm(); err != nil {
 			h.Logger.Error("failed to parse form data", "error", err)
-			SendError(w, http.StatusBadRequest, "invalid form data")
+			SendError(w, r, http.StatusBadRequest, "invalid form data")
 			return
 		}
 
@@ -253,7 +253,7 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Validate required fields
 	if username == "" || password == "" {
-		SendError(w, http.StatusBadRequest, "username and password required")
+		SendError(w, r, http.StatusBadRequest, "username and password required")
 		return
 	}
 
@@ -265,20 +265,20 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 	block, err := h.AuthService.FLAPLogin(r.Context(), signonFrame, "")
 	if err != nil {
 		h.Logger.DebugContext(r.Context(), err.Error())
-		SendError(w, http.StatusInternalServerError, "internal server error")
+		SendError(w, r, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
 	if block.HasTag(wire.LoginTLVTagsErrorSubcode) {
 		h.Logger.DebugContext(r.Context(), "login failed")
-		SendError(w, http.StatusUnauthorized, "username and password required")
+		SendError(w, r, http.StatusUnauthorized, "username and password required")
 		return
 	}
 
 	authCookie, ok := block.Bytes(wire.OServiceTLVTagsLoginCookie)
 	if !ok {
 		h.Logger.DebugContext(r.Context(), "login cookie not found")
-		SendError(w, http.StatusInternalServerError, "internal server error")
+		SendError(w, r, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -286,7 +286,7 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 	sessionSecret, err := h.generateToken()
 	if err != nil {
 		h.Logger.Error("failed to generate session secret", "error", err)
-		SendError(w, http.StatusInternalServerError, "internal server error")
+		SendError(w, r, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
