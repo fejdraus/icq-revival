@@ -16,6 +16,7 @@ type ICBMService interface {
 	EvilRequest(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x04_0x08_ICBMEvilRequest) (wire.SNACMessage, error)
 	ParameterQuery(ctx context.Context, inFrame wire.SNACFrame) wire.SNACMessage
 	ClientErr(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x04_0x0B_ICBMClientErr) error
+	OfflineRetrieve(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame) (wire.SNACMessage, error)
 }
 
 type OServiceService interface {

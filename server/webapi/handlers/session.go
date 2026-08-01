@@ -24,6 +24,7 @@ type SessionHandler struct {
 	SessionManager   *state.WebAPISessionManager
 	OSCARAuthService AuthService
 	FeedbagService   FeedbagService
+	ICBMService      ICBMService
 	BuddyListManager *BuddyListManager
 	IconSource       BuddyIconSource
 	Logger           *slog.Logger
@@ -380,6 +381,27 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 					types.ConversationEventData("list", nil))
 				break
 			}
+		}
+	}
+
+	// Drain messages stored while the user was signed off. The service relays them
+	// as ordinary ICBMChannelMsgToClient SNACs stamped with a send time, which the
+	// listener started above turns into offlineIM events. Retrieval deletes them
+	// from the store, so skip it when the client subscribes to neither event that
+	// can carry them rather than dropping the messages on the floor.
+	//
+	// This trails the conversation list queued above because the listener pushes
+	// from its own goroutine. The client rebuilds its list from scratch on the first
+	// "list" it sees, dropping conversations it knows only from an earlier "update",
+	// so a drained message must not reach the queue ahead of that event.
+	if slices.Contains(events, "offlineIM") || slices.Contains(events, "im") {
+		frame := wire.SNACFrame{
+			FoodGroup: wire.ICBM,
+			SubGroup:  wire.ICBMOfflineRetrieve,
+			RequestID: wire.ReqIDFromServer,
+		}
+		if _, err := h.ICBMService.OfflineRetrieve(ctx, instance, frame); err != nil {
+			h.Logger.ErrorContext(ctx, "failed to retrieve offline messages", "err", err.Error())
 		}
 	}
 

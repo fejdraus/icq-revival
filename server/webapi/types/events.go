@@ -58,6 +58,21 @@ type IMEvent struct {
 	AutoResp  bool     `json:"autoresponse,omitempty"`
 }
 
+// OfflineIMEvent represents a message that was stored while the user was signed
+// off and is replayed when they next start a session.
+//
+// The client models this separately from IMEvent: it reads the sender from a bare
+// aimId rather than a source user object, and resolves the display name from the
+// buddy list it already holds. Timestamp is when the sender sent the message, not
+// when it was delivered.
+type OfflineIMEvent struct {
+	AimID     string  `json:"aimId"`
+	Message   string  `json:"message"`
+	MsgID     string  `json:"msgId,omitempty"`
+	Timestamp float64 `json:"timestamp"` // float64 for AMF3 encoding
+	AutoResp  bool    `json:"autoresponse,omitempty"`
+}
+
 // SentIMEvent represents a sent instant message event.
 type SentIMEvent struct {
 	Sender    UserInfo `json:"sender"` // Sender user info

@@ -40,3 +40,25 @@ func TestConvertEventForAMF3_PresenceCarriesBuddyIcon(t *testing.T) {
 		assert.False(t, ok)
 	})
 }
+
+// The AMF3 converter flattens OfflineIMEvent through an explicit allowlist. The
+// client keys its conversation list and chat-log cache by msgId, so an event that
+// loses it collides with every other offline message.
+func TestConvertEventForAMF3_OfflineIM(t *testing.T) {
+	out := ConvertEventForAMF3(types.Event{
+		Type: types.EventTypeOfflineIM,
+		Data: types.OfflineIMEvent{
+			AimID:     "mikekelly",
+			Message:   "sent while you were out",
+			MsgID:     "beefcafe",
+			Timestamp: 1700000000,
+		},
+	})
+
+	eventData := out["eventData"].(map[string]interface{})
+	assert.Equal(t, "mikekelly", eventData["aimId"])
+	assert.Equal(t, "sent while you were out", eventData["message"])
+	assert.Equal(t, "beefcafe", eventData["msgId"])
+	assert.Equal(t, float64(1700000000), eventData["timestamp"])
+	assert.Equal(t, false, eventData["autoresponse"])
+}

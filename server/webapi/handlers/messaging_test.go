@@ -44,6 +44,11 @@ func (m *MockICBMService) ClientEvent(ctx context.Context, instance *state.Sessi
 	return args.Error(0)
 }
 
+func (m *MockICBMService) OfflineRetrieve(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame) (wire.SNACMessage, error) {
+	args := m.Called(ctx, instance, inFrame)
+	return args.Get(0).(wire.SNACMessage), args.Error(1)
+}
+
 // createTestSessionManager creates a WebAPISessionManager with a pre-populated session.
 func createTestSessionManager(screenName string) (*state.WebAPISessionManager, string) {
 	return createTestSessionManagerWithOSCAR(screenName, nil)

@@ -44,12 +44,19 @@ func ConvertEventForAMF3(event types.Event) map[string]interface{} {
 		}
 
 	case types.EventTypeOfflineIM:
-		if imEvent, ok := event.Data.(types.IMEvent); ok {
-			result["eventData"] = map[string]interface{}{
-				"aimId":     imEvent.Source.AimID,
-				"message":   imEvent.Message,
-				"timestamp": float64(imEvent.Timestamp), // Convert to float64
+		if imEvent, ok := event.Data.(types.OfflineIMEvent); ok {
+			eventData := map[string]interface{}{
+				"aimId":        imEvent.AimID,
+				"message":      imEvent.Message,
+				"timestamp":    imEvent.Timestamp, // Already float64
+				"autoresponse": imEvent.AutoResp,
 			}
+			// The client keys its conversation list and chat-log cache by msgId, so
+			// an event without one collides with every other offline message.
+			if imEvent.MsgID != "" {
+				eventData["msgId"] = imEvent.MsgID
+			}
+			result["eventData"] = eventData
 		} else if dataMap, ok := event.Data.(map[string]interface{}); ok {
 			// Already a map, ensure timestamps are float64
 			if ts, exists := dataMap["timestamp"]; exists {

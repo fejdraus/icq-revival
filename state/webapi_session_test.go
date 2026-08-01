@@ -1068,3 +1068,98 @@ func TestWebAPISession_CloseCancelsSessionContext(t *testing.T) {
 
 	assert.ErrorIs(t, sess.ctx.Err(), context.Canceled)
 }
+
+// A message replayed out of the offline store arrives as an ordinary
+// ICBMChannelMsgToClient stamped with a send time. The client models that as its
+// own offlineIM event, keyed by a bare aimId and timestamped when the sender sent
+// it rather than when it was delivered.
+func TestWebAPISession_OfflineIM(t *testing.T) {
+	sentAt := time.Now().Add(-2 * time.Hour).Unix()
+
+	newSession := func(events ...string) *WebAPISession {
+		return &WebAPISession{
+			ScreenName: DisplayScreenName("me"),
+			Events:     events,
+			EventQueue: types.NewEventQueue(10),
+			logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+	}
+
+	storedMsg := func(t *testing.T, withSendTime bool) wire.SNACMessage {
+		t.Helper()
+		frags, err := wire.ICBMFragmentList("sent while you were out")
+		require.NoError(t, err)
+		body := wire.SNAC_0x04_0x07_ICBMChannelMsgToClient{
+			ChannelID:   wire.ICBMChannelIM,
+			TLVUserInfo: wire.TLVUserInfo{ScreenName: "Mike Kelly"},
+		}
+		body.Append(wire.NewTLVBE(wire.ICBMTLVAOLIMData, frags))
+		if withSendTime {
+			body.Append(wire.NewTLVBE(wire.ICBMTLVSendTime, uint32(sentAt)))
+		}
+		return wire.SNACMessage{Body: body}
+	}
+
+	t.Run("send time yields an offlineIM event", func(t *testing.T) {
+		sess := newSession("im", "offlineIM")
+		sess.handleIncomingIM(storedMsg(t, true))
+
+		events := sess.EventQueue.GetAllEvents()
+		require.Len(t, events, 1)
+		assert.Equal(t, types.EventTypeOfflineIM, events[0].Type)
+		offline := events[0].Data.(types.OfflineIMEvent)
+		assert.Equal(t, "mikekelly", offline.AimID)
+		assert.Equal(t, "sent while you were out", offline.Message)
+		assert.NotEmpty(t, offline.MsgID)
+		assert.Equal(t, float64(sentAt), offline.Timestamp)
+	})
+
+	t.Run("no send time yields an im event", func(t *testing.T) {
+		sess := newSession("im", "offlineIM")
+		sess.handleIncomingIM(storedMsg(t, false))
+
+		events := sess.EventQueue.GetAllEvents()
+		require.Len(t, events, 1)
+		assert.Equal(t, types.EventTypeIM, events[0].Type)
+	})
+
+	// Retrieval deletes the message from the store, so a client that subscribes to
+	// im alone still has to receive it.
+	t.Run("falls back to im when offlineIM is not subscribed", func(t *testing.T) {
+		sess := newSession("im")
+		sess.handleIncomingIM(storedMsg(t, true))
+
+		events := sess.EventQueue.GetAllEvents()
+		require.Len(t, events, 1)
+		assert.Equal(t, types.EventTypeIM, events[0].Type)
+		assert.Equal(t, float64(sentAt), events[0].Data.(types.IMEvent).Timestamp)
+	})
+
+	t.Run("offlineIM subscriber gets a conversation update", func(t *testing.T) {
+		sess := newSession("offlineIM", "conversation")
+		sess.handleIncomingIM(storedMsg(t, true))
+
+		events := sess.EventQueue.GetAllEvents()
+		require.Len(t, events, 2)
+		assert.Equal(t, types.EventTypeOfflineIM, events[0].Type)
+		assert.Equal(t, types.EventTypeConversation, events[1].Type)
+	})
+
+	// The history the client pulls with fetchStoredIMs has to order the message by
+	// when it was sent, not when the session that drained the store started.
+	t.Run("logs the message under its send time", func(t *testing.T) {
+		sess := newSession("offlineIM")
+		sess.handleIncomingIM(storedMsg(t, true))
+
+		stored := sess.GetStoredIMs(StoredIMQuery{PartnerAimID: "mikekelly", NToGet: 10})
+		require.Len(t, stored, 1)
+		assert.Equal(t, float64(sentAt), stored[0]["date"])
+	})
+
+	t.Run("no subscription drops the message", func(t *testing.T) {
+		sess := newSession("presence")
+		sess.handleIncomingIM(storedMsg(t, true))
+
+		assert.Empty(t, sess.EventQueue.GetAllEvents())
+	})
+}

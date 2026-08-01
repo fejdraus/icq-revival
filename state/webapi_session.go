@@ -324,12 +324,20 @@ func (s *WebAPISession) handleICBMMessage(msg wire.SNACMessage) {
 
 // handleIncomingIM handles incoming instant messages.
 func (s *WebAPISession) handleIncomingIM(msg wire.SNACMessage) {
-	if !s.IsSubscribedTo("im") {
+	body, ok := msg.Body.(wire.SNAC_0x04_0x07_ICBMChannelMsgToClient)
+	if !ok {
 		return
 	}
 
-	body, ok := msg.Body.(wire.SNAC_0x04_0x07_ICBMChannelMsgToClient)
-	if !ok {
+	// A send time is only stamped on a message replayed out of the offline store,
+	// so its presence marks this as a delivery of something sent while the user was
+	// signed off, and carries the moment the sender actually sent it.
+	sentTime, isOffline := body.Uint32BE(wire.ICBMTLVSendTime)
+
+	// An offlineIM subscriber gets the dedicated event; a client that asked for
+	// im only still gets the message, just with no signal that it was stored.
+	asOfflineIM := isOffline && s.IsSubscribedTo("offlineIM")
+	if !asOfflineIM && !s.IsSubscribedTo("im") {
 		return
 	}
 
@@ -358,32 +366,49 @@ func (s *WebAPISession) handleIncomingIM(msg wire.SNACMessage) {
 	// displayId, so the two forms must not be interchanged.
 	partnerDisplay := body.ScreenName
 	partnerAimID := NewIdentScreenName(partnerDisplay).String()
-	nowSec := time.Now().Unix()
-	s.AddStoredIM(partnerAimID, partnerAimID, messageText, msgID, nowSec)
 
-	// Create IM event
-	imEvent := types.IMEvent{
-		Source: types.UserInfo{
+	// An offline message is logged under the time it was sent, so the stored-IM
+	// history it lands in stays in the order the conversation happened.
+	timestamp := time.Now().Unix()
+	if isOffline {
+		timestamp = int64(sentTime)
+	}
+	s.AddStoredIM(partnerAimID, partnerAimID, messageText, msgID, timestamp)
+
+	if asOfflineIM {
+		s.EventQueue.Push(types.EventTypeOfflineIM, types.OfflineIMEvent{
 			AimID:     partnerAimID,
-			DisplayID: partnerDisplay,
-			Friendly:  s.aliasFor(NewIdentScreenName(partnerAimID)),
-			UserType:  "aim",
-			State:     "online",
-		},
-		Message:   messageText,
-		MsgID:     msgID,
-		Timestamp: float64(time.Now().Unix()),
-		AutoResp:  autoResponse,
+			Message:   messageText,
+			MsgID:     msgID,
+			Timestamp: float64(timestamp),
+			AutoResp:  autoResponse,
+		})
+		s.logger.Debug("delivered offline instant message",
+			"from", partnerDisplay,
+			"to", s.ScreenName,
+			"sent", timestamp)
+	} else {
+		s.EventQueue.Push(types.EventTypeIM, types.IMEvent{
+			Source: types.UserInfo{
+				AimID:     partnerAimID,
+				DisplayID: partnerDisplay,
+				Friendly:  s.aliasFor(NewIdentScreenName(partnerAimID)),
+				UserType:  "aim",
+				State:     "online",
+			},
+			Message:   messageText,
+			MsgID:     msgID,
+			Timestamp: float64(timestamp),
+			AutoResp:  autoResponse,
+		})
+		s.logger.Debug("delivered instant message",
+			"from", partnerDisplay,
+			"to", s.ScreenName)
 	}
 
-	s.EventQueue.Push(types.EventTypeIM, imEvent)
-	s.logger.Debug("delivered instant message",
-		"from", partnerDisplay,
-		"to", s.ScreenName)
-
 	if s.IsSubscribedTo("conversation") {
-		// unread is 0 here, not 1, because the "im" event pushed above already
-		// causes the client to increment its own persisted per-buddy unread
+		// unread is 0 here, not 1, because the "im"/"offlineIM" event pushed above
+		// already causes the client to increment its own persisted per-buddy unread
 		// tally. The "Recent chats" badge is the sum of that persisted tally and
 		// this conversation's unreadCount, so sending 1 here would double-count
 		// the message (badge shows 2 for the first IM). Mirrors the sent-IM path,
