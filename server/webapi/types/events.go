@@ -14,6 +14,7 @@ const (
 	EventTypeBuddyList    EventType = "buddylist"
 	EventTypeConversation EventType = "conversation"
 	EventTypeIM           EventType = "im"
+	EventTypeMyInfo       EventType = "myInfo"
 	EventTypeOfflineIM    EventType = "offlineIM"
 	EventTypePreference   EventType = "preference"
 	EventTypePresence     EventType = "presence"

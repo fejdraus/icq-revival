@@ -446,7 +446,7 @@ func (s *ICQService) OfflineMsgReq(ctx context.Context, inFrame wire.SNACFrame, 
 			msgOut := wire.ICQMessageReplyEnvelope{
 				Message: reply,
 			}
-			if err := s.reply(ctx, instance, msgOut, inFrame.RequestID, wire.SNACFlagsMoreToCome); err != nil {
+			if err := s.replyToSelf(ctx, instance, msgOut, inFrame.RequestID, wire.SNACFlagsMoreToCome); err != nil {
 				return fmt.Errorf("sending offline message: %w", err)
 			}
 		} else {
@@ -462,11 +462,19 @@ func (s *ICQService) OfflineMsgReq(ctx context.Context, inFrame wire.SNACFrame, 
 			}
 
 			for _, tlv := range msgIn.Message.TLVList {
+				// The stored SNAC is whatever the sender sent. A send time it
+				// carries is not ours, and TLVList lookups return the first match,
+				// so it would shadow the stamp appended below.
+				if tlv.Tag == wire.ICBMTLVSendTime {
+					continue
+				}
 				clientIM.Append(tlv)
 			}
 			clientIM.Append(wire.NewTLVBE(wire.ICBMTLVSendTime, uint32(msgIn.Sent.Unix())))
 
-			s.messageRelayer.RelayToScreenName(ctx, msgIn.Recipient, wire.SNACMessage{
+			// Retrieval answers the instance that asked for it, not every instance
+			// of the account.
+			s.messageRelayer.RelayToSelf(ctx, instance, wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					FoodGroup: wire.ICBM,
 					SubGroup:  wire.ICBMChannelMsgToClient,
@@ -488,7 +496,7 @@ func (s *ICQService) OfflineMsgReq(ctx context.Context, inFrame wire.SNACFrame, 
 		},
 	}
 
-	if err := s.reply(ctx, instance, eofMsg, inFrame.RequestID, 0); err != nil {
+	if err := s.replyToSelf(ctx, instance, eofMsg, inFrame.RequestID, 0); err != nil {
 		return fmt.Errorf("sending end of offline messages: %w", err)
 	}
 
@@ -1205,7 +1213,20 @@ func (s *ICQService) affiliations(ctx context.Context, instance *state.SessionIn
 }
 
 func (s *ICQService) reply(ctx context.Context, instance *state.SessionInstance, message wire.ICQMessageReplyEnvelope, requestID uint32, snacFlags uint16) error {
-	msg := wire.SNACMessage{
+	s.messageRelayer.RelayToScreenName(ctx, instance.IdentScreenName(), replySNAC(message, requestID, snacFlags))
+	return nil
+}
+
+// replyToSelf answers the instance that made the request rather than every
+// instance of the account.
+func (s *ICQService) replyToSelf(ctx context.Context, instance *state.SessionInstance, message wire.ICQMessageReplyEnvelope, requestID uint32, snacFlags uint16) error {
+	s.messageRelayer.RelayToSelf(ctx, instance, replySNAC(message, requestID, snacFlags))
+	return nil
+}
+
+// replySNAC wraps an ICQ metadata payload in a DB reply SNAC.
+func replySNAC(message wire.ICQMessageReplyEnvelope, requestID uint32, snacFlags uint16) wire.SNACMessage {
+	return wire.SNACMessage{
 		Frame: wire.SNACFrame{
 			FoodGroup: wire.ICQ,
 			SubGroup:  wire.ICQDBReply,
@@ -1220,9 +1241,6 @@ func (s *ICQService) reply(ctx context.Context, instance *state.SessionInstance,
 			},
 		},
 	}
-
-	s.messageRelayer.RelayToScreenName(ctx, instance.IdentScreenName(), msg)
-	return nil
 }
 
 func (s *ICQService) replySearchHit(ctx context.Context, instance *state.SessionInstance, record wire.ICQUserSearchRecord, requestID uint32, last bool, seq uint16) error {

@@ -364,47 +364,6 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 	// icon propagates to the badge.
 	myIconURL := h.IconSource.PublishedURL(ctx, baseURL, screenName.IdentScreenName())
 
-	// Queue myInfo event for authenticated users
-	if authToken != "" {
-		for _, event := range events {
-			if event == "myInfo" || event == "presence" {
-				myInfoData := buildMyInfo(screenName, "online", myIconURL)
-				myInfoData["onlineTime"] = time.Now().Unix()
-				myInfoData["memberSince"] = time.Now().Unix() - 86400*30 // 30 days ago
-				session.EventQueue.Push(types.EventType("myInfo"), myInfoData)
-				break
-			}
-		}
-		for _, event := range events {
-			if event == "conversation" {
-				session.EventQueue.Push(types.EventTypeConversation,
-					types.ConversationEventData("list", nil))
-				break
-			}
-		}
-	}
-
-	// Drain messages stored while the user was signed off. The service relays them
-	// as ordinary ICBMChannelMsgToClient SNACs stamped with a send time, which the
-	// listener started above turns into offlineIM events. Retrieval deletes them
-	// from the store, so skip it when the client subscribes to neither event that
-	// can carry them rather than dropping the messages on the floor.
-	//
-	// This trails the conversation list queued above because the listener pushes
-	// from its own goroutine. The client rebuilds its list from scratch on the first
-	// "list" it sees, dropping conversations it knows only from an earlier "update",
-	// so a drained message must not reach the queue ahead of that event.
-	if slices.Contains(events, "offlineIM") || slices.Contains(events, "im") {
-		frame := wire.SNACFrame{
-			FoodGroup: wire.ICBM,
-			SubGroup:  wire.ICBMOfflineRetrieve,
-			RequestID: wire.ReqIDFromServer,
-		}
-		if _, err := h.ICBMService.OfflineRetrieve(ctx, instance, frame); err != nil {
-			h.Logger.ErrorContext(ctx, "failed to retrieve offline messages", "err", err.Error())
-		}
-	}
-
 	now := time.Now().Unix()
 
 	// Prepare response
@@ -425,41 +384,57 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 		"lifestreamApiBase": baseURL + "/",
 	}
 
-	if authToken != "" {
-		myInfoPayload := buildMyInfo(screenName, "online", myIconURL)
-		myInfoPayload["onlineTime"] = time.Now().Unix()
-		myInfoPayload["memberSince"] = time.Now().Unix() - 86400*30 // 30 days ago
-		myInfoPayload["self"] = map[string]interface{}{
-			"instNum":        1,
-			"loginTime":      time.Now().Unix(),
-			"sessionTimeout": 30,
-			"events":         events,
-			"assertCaps":     []string{},
-			"rightsInfo": map[string]interface{}{
-				"maxDenies":            500,
-				"maxPermits":           500,
-				"maxWatchers":          3000,
-				"maxBuddies":           500,
-				"maxTempBuddies":       160,
-				"maxIMSize":            3987,
-				"minInterIcbmInterval": 1000,
-				"maxSourceEvil":        900,
-				"maxDstEvil":           999,
-				"maxSigLen":            4096,
-			},
-		}
-		resp.Response.Data.MyInfo = myInfoPayload
-		if resp.Response.Data.Events == nil {
-			resp.Response.Data.Events = make(map[string]interface{})
-		}
-		resp.Response.Data.Events["myInfo"] = myInfoPayload
+	myInfoPayload := buildMyInfo(screenName, "online", myIconURL)
+	myInfoPayload["onlineTime"] = time.Now().Unix()
+	myInfoPayload["memberSince"] = time.Now().Unix() - 86400*30 // 30 days ago
+	myInfoPayload["self"] = map[string]interface{}{
+		"instNum":        1,
+		"loginTime":      time.Now().Unix(),
+		"sessionTimeout": 30,
+		"events":         events,
+		"assertCaps":     []string{},
+		"rightsInfo": map[string]interface{}{
+			"maxDenies":            500,
+			"maxPermits":           500,
+			"maxWatchers":          3000,
+			"maxBuddies":           500,
+			"maxTempBuddies":       160,
+			"maxIMSize":            3987,
+			"minInterIcbmInterval": 1000,
+			"maxSourceEvil":        900,
+			"maxDstEvil":           999,
+			"maxSigLen":            4096,
+		},
+	}
+	resp.Response.Data.MyInfo = myInfoPayload
+	if resp.Response.Data.Events == nil {
+		resp.Response.Data.Events = make(map[string]interface{})
+	}
+	resp.Response.Data.Events["myInfo"] = myInfoPayload
+
+	// Seeds that only queue an event are keyed off the subscription rather than
+	// iterated with it, so the server fixes their order and each is queued once.
+	// myInfo and presence render the identity badge from the same payload and the
+	// client subscribes to both, which a per-subscription loop would queue twice.
+	if slices.Contains(events, "myInfo") || slices.Contains(events, "presence") {
+		myInfoData := buildMyInfo(screenName, "online", myIconURL)
+		myInfoData["onlineTime"] = time.Now().Unix()
+		myInfoData["memberSince"] = time.Now().Unix() - 86400*30 // 30 days ago
+		session.EventQueue.Push(types.EventTypeMyInfo, myInfoData)
 	}
 
+	if slices.Contains(events, "conversation") {
+		session.EventQueue.Push(types.EventTypeConversation,
+			types.ConversationEventData("list", nil))
+	}
+
+	// The remaining seeds also populate the response payload, so they stay keyed off
+	// the subscription list they are rendered into.
 	for _, event := range events {
 		switch types.EventType(event) {
 		case types.EventTypeBuddyList:
 			buddyGroups := []WebAPIBuddyGroup{}
-			if authToken != "" && h.BuddyListManager != nil {
+			if h.BuddyListManager != nil {
 				var err error
 				buddyGroups, err = h.BuddyListManager.GetBuddyListForUser(ctx, session)
 				if err != nil {
@@ -475,9 +450,7 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 				resp.Response.Data.Events = make(map[string]interface{})
 			}
 			resp.Response.Data.Events["buddylist"] = blPayload
-			if authToken != "" {
-				session.EventQueue.Push(types.EventTypeBuddyList, blPayload)
-			}
+			session.EventQueue.Push(types.EventTypeBuddyList, blPayload)
 		case types.EventTypePreference:
 			// Seed the client with effective preference values: the user's stored
 			// prefs where set, and the server-side spec defaults otherwise. The
@@ -486,7 +459,7 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 			// would silently fall back to the client's hidden default and, for
 			// showGroups, hide group headers.
 			prefPayload := map[string]interface{}{}
-			if authToken != "" && session.OSCARSession != nil {
+			if session.OSCARSession != nil {
 				if item, err := buddyPrefsItem(ctx, h.FeedbagService, session.OSCARSession); err != nil {
 					h.Logger.ErrorContext(ctx, "failed to get preferences", "err", err.Error())
 				} else {
@@ -497,16 +470,14 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 				resp.Response.Data.Events = make(map[string]interface{})
 			}
 			resp.Response.Data.Events["preference"] = prefPayload
-			if authToken != "" {
-				session.EventQueue.Push(types.EventTypePreference, prefPayload)
-			}
+			session.EventQueue.Push(types.EventTypePreference, prefPayload)
 		case types.EventTypePermitDeny:
 			// The client keeps its privacy state solely in the model this event
 			// populates. Both the block/unblock menu action and the "blocked"
 			// presence state read that model and no-op silently while it is
 			// empty, so the session has to start with one.
 			var pdPayload interface{} = PermitDenyData{PDMode: "permitAll"}
-			if authToken != "" && session.OSCARSession != nil {
+			if session.OSCARSession != nil {
 				pdd, err := session.PermitDenyRefresher(ctx)
 				if err != nil {
 					h.Logger.ErrorContext(ctx, "failed to get permit/deny settings", "err", err.Error())
@@ -518,9 +489,31 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 				resp.Response.Data.Events = make(map[string]interface{})
 			}
 			resp.Response.Data.Events["permitDeny"] = pdPayload
-			if authToken != "" {
-				session.EventQueue.Push(types.EventTypePermitDeny, pdPayload)
-			}
+			session.EventQueue.Push(types.EventTypePermitDeny, pdPayload)
+		}
+	}
+
+	// Drain messages stored while the user was signed off. The service relays them
+	// as ordinary ICBMChannelMsgToClient SNACs stamped with a send time, which the
+	// listener started above turns into offlineIM events. Retrieval deletes them
+	// from the store and the Web API has no ack, so this is the one delivery attempt.
+	// Skip it for a client that did not subscribe, which leaves the messages stored
+	// for a session that wants them rather than spending them on one that does not.
+	//
+	// This trails every event queued above because the listener pushes from its own
+	// goroutine, so anything drained here can overtake a later push. An offlineIM
+	// names its sender by bare aimId and leaves the client to resolve the display
+	// name against the buddy list it holds, and the conversation list is rebuilt from
+	// scratch on the first "list" the client sees. Both of those events are queued in
+	// the loop above, so the drain has to come after it.
+	if slices.Contains(events, "offlineIM") {
+		frame := wire.SNACFrame{
+			FoodGroup: wire.ICBM,
+			SubGroup:  wire.ICBMOfflineRetrieve,
+			RequestID: wire.ReqIDFromServer,
+		}
+		if _, err := h.ICBMService.OfflineRetrieve(ctx, instance, frame); err != nil {
+			h.Logger.ErrorContext(ctx, "failed to retrieve offline messages", "err", err.Error())
 		}
 	}
 
@@ -571,7 +564,7 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 			if event == "buddylist" || event == "myInfo" {
 				var buddyGroups []BuddyGroup
 
-				if authToken != "" && h.BuddyListManager != nil {
+				if h.BuddyListManager != nil {
 					// Fetch actual buddy list from service
 					webAPIGroups, err := h.BuddyListManager.GetBuddyListForUser(ctx, session)
 					if err != nil {

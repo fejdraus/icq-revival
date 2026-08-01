@@ -173,6 +173,12 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 			// Strip the store message directive.
 			continue
 		}
+		if tlv.Tag == wire.ICBMTLVSendTime {
+			// Only the server stamps a send time, and only on a message replayed
+			// out of the offline store. Forwarding the sender's would let them
+			// pass a live message off as a stored one and date it at will.
+			continue
+		}
 		if clientIM.ChannelID == wire.ICBMChannelRendezvous && tlv.Tag == wire.ICBMTLVData {
 			if tlv, err = addExternalIP(instance, tlv); err != nil {
 				return nil, fmt.Errorf("addExternalIP: %w", err)
@@ -566,11 +572,20 @@ func (s *ICBMService) OfflineRetrieve(ctx context.Context, instance *state.Sessi
 		}
 
 		for _, tlv := range event.Message.TLVList {
+			// The stored SNAC is whatever the sender sent. A send time it carries
+			// is not ours, and TLVList lookups return the first match, so it would
+			// shadow the stamp appended below.
+			if tlv.Tag == wire.ICBMTLVSendTime {
+				continue
+			}
 			clientIM.Append(tlv)
 		}
 		clientIM.Append(wire.NewTLVBE(wire.ICBMTLVSendTime, uint32(event.Sent.Unix())))
 
-		s.messageRelayer.RelayToScreenName(ctx, event.Recipient, wire.SNACMessage{
+		// Retrieval answers the instance that asked for it. Relaying to the screen
+		// name would hand this reply to every other instance of the account, which
+		// never requested it and cannot tell it apart from a live message.
+		s.messageRelayer.RelayToSelf(ctx, instance, wire.SNACMessage{
 			Frame: wire.SNACFrame{
 				FoodGroup: wire.ICBM,
 				SubGroup:  wire.ICBMChannelMsgToClient,

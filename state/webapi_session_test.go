@@ -1123,18 +1123,6 @@ func TestWebAPISession_OfflineIM(t *testing.T) {
 		assert.Equal(t, types.EventTypeIM, events[0].Type)
 	})
 
-	// Retrieval deletes the message from the store, so a client that subscribes to
-	// im alone still has to receive it.
-	t.Run("falls back to im when offlineIM is not subscribed", func(t *testing.T) {
-		sess := newSession("im")
-		sess.handleIncomingIM(storedMsg(t, true))
-
-		events := sess.EventQueue.GetAllEvents()
-		require.Len(t, events, 1)
-		assert.Equal(t, types.EventTypeIM, events[0].Type)
-		assert.Equal(t, float64(sentAt), events[0].Data.(types.IMEvent).Timestamp)
-	})
-
 	t.Run("offlineIM subscriber gets a conversation update", func(t *testing.T) {
 		sess := newSession("offlineIM", "conversation")
 		sess.handleIncomingIM(storedMsg(t, true))
@@ -1156,9 +1144,13 @@ func TestWebAPISession_OfflineIM(t *testing.T) {
 		assert.Equal(t, float64(sentAt), stored[0]["date"])
 	})
 
-	t.Run("no subscription drops the message", func(t *testing.T) {
+	// Only a live IM is filtered on subscription here. Retrieval answers the
+	// instance that asked and StartSession asks only for an offlineIM subscriber,
+	// so a stamped message reaching a session that did not subscribe is not a state
+	// this handler can be put in.
+	t.Run("no subscription drops a live message", func(t *testing.T) {
 		sess := newSession("presence")
-		sess.handleIncomingIM(storedMsg(t, true))
+		sess.handleIncomingIM(storedMsg(t, false))
 
 		assert.Empty(t, sess.EventQueue.GetAllEvents())
 	})

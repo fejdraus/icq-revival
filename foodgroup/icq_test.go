@@ -2373,7 +2373,7 @@ func TestICQService_OfflineMsgReq(t *testing.T) {
 					},
 				},
 				messageRelayerParams: messageRelayerParams{
-					relayToScreenNameParams: relayToScreenNameParams{
+					relayToSelfParams: relayToSelfParams{
 						{
 							screenName: state.NewIdentScreenName("11111111"),
 							message: wire.SNACMessage{
@@ -2511,7 +2511,7 @@ func TestICQService_OfflineMsgReq(t *testing.T) {
 					},
 				},
 				messageRelayerParams: messageRelayerParams{
-					relayToScreenNameParams: relayToScreenNameParams{
+					relayToSelfParams: relayToSelfParams{
 						{
 							screenName: state.NewIdentScreenName("11111111"),
 							message: wire.SNACMessage{
@@ -2576,7 +2576,9 @@ func TestICQService_OfflineMsgReq(t *testing.T) {
 					},
 				},
 				messageRelayerParams: messageRelayerParams{
-					relayToScreenNameParams: relayToScreenNameParams{
+					// Retrieval answers the requesting instance, both the message
+					// itself and the end-of-messages envelope.
+					relayToSelfParams: relayToSelfParams{
 						{
 							screenName: state.NewIdentScreenName("11111111"),
 							message: wire.SNACMessage{
@@ -2646,6 +2648,10 @@ func TestICQService_OfflineMsgReq(t *testing.T) {
 			for _, params := range tt.mockParams.relayToScreenNameParams {
 				messageRelayer.EXPECT().
 					RelayToScreenName(mock.Anything, params.screenName, params.message)
+			}
+			for _, params := range tt.mockParams.relayToSelfParams {
+				messageRelayer.EXPECT().
+					RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			var feedbagSenderCalls int

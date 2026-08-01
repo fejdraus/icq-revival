@@ -356,6 +356,73 @@ func TestICBMService_ChannelMsgToHost(t *testing.T) {
 			expectOutput: nil,
 		},
 		{
+			// Only the server stamps a send time, and only on a replay out of the
+			// offline store. Forwarding the sender's would let them pass a live
+			// message off as a stored one and date it at will.
+			name:     "strip sender-supplied send time from message relayed to online recipient",
+			instance: newTestInstance("sender-screen-name", sessOptWarning(10)),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					relationshipParams: relationshipParams{
+						{
+							me:   state.NewIdentScreenName("sender-screen-name"),
+							them: state.NewIdentScreenName("recipient-screen-name"),
+							result: state.Relationship{
+								User: state.NewIdentScreenName("recipient-screen-name"),
+							},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams{
+						{
+							screenName: state.NewIdentScreenName("recipient-screen-name"),
+							result:     newTestInstance("recipient-screen-name", sessOptWarning(20), sessOptSignonComplete).Session(),
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNameActiveOnlyParams: relayToScreenNameActiveOnlyParams{
+						{
+							screenName: state.NewIdentScreenName("recipient-screen-name"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.ICBM,
+									SubGroup:  wire.ICBMChannelMsgToClient,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: wire.SNAC_0x04_0x07_ICBMChannelMsgToClient{
+									ChannelID:   wire.ICBMChannelIM,
+									TLVUserInfo: newTestInstance("sender-screen-name", sessOptWarning(10)).Session().TLVUserInfo(),
+									TLVRestBlock: wire.TLVRestBlock{
+										TLVList: wire.TLVList{
+											wire.NewTLVBE(wire.ICBMTLVData, []byte{1, 2, 3, 4}),
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x04_0x06_ICBMChannelMsgToHost{
+					ChannelID:  wire.ICBMChannelIM,
+					ScreenName: "recipient-screen-name",
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.ICBMTLVSendTime, uint32(time.Unix(1700000000, 0).Unix())),
+							wire.NewTLVBE(wire.ICBMTLVData, []byte{1, 2, 3, 4}),
+						},
+					},
+				},
+			},
+			expectOutput: nil,
+		},
+		{
 			name:     "don't transmit message from sender to recipient because sender has blocked recipient",
 			instance: newTestInstance("sender-screen-name", sessOptWarning(10)),
 			mockParams: mockParams{
@@ -3083,10 +3150,17 @@ func TestICBMService_OfflineRetrieve(t *testing.T) {
 							recipIn: state.NewIdentScreenName("recipient"),
 							messagesOut: []state.OfflineMessage{
 								{
+									// The stored SNAC carries a send time the sender
+									// supplied. TLVList lookups return the first
+									// match, so it has to be dropped rather than
+									// shadow the Sent stamp appended on replay.
 									Message: wire.SNAC_0x04_0x06_ICBMChannelMsgToHost{
-										Cookie:       1234,
-										ChannelID:    wire.ICBMChannelIM,
-										TLVRestBlock: wire.TLVRestBlock{TLVList: []wire.TLV{wire.NewTLVBE(wire.ICBMTLVData, []byte{1, 2, 3})}},
+										Cookie:    1234,
+										ChannelID: wire.ICBMChannelIM,
+										TLVRestBlock: wire.TLVRestBlock{TLVList: []wire.TLV{
+											wire.NewTLVBE(wire.ICBMTLVSendTime, uint32(1)),
+											wire.NewTLVBE(wire.ICBMTLVData, []byte{1, 2, 3}),
+										}},
 									},
 									Recipient: state.NewIdentScreenName("recipient"),
 									Sender:    state.NewIdentScreenName("sender"),
@@ -3103,7 +3177,7 @@ func TestICBMService_OfflineRetrieve(t *testing.T) {
 					},
 				},
 				messageRelayerParams: messageRelayerParams{
-					relayToScreenNameParams: relayToScreenNameParams{
+					relayToSelfParams: relayToSelfParams{
 						{
 							screenName: state.NewIdentScreenName("recipient"),
 							message: wire.SNACMessage{
@@ -3158,7 +3232,7 @@ func TestICBMService_OfflineRetrieve(t *testing.T) {
 					deleteMessagesParams: deleteMessagesParams{},
 				},
 				messageRelayerParams: messageRelayerParams{
-					relayToScreenNameParams: relayToScreenNameParams{},
+					relayToSelfParams: relayToSelfParams{},
 				},
 			},
 		},
@@ -3197,7 +3271,7 @@ func TestICBMService_OfflineRetrieve(t *testing.T) {
 					},
 				},
 				messageRelayerParams: messageRelayerParams{
-					relayToScreenNameParams: relayToScreenNameParams{
+					relayToSelfParams: relayToSelfParams{
 						{
 							screenName: state.NewIdentScreenName("recipient"),
 							message: wire.SNACMessage{
@@ -3244,7 +3318,7 @@ func TestICBMService_OfflineRetrieve(t *testing.T) {
 					},
 				},
 				messageRelayerParams: messageRelayerParams{
-					relayToScreenNameParams: relayToScreenNameParams{},
+					relayToSelfParams: relayToSelfParams{},
 				},
 			},
 		},
@@ -3265,9 +3339,9 @@ func TestICBMService_OfflineRetrieve(t *testing.T) {
 			}
 
 			messageRelayer := newMockMessageRelayer(t)
-			for _, item := range tc.mockParams.relayToScreenNameParams {
+			for _, item := range tc.mockParams.relayToSelfParams {
 				messageRelayer.EXPECT().
-					RelayToScreenName(mock.Anything, item.screenName, item.message)
+					RelayToSelf(mock.Anything, matchSession(item.screenName), item.message)
 			}
 
 			svc := ICBMService{

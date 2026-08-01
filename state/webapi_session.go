@@ -334,10 +334,10 @@ func (s *WebAPISession) handleIncomingIM(msg wire.SNACMessage) {
 	// signed off, and carries the moment the sender actually sent it.
 	sentTime, isOffline := body.Uint32BE(wire.ICBMTLVSendTime)
 
-	// An offlineIM subscriber gets the dedicated event; a client that asked for
-	// im only still gets the message, just with no signal that it was stored.
-	asOfflineIM := isOffline && s.IsSubscribedTo("offlineIM")
-	if !asOfflineIM && !s.IsSubscribedTo("im") {
+	// Retrieval answers only the instance that asked, and StartSession asks only
+	// when the client subscribed to offlineIM, so a stamped message here is one
+	// this session requested. A live IM still needs the im subscription.
+	if !isOffline && !s.IsSubscribedTo("im") {
 		return
 	}
 
@@ -375,7 +375,7 @@ func (s *WebAPISession) handleIncomingIM(msg wire.SNACMessage) {
 	}
 	s.AddStoredIM(partnerAimID, partnerAimID, messageText, msgID, timestamp)
 
-	if asOfflineIM {
+	if isOffline {
 		s.EventQueue.Push(types.EventTypeOfflineIM, types.OfflineIMEvent{
 			AimID:     partnerAimID,
 			Message:   messageText,
