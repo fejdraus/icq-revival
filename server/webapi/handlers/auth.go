@@ -17,6 +17,46 @@ import (
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
+// AuthToken is the opaque credential the client presents on later requests.
+//
+// ExpiresIn is a string because that is the shape the client is given, even
+// though ClientLoginData.TokenExpiresIn carries the same quantity as a number.
+type AuthToken struct {
+	A         string `json:"a" xml:"a"`
+	ExpiresIn string `json:"expiresIn" xml:"expiresIn"`
+}
+
+// GetTokenData is the getToken payload.
+type GetTokenData struct {
+	Token    AuthToken `json:"token" xml:"token"`
+	UserData UserData  `json:"userData" xml:"userData"`
+}
+
+// UserData wraps the attributes getToken reports about the account.
+type UserData struct {
+	Attributes UserAttributes `json:"attributes" xml:"attributes"`
+}
+
+// UserAttributes names the account the token belongs to.
+type UserAttributes struct {
+	LoginID string `json:"loginId" xml:"loginId"`
+}
+
+// ClientLoginData is the clientLogin payload.
+type ClientLoginData struct {
+	Token          AuthToken `json:"token" xml:"token"`
+	LoginID        string    `json:"loginId" xml:"loginId"`
+	ScreenName     string    `json:"screenName" xml:"screenName"`
+	SessionSecret  string    `json:"sessionSecret" xml:"sessionSecret"`
+	HostTime       int64     `json:"hostTime" xml:"hostTime"`
+	TokenExpiresIn int       `json:"tokenExpiresIn" xml:"tokenExpiresIn"`
+}
+
+// RedirectData sends an unauthenticated client to the login page.
+type RedirectData struct {
+	RedirectURL string `json:"redirectURL" xml:"redirectURL"`
+}
+
 // AuthHandler handles Web AIM API authentication endpoints.
 type AuthHandler struct {
 	AuthService AuthService
@@ -50,9 +90,7 @@ func (h *AuthHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 		resp := BaseResponse{}
 		resp.Response.StatusCode = 401
 		resp.Response.StatusText = "Unauthorized"
-		resp.Response.Data = map[string]interface{}{
-			"redirectURL": h.loginRedirectURL(r),
-		}
+		resp.Response.Data = &RedirectData{RedirectURL: h.loginRedirectURL(r)}
 		SendResponse(w, r, resp, h.Logger)
 		return
 	}
@@ -73,16 +111,13 @@ func (h *AuthHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]interface{}{
-		"token": map[string]interface{}{
-			"a":         base64.URLEncoding.EncodeToString(tokenBytes),
-			"expiresIn": "86400", // todo check this assumption
+	resp.Response.Data = &GetTokenData{
+		Token: AuthToken{
+			A: base64.URLEncoding.EncodeToString(tokenBytes),
+			// A string, not a number: that is how the client is given it.
+			ExpiresIn: "86400", // todo check this assumption
 		},
-		"userData": map[string]interface{}{
-			"attributes": map[string]interface{}{
-				"loginId": string(loginID),
-			},
-		},
+		UserData: UserData{Attributes: UserAttributes{LoginID: string(loginID)}},
 	}
 	SendResponse(w, r, resp, h.Logger)
 
@@ -294,16 +329,17 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]interface{}{
-		"token": map[string]interface{}{
-			"a":         base64.URLEncoding.EncodeToString(authCookie),
-			"expiresIn": "86400", // 24 hours in seconds
+	resp.Response.Data = &ClientLoginData{
+		Token: AuthToken{
+			A:         base64.URLEncoding.EncodeToString(authCookie),
+			ExpiresIn: "86400", // 24 hours in seconds
 		},
-		"loginId":        username,
-		"screenName":     username,
-		"sessionSecret":  sessionSecret,
-		"hostTime":       time.Now().Unix(),
-		"tokenExpiresIn": 86400, // 24 hours in seconds
+		LoginID:       username,
+		ScreenName:    username,
+		SessionSecret: sessionSecret,
+		HostTime:      time.Now().Unix(),
+		// A number here where token.expiresIn is a string, as the client expects.
+		TokenExpiresIn: 86400, // 24 hours in seconds
 	}
 
 	// Send response in requested format (JSON, JSONP, XML, or AMF)

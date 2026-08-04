@@ -478,16 +478,11 @@ func TestPresenceHandler_SetState_EmitsMyInfoEvent(t *testing.T) {
 	session, err := sessionMgr.GetSession(context.Background(), aimsid)
 	assert.NoError(t, err)
 
-	var myInfo map[string]interface{}
-	for _, event := range session.EventQueue.GetAllEvents() {
-		if event.Type == "myInfo" {
-			myInfo, _ = event.Data.(map[string]interface{})
-		}
-	}
+	myInfo := queuedMyInfo(session)
 	assert.NotNil(t, myInfo, "expected a myInfo event to be queued")
-	assert.Equal(t, "away", myInfo["state"])
-	assert.Equal(t, "brb", myInfo["awayMsg"])
-	assert.Equal(t, "testuser", myInfo["aimId"])
+	assert.Equal(t, "away", myInfo.State)
+	assert.Equal(t, "brb", myInfo.AwayMsg)
+	assert.Equal(t, "testuser", myInfo.AimID)
 }
 
 func TestPresenceHandler_SetState_MyInfoNormalizesAimID(t *testing.T) {
@@ -526,16 +521,11 @@ func TestPresenceHandler_SetState_MyInfoNormalizesAimID(t *testing.T) {
 	session, err := sessionMgr.GetSession(context.Background(), aimsid)
 	assert.NoError(t, err)
 
-	var myInfo map[string]interface{}
-	for _, event := range session.EventQueue.GetAllEvents() {
-		if event.Type == "myInfo" {
-			myInfo, _ = event.Data.(map[string]interface{})
-		}
-	}
+	myInfo := queuedMyInfo(session)
 	require.NotNil(t, myInfo, "expected a myInfo event to be queued")
-	assert.Equal(t, "mikekelly", myInfo["aimId"])
-	assert.Equal(t, "Mike Kelly", myInfo["displayId"])
-	assert.Equal(t, "Mike Kelly", myInfo["friendly"])
+	assert.Equal(t, "mikekelly", myInfo.AimID)
+	assert.Equal(t, "Mike Kelly", myInfo.DisplayID)
+	assert.Equal(t, "Mike Kelly", myInfo.Friendly)
 }
 
 func TestPresenceHandler_SetState_NoOSCARSession_Rejected(t *testing.T) {
@@ -734,4 +724,15 @@ func TestPresenceHandler_GetProfile(t *testing.T) {
 	assert.Contains(t, body, `"testuser"`)
 
 	locateService.AssertExpectations(t)
+}
+
+// queuedMyInfo returns the myInfo event the session has queued, if any.
+func queuedMyInfo(session *state.WebAPISession) *MyInfo {
+	var myInfo *MyInfo
+	for _, event := range session.EventQueue.GetAllEvents() {
+		if event.Type == "myInfo" {
+			myInfo, _ = event.Data.(*MyInfo)
+		}
+	}
+	return myInfo
 }

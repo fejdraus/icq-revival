@@ -41,6 +41,24 @@ type BuddyBroadcaster interface {
 // may query in target-list ("t=") mode.
 const maxPresenceTargets = 10
 
+// ProfileData is the getProfile payload.
+type ProfileData struct {
+	ScreenName  string `json:"screenName" xml:"screenName"`
+	Profile     string `json:"profile" xml:"profile"`
+	LastUpdated int64  `json:"lastUpdated" xml:"lastUpdated"`
+}
+
+// SetStateData echoes the identity fields a setState changed.
+type SetStateData struct {
+	AimID      string `json:"aimId" xml:"aimId"`
+	DisplayID  string `json:"displayId" xml:"displayId"`
+	State      string `json:"state" xml:"state"`
+	AwayMsg    string `json:"awayMsg" xml:"awayMsg"`
+	StatusMsg  string `json:"statusMsg" xml:"statusMsg"`
+	UserType   string `json:"userType" xml:"userType"`
+	OnlineTime int64  `json:"onlineTime" xml:"onlineTime"`
+}
+
 // PresenceData contains presence information.
 type PresenceData struct {
 	Groups []BuddyGroupInfo    `json:"groups,omitempty" xml:"groups>group,omitempty"`
@@ -391,14 +409,14 @@ func (h *PresenceHandler) SetState(w http.ResponseWriter, r *http.Request, sessi
 	response := BaseResponse{}
 	response.Response.StatusCode = 200
 	response.Response.StatusText = "OK"
-	response.Response.Data = map[string]interface{}{
-		"aimId":      session.ScreenName.IdentScreenName().String(),
-		"displayId":  session.ScreenName.String(),
-		"state":      stateParam,
-		"awayMsg":    awayMsg,
-		"statusMsg":  "",
-		"userType":   "aim",
-		"onlineTime": time.Now().Unix(),
+	response.Response.Data = &SetStateData{
+		AimID:      session.ScreenName.IdentScreenName().String(),
+		DisplayID:  session.ScreenName.String(),
+		State:      stateParam,
+		AwayMsg:    awayMsg,
+		StatusMsg:  "",
+		UserType:   "aim",
+		OnlineTime: time.Now().Unix(),
 	}
 	SendResponse(w, r, response, h.Logger)
 }
@@ -505,11 +523,7 @@ func (h *PresenceHandler) GetProfile(w http.ResponseWriter, r *http.Request, ses
 	}
 
 	// Send response
-	responseData := map[string]interface{}{
-		"screenName":  targetSN,
-		"profile":     profileText,
-		"lastUpdated": int64(0),
-	}
+	responseData := &ProfileData{ScreenName: targetSN, Profile: profileText}
 
 	response := BaseResponse{}
 	response.Response.StatusCode = 200
@@ -609,12 +623,8 @@ func (h *PresenceHandler) pushMyInfo(session *state.WebAPISession, webState, awa
 	// already holds; a setState/setStatus does not change the icon. Icon changes
 	// arrive on their own myInfo via the pump's MyInfoRefresher.
 	myInfo := buildMyInfo(session.ScreenName, webState, "")
-	if awayMsg != "" {
-		myInfo["awayMsg"] = awayMsg
-	}
-	if statusMsg != "" {
-		myInfo["statusMsg"] = statusMsg
-	}
+	myInfo.AwayMsg = awayMsg
+	myInfo.StatusMsg = statusMsg
 
 	session.EventQueue.Push(types.EventType("myInfo"), myInfo)
 }

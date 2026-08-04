@@ -413,7 +413,7 @@ func (s *WebAPISession) handleIncomingIM(msg wire.SNACMessage) {
 		// this conversation's unreadCount, so sending 1 here would double-count
 		// the message (badge shows 2 for the first IM). Mirrors the sent-IM path,
 		// which also passes 0.
-		s.EventQueue.Push(types.EventTypeConversation, types.ConversationEventData("update", []map[string]interface{}{
+		s.EventQueue.Push(types.EventTypeConversation, types.ConversationEventData("update", []types.ConversationEntryData{
 			types.ConversationEntry(
 				partnerAimID,
 				partnerDisplay,
@@ -554,11 +554,11 @@ func (s *WebAPISession) handleFeedbagMessage(msg wire.SNACMessage) {
 		s.InvalidateAliases()
 
 		if s.BuddyListRefresher != nil {
-			groups, err := s.BuddyListRefresher(s.ctx)
+			payload, err := s.BuddyListRefresher(s.ctx)
 			if err != nil {
 				s.logger.Error("failed to refresh buddy list after feedbag change", "err", err)
 			} else {
-				s.EventQueue.Push(types.EventTypeBuddyList, map[string]interface{}{"groups": groups})
+				s.EventQueue.Push(types.EventTypeBuddyList, payload)
 			}
 		}
 		if s.PermitDenyRefresher != nil {

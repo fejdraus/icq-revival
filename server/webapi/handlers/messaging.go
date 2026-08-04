@@ -175,10 +175,7 @@ func (h *MessagingHandler) SendIM(w http.ResponseWriter, r *http.Request, sess *
 	)
 
 	// Send success response
-	responseData := map[string]interface{}{
-		"msgId": messageID,
-		"state": "delivered",
-	}
+	responseData := &SendIMData{MsgID: messageID, State: "delivered"}
 	response := BaseResponse{}
 	response.Response.StatusCode = 200
 	response.Response.StatusText = "OK"
@@ -253,7 +250,7 @@ func (h *MessagingHandler) pushSenderWebAPIEvents(sess *state.WebAPISession, rec
 	}
 	sess.EventQueue.Push(types.EventTypeSentIM, senderEventData)
 	if sess.IsSubscribedTo("conversation") {
-		sess.EventQueue.Push(types.EventTypeConversation, types.ConversationEventData("update", []map[string]interface{}{
+		sess.EventQueue.Push(types.EventTypeConversation, types.ConversationEventData("update", []types.ConversationEntryData{
 			types.ConversationEntry(recipientAimID, recipientDisplay, message, messageID, senderAimID, true, 0),
 		}))
 	}
@@ -302,6 +299,12 @@ func (h *MessagingHandler) SetTyping(w http.ResponseWriter, r *http.Request, ses
 	}
 
 	h.sendSuccessResponse(w, r, nil)
+}
+
+// SendIMData reports the fate of an accepted IM.
+type SendIMData struct {
+	MsgID string `json:"msgId" xml:"msgId"`
+	State string `json:"state" xml:"state"`
 }
 
 // sendSuccessResponse sends a success response in Web AIM API format

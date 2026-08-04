@@ -28,10 +28,10 @@ const (
 
 // Event represents an event to be delivered to a web client.
 type Event struct {
-	Type      EventType   `json:"type"`
-	SeqNum    uint64      `json:"seqNum"`
-	Timestamp int64       `json:"timestamp"`
-	Data      interface{} `json:"eventData"`
+	Type      EventType   `json:"type" xml:"type"`
+	SeqNum    uint64      `json:"seqNum" xml:"seqNum"`
+	Timestamp int64       `json:"timestamp" xml:"timestamp"`
+	Data      interface{} `json:"eventData" xml:"eventData"`
 }
 
 // PresenceEvent represents a presence change event.
@@ -39,24 +39,24 @@ type Event struct {
 // alias it already holds, so a presence update that omits it silently renames the
 // buddy back to their screen name. See UserInfo.
 type PresenceEvent struct {
-	AimID      string `json:"aimId"`
-	Friendly   string `json:"friendly,omitempty"`
-	State      string `json:"state"` // "online", "offline", "away", "idle"
-	StatusMsg  string `json:"statusMsg,omitempty"`
-	AwayMsg    string `json:"awayMsg,omitempty"`
-	IdleTime   int    `json:"idleTime,omitempty"`   // Minutes idle
-	OnlineTime int64  `json:"onlineTime,omitempty"` // Unix timestamp
-	UserType   string `json:"userType"`             // "aim", "icq", "admin"
-	BuddyIcon  string `json:"buddyIcon,omitempty"`  // Absolute icon URL; empty preserves the client's current icon, the placeholder URL clears it
+	AimID      string `json:"aimId" xml:"aimId"`
+	Friendly   string `json:"friendly,omitempty" xml:"friendly,omitempty"`
+	State      string `json:"state" xml:"state"` // "online", "offline", "away", "idle"
+	StatusMsg  string `json:"statusMsg,omitempty" xml:"statusMsg,omitempty"`
+	AwayMsg    string `json:"awayMsg,omitempty" xml:"awayMsg,omitempty"`
+	IdleTime   int    `json:"idleTime,omitempty" xml:"idleTime,omitempty"`     // Minutes idle
+	OnlineTime int64  `json:"onlineTime,omitempty" xml:"onlineTime,omitempty"` // Unix timestamp
+	UserType   string `json:"userType" xml:"userType"`                         // "aim", "icq", "admin"
+	BuddyIcon  string `json:"buddyIcon,omitempty" xml:"buddyIcon,omitempty"`   // Absolute icon URL; empty preserves the client's current icon, the placeholder URL clears it
 }
 
 // IMEvent represents an instant message event.
 type IMEvent struct {
-	Source    UserInfo `json:"source"`
-	Message   string   `json:"message"`
-	MsgID     string   `json:"msgId,omitempty"`
-	Timestamp float64  `json:"timestamp"` // float64 for AMF3 encoding
-	AutoResp  bool     `json:"autoresponse,omitempty"`
+	Source    UserInfo `json:"source" xml:"source"`
+	Message   string   `json:"message" xml:"message"`
+	MsgID     string   `json:"msgId,omitempty" xml:"msgId,omitempty"`
+	Timestamp float64  `json:"timestamp" xml:"timestamp"` // float64 for AMF3 encoding
+	AutoResp  bool     `json:"autoresponse,omitempty" xml:"autoresponse,omitempty"`
 }
 
 // OfflineIMEvent represents a message that was stored while the user was signed
@@ -67,21 +67,21 @@ type IMEvent struct {
 // buddy list it already holds. Timestamp is when the sender sent the message, not
 // when it was delivered.
 type OfflineIMEvent struct {
-	AimID     string  `json:"aimId"`
-	Message   string  `json:"message"`
-	MsgID     string  `json:"msgId,omitempty"`
-	Timestamp float64 `json:"timestamp"` // float64 for AMF3 encoding
-	AutoResp  bool    `json:"autoresponse,omitempty"`
+	AimID     string  `json:"aimId" xml:"aimId"`
+	Message   string  `json:"message" xml:"message"`
+	MsgID     string  `json:"msgId,omitempty" xml:"msgId,omitempty"`
+	Timestamp float64 `json:"timestamp" xml:"timestamp"` // float64 for AMF3 encoding
+	AutoResp  bool    `json:"autoresponse,omitempty" xml:"autoresponse,omitempty"`
 }
 
 // SentIMEvent represents a sent instant message event.
 type SentIMEvent struct {
-	Sender    UserInfo `json:"sender"` // Sender user info
-	Dest      UserInfo `json:"dest"`   // Destination user info
-	Message   string   `json:"message"`
-	MsgID     string   `json:"msgId,omitempty"`
-	Timestamp float64  `json:"timestamp"` // float64 for AMF3 encoding
-	AutoResp  bool     `json:"autoResponse,omitempty"`
+	Sender    UserInfo `json:"sender" xml:"sender"` // Sender user info
+	Dest      UserInfo `json:"dest" xml:"dest"`     // Destination user info
+	Message   string   `json:"message" xml:"message"`
+	MsgID     string   `json:"msgId,omitempty" xml:"msgId,omitempty"`
+	Timestamp float64  `json:"timestamp" xml:"timestamp"` // float64 for AMF3 encoding
+	AutoResp  bool     `json:"autoResponse,omitempty" xml:"autoResponse,omitempty"`
 }
 
 // UserInfo represents basic user information in events.
@@ -93,18 +93,18 @@ type SentIMEvent struct {
 // per aimId, and that merge deletes friendly before applying the map. An alias
 // therefore has to be repeated on every user map, or it is lost.
 type UserInfo struct {
-	AimID      string  `json:"aimId"`
-	DisplayID  string  `json:"displayId,omitempty"`
-	Friendly   string  `json:"friendly,omitempty"`
-	UserType   string  `json:"userType,omitempty"`
-	State      string  `json:"state,omitempty"`
-	OnlineTime float64 `json:"onlineTime,omitempty"` // float64 for AMF3 encoding
+	AimID      string  `json:"aimId" xml:"aimId"`
+	DisplayID  string  `json:"displayId,omitempty" xml:"displayId,omitempty"`
+	Friendly   string  `json:"friendly,omitempty" xml:"friendly,omitempty"`
+	UserType   string  `json:"userType,omitempty" xml:"userType,omitempty"`
+	State      string  `json:"state,omitempty" xml:"state,omitempty"`
+	OnlineTime float64 `json:"onlineTime,omitempty" xml:"onlineTime,omitempty"` // float64 for AMF3 encoding
 }
 
 // TypingEvent represents a typing notification event.
 type TypingEvent struct {
-	AimID        string `json:"aimId"`
-	TypingStatus string `json:"typingStatus"`
+	AimID        string `json:"aimId" xml:"aimId"`
+	TypingStatus string `json:"typingStatus" xml:"typingStatus"`
 }
 
 // RateLimitEvent tells the client that its rate limit status changed.
@@ -116,13 +116,13 @@ type TypingEvent struct {
 // client's last recorded status was "limit", so this event must be pushed on
 // status transitions rather than on every rate-limited request.
 type RateLimitEvent struct {
-	Classes []RateLimitClass `json:"classes"`
+	Classes []RateLimitClass `json:"classes" xml:"classes>class"`
 }
 
 // RateLimitClass is the per-rate-class state carried by a RateLimitEvent.
 type RateLimitClass struct {
-	ID     int    `json:"id"`
-	Status string `json:"status"` // "clear", "warn", "limit", or "disconnect"
+	ID     int    `json:"id" xml:"id"`
+	Status string `json:"status" xml:"status"` // "clear", "warn", "limit", or "disconnect"
 }
 
 // EventQueue manages a queue of events for a WebAPI session.

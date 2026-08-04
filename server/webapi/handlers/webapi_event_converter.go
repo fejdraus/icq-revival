@@ -115,7 +115,6 @@ func ConvertEventForAMF3(event types.Event) map[string]interface{} {
 		}
 
 	case types.EventTypeBuddyList:
-		// Buddy list events are already converted to maps in FormatBuddyListEvent
 		// Just pass through
 		result["eventData"] = event.Data
 

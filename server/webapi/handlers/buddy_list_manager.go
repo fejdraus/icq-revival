@@ -34,29 +34,32 @@ func NewBuddyListManager(feedbagService FeedbagService, locateService LocateServ
 
 // WebAPIBuddyGroup represents a group in the WebAPI buddy list format.
 type WebAPIBuddyGroup struct {
-	Name    string            `json:"name"`
-	Buddies []WebAPIBuddyInfo `json:"buddies"`
-	Recent  bool              `json:"recent,omitempty"`
-	Smart   interface{}       `json:"smart,omitempty"` // Can be null or number
+	Name    string            `json:"name" xml:"name"`
+	Buddies []WebAPIBuddyInfo `json:"buddies" xml:"buddies>buddy"`
+	Recent  bool              `json:"recent,omitempty" xml:"recent,omitempty"`
+	// Smart is null or a number. It is a pointer rather than an interface so
+	// encoding/xml can render it: a non-nil interface holding a map cannot be
+	// marshalled, while a nil pointer is simply omitted.
+	Smart *int `json:"smart,omitempty" xml:"smart,omitempty"`
 }
 
 // WebAPIBuddyInfo represents a buddy in the WebAPI format.
 type WebAPIBuddyInfo struct {
-	AimID        string   `json:"aimId"`
-	DisplayID    string   `json:"displayId"`
-	Friendly     string   `json:"friendly,omitempty"` // Viewer's private alias, rendered in preference to DisplayID
-	State        string   `json:"state"`              // "online", "offline", "away", "idle"
-	StatusMsg    string   `json:"statusMsg,omitempty"`
-	AwayMsg      string   `json:"awayMsg,omitempty"`
-	OnlineTime   int64    `json:"onlineTime,omitempty"`
-	IdleTime     int      `json:"idleTime,omitempty"` // Minutes idle
-	UserType     string   `json:"userType"`           // "aim", "icq", "admin"
-	Bot          bool     `json:"bot"`
-	Service      string   `json:"service,omitempty"` // "AIM", "ICQ" (Web AIM client compares case-sensitively)
-	PresenceIcon string   `json:"presenceIcon,omitempty"`
-	BuddyIcon    string   `json:"buddyIcon,omitempty"`
-	Capabilities []string `json:"capabilities,omitempty"`
-	MemberSince  int64    `json:"memberSince,omitempty"`
+	AimID        string   `json:"aimId" xml:"aimId"`
+	DisplayID    string   `json:"displayId" xml:"displayId"`
+	Friendly     string   `json:"friendly,omitempty" xml:"friendly,omitempty"` // Viewer's private alias, rendered in preference to DisplayID
+	State        string   `json:"state" xml:"state"`                           // "online", "offline", "away", "idle"
+	StatusMsg    string   `json:"statusMsg,omitempty" xml:"statusMsg,omitempty"`
+	AwayMsg      string   `json:"awayMsg,omitempty" xml:"awayMsg,omitempty"`
+	OnlineTime   int64    `json:"onlineTime,omitempty" xml:"onlineTime,omitempty"`
+	IdleTime     int      `json:"idleTime,omitempty" xml:"idleTime,omitempty"` // Minutes idle
+	UserType     string   `json:"userType" xml:"userType"`                     // "aim", "icq", "admin"
+	Bot          bool     `json:"bot" xml:"bot"`
+	Service      string   `json:"service,omitempty" xml:"service,omitempty"` // "AIM", "ICQ" (Web AIM client compares case-sensitively)
+	PresenceIcon string   `json:"presenceIcon,omitempty" xml:"presenceIcon,omitempty"`
+	BuddyIcon    string   `json:"buddyIcon,omitempty" xml:"buddyIcon,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty" xml:"capabilities>capability,omitempty"`
+	MemberSince  int64    `json:"memberSince,omitempty" xml:"memberSince,omitempty"`
 }
 
 // GetBuddyListForUser retrieves and converts the buddy list for a user.
@@ -564,73 +567,4 @@ func (m *BuddyListManager) SetGroupAttributeInFeedbag(ctx context.Context, sess 
 	}
 
 	return "success", nil
-}
-
-// FormatBuddyListEvent formats a buddy list for an event.
-func (m *BuddyListManager) FormatBuddyListEvent(groups []WebAPIBuddyGroup) map[string]interface{} {
-	// Convert groups to a format that AMF3 can properly encode
-	// AMF3 has trouble with complex struct slices, so convert to maps
-	groupMaps := make([]interface{}, len(groups))
-	for i, group := range groups {
-		buddyMaps := make([]interface{}, len(group.Buddies))
-		for j, buddy := range group.Buddies {
-			// Convert each buddy to a map
-			buddyMap := map[string]interface{}{
-				"aimId":     buddy.AimID,
-				"displayId": buddy.DisplayID,
-				"state":     buddy.State,
-				"userType":  buddy.UserType,
-				"bot":       buddy.Bot,
-				"service":   buddy.Service,
-			}
-
-			// Add optional fields if present
-			if buddy.StatusMsg != "" {
-				buddyMap["statusMsg"] = buddy.StatusMsg
-			}
-			if buddy.AwayMsg != "" {
-				buddyMap["awayMsg"] = buddy.AwayMsg
-			}
-			if buddy.OnlineTime > 0 {
-				buddyMap["onlineTime"] = float64(buddy.OnlineTime)
-			}
-			if buddy.IdleTime > 0 {
-				buddyMap["idleTime"] = buddy.IdleTime
-			}
-			if buddy.PresenceIcon != "" {
-				buddyMap["presenceIcon"] = buddy.PresenceIcon
-			}
-			if buddy.BuddyIcon != "" {
-				buddyMap["buddyIcon"] = buddy.BuddyIcon
-			}
-			if len(buddy.Capabilities) > 0 {
-				buddyMap["capabilities"] = buddy.Capabilities
-			}
-			if buddy.MemberSince > 0 {
-				buddyMap["memberSince"] = float64(buddy.MemberSince)
-			}
-
-			buddyMaps[j] = buddyMap
-		}
-
-		// Convert group to a map
-		groupMap := map[string]interface{}{
-			"name":    group.Name,
-			"buddies": buddyMaps,
-		}
-
-		// Add optional group fields
-		if group.Recent {
-			groupMap["recent"] = group.Recent
-		}
-		if group.Smart != nil {
-			groupMap["smart"] = group.Smart
-		}
-
-		groupMaps[i] = groupMap
-	}
-
-	return map[string]interface{}{
-		"groups": groupMaps,
-	}
 }

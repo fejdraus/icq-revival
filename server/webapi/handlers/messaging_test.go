@@ -132,16 +132,16 @@ func sendIMForDest(t *testing.T, dest, locateName, alias string) []types.Event {
 // properly formatted name the client already holds for that aimId.
 func TestMessagingHandler_SendIM_DestDisplayIDFromLocateReply(t *testing.T) {
 	var sentIM types.SentIMEvent
-	var conv map[string]interface{}
+	var conv types.ConversationEntryData
 	for _, event := range sendIMForDest(t, "mikelee", "Mike Lee", "") {
 		switch event.Type {
 		case types.EventTypeSentIM:
 			sentIM, _ = event.Data.(types.SentIMEvent)
 		case types.EventTypeConversation:
-			data, _ := event.Data.(map[string]interface{})
-			convs, _ := data["conversations"].([]map[string]interface{})
-			require.Len(t, convs, 1)
-			conv = convs[0]
+			data, _ := event.Data.(*types.ConversationData)
+			require.NotNil(t, data)
+			require.Len(t, data.Conversations, 1)
+			conv = data.Conversations[0]
 		}
 	}
 
@@ -150,9 +150,8 @@ func TestMessagingHandler_SendIM_DestDisplayIDFromLocateReply(t *testing.T) {
 	assert.Equal(t, "mikelee", sentIM.Dest.AimID)
 	assert.Equal(t, "Mike Lee", sentIM.Dest.DisplayID)
 
-	require.NotNil(t, conv)
-	assert.Equal(t, "mikelee", conv["aimId"])
-	assert.Equal(t, "Mike Lee", conv["displayId"])
+	assert.Equal(t, "mikelee", conv.AimID)
+	assert.Equal(t, "Mike Lee", conv.DisplayID)
 }
 
 // An alias is private to the sender and lives only in their feedbag, and the client
@@ -175,16 +174,16 @@ func TestMessagingHandler_SendIM_DestCarriesAlias(t *testing.T) {
 // rather than filled in with the aimId, leaving the client's existing name intact.
 func TestMessagingHandler_SendIM_OmitsDestDisplayIDWhenUnresolved(t *testing.T) {
 	var sentIM types.SentIMEvent
-	var conv map[string]interface{}
+	var conv types.ConversationEntryData
 	for _, event := range sendIMForDest(t, "mikelee", "", "") {
 		switch event.Type {
 		case types.EventTypeSentIM:
 			sentIM, _ = event.Data.(types.SentIMEvent)
 		case types.EventTypeConversation:
-			data, _ := event.Data.(map[string]interface{})
-			convs, _ := data["conversations"].([]map[string]interface{})
-			require.Len(t, convs, 1)
-			conv = convs[0]
+			data, _ := event.Data.(*types.ConversationData)
+			require.NotNil(t, data)
+			require.Len(t, data.Conversations, 1)
+			conv = data.Conversations[0]
 		}
 	}
 
@@ -194,9 +193,12 @@ func TestMessagingHandler_SendIM_OmitsDestDisplayIDWhenUnresolved(t *testing.T) 
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "displayId\":\"mikelee\"")
 
-	require.NotNil(t, conv)
-	assert.Equal(t, "mikelee", conv["aimId"])
-	assert.NotContains(t, conv, "displayId")
+	assert.Equal(t, "mikelee", conv.AimID)
+	assert.Empty(t, conv.DisplayID)
+	// omitempty is what keeps it out of the payload.
+	encodedConv, err := json.Marshal(conv)
+	require.NoError(t, err)
+	assert.NotContains(t, string(encodedConv), "displayId")
 }
 
 func TestMessagingHandler_SendIM(t *testing.T) {

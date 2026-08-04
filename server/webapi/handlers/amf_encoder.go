@@ -9,7 +9,6 @@ import (
 	"time"
 
 	goAMF3 "github.com/breign/goAMF3"
-	"github.com/mk6i/open-oscar-server/server/webapi/types"
 )
 
 // AMFVersion represents the AMF encoding version
@@ -48,6 +47,10 @@ func (e *AMFEncoder) toAMF3Compatible(data interface{}) interface{} {
 
 	// goAMF3 handles regular Go types well, just need to ensure maps are used
 	// Don't use ECMAArray for AMF3 - just regular maps
+	// Every response is a struct whose json tags name its fields, and
+	// structToMap reflects over exactly those tags, so no response needs a case
+	// of its own here. sanitizeForAMF3 handles the types goAMF3 cannot take —
+	// notably the uint64 sequence numbers — on the way out.
 	switch d := data.(type) {
 	case BaseResponse:
 		return e.baseResponseToMap(d)
@@ -55,46 +58,6 @@ func (e *AMFEncoder) toAMF3Compatible(data interface{}) interface{} {
 		return e.responseBodyToMap(d)
 	case ErrorResponse:
 		return e.errorResponseToMap(d)
-	case StartSessionResponse:
-		// Special handling for StartSessionResponse
-		return map[string]interface{}{
-			"response": map[string]interface{}{
-				"statusCode": d.Response.StatusCode,
-				"statusText": d.Response.StatusText,
-				"data": map[string]interface{}{
-					"aimsid":          d.Response.Data.AimSID,
-					"fetchTimeout":    d.Response.Data.FetchTimeout,
-					"timeToNextFetch": d.Response.Data.TimeToNextFetch,
-					"fetchBaseURL":    d.Response.Data.FetchBaseURL, // Required for Gromit
-					"events":          d.Response.Data.Events,
-					"wellKnownUrls":   d.Response.Data.WellKnownUrls,
-				},
-			},
-		}
-	case FetchEventsResponse:
-		// Special handling for FetchEventsResponse
-		// goAMF3 can't handle uint64, must convert to int
-		return map[string]interface{}{
-			"response": map[string]interface{}{
-				"statusCode": d.Response.StatusCode,
-				"statusText": d.Response.StatusText,
-				"data": map[string]interface{}{
-					"events":          d.Response.Data.Events,
-					"lastSeqNum":      int(d.Response.Data.LastSeqNum), // Convert uint64 to int
-					"timeToNextFetch": d.Response.Data.TimeToNextFetch,
-					"fetchBaseURL":    d.Response.Data.FetchBaseURL,
-				},
-			},
-		}
-	case EndSessionResponse:
-		// Special handling for EndSessionResponse - Gromit expects flat structure
-		// Based on Gromit's MockServer, it expects:
-		// { "data": {}, "statusCode": 200, "statusText": "OK" }
-		return map[string]interface{}{
-			"data":       map[string]interface{}{}, // Empty data object
-			"statusCode": d.Response.StatusCode,
-			"statusText": d.Response.StatusText,
-		}
 	default:
 		// For other types, convert structs to maps
 		return e.convertToMap(data)
@@ -102,7 +65,11 @@ func (e *AMFEncoder) toAMF3Compatible(data interface{}) interface{} {
 }
 
 // sanitizeForAMF3 recursively removes nil values from the data structure
-// because goAMF3 panics when encountering nil values in maps
+// because goAMF3 panics when encountering nil values in maps.
+//
+// It runs on the output of toAMF3Compatible, so every struct and slice has
+// already been reduced to maps and []interface{}; only the leaf types goAMF3
+// cannot take are left to convert.
 func (e *AMFEncoder) sanitizeForAMF3(data interface{}) interface{} {
 	if data == nil {
 		return map[string]interface{}{}
@@ -141,43 +108,6 @@ func (e *AMFEncoder) sanitizeForAMF3(data interface{}) interface{} {
 			result[i] = e.sanitizeForAMF3(item)
 		}
 		return result
-	case []types.Event:
-		// Handle WebAPIEvent arrays specially
-		result := make([]interface{}, len(v))
-		for i, event := range v {
-			// AMF3 has a 29-bit limit for integers
-			// Keep seqNum small by using modulo
-			seqNum := int(event.SeqNum % (1 << 29))
-			// Convert timestamp to seconds ago to keep it small
-			timestampSec := int(time.Now().Unix() - event.Timestamp)
-			if timestampSec < 0 {
-				timestampSec = 0
-			}
-
-			result[i] = map[string]interface{}{
-				"type":      event.Type,
-				"seqNum":    seqNum,
-				"timestamp": timestampSec,
-				"data":      e.sanitizeForAMF3(event.Data),
-			}
-		}
-		return result
-	case types.Event:
-		// Handle single WebAPIEvent
-		// AMF3 has a 29-bit limit for integers
-		seqNum := int(v.SeqNum % (1 << 29))
-		// Convert timestamp to seconds ago to keep it small
-		timestampSec := int(time.Now().Unix() - v.Timestamp)
-		if timestampSec < 0 {
-			timestampSec = 0
-		}
-
-		return map[string]interface{}{
-			"type":      v.Type,
-			"seqNum":    seqNum,
-			"timestamp": timestampSec,
-			"data":      e.sanitizeForAMF3(v.Data),
-		}
 	default:
 		// For other types, use reflection to check if it's a struct
 		// and convert to map
@@ -216,12 +146,18 @@ func (e *AMFEncoder) responseBodyToMap(body ResponseBody) map[string]interface{}
 
 // errorResponseToMap converts ErrorResponse to AMF3-compatible map
 func (e *AMFEncoder) errorResponseToMap(err ErrorResponse) map[string]interface{} {
-	return map[string]interface{}{
-		"response": map[string]interface{}{
-			"statusCode": err.Response.StatusCode,
-			"statusText": err.Response.StatusText,
-		},
+	m := map[string]interface{}{
+		"statusCode": err.Response.StatusCode,
+		"statusText": err.Response.StatusText,
 	}
+	// The client dereferences response.data on a failure too, so the error
+	// envelope carries one in AMF as it does in every other format.
+	if err.Response.Data != nil {
+		m["data"] = e.toAMF3Compatible(err.Response.Data)
+	} else {
+		m["data"] = map[string]interface{}{}
+	}
+	return map[string]interface{}{"response": m}
 }
 
 // structToMap converts a struct to a map using JSON tags for AMF3

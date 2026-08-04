@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/xml"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -20,34 +19,12 @@ type EventsHandler struct {
 	Logger         *slog.Logger
 }
 
-// FetchEventsResponse represents the response for fetchEvents endpoint.
-type FetchEventsResponse struct {
-	Response struct {
-		StatusCode int             `json:"statusCode"`
-		StatusText string          `json:"statusText"`
-		Data       FetchEventsData `json:"data"`
-	} `json:"response"`
-}
-
 // FetchEventsData contains the events and metadata.
 type FetchEventsData struct {
-	Events          []types.Event `json:"events"`
-	LastSeqNum      uint64        `json:"lastSeqNum"`
-	TimeToNextFetch int           `json:"timeToNextFetch"`
-	FetchBaseURL    string        `json:"fetchBaseURL"`
-}
-
-// FetchEventsXMLResponse represents the XML response for fetchEvents endpoint.
-type FetchEventsXMLResponse struct {
-	XMLName    xml.Name `xml:"response"`
-	StatusCode int      `xml:"statusCode"`
-	StatusText string   `xml:"statusText"`
-	Data       struct {
-		Events          []types.Event `xml:"events>event"`
-		LastSeqNum      uint64        `xml:"lastSeqNum"`
-		TimeToNextFetch int           `xml:"timeToNextFetch"`
-		FetchBaseURL    string        `xml:"fetchBaseURL"`
-	} `xml:"data"`
+	Events          []types.Event `json:"events" xml:"events>event"`
+	LastSeqNum      uint64        `json:"lastSeqNum" xml:"lastSeqNum"`
+	TimeToNextFetch int           `json:"timeToNextFetch" xml:"timeToNextFetch"`
+	FetchBaseURL    string        `json:"fetchBaseURL" xml:"fetchBaseURL"`
 }
 
 // FetchEvents handles GET /aim/fetchEvents requests with long-polling support.
@@ -100,63 +77,40 @@ func (h *EventsHandler) FetchEvents(w http.ResponseWriter, r *http.Request, sess
 	}
 
 	// Prepare response
-	resp := FetchEventsResponse{}
+	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data.Events = events
-	resp.Response.Data.LastSeqNum = newLastSeqNum
-	resp.Response.Data.TimeToNextFetch = session.TimeToNextFetch
-	// Include fetchBaseURL with updated sequence number for next request
-	resp.Response.Data.FetchBaseURL = fmt.Sprintf("http://%s/aim/fetchEvents?aimsid=%s&seqNum=%d",
-		r.Host, aimsid, newLastSeqNum)
+	resp.Response.Data = &FetchEventsData{
+		Events:          events,
+		LastSeqNum:      newLastSeqNum,
+		TimeToNextFetch: session.TimeToNextFetch,
+		// Include fetchBaseURL with updated sequence number for next request
+		FetchBaseURL: fmt.Sprintf("http://%s/aim/fetchEvents?aimsid=%s&seqNum=%d",
+			r.Host, aimsid, newLastSeqNum),
+	}
 
-	// Check response format
+	// AMF3 clients (e.g. Gromit) take the events reshaped: timestamps as floats
+	// and the source/dest user objects flattened. That is a payload difference,
+	// not just an encoding one, so it stays here rather than in the encoder.
 	format := strings.ToLower(r.URL.Query().Get("f"))
-
-	switch format {
-	case "xml":
-		// Send XML response
-		xmlResp := FetchEventsXMLResponse{}
-		xmlResp.StatusCode = 200
-		xmlResp.StatusText = "OK"
-		xmlResp.Data.Events = events
-		xmlResp.Data.LastSeqNum = newLastSeqNum
-		xmlResp.Data.TimeToNextFetch = session.TimeToNextFetch
-		xmlResp.Data.FetchBaseURL = fmt.Sprintf("http://%s/aim/fetchEvents?aimsid=%s&seqNum=%d",
-			r.Host, aimsid, newLastSeqNum)
-
-		w.Header().Set("Content-Type", "text/xml")
-		_, _ = fmt.Fprint(w, `<?xml version="1.0" encoding="UTF-8"?>`)
-		if err := xml.NewEncoder(w).Encode(xmlResp); err != nil {
-			h.Logger.Error("failed to encode XML response", "error", err)
-		}
-	case "amf", "amf3":
-		// For AMF3, build the response with fields in the correct order
-		// The working implementation has: response { data {...}, statusCode, statusText, statusDetailCode }
-		// Convert events to ensure timestamps are float64 for AMF3
-		convertedEvents := ConvertEventsForAMF3(events)
-
+	if format == "amf" || format == "amf3" {
 		amfResp := map[string]interface{}{
 			"response": map[string]interface{}{
-				// Data comes FIRST (Gromit processes this large object)
 				"data": map[string]interface{}{
-					"events":          convertedEvents,
+					"events":          ConvertEventsForAMF3(events),
 					"lastSeqNum":      newLastSeqNum,
 					"timeToNextFetch": session.TimeToNextFetch,
 					"fetchBaseURL": fmt.Sprintf("http://%s/aim/fetchEvents?aimsid=%s&seqNum=%d",
 						r.Host, aimsid, newLastSeqNum),
 				},
-				// Status fields come AFTER data
 				"statusCode":       200,
 				"statusText":       "OK",
 				"statusDetailCode": 0,
 			},
 		}
-
-		// Use SendResponse which will detect AMF format and encode properly
 		SendResponse(w, r, amfResp, h.Logger)
-	default:
-		// Send JSON/JSONP response with standard structure
+	} else {
+		// Send response in requested format (JSON, JSONP, or XML)
 		SendResponse(w, r, resp, h.Logger)
 	}
 

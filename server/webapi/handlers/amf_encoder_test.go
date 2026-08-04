@@ -93,16 +93,8 @@ func TestAMFEncoderComplexTypes(t *testing.T) {
 			version: AMF3,
 		},
 		{
-			name: "ErrorResponse",
-			input: ErrorResponse{
-				Response: struct {
-					StatusCode int    `json:"statusCode" xml:"statusCode"`
-					StatusText string `json:"statusText" xml:"statusText"`
-				}{
-					StatusCode: 404,
-					StatusText: "Not Found",
-				},
-			},
+			name:    "ErrorResponse",
+			input:   newErrorResponse(404, "Not Found"),
 			version: AMF3,
 		},
 		{
@@ -433,5 +425,31 @@ func TestZeroValueDetection(t *testing.T) {
 		} else if actual != expected {
 			t.Errorf("Field %s: expected %v, got %v", field, expected, actual)
 		}
+	}
+}
+
+// The client dereferences response.data on a failure too, so the AMF error
+// envelope carries one just as the JSON, JSONP and XML ones do.
+func TestAMFErrorEnvelopeCarriesData(t *testing.T) {
+	encoder := NewAMFEncoder(nil)
+
+	out, ok := encoder.toAMF3Compatible(newErrorResponse(404, "Not Found")).(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected an envelope map, got %T", out)
+	}
+	resp, ok := out["response"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected a response map, got %T", out["response"])
+	}
+
+	if resp["statusCode"] != 404 {
+		t.Errorf("statusCode: expected 404, got %v", resp["statusCode"])
+	}
+	data, ok := resp["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected an empty data map, got %T", resp["data"])
+	}
+	if len(data) != 0 {
+		t.Errorf("data: expected empty, got %v", data)
 	}
 }

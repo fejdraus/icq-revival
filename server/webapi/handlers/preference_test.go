@@ -162,19 +162,19 @@ func TestEffectiveBuddyPrefs_StoredOverridesDefault(t *testing.T) {
 	got := effectiveBuddyPrefs(list)
 
 	// Every pref is present (defaults applied for unset ones).
-	assert.Len(t, got, len(webBuddyPrefs))
-	assert.Equal(t, 0, got["playIMSound"])
-	assert.Equal(t, 1, got["viewIMsInBubbles"])
+	assert.Equal(t, len(webBuddyPrefs), got.Len())
+	assertPref(t, got, "playIMSound", 0)
+	assertPref(t, got, "viewIMsInBubbles", 1)
 }
 
 func TestEffectiveBuddyPrefs_AppliesDefaultsWhenNothingSet(t *testing.T) {
 	got := effectiveBuddyPrefs(wire.TLVList{})
 
 	// Unset prefs resolve to their spec defaults rather than being omitted.
-	assert.Len(t, got, len(webBuddyPrefs))
-	assert.Equal(t, 1, got["showGroups"], "showGroups should default to shown")
-	assert.Equal(t, 1, got["playIMSound"], "playIMSound defaults true")
-	assert.Equal(t, 0, got["sortBuddyList"], "sortBuddyList defaults false")
+	assert.Equal(t, len(webBuddyPrefs), got.Len())
+	assertPref(t, got, "showGroups", 1)    // showGroups should default to shown
+	assertPref(t, got, "playIMSound", 1)   // playIMSound defaults true
+	assertPref(t, got, "sortBuddyList", 0) // sortBuddyList defaults false
 }
 
 func TestPreferenceHandler_SetPermitDeny_QueuesPermitDenyEvent(t *testing.T) {
@@ -257,4 +257,28 @@ func TestPreferenceHandler_SetPreferences_NoOSCARSession(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, rr.Code)
 	assert.Contains(t, rr.Body.String(), "internal server error")
 	fs.AssertNotCalled(t, "Query", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// assertPref asserts a preference is carried and holds want.
+func assertPref(t *testing.T, prefs *PreferenceData, name string, want int) {
+	t.Helper()
+	got, ok := prefs.Get(name)
+	if assert.True(t, ok, "%s should be carried", name) {
+		assert.Equal(t, want, got, "%s", name)
+	}
+}
+
+// The struct and the table must describe the same set of preferences: a
+// preference in the table but not the struct is silently never sent, and one in
+// the struct but not the table is always absent.
+func TestPreferenceDataMatchesPrefTable(t *testing.T) {
+	structNames := make([]string, 0, len(prefFieldIndex))
+	for name := range prefFieldIndex {
+		structNames = append(structNames, name)
+	}
+	tableNames := make([]string, 0, len(webBuddyPrefs))
+	for name := range webBuddyPrefs {
+		tableNames = append(tableNames, name)
+	}
+	assert.ElementsMatch(t, tableNames, structNames)
 }

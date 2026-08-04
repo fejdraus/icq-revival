@@ -267,7 +267,14 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		// method is an unimplemented social-feed feature; the subtree catch-all
 		// acknowledges them with an empty 200 so the client doesn't error.
 		mux.Handle("GET /lifestream/getUserDetails", stubRoute(lifestreamStub.GetUserDetails))
+		mux.Handle("GET /lifestream/heyGetNotifications", stubRoute(lifestreamStub.HeyGetNotifications))
 		mux.Handle("GET /lifestream/", stubRoute(lifestreamStub.EmptyOK))
+
+		// The client probes for a linked Google Talk account as soon as the
+		// session comes up, and its callback dereferences response.data unless
+		// the status says the service is absent.
+		serviceStub := &handlers.ServiceStubHandler{Logger: logger}
+		mux.Handle("GET /service/getAttributes", stubRoute(serviceStub.GetAttributes))
 
 		// Go 1.22 patterns are method-exact, so an OPTIONS preflight matches none of
 		// the "GET /x" routes above and would otherwise fall through to the 404

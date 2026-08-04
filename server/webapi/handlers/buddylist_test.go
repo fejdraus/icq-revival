@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -127,7 +126,7 @@ func TestBuddyListHandler_AddTempBuddy(t *testing.T) {
 				LastAccessed: time.Now(),
 			},
 			expectedStatusCode: http.StatusBadRequest,
-			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing buddy names (t parameter)"}}`,
+			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing buddy names (t parameter)","data":{}}}`,
 		},
 		{
 			name: "Success_WithWhitespace",
@@ -178,7 +177,7 @@ func TestBuddyListHandler_AddTempBuddy(t *testing.T) {
 			handler.AddTempBuddy(rr, req, tt.session)
 
 			assert.Equal(t, tt.expectedStatusCode, rr.Code)
-			assert.Equal(t, tt.expectedResponse, strings.TrimSpace(rr.Body.String()))
+			assert.JSONEq(t, tt.expectedResponse, rr.Body.String())
 
 			if tt.checkSession != nil && tt.session != nil {
 				tt.checkSession(t, tt.session)
@@ -368,7 +367,7 @@ func TestBuddyListHandler_AddBuddy(t *testing.T) {
 				}
 			},
 			expectedStatusCode: http.StatusBadRequest,
-			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing buddy parameter"}}`,
+			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing buddy parameter","data":{}}}`,
 		},
 	}
 
@@ -410,8 +409,7 @@ func TestBuddyListHandler_AddBuddy(t *testing.T) {
 			handler.AddBuddy(rr, req, session)
 
 			assert.Equal(t, tt.expectedStatusCode, rr.Code)
-			responseBody := strings.TrimSpace(rr.Body.String())
-			assert.Equal(t, tt.expectedResponse, responseBody)
+			assert.JSONEq(t, tt.expectedResponse, rr.Body.String())
 
 			feedbagService.AssertExpectations(t)
 			blmFeedbagService.AssertExpectations(t)
@@ -445,7 +443,7 @@ func TestBuddyListHandler_AddGroup(t *testing.T) {
 				return newSession(aimsid)
 			},
 			expectedStatusCode: http.StatusBadRequest,
-			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing group parameter"}}`,
+			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing group parameter","data":{}}}`,
 		},
 		{
 			name:        "Success_GroupAdded",
@@ -539,7 +537,7 @@ func TestBuddyListHandler_AddGroup(t *testing.T) {
 			handler.AddGroup(rr, req, session)
 
 			assert.Equal(t, tt.expectedStatusCode, rr.Code)
-			assert.Equal(t, tt.expectedResponse, strings.TrimSpace(rr.Body.String()))
+			assert.JSONEq(t, tt.expectedResponse, rr.Body.String())
 			fs.AssertExpectations(t)
 			blmFs.AssertExpectations(t)
 		})
@@ -567,7 +565,7 @@ func TestBuddyListHandler_RemoveBuddy(t *testing.T) {
 				return &state.WebAPISession{AimSID: aimsid, ScreenName: state.DisplayScreenName("testuser"), LastAccessed: time.Now()}
 			},
 			expectedStatusCode: http.StatusBadRequest,
-			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing buddy parameter"}}`,
+			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing buddy parameter","data":{}}}`,
 		},
 		{
 			name:        "Success_BuddyRemoved",
@@ -695,7 +693,7 @@ func TestBuddyListHandler_RemoveBuddy(t *testing.T) {
 			handler.RemoveBuddy(rr, req, session)
 
 			assert.Equal(t, tt.expectedStatusCode, rr.Code)
-			assert.Equal(t, tt.expectedResponse, strings.TrimSpace(rr.Body.String()))
+			assert.JSONEq(t, tt.expectedResponse, rr.Body.String())
 			fs.AssertExpectations(t)
 		})
 	}
@@ -722,7 +720,7 @@ func TestBuddyListHandler_RemoveGroup(t *testing.T) {
 				return &state.WebAPISession{AimSID: aimsid, ScreenName: state.DisplayScreenName("testuser"), LastAccessed: time.Now()}
 			},
 			expectedStatusCode: http.StatusBadRequest,
-			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing group parameter"}}`,
+			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing group parameter","data":{}}}`,
 		},
 		{
 			name:        "Success_GroupRemoved",
@@ -840,7 +838,7 @@ func TestBuddyListHandler_RemoveGroup(t *testing.T) {
 			handler.RemoveGroup(rr, req, session)
 
 			assert.Equal(t, tt.expectedStatusCode, rr.Code)
-			assert.Equal(t, tt.expectedResponse, strings.TrimSpace(rr.Body.String()))
+			assert.JSONEq(t, tt.expectedResponse, rr.Body.String())
 			fs.AssertExpectations(t)
 		})
 	}
@@ -860,7 +858,7 @@ func TestRequireSession(t *testing.T) {
 			aimsid:             "",
 			setupMocks:         func(sm *MockWebAPISessionManager, aimsid string) {},
 			expectedStatusCode: http.StatusBadRequest,
-			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing aimsid parameter"}}`,
+			expectedResponse:   `{"response":{"statusCode":400,"statusText":"missing aimsid parameter","data":{}}}`,
 			expectNextCalled:   false,
 		},
 		{
@@ -870,7 +868,7 @@ func TestRequireSession(t *testing.T) {
 				sm.On("GetSession", mock.Anything, aimsid).Return(nil, state.ErrNoWebAPISession)
 			},
 			expectedStatusCode: http.StatusUnauthorized,
-			expectedResponse:   `{"response":{"statusCode":401,"statusText":"invalid or expired session"}}`,
+			expectedResponse:   `{"response":{"statusCode":401,"statusText":"invalid or expired session","data":{}}}`,
 			expectNextCalled:   false,
 		},
 		{
@@ -880,7 +878,7 @@ func TestRequireSession(t *testing.T) {
 				sm.On("GetSession", mock.Anything, aimsid).Return(nil, state.ErrWebAPISessionExpired)
 			},
 			expectedStatusCode: http.StatusUnauthorized,
-			expectedResponse:   `{"response":{"statusCode":401,"statusText":"invalid or expired session"}}`,
+			expectedResponse:   `{"response":{"statusCode":401,"statusText":"invalid or expired session","data":{}}}`,
 			expectNextCalled:   false,
 		},
 		{
@@ -890,7 +888,7 @@ func TestRequireSession(t *testing.T) {
 				sm.On("GetSession", mock.Anything, aimsid).Return(nil, errors.New("db error"))
 			},
 			expectedStatusCode: http.StatusUnauthorized,
-			expectedResponse:   `{"response":{"statusCode":401,"statusText":"invalid or expired session"}}`,
+			expectedResponse:   `{"response":{"statusCode":401,"statusText":"invalid or expired session","data":{}}}`,
 			expectNextCalled:   false,
 		},
 		{
@@ -907,7 +905,7 @@ func TestRequireSession(t *testing.T) {
 				sm.On("GetSession", mock.Anything, aimsid).Return(sess, nil)
 			},
 			expectedStatusCode: http.StatusInternalServerError,
-			expectedResponse:   `{"response":{"statusCode":500,"statusText":"internal server error"}}`,
+			expectedResponse:   `{"response":{"statusCode":500,"statusText":"internal server error","data":{}}}`,
 			expectNextCalled:   false,
 		},
 		{
@@ -924,7 +922,7 @@ func TestRequireSession(t *testing.T) {
 				sm.On("TouchSession", mock.Anything, aimsid).Return(nil)
 			},
 			expectedStatusCode: http.StatusOK,
-			expectedResponse:   `{"response":{"statusCode":200,"statusText":"OK"}}`,
+			expectedResponse:   `{"response":{"statusCode":200,"statusText":"OK","data":{}}}`,
 			expectNextCalled:   true,
 		},
 	}
@@ -957,7 +955,7 @@ func TestRequireSession(t *testing.T) {
 			wrapped.ServeHTTP(rr, req)
 
 			assert.Equal(t, tt.expectedStatusCode, rr.Code)
-			assert.Equal(t, tt.expectedResponse, strings.TrimSpace(rr.Body.String()))
+			assert.JSONEq(t, tt.expectedResponse, rr.Body.String())
 			assert.Equal(t, tt.expectNextCalled, nextCalled)
 
 			sm.AssertExpectations(t)
@@ -993,7 +991,7 @@ func TestBuddyListHandler_RenameGroup(t *testing.T) {
 				return &state.WebAPISession{AimSID: aimsid, LastAccessed: time.Now()}
 			},
 			expectStatusCode: http.StatusBadRequest,
-			expectResponse:   `{"response":{"statusCode":400,"statusText":"missing oldGroup or newGroup parameter"}}`,
+			expectResponse:   `{"response":{"statusCode":400,"statusText":"missing oldGroup or newGroup parameter","data":{}}}`,
 		},
 		{
 			name:        "Success",
@@ -1044,7 +1042,7 @@ func TestBuddyListHandler_RenameGroup(t *testing.T) {
 			handler.RenameGroup(rr, req, session)
 
 			assert.Equal(t, tt.expectStatusCode, rr.Code)
-			assert.Equal(t, tt.expectResponse, strings.TrimSpace(rr.Body.String()))
+			assert.JSONEq(t, tt.expectResponse, rr.Body.String())
 			fs.AssertExpectations(t)
 		})
 	}
@@ -1078,7 +1076,7 @@ func TestBuddyListHandler_MoveBuddy(t *testing.T) {
 				return &state.WebAPISession{AimSID: aimsid, LastAccessed: time.Now()}
 			},
 			expectStatusCode: http.StatusBadRequest,
-			expectResponse:   `{"response":{"statusCode":400,"statusText":"missing buddy parameter"}}`,
+			expectResponse:   `{"response":{"statusCode":400,"statusText":"missing buddy parameter","data":{}}}`,
 		},
 		{
 			name:        "Success_Reorder",
@@ -1136,7 +1134,7 @@ func TestBuddyListHandler_MoveBuddy(t *testing.T) {
 			handler.MoveBuddy(rr, req, session)
 
 			assert.Equal(t, tt.expectStatusCode, rr.Code)
-			assert.Equal(t, tt.expectResponse, strings.TrimSpace(rr.Body.String()))
+			assert.JSONEq(t, tt.expectResponse, rr.Body.String())
 			fs.AssertExpectations(t)
 		})
 	}
@@ -1170,7 +1168,7 @@ func TestBuddyListHandler_SetBuddyAttribute(t *testing.T) {
 				return &state.WebAPISession{AimSID: aimsid, LastAccessed: time.Now()}
 			},
 			expectStatusCode: http.StatusBadRequest,
-			expectResponse:   `{"response":{"statusCode":400,"statusText":"missing t parameter"}}`,
+			expectResponse:   `{"response":{"statusCode":400,"statusText":"missing t parameter","data":{}}}`,
 		},
 		{
 			name:        "Success",
@@ -1221,7 +1219,7 @@ func TestBuddyListHandler_SetBuddyAttribute(t *testing.T) {
 			handler.SetBuddyAttribute(rr, req, session)
 
 			assert.Equal(t, tt.expectStatusCode, rr.Code)
-			assert.Equal(t, tt.expectResponse, strings.TrimSpace(rr.Body.String()))
+			assert.JSONEq(t, tt.expectResponse, rr.Body.String())
 			fs.AssertExpectations(t)
 		})
 	}
@@ -1255,7 +1253,7 @@ func TestBuddyListHandler_SetGroupAttribute(t *testing.T) {
 				return &state.WebAPISession{AimSID: aimsid, LastAccessed: time.Now()}
 			},
 			expectStatusCode: http.StatusBadRequest,
-			expectResponse:   `{"response":{"statusCode":400,"statusText":"missing collapsed parameter"}}`,
+			expectResponse:   `{"response":{"statusCode":400,"statusText":"missing collapsed parameter","data":{}}}`,
 		},
 		{
 			name:        "Success",
@@ -1306,7 +1304,7 @@ func TestBuddyListHandler_SetGroupAttribute(t *testing.T) {
 			handler.SetGroupAttribute(rr, req, session)
 
 			assert.Equal(t, tt.expectStatusCode, rr.Code)
-			assert.Equal(t, tt.expectResponse, strings.TrimSpace(rr.Body.String()))
+			assert.JSONEq(t, tt.expectResponse, rr.Body.String())
 			fs.AssertExpectations(t)
 		})
 	}

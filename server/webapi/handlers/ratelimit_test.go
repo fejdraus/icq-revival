@@ -342,14 +342,14 @@ func TestRateLimitMiddleware_sendRateLimited(t *testing.T) {
 			name:            "plain JSON",
 			query:           "",
 			wantCode:        http.StatusOK,
-			wantBody:        `{"response":{"statusCode":430,"statusText":"rate limit exceeded"}}`,
+			wantBody:        `{"response":{"statusCode":430,"statusText":"rate limit exceeded","data":{}}}`,
 			wantContentType: "application/json",
 		},
 		{
 			name:            "JSONP callback",
 			query:           "?c=myCallback",
 			wantCode:        http.StatusOK,
-			wantBody:        `myCallback({"response":{"statusCode":430,"statusText":"rate limit exceeded"}});`,
+			wantBody:        `myCallback({"response":{"statusCode":430,"statusText":"rate limit exceeded","data":{}}});`,
 			wantContentType: "application/javascript",
 		},
 		{
@@ -358,7 +358,7 @@ func TestRateLimitMiddleware_sendRateLimited(t *testing.T) {
 			name:            "JSONP callback echoes requestId",
 			query:           "?c=myCallback&r=42",
 			wantCode:        http.StatusOK,
-			wantBody:        `myCallback({"response":{"statusCode":430,"statusText":"rate limit exceeded","requestId":"42"}});`,
+			wantBody:        `myCallback({"response":{"statusCode":430,"statusText":"rate limit exceeded","requestId":"42","data":{}}});`,
 			wantContentType: "application/javascript",
 		},
 		{
@@ -368,7 +368,7 @@ func TestRateLimitMiddleware_sendRateLimited(t *testing.T) {
 			query:    "?c=alert(1)",
 			wantCode: http.StatusBadRequest,
 			// sendJSONError encodes with json.Encoder, which appends a newline.
-			wantBody:        "{\"response\":{\"statusCode\":400,\"statusText\":\"invalid callback parameter\"}}\n",
+			wantBody:        "{\"response\":{\"statusCode\":400,\"statusText\":\"invalid callback parameter\",\"data\":{}}}\n",
 			wantContentType: "application/json",
 		},
 	}

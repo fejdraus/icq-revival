@@ -52,11 +52,9 @@ func (h *BuddyListHandler) AddBuddy(w http.ResponseWriter, r *http.Request, sess
 	resultCode, buddyInfo := h.addBuddyToFeedbag(ctx, session, buddyName, groupName)
 
 	// Prepare response
-	responseData := map[string]any{
-		"resultCode": resultCode,
-	}
+	responseData := &ResultCodeData{ResultCode: resultCode}
 	if resultCode == "success" {
-		responseData["buddyInfo"] = buddyInfo
+		responseData.BuddyInfo = buddyInfo
 	}
 
 	resp := BaseResponse{}
@@ -70,7 +68,7 @@ func (h *BuddyListHandler) AddBuddy(w http.ResponseWriter, r *http.Request, sess
 		if err != nil {
 			h.Logger.ErrorContext(ctx, "failed to get buddy list for event", "err", err.Error())
 		} else {
-			blPayload := map[string]any{"groups": groups}
+			blPayload := &BuddyListData{Groups: groups}
 			session.EventQueue.Push(types.EventTypeBuddyList, blPayload)
 		}
 	}
@@ -99,9 +97,7 @@ func (h *BuddyListHandler) AddGroup(w http.ResponseWriter, r *http.Request, sess
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]any{
-		"resultCode": resultCode,
-	}
+	resp.Response.Data = &ResultCodeData{ResultCode: resultCode}
 	SendResponse(w, r, resp, h.Logger)
 
 	if resultCode == "success" {
@@ -109,7 +105,7 @@ func (h *BuddyListHandler) AddGroup(w http.ResponseWriter, r *http.Request, sess
 		if err != nil {
 			h.Logger.ErrorContext(ctx, "failed to get buddy list for event", "err", err.Error())
 		} else {
-			blPayload := map[string]any{"groups": groups}
+			blPayload := &BuddyListData{Groups: groups}
 			session.EventQueue.Push(types.EventTypeBuddyList, blPayload)
 		}
 	}
@@ -210,9 +206,7 @@ func (h *BuddyListHandler) RemoveBuddy(w http.ResponseWriter, r *http.Request, s
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]any{
-		"resultCode": resultCode,
-	}
+	resp.Response.Data = &ResultCodeData{ResultCode: resultCode}
 	SendResponse(w, r, resp, h.Logger)
 
 	if resultCode == "success" {
@@ -220,7 +214,7 @@ func (h *BuddyListHandler) RemoveBuddy(w http.ResponseWriter, r *http.Request, s
 		if err != nil {
 			h.Logger.ErrorContext(ctx, "failed to get buddy list for event", "err", err.Error())
 		} else {
-			blPayload := map[string]any{"groups": groups}
+			blPayload := &BuddyListData{Groups: groups}
 			session.EventQueue.Push(types.EventTypeBuddyList, blPayload)
 		}
 	}
@@ -253,9 +247,7 @@ func (h *BuddyListHandler) RemoveGroup(w http.ResponseWriter, r *http.Request, s
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]any{
-		"resultCode": resultCode,
-	}
+	resp.Response.Data = &ResultCodeData{ResultCode: resultCode}
 	SendResponse(w, r, resp, h.Logger)
 
 	if resultCode == "success" {
@@ -263,7 +255,7 @@ func (h *BuddyListHandler) RemoveGroup(w http.ResponseWriter, r *http.Request, s
 		if err != nil {
 			h.Logger.ErrorContext(ctx, "failed to get buddy list for event", "err", err.Error())
 		} else {
-			blPayload := map[string]any{"groups": groups}
+			blPayload := &BuddyListData{Groups: groups}
 			session.EventQueue.Push(types.EventTypeBuddyList, blPayload)
 		}
 	}
@@ -384,10 +376,7 @@ func (h *BuddyListHandler) AddTempBuddy(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Prepare response
-	responseData := map[string]any{
-		"resultCode": "success",
-		"buddyNames": buddyNames,
-	}
+	responseData := &ResultCodeData{ResultCode: "success", BuddyNames: buddyNames}
 
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
@@ -433,10 +422,7 @@ func (h *BuddyListHandler) RemoveTempBuddy(w http.ResponseWriter, r *http.Reques
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]any{
-		"resultCode": "success",
-		"buddyNames": removed,
-	}
+	resp.Response.Data = &ResultCodeData{ResultCode: "success", BuddyNames: removed}
 	SendResponse(w, r, resp, h.Logger)
 
 	h.Logger.InfoContext(ctx, "temporary buddies removed",
@@ -470,9 +456,7 @@ func (h *BuddyListHandler) RenameGroup(w http.ResponseWriter, r *http.Request, s
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]any{
-		"resultCode": resultCode,
-	}
+	resp.Response.Data = &ResultCodeData{ResultCode: resultCode}
 	SendResponse(w, r, resp, h.Logger)
 
 	if resultCode == "success" {
@@ -518,9 +502,7 @@ func (h *BuddyListHandler) MoveBuddy(w http.ResponseWriter, r *http.Request, ses
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]any{
-		"resultCode": resultCode,
-	}
+	resp.Response.Data = &ResultCodeData{ResultCode: resultCode}
 	SendResponse(w, r, resp, h.Logger)
 
 	if resultCode == "success" {
@@ -561,9 +543,7 @@ func (h *BuddyListHandler) SetBuddyAttribute(w http.ResponseWriter, r *http.Requ
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]any{
-		"resultCode": resultCode,
-	}
+	resp.Response.Data = &ResultCodeData{ResultCode: resultCode}
 	SendResponse(w, r, resp, h.Logger)
 
 	if resultCode == "success" {
@@ -604,9 +584,7 @@ func (h *BuddyListHandler) SetGroupAttribute(w http.ResponseWriter, r *http.Requ
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]any{
-		"resultCode": resultCode,
-	}
+	resp.Response.Data = &ResultCodeData{ResultCode: resultCode}
 	SendResponse(w, r, resp, h.Logger)
 
 	if resultCode == "success" {
@@ -629,8 +607,19 @@ func (h *BuddyListHandler) pushBuddyListEvent(ctx context.Context, session *stat
 		h.Logger.ErrorContext(ctx, "failed to get buddy list for event", "err", err.Error())
 		return
 	}
-	blPayload := map[string]any{"groups": groups}
-	session.EventQueue.Push(types.EventTypeBuddyList, blPayload)
+	session.EventQueue.Push(types.EventTypeBuddyList, &BuddyListData{Groups: groups})
+}
+
+// ResultCodeData is the payload the buddy list editing methods answer with.
+//
+// The spec shows these methods returning an empty data; the Web AIM client
+// reads resultCode from it, so the server sends one.
+type ResultCodeData struct {
+	ResultCode string `json:"resultCode" xml:"resultCode"`
+	// BuddyInfo accompanies a successful addBuddy only.
+	BuddyInfo *BuddyPresenceInfo `json:"buddyInfo,omitempty" xml:"buddyInfo,omitempty"`
+	// BuddyNames accompanies the temp-buddy methods only.
+	BuddyNames []string `json:"buddyNames,omitempty" xml:"buddyNames>buddyName,omitempty"`
 }
 
 // sendError is a convenience method that wraps the common SendError function.

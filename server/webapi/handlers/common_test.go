@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/xml"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -10,10 +11,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestAttachRequestID(t *testing.T) {
+func TestNormalizeEnvelope(t *testing.T) {
 	t.Run("sets requestId from r query param", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/buddylist/addBuddy?r=abc123", nil)
-		data := attachRequestID(req, BaseResponse{
+		data := normalizeEnvelope(req, BaseResponse{
 			Response: ResponseBody{
 				StatusCode: 200,
 				StatusText: "OK",
@@ -27,7 +28,7 @@ func TestAttachRequestID(t *testing.T) {
 
 	t.Run("preserves explicit requestId", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/buddylist/addBuddy?r=abc123", nil)
-		data := attachRequestID(req, BaseResponse{
+		data := normalizeEnvelope(req, BaseResponse{
 			Response: ResponseBody{
 				StatusCode: 200,
 				StatusText: "OK",
@@ -42,7 +43,7 @@ func TestAttachRequestID(t *testing.T) {
 
 	t.Run("no-op without r param", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/buddylist/addBuddy", nil)
-		data := attachRequestID(req, BaseResponse{
+		data := normalizeEnvelope(req, BaseResponse{
 			Response: ResponseBody{
 				StatusCode: 200,
 				StatusText: "OK",
@@ -138,4 +139,56 @@ func TestSendErrorJSONFallback(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 	assert.Contains(t, w.Header().Get("Content-Type"), "json")
 	assert.Contains(t, w.Body.String(), `"statusCode":404`)
+}
+
+// The Web API nests the envelope under a "response" key in JSON but renders it
+// as a flat <response> root in XML. MarshalXML reconciles the two so one struct
+// can describe a response in both formats.
+func TestEnvelopeMarshalXML(t *testing.T) {
+	t.Run("renders the flat response root", func(t *testing.T) {
+		resp := BaseResponse{}
+		resp.Response.StatusCode = 200
+		resp.Response.StatusText = "Ok"
+		resp.Response.RequestID = "123"
+		resp.Response.Data = struct {
+			AimSID string `json:"aimsid" xml:"aimsid"`
+		}{AimSID: "opaquedata"}
+
+		out, err := xml.Marshal(resp)
+		assert.NoError(t, err)
+		assert.Equal(t,
+			"<response><statusCode>200</statusCode><statusText>Ok</statusText>"+
+				"<requestId>123</requestId><data><aimsid>opaquedata</aimsid></data></response>",
+			string(out))
+	})
+
+	t.Run("renders an empty data element for a response with no payload", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/aim/endSession", nil)
+		resp := BaseResponse{}
+		resp.Response.StatusCode = 200
+		resp.Response.StatusText = "Ok"
+
+		out, err := xml.Marshal(normalizeEnvelope(req, resp))
+		assert.NoError(t, err)
+		assert.Contains(t, string(out), "<data></data>")
+	})
+
+	t.Run("error envelopes share the shape", func(t *testing.T) {
+		out, err := xml.Marshal(newErrorResponse(400, "bad request"))
+		assert.NoError(t, err)
+		assert.Equal(t,
+			"<response><statusCode>400</statusCode><statusText>bad request</statusText>"+
+				"<data></data></response>",
+			string(out))
+	})
+}
+
+// A handler that sets no data still sends one, because the client dereferences
+// response.data on any success.
+func TestNormalizeEnvelopeSuppliesEmptyData(t *testing.T) {
+	req := httptest.NewRequest("GET", "/aim/endSession", nil)
+
+	got := normalizeEnvelope(req, BaseResponse{}).(BaseResponse)
+
+	assert.Equal(t, struct{}{}, got.Response.Data)
 }

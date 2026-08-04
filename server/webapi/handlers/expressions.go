@@ -10,6 +10,17 @@ import (
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
+// ExpressionsData lists the expressions (buddy icons, etc.) a user publishes.
+type ExpressionsData struct {
+	Expressions []Expression `json:"expressions" xml:"expressions>expression"`
+}
+
+// Expression is one published asset.
+type Expression struct {
+	Type string `json:"type" xml:"type"`
+	URL  string `json:"url" xml:"url"`
+}
+
 // ExpressionsHandler handles Web AIM API expressions/buddy icon endpoints.
 type ExpressionsHandler struct {
 	IconSource BuddyIconSource
@@ -63,18 +74,15 @@ func (h *ExpressionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expressions := []any{}
+	expressions := []Expression{}
 	if iconURL != "" {
-		expressions = append(expressions, map[string]any{
-			"type": "bigBuddyIcon",
-			"url":  iconURL,
-		})
+		expressions = append(expressions, Expression{Type: "bigBuddyIcon", URL: iconURL})
 	}
 
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]any{"expressions": expressions}
+	resp.Response.Data = &ExpressionsData{Expressions: expressions}
 	SendResponse(w, r, resp, h.Logger)
 }
 

@@ -65,7 +65,6 @@ type StartOSCARSessionRequest struct {
 
 // StartOSCARSessionResponse represents the response for startOSCARSession endpoint.
 type StartOSCARSessionResponse struct {
-	XMLName  xml.Name `xml:"response" json:"-"`
 	Response struct {
 		StatusCode int    `json:"statusCode" xml:"statusCode"`
 		StatusText string `json:"statusText" xml:"statusText"`
@@ -77,18 +76,12 @@ type StartOSCARSessionResponse struct {
 			Encryption  string `json:"encryption,omitempty" xml:"encryption,omitempty"`
 			Compression string `json:"compression,omitempty" xml:"compression,omitempty"`
 		} `json:"data" xml:"data"`
-	} `json:"response" xml:"-"`
-	// For XML responses, flatten the structure
-	StatusCode int    `json:"-" xml:"statusCode"`
-	StatusText string `json:"-" xml:"statusText"`
-	Data       struct {
-		Host        string `json:"-" xml:"host"`
-		Port        int    `json:"-" xml:"port"`
-		Cookie      string `json:"-" xml:"cookie"`
-		UseSSL      bool   `json:"-" xml:"useSSL"`
-		Encryption  string `json:"-" xml:"encryption,omitempty"`
-		Compression string `json:"-" xml:"compression,omitempty"`
-	} `json:"-" xml:"data"`
+	} `json:"response"`
+}
+
+// MarshalXML renders the envelope with the same flat root as BaseResponse.
+func (s StartOSCARSessionResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+	return e.EncodeElement(s.Response, xml.StartElement{Name: xml.Name{Local: "response"}})
 }
 
 // StartOSCARSession handles GET /aim/startOSCARSession requests.
@@ -308,16 +301,6 @@ func (h *OSCARBridgeHandler) buildResponse(host string, port int, cookie []byte,
 	if compress {
 		resp.Response.Data.Compression = "none" // Compression not implemented
 	}
-
-	// Duplicate data for XML format
-	resp.StatusCode = resp.Response.StatusCode
-	resp.StatusText = resp.Response.StatusText
-	resp.Data.Host = resp.Response.Data.Host
-	resp.Data.Port = resp.Response.Data.Port
-	resp.Data.Cookie = resp.Response.Data.Cookie
-	resp.Data.UseSSL = resp.Response.Data.UseSSL
-	resp.Data.Encryption = resp.Response.Data.Encryption
-	resp.Data.Compression = resp.Response.Data.Compression
 
 	return resp
 }

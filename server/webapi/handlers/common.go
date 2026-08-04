@@ -15,62 +15,51 @@ import (
 // BaseResponse is the standard response envelope for all Web API responses.
 // It supports both JSON and XML marshaling.
 type BaseResponse struct {
-	XMLName  xml.Name     `xml:"response" json:"-"`
 	Response ResponseBody `json:"response"`
+}
+
+// MarshalXML renders the envelope as the Web API's flat <response> root, where
+// JSON nests the same body under a "response" key. Reconciling the two shapes
+// here is what lets one struct describe a response in both formats.
+func (b BaseResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement) error {
+	return e.EncodeElement(b.Response, xml.StartElement{Name: xml.Name{Local: "response"}})
 }
 
 // ResponseBody contains the status and data for API responses.
 type ResponseBody struct {
-	StatusCode int         `json:"statusCode" xml:"statusCode"`
-	StatusText string      `json:"statusText" xml:"statusText"`
-	RequestID  string      `json:"requestId,omitempty" xml:"requestId,omitempty"`
-	Data       interface{} `json:"data,omitempty" xml:"data,omitempty"`
+	StatusCode int    `json:"statusCode" xml:"statusCode"`
+	StatusText string `json:"statusText" xml:"statusText"`
+	RequestID  string `json:"requestId,omitempty" xml:"requestId,omitempty"`
+	// Data is never omitted. Every Web API method sends a data element even when
+	// it carries no payload, and the client dereferences response.data on any
+	// success; SendResponse substitutes an empty object when a handler sets none.
+	Data interface{} `json:"data" xml:"data"`
 }
 
 // ErrorResponse represents an error response with proper XML/JSON support.
 type ErrorResponse struct {
-	XMLName  xml.Name `xml:"response" json:"-"`
 	Response struct {
 		StatusCode int    `json:"statusCode" xml:"statusCode"`
 		StatusText string `json:"statusText" xml:"statusText"`
-	} `json:"response" xml:"-"`
-	// For XML responses, flatten the structure
-	StatusCode int    `json:"-" xml:"statusCode"`
-	StatusText string `json:"-" xml:"statusText"`
+		// Data carries an empty object for the same reason the JSONP error path
+		// sends one: a client callback that reaches response.data on a failure
+		// throws a TypeError when it is absent.
+		Data interface{} `json:"data" xml:"data"`
+	} `json:"response"`
 }
 
-// XMLMapResponse is a helper struct for converting map-based responses to XML
-type XMLMapResponse struct {
-	XMLName    xml.Name `xml:"response"`
-	StatusCode int      `xml:"statusCode"`
-	StatusText string   `xml:"statusText"`
-	Data       XMLData  `xml:"data,omitempty"`
+// MarshalXML renders the error envelope with the same flat root as BaseResponse.
+func (e ErrorResponse) MarshalXML(enc *xml.Encoder, _ xml.StartElement) error {
+	return enc.EncodeElement(e.Response, xml.StartElement{Name: xml.Name{Local: "response"}})
 }
 
-// XMLData wraps the data for XML responses
-type XMLData struct {
-	// Auth response fields
-	Token          *XMLToken `xml:"token,omitempty"`
-	LoginID        string    `xml:"loginId,omitempty"`
-	ScreenName     string    `xml:"screenName,omitempty"`
-	SessionSecret  string    `xml:"sessionSecret,omitempty"`
-	HostTime       int64     `xml:"hostTime,omitempty"`
-	TokenExpiresIn int       `xml:"tokenExpiresIn,omitempty"`
-
-	// Generic fields for other responses
-	AimSID   string `xml:"aimsid,omitempty"`
-	FetchURL string `xml:"fetchUrl,omitempty"`
-	MsgID    string `xml:"msgId,omitempty"`
-	State    string `xml:"state,omitempty"`
-
-	// For any other data, we'll encode as string
-	Raw string `xml:",chardata"`
-}
-
-// XMLToken represents the token structure in XML
-type XMLToken struct {
-	A         string `xml:"a"`
-	ExpiresIn int    `xml:"expiresIn"`
+// newErrorResponse builds the error envelope every format shares.
+func newErrorResponse(statusCode int, message string) ErrorResponse {
+	resp := ErrorResponse{}
+	resp.Response.StatusCode = statusCode
+	resp.Response.StatusText = message
+	resp.Response.Data = struct{}{}
+	return resp
 }
 
 // requestIDFromRequest returns the Web AIM client request correlation id from the
@@ -82,25 +71,28 @@ func requestIDFromRequest(r *http.Request) string {
 	return r.URL.Query().Get("r")
 }
 
-// attachRequestID copies the request's "r" parameter into BaseResponse.requestId
-// when the handler did not set one explicitly.
-func attachRequestID(r *http.Request, data interface{}) interface{} {
-	id := requestIDFromRequest(r)
-	if id == "" {
-		return data
-	}
+// normalizeEnvelope fills in the envelope fields a handler does not set itself:
+// the request correlation id, and an empty data object for a response that
+// carries no payload. Both are things every encoder needs and none can infer —
+// and encoding/xml has no way to render a nil data at all.
+func normalizeEnvelope(r *http.Request, data interface{}) interface{} {
 	br, ok := data.(BaseResponse)
-	if !ok || br.Response.RequestID != "" {
+	if !ok {
 		return data
 	}
-	br.Response.RequestID = id
+	if br.Response.RequestID == "" {
+		br.Response.RequestID = requestIDFromRequest(r)
+	}
+	if br.Response.Data == nil {
+		br.Response.Data = struct{}{}
+	}
 	return br
 }
 
 // SendResponse sends a response in the requested format (JSON, JSONP, XML, or AMF).
 // This is the centralized function that all handlers should use for responses.
 func SendResponse(w http.ResponseWriter, r *http.Request, data interface{}, logger *slog.Logger) {
-	data = attachRequestID(r, data)
+	data = normalizeEnvelope(r, data)
 
 	// Check for format parameter (f for format or callback for JSONP)
 	// First check URL query parameters
@@ -180,6 +172,11 @@ func sendJSONPError(w http.ResponseWriter, r *http.Request, callback string, sta
 	envelope := map[string]any{
 		"statusCode": statusCode,
 		"statusText": message,
+		// Callbacks that reach response.data on a failure throw a TypeError when
+		// it is absent, which aborts whatever the client was doing mid-startup.
+		// Its XHR path fabricates an empty data for transport failures; JSONP
+		// delivers the envelope verbatim, so the empty data has to come from here.
+		"data": map[string]any{},
 	}
 	// The client indexes JSONP replies by response.requestId and discards any
 	// reply that lacks one ("Request id is missing from the server response"),
@@ -203,9 +200,7 @@ func sendJSONPError(w http.ResponseWriter, r *http.Request, callback string, sta
 
 // sendJSONError sends a JSON error response.
 func sendJSONError(w http.ResponseWriter, statusCode int, message string) {
-	resp := ErrorResponse{}
-	resp.Response.StatusCode = statusCode
-	resp.Response.StatusText = message
+	resp := newErrorResponse(statusCode, message)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
@@ -214,9 +209,7 @@ func sendJSONError(w http.ResponseWriter, statusCode int, message string) {
 
 // sendXMLError sends an XML error response.
 func sendXMLError(w http.ResponseWriter, statusCode int, message string) {
-	resp := ErrorResponse{}
-	resp.StatusCode = statusCode
-	resp.StatusText = message
+	resp := newErrorResponse(statusCode, message)
 
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 	w.WriteHeader(statusCode)
@@ -255,12 +248,8 @@ func sendJSON(w http.ResponseWriter, data interface{}, logger *slog.Logger) {
 func sendXML(w http.ResponseWriter, data interface{}, logger *slog.Logger) {
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 
-	// Convert BaseResponse with map data to a format XML can handle
-	if baseResp, ok := data.(BaseResponse); ok {
-		data = convertBaseResponseForXML(baseResp)
-	}
-
-	// Marshal the data
+	// Every payload is a struct whose xml tags name its elements, and the
+	// envelope's MarshalXML renders the flat <response> root the Web API uses.
 	xmlData, err := xml.Marshal(data)
 	if err != nil {
 		if logger != nil {
@@ -383,71 +372,9 @@ func sendAMF(w http.ResponseWriter, r *http.Request, data interface{}, logger *s
 	}
 }
 
-// convertBaseResponseForXML converts a BaseResponse with map data to XMLMapResponse
-func convertBaseResponseForXML(resp BaseResponse) XMLMapResponse {
-	xmlResp := XMLMapResponse{
-		StatusCode: resp.Response.StatusCode,
-		StatusText: resp.Response.StatusText,
-	}
-
-	// Convert map data to XMLData struct
-	if dataMap, ok := resp.Response.Data.(map[string]interface{}); ok {
-		xmlData := XMLData{}
-
-		// Handle auth response fields
-		if tokenData, ok := dataMap["token"].(map[string]interface{}); ok {
-			xmlData.Token = &XMLToken{}
-			if a, ok := tokenData["a"].(string); ok {
-				xmlData.Token.A = a
-			}
-			if expiresIn, ok := tokenData["expiresIn"].(int); ok {
-				xmlData.Token.ExpiresIn = expiresIn
-			}
-		}
-
-		if loginId, ok := dataMap["loginId"].(string); ok {
-			xmlData.LoginID = loginId
-		}
-		if screenName, ok := dataMap["screenName"].(string); ok {
-			xmlData.ScreenName = screenName
-		}
-		if sessionSecret, ok := dataMap["sessionSecret"].(string); ok {
-			xmlData.SessionSecret = sessionSecret
-		}
-		if hostTime, ok := dataMap["hostTime"].(int64); ok {
-			xmlData.HostTime = hostTime
-		}
-		if tokenExpiresIn, ok := dataMap["tokenExpiresIn"].(int); ok {
-			xmlData.TokenExpiresIn = tokenExpiresIn
-		}
-
-		// Handle session response fields
-		if aimsid, ok := dataMap["aimsid"].(string); ok {
-			xmlData.AimSID = aimsid
-		}
-		if fetchUrl, ok := dataMap["fetchUrl"].(string); ok {
-			xmlData.FetchURL = fetchUrl
-		}
-
-		// Handle message response fields
-		if msgId, ok := dataMap["msgId"].(string); ok {
-			xmlData.MsgID = msgId
-		}
-		if state, ok := dataMap["state"].(string); ok {
-			xmlData.State = state
-		}
-
-		xmlResp.Data = xmlData
-	}
-
-	return xmlResp
-}
-
 // sendAMFError sends an AMF error response
 func sendAMFError(w http.ResponseWriter, r *http.Request, statusCode int, message string, logger *slog.Logger) {
-	errorResp := ErrorResponse{}
-	errorResp.Response.StatusCode = statusCode
-	errorResp.Response.StatusText = message
+	errorResp := newErrorResponse(statusCode, message)
 
 	encoder := NewAMFEncoder(logger)
 	version := DetectAMFVersion(r)

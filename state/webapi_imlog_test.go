@@ -19,9 +19,9 @@ func TestWebAPISession_GetStoredIMs(t *testing.T) {
 		NToGet:       10,
 	})
 	assert.Len(t, msgs, 2)
-	assert.Equal(t, "msg-2", msgs[0]["msgId"])
-	assert.Equal(t, float64(200), msgs[0]["date"])
-	assert.Equal(t, "hello", msgs[1]["message"])
+	assert.Equal(t, "msg-2", msgs[0].MsgID)
+	assert.Equal(t, float64(200), msgs[0].Date)
+	assert.Equal(t, "hello", msgs[1].Message)
 
 	msgs = sess.GetStoredIMs(StoredIMQuery{
 		PartnerAimID: "buddy1",
@@ -30,7 +30,7 @@ func TestWebAPISession_GetStoredIMs(t *testing.T) {
 		EndTime:      250,
 	})
 	assert.Len(t, msgs, 1)
-	assert.Equal(t, "msg-2", msgs[0]["msgId"])
+	assert.Equal(t, "msg-2", msgs[0].MsgID)
 }
 
 func TestWebAPISession_GetStoredIMs_NormalizesPartner(t *testing.T) {
@@ -44,5 +44,5 @@ func TestWebAPISession_GetStoredIMs_NormalizesPartner(t *testing.T) {
 		NToGet:       10,
 	})
 	require.Len(t, msgs, 1)
-	assert.Equal(t, "msg-1", msgs[0]["msgId"])
+	assert.Equal(t, "msg-1", msgs[0].MsgID)
 }

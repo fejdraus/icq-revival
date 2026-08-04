@@ -31,13 +31,17 @@ func (h *AimStubHandler) ReportAction(w http.ResponseWriter, r *http.Request) {
 	SendResponse(w, r, resp, h.Logger)
 }
 
+// StoredDataItems is the client-side data blob store, which this server does
+// not keep, so it always answers with an empty items list.
+type StoredDataItems struct {
+	Items []string `json:"items" xml:"items>item"`
+}
+
 // GetData returns empty client-side data blobs (buddy list favorites, etc.).
 func (h *AimStubHandler) GetData(w http.ResponseWriter, r *http.Request) {
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]interface{}{
-		"items": []interface{}{},
-	}
+	resp.Response.Data = &StoredDataItems{Items: []string{}}
 	SendResponse(w, r, resp, h.Logger)
 }

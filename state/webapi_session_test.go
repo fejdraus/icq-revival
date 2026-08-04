@@ -829,18 +829,19 @@ func TestWebAPISession_HandleIncomingIM_NormalizesAimID(t *testing.T) {
 	assert.Equal(t, "mikekelly", imEvent.Source.AimID)
 	assert.Equal(t, "Mike Kelly", imEvent.Source.DisplayID)
 
-	convData := events[1].Data.(map[string]interface{})
-	entries := convData["conversations"].([]map[string]interface{})
-	require.Len(t, entries, 1)
-	assert.Equal(t, "mikekelly", entries[0]["aimId"])
-	assert.Equal(t, "Mike Kelly", entries[0]["displayId"])
-	assert.Equal(t, "mikekelly", entries[0]["lastIM"].(map[string]interface{})["sender"])
+	convData := events[1].Data.(*types.ConversationData)
+	require.Len(t, convData.Conversations, 1)
+	entry := convData.Conversations[0]
+	assert.Equal(t, "mikekelly", entry.AimID)
+	assert.Equal(t, "Mike Kelly", entry.DisplayID)
+	require.NotNil(t, entry.LastIM)
+	assert.Equal(t, "mikekelly", entry.LastIM.Sender)
 
 	// The IM log is keyed by aimId, so the conversation the client opens from
 	// this event finds its own history.
 	msgs := sess.GetStoredIMs(StoredIMQuery{PartnerAimID: "mikekelly", NToGet: 10})
 	require.Len(t, msgs, 1)
-	assert.Equal(t, "hello", msgs[0]["message"])
+	assert.Equal(t, "hello", msgs[0].Message)
 }
 
 func TestWebAPISession_HandleTypingNotification_NormalizesAimID(t *testing.T) {
@@ -1141,7 +1142,7 @@ func TestWebAPISession_OfflineIM(t *testing.T) {
 
 		stored := sess.GetStoredIMs(StoredIMQuery{PartnerAimID: "mikekelly", NToGet: 10})
 		require.Len(t, stored, 1)
-		assert.Equal(t, float64(sentAt), stored[0]["date"])
+		assert.Equal(t, float64(sentAt), stored[0].Date)
 	})
 
 	// Only a live IM is filtered on subscription here. Retrieval answers the

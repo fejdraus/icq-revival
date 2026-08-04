@@ -32,6 +32,17 @@ func (s *WebAPISession) AddStoredIM(partnerAimID, sender, message, msgID string,
 	})
 }
 
+// StoredIM is one entry in a fetchStoredIMs reply.
+//
+// Date is a float because AMF3 encodes whole numbers in 29 bits, which a Unix
+// timestamp overflows.
+type StoredIM struct {
+	Sender  string  `json:"sender" xml:"sender"`
+	Message string  `json:"message" xml:"message"`
+	MsgID   string  `json:"msgId" xml:"msgId"`
+	Date    float64 `json:"date" xml:"date"`
+}
+
 // StoredIMQuery describes filters for fetchStoredIMs.
 type StoredIMQuery struct {
 	PartnerAimID string
@@ -45,7 +56,7 @@ type StoredIMQuery struct {
 
 // GetStoredIMs returns stored messages for a conversation partner, filtered and sorted
 // per the Web AIM client's fetchStoredIMs parameters.
-func (s *WebAPISession) GetStoredIMs(q StoredIMQuery) []map[string]interface{} {
+func (s *WebAPISession) GetStoredIMs(q StoredIMQuery) []StoredIM {
 	if s == nil || q.PartnerAimID == "" {
 		return nil
 	}
@@ -55,7 +66,7 @@ func (s *WebAPISession) GetStoredIMs(q StoredIMQuery) []map[string]interface{} {
 	s.imLogMu.Unlock()
 
 	if len(msgs) == 0 {
-		return []map[string]interface{}{}
+		return []StoredIM{}
 	}
 
 	filtered := make([]WebAPIStoredIM, 0, len(msgs))
@@ -102,13 +113,13 @@ func (s *WebAPISession) GetStoredIMs(q StoredIMQuery) []map[string]interface{} {
 		filtered = filtered[:n]
 	}
 
-	out := make([]map[string]interface{}, len(filtered))
+	out := make([]StoredIM, len(filtered))
 	for i, msg := range filtered {
-		out[i] = map[string]interface{}{
-			"sender":  msg.Sender,
-			"message": msg.Message,
-			"msgId":   msg.MsgID,
-			"date":    float64(msg.Date),
+		out[i] = StoredIM{
+			Sender:  msg.Sender,
+			Message: msg.Message,
+			MsgID:   msg.MsgID,
+			Date:    float64(msg.Date),
 		}
 	}
 	return out

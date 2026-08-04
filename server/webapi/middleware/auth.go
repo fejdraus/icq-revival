@@ -367,6 +367,9 @@ func (m *AuthMiddleware) writeErrorEnvelope(w http.ResponseWriter, r *http.Reque
 	envelope := map[string]any{
 		"statusCode": statusCode,
 		"statusText": message,
+		// Callbacks that reach response.data on a failure throw a TypeError when
+		// it is absent, so the envelope carries an empty one even here.
+		"data": map[string]any{},
 	}
 	// The client indexes JSONP replies by response.requestId and discards any
 	// reply that lacks one, leaving the request pending until it times out.

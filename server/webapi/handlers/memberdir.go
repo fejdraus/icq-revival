@@ -81,6 +81,16 @@ type MemberDirInfo struct {
 	Profile MemberDirProfile `json:"profile" xml:"profile"`
 }
 
+// MemberDirResults wraps a directory search result set.
+type MemberDirResults struct {
+	Results MemberDirInfoArray `json:"results" xml:"results"`
+}
+
+// MemberDirInfoArray is the list of matched profiles.
+type MemberDirInfoArray struct {
+	InfoArray []MemberDirInfo `json:"infoArray" xml:"infoArray>info"`
+}
+
 // Search handles GET /memberDir/search. The web client sends the raw add-contact
 // input as a "match" parameter shaped like "keyword=<x>" or
 // "firstName=<x>,lastName=<y>". We translate that into an OSCAR ODir InfoQuery
@@ -94,7 +104,7 @@ func (h *MemberDirHandler) Search(w http.ResponseWriter, r *http.Request, sessio
 	reply, err := h.DirSearchService.InfoQuery(ctx, wire.SNACFrame{}, inBody)
 	if err != nil {
 		h.Logger.ErrorContext(ctx, "memberDir search failed", "err", err.Error())
-		h.sendData(w, r, map[string]any{"results": map[string]any{"infoArray": []MemberDirInfo{}}})
+		h.sendData(w, r, &MemberDirResults{Results: MemberDirInfoArray{InfoArray: []MemberDirInfo{}}})
 		return
 	}
 
@@ -102,7 +112,7 @@ func (h *MemberDirHandler) Search(w http.ResponseWriter, r *http.Request, sessio
 	if !ok || body.Status != wire.ODirSearchResponseOK {
 		// Missing/insufficient params or an empty directory: return no results
 		// rather than an error so the client simply shows an empty result set.
-		h.sendData(w, r, map[string]any{"results": map[string]any{"infoArray": []MemberDirInfo{}}})
+		h.sendData(w, r, &MemberDirResults{Results: MemberDirInfoArray{InfoArray: []MemberDirInfo{}}})
 		return
 	}
 
@@ -142,7 +152,7 @@ func (h *MemberDirHandler) Search(w http.ResponseWriter, r *http.Request, sessio
 		"results", len(infoArray),
 	)
 
-	h.sendData(w, r, map[string]any{"results": map[string]any{"infoArray": infoArray}})
+	h.sendData(w, r, &MemberDirResults{Results: MemberDirInfoArray{InfoArray: infoArray}})
 }
 
 // Get handles GET /memberDir/get. The "t" param names the screen names to look
@@ -191,7 +201,7 @@ func (h *MemberDirHandler) Get(w http.ResponseWriter, r *http.Request, session *
 		"targets", len(targets),
 	)
 
-	h.sendData(w, r, map[string]any{"infoArray": infoArray})
+	h.sendData(w, r, &MemberDirInfoArray{InfoArray: infoArray})
 }
 
 // Update handles GET /memberDir/update. The "Edit Your Name" form sends repeated
@@ -255,7 +265,7 @@ func (h *MemberDirHandler) Update(w http.ResponseWriter, r *http.Request, sessio
 		"lastName", values[wire.ODirTLVLastName],
 	)
 
-	h.sendData(w, r, map[string]any{})
+	h.sendData(w, r, struct{}{})
 }
 
 // sendData wraps data in the standard response envelope and sends it via

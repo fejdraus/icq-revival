@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"encoding/base64"
-	"encoding/xml"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -65,75 +64,91 @@ type ChatSessionManager interface {
 	RemoveUserFromAllChats(user state.IdentScreenName)
 }
 
-// BuddyGroup represents a group of buddies.
-type BuddyGroup struct {
-	Name    string  `json:"name"`
-	Buddies []Buddy `json:"buddies"`
+// MyInfo is the user's own identity blob, which the Web AIM client renders in
+// its identity badge. It is both the startSession payload's myInfo and the
+// myInfo event's data.
+type MyInfo struct {
+	AimID     string `json:"aimId" xml:"aimId"`
+	DisplayID string `json:"displayId" xml:"displayId"`
+	Friendly  string `json:"friendly" xml:"friendly"`
+	State     string `json:"state" xml:"state"`
+	UserType  string `json:"userType" xml:"userType"` // "aim", "icq"
+	Bot       bool   `json:"bot" xml:"bot"`
+	Service   string `json:"service" xml:"service"` // "AIM", "ICQ" (compared case-sensitively)
+	// Capabilities is always sent, empty included, because the client iterates it
+	// unconditionally.
+	Capabilities []string `json:"capabilities" xml:"capabilities>capability"`
+	// BuddyIcon is omitted when empty so the client's merge preserves the icon it
+	// already holds.
+	BuddyIcon   string      `json:"buddyIcon,omitempty" xml:"buddyIcon,omitempty"`
+	AwayMsg     string      `json:"awayMsg,omitempty" xml:"awayMsg,omitempty"`
+	StatusMsg   string      `json:"statusMsg,omitempty" xml:"statusMsg,omitempty"`
+	OnlineTime  int64       `json:"onlineTime,omitempty" xml:"onlineTime,omitempty"`
+	MemberSince int64       `json:"memberSince,omitempty" xml:"memberSince,omitempty"`
+	Self        *MyInfoSelf `json:"self,omitempty" xml:"self,omitempty"`
 }
 
-// Buddy represents a buddy in the buddy list.
-type Buddy struct {
-	AimID     string `json:"aimId"`
-	State     string `json:"state"`
-	StatusMsg string `json:"statusMsg,omitempty"`
-	AwayMsg   string `json:"awayMsg,omitempty"`
-	UserType  string `json:"userType"`
+// MyInfoSelf carries the session-scoped half of myInfo: the instance the client
+// is talking to and the limits it must respect.
+type MyInfoSelf struct {
+	InstNum        int        `json:"instNum" xml:"instNum"`
+	LoginTime      int64      `json:"loginTime" xml:"loginTime"`
+	SessionTimeout int        `json:"sessionTimeout" xml:"sessionTimeout"`
+	Events         []string   `json:"events" xml:"events>event"`
+	AssertCaps     []string   `json:"assertCaps" xml:"assertCaps>capability"`
+	RightsInfo     RightsInfo `json:"rightsInfo" xml:"rightsInfo"`
 }
 
-// StartSessionResponse represents the response for startSession endpoint.
-type StartSessionResponse struct {
-	Response struct {
-		StatusCode int    `json:"statusCode"`
-		StatusText string `json:"statusText"`
-		Data       struct {
-			AimSID          string                 `json:"aimsid"`
-			Ts              int64                  `json:"ts"`
-			FetchTimeout    int                    `json:"fetchTimeout"`
-			TimeToNextFetch int                    `json:"timeToNextFetch"`
-			FetchBaseURL    string                 `json:"fetchBaseURL"` // Gromit expects this directly in data!
-			MyInfo          map[string]interface{} `json:"myInfo,omitempty"`
-			Events          map[string]interface{} `json:"events,omitempty"`
-			WellKnownUrls   map[string]string      `json:"wellKnownUrls,omitempty"`
-		} `json:"data"`
-	} `json:"response"`
+// RightsInfo reports the account limits the client enforces client-side.
+type RightsInfo struct {
+	MaxDenies            int `json:"maxDenies" xml:"maxDenies"`
+	MaxPermits           int `json:"maxPermits" xml:"maxPermits"`
+	MaxWatchers          int `json:"maxWatchers" xml:"maxWatchers"`
+	MaxBuddies           int `json:"maxBuddies" xml:"maxBuddies"`
+	MaxTempBuddies       int `json:"maxTempBuddies" xml:"maxTempBuddies"`
+	MaxIMSize            int `json:"maxIMSize" xml:"maxIMSize"`
+	MinInterIcbmInterval int `json:"minInterIcbmInterval" xml:"minInterIcbmInterval"`
+	MaxSourceEvil        int `json:"maxSourceEvil" xml:"maxSourceEvil"`
+	MaxDstEvil           int `json:"maxDstEvil" xml:"maxDstEvil"`
+	MaxSigLen            int `json:"maxSigLen" xml:"maxSigLen"`
 }
 
-// StartSessionXMLResponse represents the XML response for startSession endpoint.
-type StartSessionXMLResponse struct {
-	XMLName    xml.Name `xml:"response"`
-	StatusCode int      `xml:"statusCode"`
-	StatusText string   `xml:"statusText"`
-	Data       struct {
-		AimSID          string `xml:"aimsid"`
-		FetchTimeout    int    `xml:"fetchTimeout"`
-		TimeToNextFetch int    `xml:"timeToNextFetch"`
-		FetchBaseURL    string `xml:"fetchBaseURL"` // Gromit expects this directly!
-		WellKnownUrls   *struct {
-			WebApiBase        string `xml:"webApiBase"`
-			FetchBaseURL      string `xml:"fetchBaseURL"`
-			LifestreamApiBase string `xml:"lifestreamApiBase"`
-		} `xml:"wellKnownUrls,omitempty"`
-		MyInfo *struct {
-			AimID     string `xml:"aimId"`
-			DisplayID string `xml:"displayId"`
-			Buddylist struct {
-				Groups *[]BuddyGroup `xml:"group,omitempty"`
-			} `xml:"buddylist,omitempty"`
-		} `xml:"myInfo,omitempty"`
-		Events *struct {
-			BuddyList struct {
-				Groups *[]BuddyGroup `xml:"group,omitempty"`
-			} `xml:"buddylist"`
-		} `xml:"events,omitempty"`
-	} `xml:"data"`
+// WellKnownUrls advertises the API roots to clients that discover them rather
+// than deriving them.
+type WellKnownUrls struct {
+	WebApiBase        string `json:"webApiBase" xml:"webApiBase"`
+	FetchBaseURL      string `json:"fetchBaseURL" xml:"fetchBaseURL"`
+	LifestreamApiBase string `json:"lifestreamApiBase" xml:"lifestreamApiBase"`
 }
 
-// EndSessionResponse represents the response for endSession endpoint.
-type EndSessionResponse struct {
-	Response struct {
-		StatusCode int    `json:"statusCode"`
-		StatusText string `json:"statusText"`
-	} `json:"response"`
+// StartSessionEvents seeds the client with the first value of each event it
+// subscribed to, so it renders a populated UI before its first fetchEvents.
+// Each field is absent unless the client asked for that event.
+type StartSessionEvents struct {
+	MyInfo     *MyInfo         `json:"myInfo,omitempty" xml:"myInfo,omitempty"`
+	BuddyList  *BuddyListData  `json:"buddylist,omitempty" xml:"buddylist,omitempty"`
+	Preference *PreferenceData `json:"preference,omitempty" xml:"preference,omitempty"`
+	PermitDeny interface{}     `json:"permitDeny,omitempty" xml:"permitDeny,omitempty"`
+}
+
+// BuddyListData is the buddylist event payload and the buddy list half of the
+// startSession seed.
+type BuddyListData struct {
+	Groups []WebAPIBuddyGroup `json:"groups" xml:"groups>group"`
+}
+
+// StartSessionData is the startSession payload.
+type StartSessionData struct {
+	AimSID          string `json:"aimsid" xml:"aimsid"`
+	Ts              int64  `json:"ts" xml:"ts"`
+	FetchTimeout    int    `json:"fetchTimeout" xml:"fetchTimeout"`
+	TimeToNextFetch int    `json:"timeToNextFetch" xml:"timeToNextFetch"`
+	// FetchBaseURL sits directly in data, not in wellKnownUrls: it is where the
+	// client reads its poll URL from.
+	FetchBaseURL  string              `json:"fetchBaseURL" xml:"fetchBaseURL"`
+	MyInfo        *MyInfo             `json:"myInfo,omitempty" xml:"myInfo,omitempty"`
+	Events        *StartSessionEvents `json:"events,omitempty" xml:"events,omitempty"`
+	WellKnownUrls *WellKnownUrls      `json:"wellKnownUrls,omitempty" xml:"wellKnownUrls,omitempty"`
 }
 
 // StartSession handles GET /aim/startSession requests.
@@ -302,8 +317,14 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Wire buddy list refresher so feedbag SNACs from the OSCAR bridge trigger a buddylist event.
+	// The refresher yields the whole buddylist event payload, not just the groups,
+	// so the session that pushes it does not have to know the payload's shape.
 	session.BuddyListRefresher = func(ctx context.Context) (interface{}, error) {
-		return h.BuddyListManager.GetBuddyListForUser(ctx, session)
+		groups, err := h.BuddyListManager.GetBuddyListForUser(ctx, session)
+		if err != nil {
+			return nil, err
+		}
+		return &BuddyListData{Groups: groups}, nil
 	}
 
 	// Wire the alias loader so OSCAR-driven im/presence events can repeat the
@@ -367,50 +388,46 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().Unix()
 
 	// Prepare response
-	resp := StartSessionResponse{}
-	resp.Response.StatusCode = 200
-	resp.Response.StatusText = "OK"
-	resp.Response.Data.AimSID = session.AimSID
-	resp.Response.Data.Ts = now
-	resp.Response.Data.FetchTimeout = session.FetchTimeout
-	resp.Response.Data.TimeToNextFetch = session.TimeToNextFetch
-	// Gromit expects fetchBaseURL directly in data, not in wellKnownUrls
-	resp.Response.Data.FetchBaseURL = fmt.Sprintf("%s/aim/fetchEvents?aimsid=%s&seqNum=0", baseURL, session.AimSID)
-
-	// Add wellKnownUrls for other clients that might use it.
-	resp.Response.Data.WellKnownUrls = map[string]string{
-		"webApiBase":        baseURL + "/",
-		"fetchBaseURL":      baseURL + "/aim/fetchEvents",
-		"lifestreamApiBase": baseURL + "/",
+	data := &StartSessionData{
+		AimSID:          session.AimSID,
+		Ts:              now,
+		FetchTimeout:    session.FetchTimeout,
+		TimeToNextFetch: session.TimeToNextFetch,
+		// Gromit expects fetchBaseURL directly in data, not in wellKnownUrls
+		FetchBaseURL: fmt.Sprintf("%s/aim/fetchEvents?aimsid=%s&seqNum=0", baseURL, session.AimSID),
+		// Add wellKnownUrls for other clients that might use it.
+		WellKnownUrls: &WellKnownUrls{
+			WebApiBase:        baseURL + "/",
+			FetchBaseURL:      baseURL + "/aim/fetchEvents",
+			LifestreamApiBase: baseURL + "/",
+		},
+		Events: &StartSessionEvents{},
 	}
 
 	myInfoPayload := buildMyInfo(screenName, "online", myIconURL)
-	myInfoPayload["onlineTime"] = time.Now().Unix()
-	myInfoPayload["memberSince"] = time.Now().Unix() - 86400*30 // 30 days ago
-	myInfoPayload["self"] = map[string]interface{}{
-		"instNum":        1,
-		"loginTime":      time.Now().Unix(),
-		"sessionTimeout": 30,
-		"events":         events,
-		"assertCaps":     []string{},
-		"rightsInfo": map[string]interface{}{
-			"maxDenies":            500,
-			"maxPermits":           500,
-			"maxWatchers":          3000,
-			"maxBuddies":           500,
-			"maxTempBuddies":       160,
-			"maxIMSize":            3987,
-			"minInterIcbmInterval": 1000,
-			"maxSourceEvil":        900,
-			"maxDstEvil":           999,
-			"maxSigLen":            4096,
+	myInfoPayload.OnlineTime = time.Now().Unix()
+	myInfoPayload.MemberSince = time.Now().Unix() - 86400*30 // 30 days ago
+	myInfoPayload.Self = &MyInfoSelf{
+		InstNum:        1,
+		LoginTime:      time.Now().Unix(),
+		SessionTimeout: 30,
+		Events:         events,
+		AssertCaps:     []string{},
+		RightsInfo: RightsInfo{
+			MaxDenies:            500,
+			MaxPermits:           500,
+			MaxWatchers:          3000,
+			MaxBuddies:           500,
+			MaxTempBuddies:       160,
+			MaxIMSize:            3987,
+			MinInterIcbmInterval: 1000,
+			MaxSourceEvil:        900,
+			MaxDstEvil:           999,
+			MaxSigLen:            4096,
 		},
 	}
-	resp.Response.Data.MyInfo = myInfoPayload
-	if resp.Response.Data.Events == nil {
-		resp.Response.Data.Events = make(map[string]interface{})
-	}
-	resp.Response.Data.Events["myInfo"] = myInfoPayload
+	data.MyInfo = myInfoPayload
+	data.Events.MyInfo = myInfoPayload
 
 	// Seeds that only queue an event are keyed off the subscription rather than
 	// iterated with it, so the server fixes their order and each is queued once.
@@ -418,8 +435,8 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 	// client subscribes to both, which a per-subscription loop would queue twice.
 	if slices.Contains(events, "myInfo") || slices.Contains(events, "presence") {
 		myInfoData := buildMyInfo(screenName, "online", myIconURL)
-		myInfoData["onlineTime"] = time.Now().Unix()
-		myInfoData["memberSince"] = time.Now().Unix() - 86400*30 // 30 days ago
+		myInfoData.OnlineTime = time.Now().Unix()
+		myInfoData.MemberSince = time.Now().Unix() - 86400*30 // 30 days ago
 		session.EventQueue.Push(types.EventTypeMyInfo, myInfoData)
 	}
 
@@ -445,11 +462,8 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 			if buddyGroups == nil {
 				buddyGroups = []WebAPIBuddyGroup{}
 			}
-			blPayload := map[string]interface{}{"groups": buddyGroups}
-			if resp.Response.Data.Events == nil {
-				resp.Response.Data.Events = make(map[string]interface{})
-			}
-			resp.Response.Data.Events["buddylist"] = blPayload
+			blPayload := &BuddyListData{Groups: buddyGroups}
+			data.Events.BuddyList = blPayload
 			session.EventQueue.Push(types.EventTypeBuddyList, blPayload)
 		case types.EventTypePreference:
 			// Seed the client with effective preference values: the user's stored
@@ -458,7 +472,7 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 			// this event and has no default of its own for them, so an omitted pref
 			// would silently fall back to the client's hidden default and, for
 			// showGroups, hide group headers.
-			prefPayload := map[string]interface{}{}
+			prefPayload := &PreferenceData{}
 			if session.OSCARSession != nil {
 				if item, err := buddyPrefsItem(ctx, h.FeedbagService, session.OSCARSession); err != nil {
 					h.Logger.ErrorContext(ctx, "failed to get preferences", "err", err.Error())
@@ -466,10 +480,7 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 					prefPayload = effectiveBuddyPrefs(item.TLVList)
 				}
 			}
-			if resp.Response.Data.Events == nil {
-				resp.Response.Data.Events = make(map[string]interface{})
-			}
-			resp.Response.Data.Events["preference"] = prefPayload
+			data.Events.Preference = prefPayload
 			session.EventQueue.Push(types.EventTypePreference, prefPayload)
 		case types.EventTypePermitDeny:
 			// The client keeps its privacy state solely in the model this event
@@ -485,10 +496,7 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 					pdPayload = pdd
 				}
 			}
-			if resp.Response.Data.Events == nil {
-				resp.Response.Data.Events = make(map[string]interface{})
-			}
-			resp.Response.Data.Events["permitDeny"] = pdPayload
+			data.Events.PermitDeny = pdPayload
 			session.EventQueue.Push(types.EventTypePermitDeny, pdPayload)
 		}
 	}
@@ -517,127 +525,20 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check response format
-	format := r.URL.Query().Get("f")
-	if format == "" {
-		format = "json" // default to JSON
-	}
+	resp := BaseResponse{}
+	resp.Response.StatusCode = 200
+	resp.Response.StatusText = "OK"
+	resp.Response.Data = data
 
-	// Send response in requested format
-	if format == "xml" {
-		// Build XML response
-		xmlResp := StartSessionXMLResponse{}
-		xmlResp.StatusCode = 200
-		xmlResp.StatusText = "OK"
-		xmlResp.Data.AimSID = session.AimSID
-		xmlResp.Data.FetchTimeout = timeout
-		xmlResp.Data.TimeToNextFetch = 500
-		// Gromit expects fetchBaseURL directly in data
-		xmlResp.Data.FetchBaseURL = fmt.Sprintf("%s/aim/fetchEvents?aimsid=%s&seqNum=0", baseURL, session.AimSID)
-
-		// Add wellKnownUrls for other clients
-		xmlBase := baseURL + "/"
-		xmlResp.Data.WellKnownUrls = &struct {
-			WebApiBase        string `xml:"webApiBase"`
-			FetchBaseURL      string `xml:"fetchBaseURL"`
-			LifestreamApiBase string `xml:"lifestreamApiBase"`
-		}{
-			WebApiBase:        xmlBase,
-			FetchBaseURL:      baseURL + "/aim/fetchEvents",
-			LifestreamApiBase: xmlBase,
-		}
-
-		// Add myInfo with user data
-		xmlResp.Data.MyInfo = &struct {
-			AimID     string `xml:"aimId"`
-			DisplayID string `xml:"displayId"`
-			Buddylist struct {
-				Groups *[]BuddyGroup `xml:"group,omitempty"`
-			} `xml:"buddylist,omitempty"`
-		}{
-			AimID:     session.ScreenName.IdentScreenName().String(),
-			DisplayID: session.ScreenName.String(),
-		}
-
-		// Add buddy list if requested in myInfo or events
-		for _, event := range events {
-			if event == "buddylist" || event == "myInfo" {
-				var buddyGroups []BuddyGroup
-
-				if h.BuddyListManager != nil {
-					// Fetch actual buddy list from service
-					webAPIGroups, err := h.BuddyListManager.GetBuddyListForUser(ctx, session)
-					if err != nil {
-						h.Logger.ErrorContext(ctx, "failed to get buddy list for XML response", "err", err.Error())
-						buddyGroups = []BuddyGroup{}
-					} else {
-						// Convert WebAPIBuddyGroup to handler.BuddyGroup
-						for _, webGroup := range webAPIGroups {
-							group := BuddyGroup{
-								Name:    webGroup.Name,
-								Buddies: []Buddy{},
-							}
-							for _, webBuddy := range webGroup.Buddies {
-								buddy := Buddy{
-									AimID:     webBuddy.AimID,
-									State:     webBuddy.State,
-									StatusMsg: webBuddy.StatusMsg,
-									AwayMsg:   webBuddy.AwayMsg,
-									UserType:  webBuddy.UserType,
-								}
-								group.Buddies = append(group.Buddies, buddy)
-							}
-							buddyGroups = append(buddyGroups, group)
-						}
-					}
-				} else {
-					buddyGroups = []BuddyGroup{}
-				}
-
-				// Add to myInfo buddylist
-				xmlResp.Data.MyInfo.Buddylist.Groups = &buddyGroups
-
-				// Also add to events if specifically requested
-				if event == "buddylist" {
-					if xmlResp.Data.Events == nil {
-						xmlResp.Data.Events = &struct {
-							BuddyList struct {
-								Groups *[]BuddyGroup `xml:"group,omitempty"`
-							} `xml:"buddylist"`
-						}{}
-					}
-					xmlResp.Data.Events.BuddyList.Groups = &buddyGroups
-				}
-				break
-			}
-		}
-
-		// Send XML response
-		w.Header().Set("Content-Type", "text/xml; charset=utf-8")
-
-		// Build complete XML string first
-		xmlData, err := xml.Marshal(xmlResp)
-		if err != nil {
-			h.Logger.Error("failed to marshal XML response", "error", err)
-			h.sendError(w, r, http.StatusInternalServerError, "internal server error")
-			return
-		}
-
-		// Write XML declaration and data as one response
-		xmlOutput := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>%s`, xmlData)
-		w.Header().Set("Content-Length", strconv.Itoa(len(xmlOutput)))
-		_, _ = fmt.Fprint(w, xmlOutput)
-	} else {
-		// Send response in requested format (JSON, JSONP, or AMF)
-		SendResponse(w, r, resp, h.Logger)
-	}
+	// Send response in requested format (JSON, JSONP, XML, or AMF)
+	SendResponse(w, r, resp, h.Logger)
 
 	h.Logger.DebugContext(ctx, "session started",
 		"aimsid", session.AimSID,
 		"screen_name", screenName,
 		"dev_id", apiKey.DevID,
 		"events", events,
-		"format", format,
+		"format", r.URL.Query().Get("f"),
 	)
 }
 
@@ -654,7 +555,7 @@ func (h *SessionHandler) EndSession(w http.ResponseWriter, r *http.Request, sess
 	}
 
 	// Send response
-	resp := EndSessionResponse{}
+	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
 
@@ -686,27 +587,25 @@ func (h *SessionHandler) sendError(w http.ResponseWriter, r *http.Request, statu
 // builders add them explicitly. buddyIcon is included only when non-empty; an
 // empty value would be dropped by the client merge anyway, and the placeholder
 // URL (not "") is what clears an icon.
-func buildMyInfo(screenName state.DisplayScreenName, webState, buddyIcon string) map[string]interface{} {
+func buildMyInfo(screenName state.DisplayScreenName, webState, buddyIcon string) *MyInfo {
 	// The web client compares userType/service case-sensitively; a UIN account must
 	// report ICQ so it renders as an ICQ contact rather than AIM.
 	userType, service := "aim", "AIM"
 	if screenName.IsUIN() {
 		userType, service = "icq", "ICQ"
 	}
-	myInfo := map[string]interface{}{
-		"aimId":        screenName.IdentScreenName().String(),
-		"displayId":    screenName.String(),
-		"friendly":     screenName.String(),
-		"state":        webState,
-		"userType":     userType,
-		"capabilities": []string{},
-		"bot":          false,
-		"service":      service,
+	return &MyInfo{
+		AimID:     screenName.IdentScreenName().String(),
+		DisplayID: screenName.String(),
+		Friendly:  screenName.String(),
+		State:     webState,
+		UserType:  userType,
+		// Never nil: the client iterates capabilities unconditionally.
+		Capabilities: []string{},
+		Bot:          false,
+		Service:      service,
+		BuddyIcon:    buddyIcon,
 	}
-	if buddyIcon != "" {
-		myInfo["buddyIcon"] = buddyIcon
-	}
-	return myInfo
 }
 
 func requestScheme(r *http.Request) string {

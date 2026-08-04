@@ -8,6 +8,11 @@ import (
 	"github.com/mk6i/open-oscar-server/state"
 )
 
+// StoredIMsData is the fetchStoredIMs payload.
+type StoredIMsData struct {
+	Msgs []state.StoredIM `json:"msgs" xml:"msgs>msg"`
+}
+
 // ConversationStubHandler serves Web AIM conversation/imlog endpoints the
 // client calls when syncing chat focus and read state.
 type ConversationStubHandler struct {
@@ -72,8 +77,6 @@ func (h *ConversationStubHandler) FetchStoredIMs(w http.ResponseWriter, r *http.
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
-	resp.Response.Data = map[string]interface{}{
-		"msgs": msgs,
-	}
+	resp.Response.Data = &StoredIMsData{Msgs: msgs}
 	SendResponse(w, r, resp, h.Logger)
 }

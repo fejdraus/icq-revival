@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/mk6i/open-oscar-server/server/webapi/types"
@@ -110,11 +111,108 @@ var webBuddyPrefs = map[string]uint16{
 	"imblastInviteFromBuddyOnly": wire.FeedbagBuddyPrefsImblastInviteFromBuddyOnly,
 }
 
+// PreferenceData carries Web API buddy preferences.
+//
+// Values are numbers, not "1"/"0" strings, because the client evaluates them
+// with JavaScript truthiness and numeric comparison, where the string "0" is
+// truthy. They are pointers because a preference set to 0 and a preference not
+// carried at all mean different things and both occur: getPreference and
+// setPreference answer with just the preferences the request named, while the
+// startSession seed carries every one. A plain int could not tell the two
+// apart, and the client reads its buddy-list display preferences only from
+// here — an omitted showGroups falls back to a hidden client default that hides
+// group headers.
+//
+// The fields mirror webBuddyPrefs one for one; TestPreferenceDataMatchesPrefTable
+// fails if the two drift apart.
+type PreferenceData struct {
+	DisplayLogin                   *int `json:"displayLogin,omitempty" xml:"displayLogin,omitempty"`
+	DisplayEBuddy                  *int `json:"displayEBuddy,omitempty" xml:"displayEBuddy,omitempty"`
+	PlayEnter                      *int `json:"playEnter,omitempty" xml:"playEnter,omitempty"`
+	PlayExit                       *int `json:"playExit,omitempty" xml:"playExit,omitempty"`
+	ViewIMTimestamps               *int `json:"viewIMTimestamps,omitempty" xml:"viewIMTimestamps,omitempty"`
+	ViewSmilies                    *int `json:"viewSmilies,omitempty" xml:"viewSmilies,omitempty"`
+	AcceptIcons                    *int `json:"acceptIcons,omitempty" xml:"acceptIcons,omitempty"`
+	KnockNonAOLIMs                 *int `json:"knockNonAOLIMs,omitempty" xml:"knockNonAOLIMs,omitempty"`
+	KnockNonListIMs                *int `json:"knockNonListIMs,omitempty" xml:"knockNonListIMs,omitempty"`
+	DiscloseIdle                   *int `json:"discloseIdle,omitempty" xml:"discloseIdle,omitempty"`
+	AcceptCustomBart               *int `json:"acceptCustomBart,omitempty" xml:"acceptCustomBart,omitempty"`
+	AcceptNonListBart              *int `json:"acceptNonListBart,omitempty" xml:"acceptNonListBart,omitempty"`
+	AcceptBgs                      *int `json:"acceptBgs,omitempty" xml:"acceptBgs,omitempty"`
+	AcceptChromes                  *int `json:"acceptChromes,omitempty" xml:"acceptChromes,omitempty"`
+	AcceptBLSounds                 *int `json:"acceptBLSounds,omitempty" xml:"acceptBLSounds,omitempty"`
+	AcceptIMsounds                 *int `json:"acceptIMsounds,omitempty" xml:"acceptIMsounds,omitempty"`
+	NoSeeRecentBuddies             *int `json:"noSeeRecentBuddies,omitempty" xml:"noSeeRecentBuddies,omitempty"`
+	AcceptSMSLegal                 *int `json:"acceptSMSLegal,omitempty" xml:"acceptSMSLegal,omitempty"`
+	EnterDoesCRLF                  *int `json:"enterDoesCRLF,omitempty" xml:"enterDoesCRLF,omitempty"`
+	PlayIMSound                    *int `json:"playIMSound,omitempty" xml:"playIMSound,omitempty"`
+	DiscloseTyping                 *int `json:"discloseTyping,omitempty" xml:"discloseTyping,omitempty"`
+	AcceptSuperIcons               *int `json:"acceptSuperIcons,omitempty" xml:"acceptSuperIcons,omitempty"`
+	AcceptBLRichText               *int `json:"acceptBLRichText,omitempty" xml:"acceptBLRichText,omitempty"`
+	ReduceIMSound                  *int `json:"reduceIMSound,omitempty" xml:"reduceIMSound,omitempty"`
+	ConfirmDirectIM                *int `json:"confirmDirectIM,omitempty" xml:"confirmDirectIM,omitempty"`
+	OneTabbedIMWindow              *int `json:"oneTabbedIMWindow,omitempty" xml:"oneTabbedIMWindow,omitempty"`
+	BuddyInfoOnMouseover           *int `json:"buddyInfoOnMouseover,omitempty" xml:"buddyInfoOnMouseover,omitempty"`
+	DiscloseBuddyMatches           *int `json:"discloseBuddyMatches,omitempty" xml:"discloseBuddyMatches,omitempty"`
+	CatchIMs                       *int `json:"catchIMs,omitempty" xml:"catchIMs,omitempty"`
+	ShowFriendlyName               *int `json:"showFriendlyName,omitempty" xml:"showFriendlyName,omitempty"`
+	DiscloseRadio                  *int `json:"discloseRadio,omitempty" xml:"discloseRadio,omitempty"`
+	ShowCapabilities               *int `json:"showCapabilities,omitempty" xml:"showCapabilities,omitempty"`
+	ShowBuddyListFilter            *int `json:"showBuddyListFilter,omitempty" xml:"showBuddyListFilter,omitempty"`
+	ShowAwayIdle                   *int `json:"showAwayIdle,omitempty" xml:"showAwayIdle,omitempty"`
+	ShowMobile                     *int `json:"showMobile,omitempty" xml:"showMobile,omitempty"`
+	SortBuddyList                  *int `json:"sortBuddyList,omitempty" xml:"sortBuddyList,omitempty"`
+	CatchIMsForClient              *int `json:"catchIMsForClient,omitempty" xml:"catchIMsForClient,omitempty"`
+	NewMessageSmallNotification    *int `json:"newMessageSmallNotification,omitempty" xml:"newMessageSmallNotification,omitempty"`
+	NoFrequentBuddies              *int `json:"noFrequentBuddies,omitempty" xml:"noFrequentBuddies,omitempty"`
+	BlogAwayMessages               *int `json:"blogAwayMessages,omitempty" xml:"blogAwayMessages,omitempty"`
+	BlogAIMSigMessages             *int `json:"blogAIMSigMessages,omitempty" xml:"blogAIMSigMessages,omitempty"`
+	BlogNoComments                 *int `json:"blogNoComments,omitempty" xml:"blogNoComments,omitempty"`
+	FriendOfFriend                 *int `json:"friendOfFriend,omitempty" xml:"friendOfFriend,omitempty"`
+	FriendGetContactList           *int `json:"friendGetContactList,omitempty" xml:"friendGetContactList,omitempty"`
+	CompadInit                     *int `json:"compadInit,omitempty" xml:"compadInit,omitempty"`
+	SendBuddyFeed                  *int `json:"sendBuddyFeed,omitempty" xml:"sendBuddyFeed,omitempty"`
+	BlkSendIMWhileAway             *int `json:"blkSendIMWhileAway,omitempty" xml:"blkSendIMWhileAway,omitempty"`
+	ShowBuddyFeed                  *int `json:"showBuddyFeed,omitempty" xml:"showBuddyFeed,omitempty"`
+	NoSaveVanityInfo               *int `json:"noSaveVanityInfo,omitempty" xml:"noSaveVanityInfo,omitempty"`
+	AcceptOffLineIM                *int `json:"acceptOffLineIM,omitempty" xml:"acceptOffLineIM,omitempty"`
+	ShowGroups                     *int `json:"showGroups,omitempty" xml:"showGroups,omitempty"`
+	SortGroup                      *int `json:"sortGroup,omitempty" xml:"sortGroup,omitempty"`
+	ShowOffLineBuddies             *int `json:"showOffLineBuddies,omitempty" xml:"showOffLineBuddies,omitempty"`
+	ExpandBuddies                  *int `json:"expandBuddies,omitempty" xml:"expandBuddies,omitempty"`
+	ThirdPartyFeeds                *int `json:"thirdPartyFeeds,omitempty" xml:"thirdPartyFeeds,omitempty"`
+	NotifyReceivedInvite           *int `json:"notifyReceivedInvite,omitempty" xml:"notifyReceivedInvite,omitempty"`
+	ApfAutoAccept                  *int `json:"apfAutoAccept,omitempty" xml:"apfAutoAccept,omitempty"`
+	ApfAutoAcceptBuddy             *int `json:"apfAutoAcceptBuddy,omitempty" xml:"apfAutoAcceptBuddy,omitempty"`
+	BlockAwayMsgFeed               *int `json:"blockAwayMsgFeed,omitempty" xml:"blockAwayMsgFeed,omitempty"`
+	BlockAIMProfileFeed            *int `json:"blockAIMProfileFeed,omitempty" xml:"blockAIMProfileFeed,omitempty"`
+	BlockAIMPagesFeed              *int `json:"blockAIMPagesFeed,omitempty" xml:"blockAIMPagesFeed,omitempty"`
+	BlockJournalsFeed              *int `json:"blockJournalsFeed,omitempty" xml:"blockJournalsFeed,omitempty"`
+	BlockLocationFeed              *int `json:"blockLocationFeed,omitempty" xml:"blockLocationFeed,omitempty"`
+	BlockStickiesFeed              *int `json:"blockStickiesFeed,omitempty" xml:"blockStickiesFeed,omitempty"`
+	BlockUncutFeed                 *int `json:"blockUncutFeed,omitempty" xml:"blockUncutFeed,omitempty"`
+	BlockLinksFeed                 *int `json:"blockLinksFeed,omitempty" xml:"blockLinksFeed,omitempty"`
+	BlockAIMBulletinFeed           *int `json:"blockAIMBulletinFeed,omitempty" xml:"blockAIMBulletinFeed,omitempty"`
+	SaveStatusMsg                  *int `json:"saveStatusMsg,omitempty" xml:"saveStatusMsg,omitempty"`
+	ApfNotifyReceivedInviteByEmail *int `json:"apfNotifyReceivedInviteByEmail,omitempty" xml:"apfNotifyReceivedInviteByEmail,omitempty"`
+	ShowOfflineGrp                 *int `json:"showOfflineGrp,omitempty" xml:"showOfflineGrp,omitempty"`
+	OfflineGrpCollapsed            *int `json:"offlineGrpCollapsed,omitempty" xml:"offlineGrpCollapsed,omitempty"`
+	FirstImSoundOnly               *int `json:"firstImSoundOnly,omitempty" xml:"firstImSoundOnly,omitempty"`
+	ImblastInviteNotify            *int `json:"imblastInviteNotify,omitempty" xml:"imblastInviteNotify,omitempty"`
+	ViewIMsInBubbles               *int `json:"viewIMsInBubbles,omitempty" xml:"viewIMsInBubbles,omitempty"`
+	ViewIMTimestampsRelative       *int `json:"viewIMTimestampsRelative,omitempty" xml:"viewIMTimestampsRelative,omitempty"`
+	GlobalOTR                      *int `json:"globalOTR,omitempty" xml:"globalOTR,omitempty"`
+	ImblastInviteFromBuddyOnly     *int `json:"imblastInviteFromBuddyOnly,omitempty" xml:"imblastInviteFromBuddyOnly,omitempty"`
+}
+
 // PermitDenyData contains permit/deny list information.
+//
+// The XML item names follow the spec's getPermitDeny, which nests <allow> under
+// <allows> and <block> under <blocks>.
 type PermitDenyData struct {
 	PDMode     string   `json:"pdMode" xml:"pdMode"`
-	PermitList []string `json:"allows,omitempty" xml:"allows>user,omitempty"`
-	DenyList   []string `json:"blocks,omitempty" xml:"blocks>user,omitempty"`
+	PermitList []string `json:"allows,omitempty" xml:"allows>allow,omitempty"`
+	DenyList   []string `json:"blocks,omitempty" xml:"blocks>block,omitempty"`
 }
 
 // SetPreferences handles GET /preference/set requests to update user preferences.
@@ -134,7 +232,7 @@ func (h *PreferenceHandler) SetPreferences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	applied := make(map[string]interface{})
+	applied := &PreferenceData{}
 	for name, pref := range webBuddyPrefs {
 		val := r.URL.Query().Get(name)
 		if val == "" {
@@ -142,10 +240,10 @@ func (h *PreferenceHandler) SetPreferences(w http.ResponseWriter, r *http.Reques
 		}
 		on := parseBoolPref(val)
 		item.TLVList = wire.SetBuddyPref(item.TLVList, pref, on)
-		applied[name] = boolToPrefInt(on)
+		applied.Set(name, boolToPrefInt(on))
 	}
 
-	if len(applied) > 0 {
+	if applied.Len() > 0 {
 		frame := wire.SNACFrame{FoodGroup: wire.Feedbag, SubGroup: wire.FeedbagInsertItem}
 		if _, err := h.FeedbagService.UpsertItem(ctx, instance, frame, []wire.FeedbagItem{item}); err != nil {
 			h.Logger.ErrorContext(ctx, "failed to set preferences", "err", err.Error())
@@ -161,7 +259,7 @@ func (h *PreferenceHandler) SetPreferences(w http.ResponseWriter, r *http.Reques
 
 	h.Logger.DebugContext(ctx, "preferences updated",
 		"screenName", session.ScreenName.String(),
-		"prefCount", len(applied),
+		"prefCount", applied.Len(),
 	)
 
 	// Send success response
@@ -187,45 +285,44 @@ func (h *PreferenceHandler) GetPreferences(w http.ResponseWriter, r *http.Reques
 
 	// When specific preferences are named in the query (e.g. playIMSound=1), the
 	// client is selecting those; otherwise return all preferences.
-	requestedPrefs := make(map[string]interface{})
+	requestedPrefs := &PreferenceData{}
 	for name, pref := range webBuddyPrefs {
 		if r.URL.Query().Has(name) {
-			requestedPrefs[name] = effectivePrefValue(prefsList, pref)
+			requestedPrefs.Set(name, effectivePrefValue(prefsList, pref))
 		}
 	}
 
-	var prefs map[string]interface{}
-	if len(requestedPrefs) > 0 {
-		prefs = requestedPrefs
-	} else {
-		prefs = make(map[string]interface{}, len(webBuddyPrefs))
-		for name, pref := range webBuddyPrefs {
-			prefs[name] = effectivePrefValue(prefsList, pref)
-		}
+	prefs := requestedPrefs
+	if prefs.Len() == 0 {
+		prefs = effectiveBuddyPrefs(prefsList)
 	}
 
 	h.Logger.DebugContext(ctx, "preferences retrieved",
 		"screenName", session.ScreenName.String(),
-		"prefCount", len(prefs),
-		"requested", len(requestedPrefs) > 0,
+		"prefCount", prefs.Len(),
+		"requested", requestedPrefs.Len() > 0,
 	)
+
+	var payload any = prefs
 
 	// AMF clients (e.g. Gromit) expect the payload shaped a specific way. Pref
 	// values are already numeric 0/1, which is what these clients expect.
 	format := strings.ToLower(r.URL.Query().Get("f"))
 	if format == "amf" || format == "amf3" {
+		amfPrefs := prefs.Map()
 		// Ensure prefs is never empty for Gromit.
-		if len(prefs) == 0 {
-			prefs = map[string]interface{}{"playIMSound": 1}
+		if len(amfPrefs) == 0 {
+			amfPrefs = map[string]any{"playIMSound": 1}
 		}
 		// A single preference is returned directly; multiple are wrapped in
 		// jsonData for Gromit compatibility.
-		if len(prefs) != 1 {
-			prefs = map[string]interface{}{"jsonData": prefs}
+		if len(amfPrefs) != 1 {
+			amfPrefs = map[string]any{"jsonData": amfPrefs}
 		}
+		payload = amfPrefs
 
 		h.Logger.DebugContext(ctx, "AMF preference response",
-			"prefCount", len(prefs),
+			"prefCount", prefs.Len(),
 			"format", format,
 		)
 	}
@@ -234,7 +331,7 @@ func (h *PreferenceHandler) GetPreferences(w http.ResponseWriter, r *http.Reques
 	response := BaseResponse{}
 	response.Response.StatusCode = 200
 	response.Response.StatusText = "OK"
-	response.Response.Data = prefs
+	response.Response.Data = payload
 	SendResponse(w, r, response, h.Logger)
 }
 
@@ -271,12 +368,72 @@ func buddyPrefsItem(ctx context.Context, fs FeedbagService, instance *state.Sess
 // reads these from the startup preference event and has no other default for
 // them, so an omitted pref would silently fall back to the client's own hidden
 // default (which, for showGroups, hides group headers).
-func effectiveBuddyPrefs(list wire.TLVList) map[string]interface{} {
-	prefs := make(map[string]interface{}, len(webBuddyPrefs))
+func effectiveBuddyPrefs(list wire.TLVList) *PreferenceData {
+	prefs := &PreferenceData{}
 	for name, pref := range webBuddyPrefs {
-		prefs[name] = effectivePrefValue(list, pref)
+		prefs.Set(name, effectivePrefValue(list, pref))
 	}
 	return prefs
+}
+
+// prefFieldIndex maps a preference name to its PreferenceData field.
+var prefFieldIndex = func() map[string]int {
+	t := reflect.TypeOf(PreferenceData{})
+	index := make(map[string]int, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		index[name] = i
+	}
+	return index
+}()
+
+// Set records one preference by its Web API name, leaving every preference not
+// set this way absent from the payload. It reports whether the name is one this
+// server carries.
+func (p *PreferenceData) Set(name string, value int) bool {
+	i, ok := prefFieldIndex[name]
+	if !ok {
+		return false
+	}
+	reflect.ValueOf(p).Elem().Field(i).Set(reflect.ValueOf(&value))
+	return true
+}
+
+// Get returns a preference by its Web API name and whether it is carried.
+func (p *PreferenceData) Get(name string) (int, bool) {
+	i, ok := prefFieldIndex[name]
+	if !ok {
+		return 0, false
+	}
+	field := reflect.ValueOf(p).Elem().Field(i)
+	if field.IsNil() {
+		return 0, false
+	}
+	return int(field.Elem().Int()), true
+}
+
+// Map returns the carried preferences keyed by Web API name, for the AMF path
+// that reshapes the payload rather than sending it as-is.
+func (p *PreferenceData) Map() map[string]any {
+	out := make(map[string]any, len(prefFieldIndex))
+	for name := range prefFieldIndex {
+		if v, ok := p.Get(name); ok {
+			out[name] = v
+		}
+	}
+	return out
+}
+
+// Len reports how many preferences the payload carries.
+func (p *PreferenceData) Len() int {
+	fields := reflect.ValueOf(p).Elem()
+	n := 0
+	for i := 0; i < fields.NumField(); i++ {
+		if !fields.Field(i).IsNil() {
+			n++
+		}
+	}
+	return n
 }
 
 // effectivePrefValue returns the 0/1 value for the buddy pref prefNum, deferring
