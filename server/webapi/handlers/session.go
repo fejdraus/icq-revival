@@ -473,12 +473,10 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 			// would silently fall back to the client's hidden default and, for
 			// showGroups, hide group headers.
 			prefPayload := &PreferenceData{}
-			if session.OSCARSession != nil {
-				if item, err := buddyPrefsItem(ctx, h.FeedbagService, session.OSCARSession); err != nil {
-					h.Logger.ErrorContext(ctx, "failed to get preferences", "err", err.Error())
-				} else {
-					prefPayload = effectiveBuddyPrefs(item.TLVList)
-				}
+			if item, err := buddyPrefsItem(ctx, h.FeedbagService, session.OSCARSession); err != nil {
+				h.Logger.ErrorContext(ctx, "failed to get preferences", "err", err.Error())
+			} else {
+				prefPayload = effectiveBuddyPrefs(item.TLVList)
 			}
 			data.Events.Preference = prefPayload
 			session.EventQueue.Push(types.EventTypePreference, prefPayload)
@@ -488,13 +486,10 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 			// presence state read that model and no-op silently while it is
 			// empty, so the session has to start with one.
 			var pdPayload interface{} = PermitDenyData{PDMode: "permitAll"}
-			if session.OSCARSession != nil {
-				pdd, err := session.PermitDenyRefresher(ctx)
-				if err != nil {
-					h.Logger.ErrorContext(ctx, "failed to get permit/deny settings", "err", err.Error())
-				} else {
-					pdPayload = pdd
-				}
+			if pdd, err := session.PermitDenyRefresher(ctx); err != nil {
+				h.Logger.ErrorContext(ctx, "failed to get permit/deny settings", "err", err.Error())
+			} else {
+				pdPayload = pdd
 			}
 			data.Events.PermitDeny = pdPayload
 			session.EventQueue.Push(types.EventTypePermitDeny, pdPayload)

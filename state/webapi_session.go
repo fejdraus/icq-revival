@@ -178,10 +178,6 @@ func (s *WebAPISession) IsSubscribedTo(eventType string) bool {
 // StartListeningToOSCARSession starts a goroutine that listens to the OSCAR session's
 // message channel and converts SNAC messages into WebAPI events.
 func (s *WebAPISession) StartListeningToOSCARSession() {
-	if s.OSCARSession == nil {
-		return
-	}
-
 	s.closeMu.Lock()
 	defer s.closeMu.Unlock()
 	if s.closed {
@@ -201,7 +197,16 @@ func (s *WebAPISession) StartListeningToOSCARSession() {
 				}
 				s.handleSNACMessage(msg)
 			case <-s.OSCARSession.Closed():
-				// OSCAR session closed
+				// The OSCAR instance went away without this session asking — a
+				// boot, a rate-limit disconnect. Tell the client rather than
+				// leaving its parked fetcher to hang: a sessionEnded event
+				// releases the poll at once and the client signs off on the
+				// spot, instead of waiting out the reaper's next sweep.
+				//
+				// A teardown this session started needs no event, and gets
+				// none: Close closes the queue before it closes the instance,
+				// so this Push is a no-op on that path.
+				s.EventQueue.Push(types.EventTypeSessionEnded, struct{}{})
 				return
 			}
 		}
@@ -229,10 +234,6 @@ func (s *WebAPISession) Close() {
 
 // handleSNACMessage converts a SNAC message into WebAPI events and pushes them to the event queue.
 func (s *WebAPISession) handleSNACMessage(msg wire.SNACMessage) {
-	if s.EventQueue == nil {
-		return
-	}
-
 	// Convert SNAC message to WebAPI events based on food group and subgroup
 	switch msg.Frame.FoodGroup {
 	case wire.ICBM:
@@ -678,7 +679,7 @@ func (m *WebAPISessionManager) GetSession(ctx context.Context, aimsid string) (*
 	// The aimsid must stop resolving at that point, otherwise a client told to
 	// disconnect could keep issuing charged requests against a dead session (the
 	// reaper only removes it on time expiry, up to a TTL later).
-	if session.OSCARSession != nil && session.OSCARSession.IsClosed() {
+	if session.OSCARSession.IsClosed() {
 		return nil, ErrWebAPISessionExpired
 	}
 
@@ -763,7 +764,7 @@ func (m *WebAPISessionManager) reapExpired() {
 	now := time.Now()
 	var expired []*WebAPISession
 	for aimsid, session := range m.sessions {
-		if now.After(session.ExpiresAt) || (session.OSCARSession != nil && session.OSCARSession.IsClosed()) {
+		if now.After(session.ExpiresAt) || session.OSCARSession.IsClosed() {
 			delete(m.sessions, aimsid)
 			expired = append(expired, session)
 		}

@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -44,22 +46,16 @@ func TestAuthHandler_Logout(t *testing.T) {
 	assert.Equal(t, "dev1", loc.Query().Get("devId"))
 	assert.Equal(t, "http://localhost:8000/.client/", loc.Query().Get("succUrl"))
 
-	// SSO cookies are expired so the browser is logged out.
-	cleared := map[string]bool{}
-	for _, c := range rr.Result().Cookies() {
-		if c.MaxAge < 0 {
-			cleared[c.Name] = true
-		}
-	}
-	for _, name := range []string{"RSP_USER", "RSP_LOCAL", "localAuthUser", "oldAimToken"} {
-		assert.True(t, cleared[name], "expected %s cookie to be cleared", name)
-	}
+	// Nothing to clear: getToken spent the token cookie signing this client in.
+	assert.Empty(t, rr.Result().Cookies())
 }
 
 func TestAuthHandler_LoginPSP_POST_Success(t *testing.T) {
+	var got wire.FLAPSignonFrame
 	handler := &AuthHandler{
 		AuthService: &testAuthService{
 			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+				got = inFrame
 				return successfulLoginBlock(), nil
 			},
 		},
@@ -80,14 +76,73 @@ func TestAuthHandler_LoginPSP_POST_Success(t *testing.T) {
 	assert.Equal(t, http.StatusFound, rr.Code)
 	assert.Equal(t, "http://localhost:8000/", rr.Header().Get("Location"))
 
-	cookies := rr.Result().Cookies()
-	names := make(map[string]string, len(cookies))
-	for _, c := range cookies {
-		names[c.Name] = c.Value
+	set := make(map[string]*http.Cookie)
+	for _, c := range rr.Result().Cookies() {
+		set[c.Name] = c
 	}
-	assert.Equal(t, "testuser", names["RSP_USER"])
-	assert.Equal(t, "testuser", names["RSP_LOCAL"])
-	assert.Equal(t, "testuser||testuser", names["localAuthUser"])
+
+	// The cookie carries the BOS token from the login response, unchanged.
+	tokenCookie := set[bosTokenCookie]
+	if assert.NotNil(t, tokenCookie) {
+		assert.True(t, tokenCookie.HttpOnly)
+		raw, err := base64.URLEncoding.DecodeString(tokenCookie.Value)
+		assert.NoError(t, err)
+		assert.Equal(t, loginBlockCookie, raw)
+		// It outlives the redirect but little else.
+		assert.Equal(t, int(bosTokenTTL.Seconds()), tokenCookie.MaxAge)
+	}
+
+	for _, name := range []string{"RSP_USER", "RSP_LOCAL", "localAuthUser"} {
+		assert.NotContains(t, set, name)
+	}
+
+	// The devId names the client on the resulting session.
+	clientID, ok := got.String(wire.LoginTLVTagsClientIdentity)
+	assert.True(t, ok, "signon frame should carry a client identity")
+	assert.Equal(t, "dev1", clientID)
+}
+
+func TestAuthHandler_LoginPSP_POST_ServiceErrors(t *testing.T) {
+	tests := []struct {
+		name      string
+		flapLogin func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error)
+	}{
+		{
+			name: "LoginResponseHasNoCookie",
+			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+				return blockWithoutCookie(), nil
+			},
+		},
+		{
+			name: "AuthServiceUnreachable",
+			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+				return wire.TLVRestBlock{}, errors.New("boom")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := &AuthHandler{
+				AuthService: &testAuthService{flapLogin: tt.flapLogin},
+				Logger:      slog.Default(),
+			}
+
+			form := url.Values{}
+			form.Set("loginId", "testuser")
+			form.Set("password", "secret")
+			req := httptest.NewRequest(http.MethodPost, "/_cqr/login/login.psp", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rr := httptest.NewRecorder()
+
+			handler.LoginPSP(rr, req)
+
+			// A broken auth service must not read as a mistyped password.
+			assert.Equal(t, http.StatusInternalServerError, rr.Code)
+			assert.NotContains(t, rr.Body.String(), "Invalid screen name or password")
+			assert.Empty(t, rr.Result().Cookies())
+		})
+	}
 }
 
 func TestAuthHandler_LoginPSP_POST_InvalidCredentials(t *testing.T) {

@@ -1156,3 +1156,59 @@ func TestWebAPISession_OfflineIM(t *testing.T) {
 		assert.Empty(t, sess.EventQueue.GetAllEvents())
 	})
 }
+
+// A boot closes the account's OSCAR session out from under its web session. The
+// client is parked on a long poll at that moment, so it must be released with a
+// sessionEnded event rather than left to hang until the reaper's next sweep —
+// which measured 26-28s against a running server.
+func TestWebAPISession_BootReleasesParkedFetcherWithSessionEnded(t *testing.T) {
+	mgr := NewWebAPISessionManager()
+	inst := NewSession().AddInstance()
+
+	sess, err := mgr.CreateSession(DisplayScreenName("mike"), "dev", []string{"presence"}, inst, "", slog.Default())
+	require.NoError(t, err)
+	sess.StartListeningToOSCARSession()
+
+	// Park a fetcher the way fetchEvents does, with nothing pending.
+	type result struct {
+		events []types.Event
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		events, err := sess.EventQueue.Fetch(context.Background(), 0, 60*time.Second)
+		done <- result{events, err}
+	}()
+
+	// Let the fetcher block before the session is taken away.
+	time.Sleep(50 * time.Millisecond)
+
+	inst.Session().CloseSession()
+
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		require.Len(t, got.events, 1)
+		assert.Equal(t, types.EventTypeSessionEnded, got.events[0].Type)
+	case <-time.After(5 * time.Second):
+		t.Fatal("parked fetcher was not released by the boot")
+	}
+}
+
+// A session tearing itself down — endSession, or the idle reaper — needs no
+// sessionEnded event: the client already knows it is leaving. Close closes the
+// queue before the instance, so the listener's push lands on a closed queue.
+func TestWebAPISession_SelfCloseEmitsNoSessionEndedEvent(t *testing.T) {
+	mgr := NewWebAPISessionManager()
+	inst := NewSession().AddInstance()
+
+	sess, err := mgr.CreateSession(DisplayScreenName("mike"), "dev", []string{"presence"}, inst, "", slog.Default())
+	require.NoError(t, err)
+	sess.StartListeningToOSCARSession()
+
+	require.NoError(t, mgr.RemoveSession(context.Background(), sess.AimSID))
+
+	events, err := sess.EventQueue.Fetch(context.Background(), 0, time.Second)
+	require.NoError(t, err)
+	assert.Empty(t, events)
+}

@@ -1,19 +1,25 @@
 package handlers
 
 import (
-	"fmt"
+	"encoding/base64"
+	"errors"
 	"html/template"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/mk6i/open-oscar-server/state"
-	"github.com/mk6i/open-oscar-server/wire"
 )
 
-const loginPSPCookieMaxAge = 86400
+// bosTokenCookie is the cookie the browser presents to getToken. The name is the
+// one AIM's own client knows, kept so a client running against the non-Web API
+// path finds what it expects.
+const bosTokenCookie = "oldAimToken"
+
+// bosTokenTTL mirrors the expiry stamped by HMACCookieBaker.Issue
+// (state/cookie.go). The token only has to survive login.psp -> getToken ->
+// startSession, so its brief life is what makes every later visit sign in again.
+const bosTokenTTL = time.Minute
 
 var loginPSPPage = template.Must(template.New("login.psp").Parse(`<!DOCTYPE html>
 <html lang="en">
@@ -98,17 +104,23 @@ func (h *AuthHandler) LoginPSP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if err := h.authenticateCredentials(r, loginID, password); err != nil {
-			h.Logger.DebugContext(r.Context(), "login.psp failed", "loginId", loginID, "error", err)
-			data.Error = "Invalid screen name or password."
-			h.renderLoginPSP(w, r, data)
+		authCookie, err := h.authenticateCredentials(r.Context(), loginID, password, clientIDForDevID(data.DevID))
+		if err != nil {
+			if errors.Is(err, errInvalidCredentials) {
+				h.Logger.DebugContext(r.Context(), "login.psp failed", "loginId", loginID)
+				data.Error = "Invalid screen name or password."
+				h.renderLoginPSP(w, r, data)
+				return
+			}
+			h.Logger.ErrorContext(r.Context(), "login.psp could not authenticate", "loginId", loginID, "error", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
-		screenName := state.DisplayScreenName(loginID)
-		h.setLoginPSPCookies(w, screenName)
+		setBOSTokenCookie(w, authCookie)
+
 		redirectURL := safeLoginRedirectURL(r, data.SuccURL)
-		h.Logger.InfoContext(r.Context(), "login.psp succeeded", "loginId", screenName, "redirect", redirectURL)
+		h.Logger.InfoContext(r.Context(), "login.psp succeeded", "loginId", loginID, "redirect", redirectURL)
 		http.Redirect(w, r, redirectURL, http.StatusFound)
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -126,55 +138,36 @@ func (h *AuthHandler) renderLoginPSP(w http.ResponseWriter, r *http.Request, dat
 	}
 }
 
-func (h *AuthHandler) authenticateCredentials(r *http.Request, username, password string) error {
-	signonFrame := wire.FLAPSignonFrame{}
-	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsScreenName, username))
-	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsPlaintextPassword, password))
-	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsMultiConnFlags, wire.MultiConnFlagsRecentClient))
-
-	block, err := h.AuthService.FLAPLogin(r.Context(), signonFrame, "")
-	if err != nil {
-		return err
-	}
-	if block.HasTag(wire.LoginTLVTagsErrorSubcode) {
-		return fmt.Errorf("login failed")
-	}
-	return nil
+// setBOSTokenCookie hands the BOS token from the login response to the browser,
+// which carries it as far as the getToken that follows the redirect. It is a
+// bearer credential, so HttpOnly keeps it out of reach of page scripts, and its
+// MaxAge matches the token's own life so the browser drops it on the same
+// schedule the server stops honouring it.
+func setBOSTokenCookie(w http.ResponseWriter, authCookie []byte) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     bosTokenCookie,
+		Value:    base64.URLEncoding.EncodeToString(authCookie),
+		Path:     "/",
+		Expires:  time.Now().Add(bosTokenTTL),
+		MaxAge:   int(bosTokenTTL.Seconds()),
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
-func (h *AuthHandler) setLoginPSPCookies(w http.ResponseWriter, screenName state.DisplayScreenName) {
-	loginID := string(screenName)
-	expires := time.Now().Add(loginPSPCookieMaxAge * time.Second)
-	cookie := func(name, value string) *http.Cookie {
-		return &http.Cookie{
-			Name:     name,
-			Value:    value,
-			Path:     "/",
-			Expires:  expires,
-			MaxAge:   loginPSPCookieMaxAge,
-			HttpOnly: false,
-			SameSite: http.SameSiteLaxMode,
-		}
-	}
-	http.SetCookie(w, cookie("RSP_USER", loginID))
-	http.SetCookie(w, cookie("RSP_LOCAL", loginID))
-	http.SetCookie(w, cookie("localAuthUser", loginID+"||"+loginID))
-}
-
-// clearLoginPSPCookies expires the SSO cookies set by setLoginPSPCookies (plus
-// the oldAimToken cookie honored by getToken) so the browser is logged out.
-func (h *AuthHandler) clearLoginPSPCookies(w http.ResponseWriter) {
-	for _, name := range []string{"RSP_USER", "RSP_LOCAL", "localAuthUser", "oldAimToken"} {
-		http.SetCookie(w, &http.Cookie{
-			Name:     name,
-			Value:    "",
-			Path:     "/",
-			Expires:  time.Unix(0, 0),
-			MaxAge:   -1,
-			HttpOnly: false,
-			SameSite: http.SameSiteLaxMode,
-		})
-	}
+// clearBOSTokenCookie expires the token cookie. getToken calls it on every
+// request, spending the token whether or not it was any good, so a reload finds
+// nothing to sign in with.
+func clearBOSTokenCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     bosTokenCookie,
+		Value:    "",
+		Path:     "/",
+		Expires:  time.Unix(0, 0),
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 func defaultLoginSuccURL(r *http.Request) string {

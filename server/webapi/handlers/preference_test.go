@@ -237,28 +237,6 @@ func TestPermitDenyData_PDInfoModeWins(t *testing.T) {
 	assert.Equal(t, []string{"alloweduser"}, got.PermitList)
 }
 
-func TestPreferenceHandler_SetPreferences_NoOSCARSession(t *testing.T) {
-	fs := &MockFeedbagService{}
-	sessionMgr, aimsid := createTestSessionManager("webonly") // nil OSCARSession
-
-	handler := &PreferenceHandler{
-		SessionManager: sessionMgr,
-		FeedbagService: fs,
-		Logger:         slog.Default(),
-	}
-
-	req, _ := http.NewRequest("GET", "/preference/set?aimsid="+aimsid+"&playIMSound=1", nil)
-	rr := httptest.NewRecorder()
-	requireSession(handler.SessionManager, handler.SetPreferences).ServeHTTP(rr, req)
-
-	// A nil OSCARSession is a broken server invariant (guests are unsupported),
-	// so the session middleware rejects it with a 500 before the handler runs
-	// and no feedbag lookup occurs.
-	assert.Equal(t, http.StatusInternalServerError, rr.Code)
-	assert.Contains(t, rr.Body.String(), "internal server error")
-	fs.AssertNotCalled(t, "Query", mock.Anything, mock.Anything, mock.Anything)
-}
-
 // assertPref asserts a preference is carried and holds want.
 func assertPref(t *testing.T, prefs *PreferenceData, name string, want int) {
 	t.Helper()

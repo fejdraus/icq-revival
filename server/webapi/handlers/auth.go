@@ -1,15 +1,16 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,7 +61,6 @@ type RedirectData struct {
 // AuthHandler handles Web AIM API authentication endpoints.
 type AuthHandler struct {
 	AuthService AuthService
-	CookieBaker CookieBaker
 	Logger      *slog.Logger
 }
 
@@ -82,9 +82,13 @@ func (h *AuthHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	devID := r.URL.Query().Get("devId")
 
-	loginID, tokenBytes, ok := h.resolveGetTokenSession(ctx, r)
-	if !ok || loginID == "" {
-		h.Logger.DebugContext(ctx, "getToken: no session, returning redirect",
+	// The cookie is spent either way: consumed on success, and cleared on failure
+	// so a browser holding a dead token stops presenting it.
+	clearBOSTokenCookie(w)
+
+	loginID, authCookie, ok := h.resolveGetTokenSession(r)
+	if !ok {
+		h.Logger.DebugContext(ctx, "getToken: no token, returning redirect",
 			"devId", devID,
 			"host", r.Host)
 		resp := BaseResponse{}
@@ -95,27 +99,14 @@ func (h *AuthHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Existence of the account is authoritatively enforced downstream by
-	// RegisterBOSSession (during startSession); a token minted here for an
-	// unknown screen name is inert, so no user lookup is needed at this point.
-	if len(tokenBytes) == 0 {
-		var err error
-		tokenBytes, err = h.issueAuthCookie(loginID, devID)
-		if err != nil {
-			h.Logger.ErrorContext(ctx, "getToken: failed to issue token", "error", err, "loginId", loginID)
-			SendError(w, r, http.StatusInternalServerError, "internal server error")
-			return
-		}
-	}
-
 	resp := BaseResponse{}
 	resp.Response.StatusCode = 200
 	resp.Response.StatusText = "OK"
 	resp.Response.Data = &GetTokenData{
 		Token: AuthToken{
-			A: base64.URLEncoding.EncodeToString(tokenBytes),
+			A: base64.URLEncoding.EncodeToString(authCookie),
 			// A string, not a number: that is how the client is given it.
-			ExpiresIn: "86400", // todo check this assumption
+			ExpiresIn: strconv.Itoa(int(bosTokenTTL.Seconds())),
 		},
 		UserData: UserData{Attributes: UserAttributes{LoginID: string(loginID)}},
 	}
@@ -124,41 +115,19 @@ func (h *AuthHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 	h.Logger.InfoContext(ctx, "getToken succeeded", "loginId", loginID, "devId", devID)
 }
 
-func (h *AuthHandler) resolveGetTokenSession(ctx context.Context, r *http.Request) (state.DisplayScreenName, []byte, bool) {
-	if token := r.URL.Query().Get("a"); token != "" {
-		if loginID, cookie, ok := h.loginFromToken(token); ok {
-			return loginID, cookie, true
-		}
+// resolveGetTokenSession identifies the caller from the BOS token parked at
+// sign-in. That cookie is the only credential getToken ever receives: the client
+// sends no token of its own, only f, attributes, devId and r. A token past its
+// brief life fails to crack and reads the same as no token at all.
+func (h *AuthHandler) resolveGetTokenSession(r *http.Request) (state.DisplayScreenName, []byte, bool) {
+	c, err := r.Cookie(bosTokenCookie)
+	if err != nil || c.Value == "" {
+		return "", nil, false
 	}
-
-	if c, err := r.Cookie("oldAimToken"); err == nil && c.Value != "" {
-		token, err := url.QueryUnescape(c.Value)
-		if err != nil {
-			token = c.Value
-		}
-		if loginID, cookie, ok := h.loginFromToken(token); ok {
-			return loginID, cookie, true
-		}
+	token, err := url.QueryUnescape(c.Value)
+	if err != nil {
+		token = c.Value
 	}
-
-	if c, err := r.Cookie("localAuthUser"); err == nil && c.Value != "" {
-		if loginID, ok := parseLocalAuthUser(c.Value); ok {
-			return loginID, nil, true
-		}
-	}
-
-	for _, name := range []string{"RSP_USER", "RSP_LOCAL"} {
-		if c, err := r.Cookie(name); err == nil {
-			if loginID, ok := parseRSPCookie(c.Value); ok {
-				return loginID, nil, true
-			}
-		}
-	}
-
-	return "", nil, false
-}
-
-func (h *AuthHandler) loginFromToken(token string) (state.DisplayScreenName, []byte, bool) {
 	rawCookie, err := base64.URLEncoding.DecodeString(strings.TrimSpace(token))
 	if err != nil {
 		return "", nil, false
@@ -170,49 +139,41 @@ func (h *AuthHandler) loginFromToken(token string) (state.DisplayScreenName, []b
 	return serverCookie.ScreenName, rawCookie, true
 }
 
-func parseLocalAuthUser(value string) (state.DisplayScreenName, bool) {
-	parts := strings.SplitN(value, "||", 2)
-	loginID := strings.TrimSpace(parts[0])
-	if loginID == "" {
-		return "", false
+// errInvalidCredentials reports that the auth service rejected the screen name or
+// password, as opposed to failing to answer at all.
+var errInvalidCredentials = errors.New("invalid screen name or password")
+
+// authenticateCredentials verifies the credentials and returns the auth cookie minted
+// by the OSCAR auth service. It returns errInvalidCredentials when the credentials are
+// rejected.
+func (h *AuthHandler) authenticateCredentials(ctx context.Context, username, password, clientID string) ([]byte, error) {
+	signonFrame := wire.FLAPSignonFrame{}
+	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsScreenName, username))
+	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsPlaintextPassword, password))
+	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsClientIdentity, clientID))
+	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsMultiConnFlags, wire.MultiConnFlagsRecentClient))
+
+	block, err := h.AuthService.FLAPLogin(ctx, signonFrame, "")
+	if err != nil {
+		return nil, fmt.Errorf("FLAPLogin: %w", err)
 	}
-	return state.DisplayScreenName(loginID), true
+	if block.HasTag(wire.LoginTLVTagsErrorSubcode) {
+		return nil, errInvalidCredentials
+	}
+	authCookie, ok := block.Bytes(wire.LoginTLVTagsAuthorizationCookie)
+	if !ok {
+		return nil, fmt.Errorf("login response carries no authorization cookie")
+	}
+	return authCookie, nil
 }
 
-func parseRSPCookie(value string) (state.DisplayScreenName, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", false
+// clientIDForDevID names the client on the session for callers that only know the
+// Web API devId.
+func clientIDForDevID(devID string) string {
+	if devID == "" {
+		return "WebAIM"
 	}
-	if decoded, err := url.QueryUnescape(value); err == nil && decoded != "" {
-		value = decoded
-	}
-	// RSP cookies typically contain the screen name directly.
-	if strings.ContainsAny(value, " \t\r\n") {
-		return "", false
-	}
-	return state.DisplayScreenName(value), true
-}
-
-func (h *AuthHandler) issueAuthCookie(screenName state.DisplayScreenName, devID string) ([]byte, error) {
-	if h.CookieBaker == nil {
-		return nil, fmt.Errorf("cookie baker not configured")
-	}
-	clientID := devID
-	if clientID == "" {
-		clientID = "WebAIM"
-	}
-	serverCookie := state.ServerCookie{
-		Service:       wire.BOS,
-		ScreenName:    screenName,
-		ClientID:      clientID,
-		MultiConnFlag: uint8(wire.MultiConnFlagsRecentClient),
-	}
-	buf := &bytes.Buffer{}
-	if err := wire.MarshalBE(serverCookie, buf); err != nil {
-		return nil, err
-	}
-	return h.CookieBaker.Issue(buf.Bytes())
+	return devID
 }
 
 func (h *AuthHandler) loginRedirectURL(r *http.Request) string {
@@ -223,9 +184,10 @@ func (h *AuthHandler) loginRedirectURL(r *http.Request) string {
 	return fmt.Sprintf("%s://%s/_cqr/login/login.psp", scheme, r.Host)
 }
 
+// Logout sends the browser to the login page. There is nothing to clear: the
+// token cookie is spent by the getToken that signed this client in, and nothing
+// else survives a request.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	h.clearLoginPSPCookies(w)
-
 	loginURL := h.loginRedirectURL(r)
 	q := url.Values{}
 	if devID := r.URL.Query().Get("devId"); devID != "" {
@@ -260,6 +222,7 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		username = req.Username
 		password = req.Password
+		devID = req.DevID
 	} else {
 		// Parse form-encoded or URL parameters
 		if err := r.ParseForm(); err != nil {
@@ -292,30 +255,19 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	signonFrame := wire.FLAPSignonFrame{}
-	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsScreenName, username))
-	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsPlaintextPassword, password))
-	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsMultiConnFlags, wire.MultiConnFlagsRecentClient))
-
-	block, err := h.AuthService.FLAPLogin(r.Context(), signonFrame, "")
+	authCookie, err := h.authenticateCredentials(r.Context(), username, password, clientIDForDevID(devID))
 	if err != nil {
-		h.Logger.DebugContext(r.Context(), err.Error())
+		h.Logger.DebugContext(r.Context(), "clientLogin failed", "username", username, "error", err)
+		if errors.Is(err, errInvalidCredentials) {
+			SendError(w, r, http.StatusUnauthorized, "username and password required")
+			return
+		}
 		SendError(w, r, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
-	if block.HasTag(wire.LoginTLVTagsErrorSubcode) {
-		h.Logger.DebugContext(r.Context(), "login failed")
-		SendError(w, r, http.StatusUnauthorized, "username and password required")
-		return
-	}
-
-	authCookie, ok := block.Bytes(wire.OServiceTLVTagsLoginCookie)
-	if !ok {
-		h.Logger.DebugContext(r.Context(), "login cookie not found")
-		SendError(w, r, http.StatusInternalServerError, "internal server error")
-		return
-	}
+	// No cookie here: this endpoint's caller receives the token in the response
+	// body and presents it to startSession itself.
 
 	// Generate session secret (for signing subsequent requests)
 	sessionSecret, err := h.generateToken()
@@ -332,14 +284,14 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 	resp.Response.Data = &ClientLoginData{
 		Token: AuthToken{
 			A:         base64.URLEncoding.EncodeToString(authCookie),
-			ExpiresIn: "86400", // 24 hours in seconds
+			ExpiresIn: strconv.Itoa(int(bosTokenTTL.Seconds())),
 		},
 		LoginID:       username,
 		ScreenName:    username,
 		SessionSecret: sessionSecret,
 		HostTime:      time.Now().Unix(),
 		// A number here where token.expiresIn is a string, as the client expects.
-		TokenExpiresIn: 86400, // 24 hours in seconds
+		TokenExpiresIn: int(bosTokenTTL.Seconds()),
 	}
 
 	// Send response in requested format (JSON, JSONP, XML, or AMF)

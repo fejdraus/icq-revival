@@ -50,10 +50,6 @@ func (m *MockICBMService) OfflineRetrieve(ctx context.Context, instance *state.S
 }
 
 // createTestSessionManager creates a WebAPISessionManager with a pre-populated session.
-func createTestSessionManager(screenName string) (*state.WebAPISessionManager, string) {
-	return createTestSessionManagerWithOSCAR(screenName, nil)
-}
-
 // createTestSessionManagerWithOSCAR creates a WebAPISessionManager with an OSCAR session instance set.
 func createTestSessionManagerWithOSCAR(screenName string, oscarSession *state.SessionInstance) (*state.WebAPISessionManager, string) {
 	mgr := state.NewWebAPISessionManager()

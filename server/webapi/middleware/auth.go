@@ -164,12 +164,6 @@ func (m *AuthMiddleware) RequireSession(sm WebAPISessionResolver, next func(http
 			m.sendSessionError(w, r, http.StatusUnauthorized, "invalid or expired session")
 			return
 		}
-		// startSession no longer creates sessions without an OSCAR instance, so a
-		// nil here is a server-side invariant violation, not a bad request.
-		if session.OSCARSession == nil {
-			m.sendSessionError(w, r, http.StatusInternalServerError, "internal server error")
-			return
-		}
 		_ = sm.TouchSession(r.Context(), aimsid)
 		next(w, r, session)
 	})

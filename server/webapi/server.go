@@ -24,7 +24,6 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 
 	authHandler := &handlers.AuthHandler{
 		AuthService: handler.AuthService,
-		CookieBaker: handler.CookieBaker,
 		Logger:      logger,
 	}
 

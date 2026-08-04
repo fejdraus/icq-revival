@@ -892,23 +892,6 @@ func TestRequireSession(t *testing.T) {
 			expectNextCalled:   false,
 		},
 		{
-			name:   "Error_NilOSCARSession",
-			aimsid: "no-oscar-session",
-			setupMocks: func(sm *MockWebAPISessionManager, aimsid string) {
-				sess := &state.WebAPISession{
-					AimSID:       aimsid,
-					ScreenName:   state.DisplayScreenName("someuser"),
-					LastAccessed: time.Now(),
-					// OSCARSession is nil - a broken server invariant, since
-					// startSession never creates a session without one.
-				}
-				sm.On("GetSession", mock.Anything, aimsid).Return(sess, nil)
-			},
-			expectedStatusCode: http.StatusInternalServerError,
-			expectedResponse:   `{"response":{"statusCode":500,"statusText":"internal server error","data":{}}}`,
-			expectNextCalled:   false,
-		},
-		{
 			name:   "Success_PassesSessionToNext",
 			aimsid: "valid-session",
 			setupMocks: func(sm *MockWebAPISessionManager, aimsid string) {

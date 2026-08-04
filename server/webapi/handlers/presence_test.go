@@ -528,26 +528,6 @@ func TestPresenceHandler_SetState_MyInfoNormalizesAimID(t *testing.T) {
 	assert.Equal(t, "Mike Kelly", myInfo.Friendly)
 }
 
-func TestPresenceHandler_SetState_NoOSCARSession_Rejected(t *testing.T) {
-	// A nil OSCARSession is a broken server invariant (guests are unsupported),
-	// so the session middleware rejects it with a 500 before the handler runs.
-	sessionMgr, aimsid := createTestSessionManager("testuser")
-
-	handler := &PresenceHandler{
-		SessionManager: sessionMgr,
-		Logger:         slog.Default(),
-	}
-
-	req, err := http.NewRequest("GET", "/presence/setState?aimsid="+aimsid+"&state=online", nil)
-	assert.NoError(t, err)
-
-	rr := httptest.NewRecorder()
-	requireSession(handler.SessionManager, handler.SetState).ServeHTTP(rr, req)
-
-	assert.Equal(t, http.StatusInternalServerError, rr.Code)
-	assert.Contains(t, rr.Body.String(), "internal server error")
-}
-
 func TestIsICQScreenName(t *testing.T) {
 	tests := []struct {
 		name       string

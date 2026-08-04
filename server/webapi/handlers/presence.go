@@ -612,9 +612,6 @@ func currentWebState(instance *state.SessionInstance) string {
 // to "myInfo" events only, so state changes made via setState/setStatus are
 // invisible in the user's own UI unless a myInfo event is delivered.
 func (h *PresenceHandler) pushMyInfo(session *state.WebAPISession, webState, awayMsg, statusMsg string) {
-	if session.EventQueue == nil {
-		return
-	}
 	if !session.IsSubscribedTo("myInfo") && !session.IsSubscribedTo("presence") {
 		return
 	}
