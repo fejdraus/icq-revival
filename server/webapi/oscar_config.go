@@ -100,11 +100,6 @@ func (a *OSCARConfigAdapter) IsSSLAvailable() bool {
 	return false
 }
 
-// IsAuthDisabled returns whether authentication is disabled.
-func (a *OSCARConfigAdapter) IsAuthDisabled() bool {
-	return a.cfg.DisableAuth
-}
-
 // splitHostPort splits a host:port string, handling IPv6 addresses correctly.
 // Unlike net.SplitHostPort, this doesn't return an error for missing ports.
 func splitHostPort(hostport string) (host string, port string) {

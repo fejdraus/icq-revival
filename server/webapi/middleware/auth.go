@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -378,6 +379,9 @@ func (m *AuthMiddleware) writeErrorEnvelope(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// The callback outranks the format: a client on the <script> transport needs
+	// executable JS back whatever "f" says, and gets a script load failure
+	// otherwise.
 	if callback := jsonpCallback(r); callback != "" && isValidJSONPCallback(callback) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		_, _ = w.Write([]byte(callback))
@@ -387,11 +391,54 @@ func (m *AuthMiddleware) writeErrorEnvelope(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// An XML client cannot parse a JSON error; it reports an unreadable response
+	// rather than this statusText.
+	if requestFormat(r) == "xml" {
+		m.writeXMLErrorEnvelope(w, statusCode, message, httpStatus)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	if httpStatus {
 		w.WriteHeader(statusCode)
 	}
 	_, _ = w.Write(body)
+}
+
+// xmlErrorEnvelope is the error envelope XML clients read, rooted at the
+// response itself where JSON nests it under a "response" key.
+type xmlErrorEnvelope struct {
+	XMLName    xml.Name `xml:"response"`
+	StatusCode int      `xml:"statusCode"`
+	StatusText string   `xml:"statusText"`
+	Data       struct{} `xml:"data"`
+}
+
+func (m *AuthMiddleware) writeXMLErrorEnvelope(w http.ResponseWriter, statusCode int, message string, httpStatus bool) {
+	body, err := xml.Marshal(xmlErrorEnvelope{StatusCode: statusCode, StatusText: message})
+	if err != nil {
+		m.Logger.Error("failed to encode XML error response", "err", err.Error())
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+	if httpStatus {
+		w.WriteHeader(statusCode)
+	}
+	_, _ = w.Write([]byte(xml.Header))
+	_, _ = w.Write(body)
+}
+
+// requestFormat returns the format the client asked for. A POST sends "f" in its
+// body, as clientLogin does, so the query string alone does not answer it.
+func requestFormat(r *http.Request) string {
+	format := strings.ToLower(r.URL.Query().Get("f"))
+	if format == "" && r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		format = strings.ToLower(r.FormValue("f"))
+	}
+	return format
 }
 
 func jsonpCallback(r *http.Request) string {

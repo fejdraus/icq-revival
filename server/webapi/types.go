@@ -101,7 +101,6 @@ type OSCARConfig interface {
 	GetBOSAddress() (host string, port int)
 	GetSSLBOSAddress() (host string, port int)
 	IsSSLAvailable() bool
-	IsAuthDisabled() bool
 }
 
 type ChatSessionManager interface {

@@ -39,8 +39,12 @@ type ResponseBody struct {
 // ErrorResponse represents an error response with proper XML/JSON support.
 type ErrorResponse struct {
 	Response struct {
-		StatusCode int    `json:"statusCode" xml:"statusCode"`
-		StatusText string `json:"statusText" xml:"statusText"`
+		StatusCode int `json:"statusCode" xml:"statusCode"`
+		// StatusDetailCode names which failure of a status code this is, e.g. 3011
+		// (bad password) under 330. Omitted when unset, which a client would
+		// otherwise read as a detail code of its own.
+		StatusDetailCode int    `json:"statusDetailCode,omitempty" xml:"statusDetailCode,omitempty"`
+		StatusText       string `json:"statusText" xml:"statusText"`
 		// Data carries an empty object for the same reason the JSONP error path
 		// sends one: a client callback that reaches response.data on a failure
 		// throws a TypeError when it is absent.
@@ -55,11 +59,28 @@ func (e ErrorResponse) MarshalXML(enc *xml.Encoder, _ xml.StartElement) error {
 
 // newErrorResponse builds the error envelope every format shares.
 func newErrorResponse(statusCode int, message string) ErrorResponse {
+	return newErrorResponseDetail(statusCode, 0, message)
+}
+
+// newErrorResponseDetail builds the error envelope with a statusDetailCode.
+func newErrorResponseDetail(statusCode, detailCode int, message string) ErrorResponse {
 	resp := ErrorResponse{}
 	resp.Response.StatusCode = statusCode
+	resp.Response.StatusDetailCode = detailCode
 	resp.Response.StatusText = message
 	resp.Response.Data = struct{}{}
 	return resp
+}
+
+// requestFormat returns the format the client asked for. A POST sends "f" in
+// its body, as clientLogin does.
+func requestFormat(r *http.Request) string {
+	format := strings.ToLower(r.URL.Query().Get("f"))
+	if format == "" && r.Method == http.MethodPost {
+		_ = r.ParseForm()
+		format = strings.ToLower(r.FormValue("f"))
+	}
+	return format
 }
 
 // requestIDFromRequest returns the Web AIM client request correlation id from the
@@ -94,19 +115,8 @@ func normalizeEnvelope(r *http.Request, data interface{}) interface{} {
 func SendResponse(w http.ResponseWriter, r *http.Request, data interface{}, logger *slog.Logger) {
 	data = normalizeEnvelope(r, data)
 
-	// Check for format parameter (f for format or callback for JSONP)
-	// First check URL query parameters
-	format := strings.ToLower(r.URL.Query().Get("f"))
+	format := requestFormat(r)
 	callback := jsonpCallback(r)
-
-	// If format not in URL query, check form values (for POST requests)
-	if format == "" && r.Method == "POST" {
-		_ = r.ParseForm()
-		format = strings.ToLower(r.FormValue("f"))
-		if callback == "" {
-			callback = jsonpCallback(r)
-		}
-	}
 
 	// Check for AMF format first
 	if format == "amf" || format == "amf3" {
@@ -145,20 +155,37 @@ func SendResponse(w http.ResponseWriter, r *http.Request, data interface{}, logg
 // Web AIM client reports as the generic "Failed to load script tag, probably
 // malformed JS at that url" instead of the real statusText.
 func SendError(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
+	sendErrorEnvelope(w, r, statusCode, newErrorResponse(statusCode, message))
+}
+
+// SendErrorDetail sends an error carrying a statusDetailCode, which is how a
+// client tells one failure of a status code from another. The HTTP status is
+// separate because the API codes are not HTTP codes: a bad clientLogin password
+// is 330/3011 on an HTTP 401.
+func SendErrorDetail(w http.ResponseWriter, r *http.Request, httpStatus, statusCode, detailCode int, message string) {
+	sendErrorEnvelope(w, r, httpStatus, newErrorResponseDetail(statusCode, detailCode, message))
+}
+
+// sendErrorEnvelope writes an error envelope in the format the client asked for.
+func sendErrorEnvelope(w http.ResponseWriter, r *http.Request, httpStatus int, resp ErrorResponse) {
 	if callback := jsonpCallback(r); callback != "" && isValidCallback(callback) {
-		sendJSONPError(w, r, callback, statusCode, message)
+		sendJSONPError(w, r, callback, resp)
 		return
 	}
 
-	// Try to detect format from Content-Type header if already set
+	// A client that gets a format it cannot parse reports the failure as an
+	// unreadable response rather than as this statusText. The Content-Type is the
+	// fallback signal, naming the format a handler already began writing.
+	format := requestFormat(r)
 	contentType := w.Header().Get("Content-Type")
 
-	if strings.Contains(contentType, "amf") {
-		sendAMFError(w, r, statusCode, message, nil)
-	} else if strings.Contains(contentType, "xml") {
-		sendXMLError(w, statusCode, message)
-	} else {
-		sendJSONError(w, statusCode, message)
+	switch {
+	case format == "xml" || strings.Contains(contentType, "xml"):
+		sendXMLError(w, httpStatus, resp)
+	case format == "amf" || format == "amf3" || strings.Contains(contentType, "amf"):
+		sendAMFError(w, r, httpStatus, resp, nil)
+	default:
+		sendJSONError(w, httpStatus, resp)
 	}
 }
 
@@ -168,15 +195,18 @@ func SendError(w http.ResponseWriter, r *http.Request, statusCode int, message s
 // of a <script> tag that came back with a 4xx or 5xx, so a status-carrying JSONP
 // error never reaches the callback at all. The real status travels in the
 // envelope, which is where the Web AIM client reads it from regardless.
-func sendJSONPError(w http.ResponseWriter, r *http.Request, callback string, statusCode int, message string) {
+func sendJSONPError(w http.ResponseWriter, r *http.Request, callback string, resp ErrorResponse) {
 	envelope := map[string]any{
-		"statusCode": statusCode,
-		"statusText": message,
+		"statusCode": resp.Response.StatusCode,
+		"statusText": resp.Response.StatusText,
 		// Callbacks that reach response.data on a failure throw a TypeError when
 		// it is absent, which aborts whatever the client was doing mid-startup.
 		// Its XHR path fabricates an empty data for transport failures; JSONP
 		// delivers the envelope verbatim, so the empty data has to come from here.
 		"data": map[string]any{},
+	}
+	if resp.Response.StatusDetailCode != 0 {
+		envelope["statusDetailCode"] = resp.Response.StatusDetailCode
 	}
 	// The client indexes JSONP replies by response.requestId and discards any
 	// reply that lacks one ("Request id is missing from the server response"),
@@ -187,7 +217,7 @@ func sendJSONPError(w http.ResponseWriter, r *http.Request, callback string, sta
 
 	body, err := json.Marshal(map[string]any{"response": envelope})
 	if err != nil {
-		sendJSONError(w, http.StatusInternalServerError, "internal server error")
+		sendJSONError(w, http.StatusInternalServerError, newErrorResponse(http.StatusInternalServerError, "internal server error"))
 		return
 	}
 
@@ -199,26 +229,22 @@ func sendJSONPError(w http.ResponseWriter, r *http.Request, callback string, sta
 }
 
 // sendJSONError sends a JSON error response.
-func sendJSONError(w http.ResponseWriter, statusCode int, message string) {
-	resp := newErrorResponse(statusCode, message)
-
+func sendJSONError(w http.ResponseWriter, httpStatus int, resp ErrorResponse) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
+	w.WriteHeader(httpStatus)
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // sendXMLError sends an XML error response.
-func sendXMLError(w http.ResponseWriter, statusCode int, message string) {
-	resp := newErrorResponse(statusCode, message)
-
+func sendXMLError(w http.ResponseWriter, httpStatus int, resp ErrorResponse) {
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
-	w.WriteHeader(statusCode)
+	w.WriteHeader(httpStatus)
 
 	// Write XML declaration and marshal the response
 	xmlData, err := xml.Marshal(resp)
 	if err != nil {
 		// Fall back to simple text response
-		http.Error(w, message, statusCode)
+		http.Error(w, resp.Response.StatusText, httpStatus)
 		return
 	}
 
@@ -255,7 +281,7 @@ func sendXML(w http.ResponseWriter, data interface{}, logger *slog.Logger) {
 		if logger != nil {
 			logger.Error("failed to marshal XML response", "err", err.Error())
 		}
-		sendXMLError(w, http.StatusInternalServerError, "internal server error")
+		sendXMLError(w, http.StatusInternalServerError, newErrorResponse(http.StatusInternalServerError, "internal server error"))
 		return
 	}
 
@@ -284,7 +310,7 @@ func sendJSONP(w http.ResponseWriter, r *http.Request, callback string, data int
 	// Validate callback to prevent XSS. This is the one error here that cannot be
 	// delivered as JSONP: there is no callback name safe to write.
 	if !isValidCallback(callback) {
-		sendJSONError(w, http.StatusBadRequest, "invalid callback parameter")
+		sendJSONError(w, http.StatusBadRequest, newErrorResponse(http.StatusBadRequest, "invalid callback parameter"))
 		return
 	}
 
@@ -295,7 +321,7 @@ func sendJSONP(w http.ResponseWriter, r *http.Request, callback string, data int
 		}
 		// The client is on the <script> transport, so the error has to be
 		// executable JS for it to see anything but a load failure.
-		sendJSONPError(w, r, callback, http.StatusInternalServerError, "internal server error")
+		sendJSONPError(w, r, callback, newErrorResponse(http.StatusInternalServerError, "internal server error"))
 		return
 	}
 
@@ -339,7 +365,7 @@ func sendAMF(w http.ResponseWriter, r *http.Request, data interface{}, logger *s
 				"dataType", fmt.Sprintf("%T", data))
 		}
 		// Fall back to JSON error
-		sendJSONError(w, http.StatusInternalServerError, "AMF encoding failed")
+		sendJSONError(w, http.StatusInternalServerError, newErrorResponse(http.StatusInternalServerError, "AMF encoding failed"))
 		return
 	}
 
@@ -373,21 +399,19 @@ func sendAMF(w http.ResponseWriter, r *http.Request, data interface{}, logger *s
 }
 
 // sendAMFError sends an AMF error response
-func sendAMFError(w http.ResponseWriter, r *http.Request, statusCode int, message string, logger *slog.Logger) {
-	errorResp := newErrorResponse(statusCode, message)
-
+func sendAMFError(w http.ResponseWriter, r *http.Request, httpStatus int, resp ErrorResponse, logger *slog.Logger) {
 	encoder := NewAMFEncoder(logger)
 	version := DetectAMFVersion(r)
 
-	amfData, err := encoder.EncodeAMF(errorResp, version)
+	amfData, err := encoder.EncodeAMF(resp, version)
 	if err != nil {
 		// If AMF encoding fails, fall back to JSON error
-		sendJSONError(w, statusCode, message)
+		sendJSONError(w, httpStatus, resp)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/x-amf")
 	w.Header().Set("Content-Length", strconv.Itoa(len(amfData)))
-	w.WriteHeader(statusCode)
+	w.WriteHeader(httpStatus)
 	_, _ = w.Write(amfData)
 }

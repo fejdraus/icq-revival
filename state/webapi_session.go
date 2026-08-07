@@ -58,10 +58,6 @@ type WebAPISession struct {
 	AimSID              string                                         // Unique session ID for web client
 	ScreenName          DisplayScreenName                              // User identity
 	OSCARSession        *SessionInstance                               // Bridge to existing OSCAR session
-	OSCARCookie         []byte                                         // OSCAR auth cookie for the startOSCARSession handoff
-	BOSHost             string                                         // BOS host advertised to the web client
-	BOSPort             int                                            // BOS port advertised to the web client
-	UseSSL              bool                                           // Whether the handoff advertised an SSL BOS connection
 	BaseURL             string                                         // Web API base URL advertised to the web client, used to build absolute asset URLs
 	Events              []string                                       // Subscribed event types
 	EventQueue          *types.EventQueue                              // Per-session event queue

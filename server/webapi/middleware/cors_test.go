@@ -259,6 +259,48 @@ func TestAuthErrorsHonorJSONP(t *testing.T) {
 	})
 }
 
+// An XML client cannot parse a JSON error, so it reports an unreadable response
+// instead of the reason the auth layer rejected it.
+func TestAuthErrorsHonorXML(t *testing.T) {
+	m := newTestMiddleware(&stubValidator{})
+	h := m.Authenticate(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("handler should not run")
+	}))
+
+	t.Run("format in the query string", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/aim/startOSCARSession?f=xml", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+
+		assert.Contains(t, w.Header().Get("Content-Type"), "xml")
+		assert.Contains(t, w.Body.String(), "<statusCode>400</statusCode>")
+	})
+
+	// A POST states the format in its body, the only place clientLogin sends it.
+	t.Run("format in the POST body", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPost, "/auth/clientLogin", strings.NewReader("s=testuser&f=xml"))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+
+		assert.Contains(t, w.Header().Get("Content-Type"), "xml")
+		assert.Contains(t, w.Body.String(), "<statusCode>400</statusCode>")
+	})
+
+	// A client on the <script> transport needs executable JS back whatever "f"
+	// says; XML there is a script load failure with no reason attached.
+	t.Run("a callback outranks the format", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/aim/startOSCARSession?f=xml&c=cb&r=3", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+
+		body := w.Body.String()
+		assert.True(t, strings.HasPrefix(body, "cb("), "got %s", body)
+		assert.Contains(t, body, `"statusCode":400`)
+		assert.Contains(t, body, `"requestId":"3"`)
+	})
+}
+
 // stubSessionResolver never resolves a session, so RequireSession always rejects.
 type stubSessionResolver struct{}
 

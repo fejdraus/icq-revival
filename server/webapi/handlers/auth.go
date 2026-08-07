@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -139,6 +140,17 @@ func (h *AuthHandler) resolveGetTokenSession(r *http.Request) (state.DisplayScre
 	return serverCookie.ScreenName, rawCookie, true
 }
 
+// Web API status codes, which a client reads from the envelope rather than from
+// the HTTP status. A failed sign-in is a demand for better credentials, not an
+// error: statusMoreAuthRequired plus the detail code naming what was wrong is
+// what tells a client to say "incorrect password".
+const (
+	statusMoreAuthRequired = 330
+	statusMissingParameter = 460
+
+	detailBadPassword = 3011
+)
+
 // errInvalidCredentials reports that the auth service rejected the screen name or
 // password, as opposed to failing to answer at all.
 var errInvalidCredentials = errors.New("invalid screen name or password")
@@ -209,10 +221,11 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 	var username, password, devID string
 
-	// Check Content-Type to determine how to parse the request
-	contentType := r.Header.Get("Content-Type")
+	// The media type alone decides how to read the body: a caller that states a
+	// charset sends "application/json; charset=utf-8", which is still JSON.
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 
-	if contentType == "application/json" {
+	if mediaType == "application/json" {
 		// Parse JSON body
 		var req ClientLoginRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -251,7 +264,7 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Validate required fields
 	if username == "" || password == "" {
-		SendError(w, r, http.StatusBadRequest, "username and password required")
+		SendErrorDetail(w, r, http.StatusBadRequest, statusMissingParameter, 0, "username and password required")
 		return
 	}
 
@@ -259,7 +272,8 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.Logger.DebugContext(r.Context(), "clientLogin failed", "username", username, "error", err)
 		if errors.Is(err, errInvalidCredentials) {
-			SendError(w, r, http.StatusUnauthorized, "username and password required")
+			SendErrorDetail(w, r, http.StatusUnauthorized, statusMoreAuthRequired, detailBadPassword,
+				"invalid screen name or password")
 			return
 		}
 		SendError(w, r, http.StatusInternalServerError, "internal server error")

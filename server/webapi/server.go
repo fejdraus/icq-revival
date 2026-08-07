@@ -80,9 +80,7 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 	}
 
 	oscarBridgeHandler := &handlers.OSCARBridgeHandler{
-		SessionManager:   sessionManager,
 		OSCARAuthService: handler.AuthService,
-		CookieBaker:      handler.CookieBaker,
 		Config:           handler.OSCARConfig,
 		Logger:           logger,
 	}

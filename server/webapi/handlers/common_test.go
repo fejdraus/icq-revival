@@ -141,6 +141,47 @@ func TestSendErrorJSONFallback(t *testing.T) {
 	assert.Contains(t, w.Body.String(), `"statusCode":404`)
 }
 
+// An error takes the format the client asked for in "f", the same signal
+// SendResponse honors. A client that gets a format it cannot parse reports an
+// unreadable response instead of the statusText.
+func TestSendErrorHonorsRequestedFormat(t *testing.T) {
+	t.Run("xml", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/im/sendIM?f=xml", nil)
+		w := httptest.NewRecorder()
+
+		SendError(w, req, http.StatusNotFound, "not found")
+
+		assert.Contains(t, w.Header().Get("Content-Type"), "xml")
+		assert.Contains(t, w.Body.String(), "<statusCode>404</statusCode>")
+	})
+
+	// AMF is binary, so the envelope is unreadable as text; the Content-Type is
+	// what says the encoder ran rather than the JSON fallback.
+	for _, format := range []string{"amf", "amf3"} {
+		t.Run(format, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/im/sendIM?f="+format, nil)
+			w := httptest.NewRecorder()
+
+			SendError(w, req, http.StatusNotFound, "not found")
+
+			assert.Contains(t, w.Header().Get("Content-Type"), "amf")
+			assert.NotEmpty(t, w.Body.Bytes())
+		})
+	}
+
+	// A callback outranks the format: the client is on the <script> transport
+	// and needs executable JS whatever "f" says.
+	t.Run("a callback outranks f", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/im/sendIM?f=xml&c=cb", nil)
+		w := httptest.NewRecorder()
+
+		SendError(w, req, http.StatusNotFound, "not found")
+
+		assert.Contains(t, w.Header().Get("Content-Type"), "javascript")
+		assert.Contains(t, w.Body.String(), "cb(")
+	})
+}
+
 // The Web API nests the envelope under a "response" key in JSON but renders it
 // as a flat <response> root in XML. MarshalXML reconciles the two so one struct
 // can describe a response in both formats.

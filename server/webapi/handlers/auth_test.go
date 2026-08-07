@@ -247,6 +247,23 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			},
 		},
 		{
+			// A caller that states a charset is still sending JSON.
+			name:        "Success_JSONBodyWithCharset",
+			method:      "POST",
+			contentType: "application/json; charset=utf-8",
+			body:        `{"username":"testuser","password":"testpass","devId":"dev123"}`,
+			auth: &testAuthService{
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+					return successfulLoginBlock(), nil
+				},
+			},
+			expectedStatusCode: http.StatusOK,
+			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"statusCode":200`)
+				assert.Contains(t, body, `"loginId":"testuser"`)
+			},
+		},
+		{
 			name:        "Success_FormEncoded",
 			method:      "POST",
 			contentType: "application/x-www-form-urlencoded",
@@ -270,6 +287,10 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			auth:               &testAuthService{},
 			expectedStatusCode: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, body string) {
+				// The code a client reads as "you left something out", which is
+				// not the code that means the credentials were wrong.
+				assert.Contains(t, body, `"statusCode":460`)
+				assert.NotContains(t, body, "statusDetailCode")
 				assert.Contains(t, body, "username and password required")
 			},
 		},
@@ -281,6 +302,7 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			auth:               &testAuthService{},
 			expectedStatusCode: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"statusCode":460`)
 				assert.Contains(t, body, "username and password required")
 			},
 		},
@@ -296,7 +318,9 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			},
 			expectedStatusCode: http.StatusUnauthorized,
 			checkResponse: func(t *testing.T, body string) {
-				assert.Contains(t, body, "username and password required")
+				// The codes a client maps to "incorrect password".
+				assert.Contains(t, body, `"statusCode":330`)
+				assert.Contains(t, body, `"statusDetailCode":3011`)
 			},
 		},
 		{
@@ -323,6 +347,23 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			expectedStatusCode: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, body string) {
 				assert.Contains(t, body, "invalid JSON format")
+			},
+		},
+		{
+			// A POST carries "f" in its body, the only place clientLogin states it.
+			name:        "Error_AuthFailed_XMLRequestedInBody",
+			method:      "POST",
+			contentType: "application/x-www-form-urlencoded",
+			body:        "s=testuser&pwd=wrongpass&f=xml",
+			auth: &testAuthService{
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+					return failedLoginBlock(), nil
+				},
+			},
+			expectedStatusCode: http.StatusUnauthorized,
+			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, "<statusCode>330</statusCode>")
+				assert.Contains(t, body, "<statusDetailCode>3011</statusDetailCode>")
 			},
 		},
 		{

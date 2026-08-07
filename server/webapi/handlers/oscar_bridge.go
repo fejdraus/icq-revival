@@ -1,47 +1,28 @@
 package handlers
 
 import (
-	"bytes"
-	"context"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/xml"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/mk6i/open-oscar-server/server/webapi/middleware"
 	"github.com/mk6i/open-oscar-server/state"
-	"github.com/mk6i/open-oscar-server/wire"
 )
 
-// OSCARBridgeHandler handles Web API to OSCAR protocol bridging endpoints.
-// This handler is responsible for creating a bridge between web-based clients
-// and the native OSCAR protocol, allowing web clients to connect to OSCAR services.
+// OSCARBridgeHandler handles the handoff from the Web API's HTTP login to the
+// native OSCAR protocol, telling a client where to connect and what credential
+// to present.
 type OSCARBridgeHandler struct {
-	SessionManager   *state.WebAPISessionManager
 	OSCARAuthService OSCARAuthService
-	CookieBaker      CookieBaker
 	Config           OSCARConfig
 	Logger           *slog.Logger
 }
 
-// OSCARAuthService defines methods needed for OSCAR authentication and session management.
+// OSCARAuthService verifies the credential a client presents to the bridge.
 type OSCARAuthService interface {
-	// RegisterBOSSession creates a new BOS (Basic OSCAR Service) session
-	RegisterBOSSession(ctx context.Context, authCookie state.ServerCookie, conf func(sess *state.Session)) (*state.SessionInstance, error)
-	// RetrieveBOSSession retrieves an existing BOS session
-	RetrieveBOSSession(ctx context.Context, authCookie state.ServerCookie) (*state.SessionInstance, error)
-	// Signout ends an OSCAR session
-	Signout(ctx context.Context, session *state.Session)
-}
-
-// CookieBaker issues and validates authentication cookies for OSCAR services.
-type CookieBaker interface {
-	// Issue creates a new authentication cookie from the given payload
-	Issue(data []byte) ([]byte, error)
-	// Crack verifies and decodes an authentication cookie
-	Crack(data []byte) ([]byte, error)
+	CrackCookie(authCookie []byte) (state.ServerCookie, error)
 }
 
 // OSCARConfig provides configuration for OSCAR services.
@@ -52,15 +33,6 @@ type OSCARConfig interface {
 	GetSSLBOSAddress() (host string, port int)
 	// IsSSLAvailable checks if SSL is configured for BOS connections
 	IsSSLAvailable() bool
-	// IsAuthDisabled returns whether authentication is disabled
-	IsAuthDisabled() bool
-}
-
-// StartOSCARSessionRequest represents the request parameters for startOSCARSession.
-type StartOSCARSessionRequest struct {
-	AimSID   string // WebAPI session ID
-	UseSSL   bool   // Whether to use SSL for the OSCAR connection
-	Compress bool   // Whether to use compression (not implemented)
 }
 
 // StartOSCARSessionResponse represents the response for startOSCARSession endpoint.
@@ -69,12 +41,12 @@ type StartOSCARSessionResponse struct {
 		StatusCode int    `json:"statusCode" xml:"statusCode"`
 		StatusText string `json:"statusText" xml:"statusText"`
 		Data       struct {
-			Host        string `json:"host" xml:"host"`
-			Port        int    `json:"port" xml:"port"`
-			Cookie      string `json:"cookie" xml:"cookie"`
-			UseSSL      bool   `json:"useSSL" xml:"useSSL"`
-			Encryption  string `json:"encryption,omitempty" xml:"encryption,omitempty"`
-			Compression string `json:"compression,omitempty" xml:"compression,omitempty"`
+			Host   string `json:"host" xml:"host"`
+			Port   int    `json:"port" xml:"port"`
+			Cookie string `json:"cookie" xml:"cookie"`
+			// TLSCertName is the certificate name the client verifies BOS against.
+			// Omitted rather than sent empty: its absence means connect in the clear.
+			TLSCertName string `json:"tlsCertName,omitempty" xml:"tlsCertName,omitempty"`
 		} `json:"data" xml:"data"`
 	} `json:"response"`
 }
@@ -84,31 +56,17 @@ func (s StartOSCARSessionResponse) MarshalXML(e *xml.Encoder, _ xml.StartElement
 	return e.EncodeElement(s.Response, xml.StartElement{Name: xml.Name{Local: "response"}})
 }
 
-// StartOSCARSession handles GET /aim/startOSCARSession requests.
-// This endpoint creates a bridge between a WebAPI session and the native OSCAR protocol,
-// returning connection details that allow a web client to establish a direct OSCAR connection.
+// StartOSCARSession handles GET /aim/startOSCARSession requests, which hand a
+// client that authenticated over HTTP the address of a BOS server and the
+// cookie to sign on with. The token in "a" is the auth cookie clientLogin
+// minted, already what BOS expects, so it is handed straight back.
 //
-// The endpoint performs the following operations:
-// 1. Validates the WebAPI session
-// 2. Creates an OSCAR authentication cookie
-// 3. Optionally pre-registers a BOS session
-// 4. Returns connection details (host, port, cookie)
-//
-// Parameters:
-//   - aimsid: The WebAPI session ID (required)
-//   - useSSL: Whether to use SSL connection (optional, default: false)
-//   - compress: Whether to use compression (optional, not implemented)
-//   - f: Response format - "json" or "xml" (optional, default: "json")
-//
-// Returns:
-//   - 200 OK: Successfully created OSCAR session bridge
-//   - 400 Bad Request: Missing or invalid parameters
-//   - 401 Unauthorized: Invalid or expired WebAPI session
-//   - 500 Internal Server Error: Failed to create OSCAR session
+// The sig_sha256 the client computes over the query string is not checked: that
+// signature is keyed by HMAC(password, sessionSecret), and clientLogin keeps
+// neither past the response.
 func (h *OSCARBridgeHandler) StartOSCARSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Log the request
 	h.Logger.InfoContext(ctx, "startOSCARSession requested",
 		"method", r.Method,
 		"remote_addr", r.RemoteAddr,
@@ -118,7 +76,7 @@ func (h *OSCARBridgeHandler) StartOSCARSession(w http.ResponseWriter, r *http.Re
 	apiKey, ok := ctx.Value(middleware.ContextKeyAPIKey).(*state.WebAPIKey)
 	if !ok {
 		h.Logger.Error("API key not found in context")
-		h.sendError(w, r, http.StatusInternalServerError, "internal server error")
+		SendError(w, r, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
@@ -126,125 +84,71 @@ func (h *OSCARBridgeHandler) StartOSCARSession(w http.ResponseWriter, r *http.Re
 	if !h.hasOSCARBridgeCapability(apiKey) {
 		h.Logger.Warn("API key lacks OSCAR bridge capability",
 			"dev_id", apiKey.DevID)
-		h.sendError(w, r, http.StatusForbidden, "OSCAR bridge not enabled for this application")
+		SendError(w, r, http.StatusForbidden, "OSCAR bridge not enabled for this application")
 		return
 	}
 
-	// Parse request parameters
 	params := r.URL.Query()
-	aimsid := params.Get("aimsid")
 
-	if aimsid == "" {
-		h.Logger.Warn("missing aimsid parameter")
-		h.sendError(w, r, http.StatusBadRequest, "missing aimsid parameter")
+	token := params.Get("a")
+	if token == "" {
+		h.Logger.Warn("missing authentication token")
+		SendError(w, r, http.StatusUnauthorized, "authentication token required")
 		return
 	}
 
-	// Validate WebAPI session
-	session, err := h.SessionManager.GetSession(r.Context(), aimsid)
+	rawCookie, err := base64.URLEncoding.DecodeString(strings.TrimSpace(token))
 	if err != nil {
-		switch err {
-		case state.ErrNoWebAPISession:
-			h.Logger.Warn("session not found", "aimsid", aimsid)
-			h.sendError(w, r, http.StatusNotFound, "session not found")
-		case state.ErrWebAPISessionExpired:
-			h.Logger.Warn("session expired", "aimsid", aimsid)
-			h.sendError(w, r, http.StatusGone, "session expired")
-		default:
-			h.Logger.Error("failed to get session", "error", err)
-			h.sendError(w, r, http.StatusInternalServerError, "internal server error")
-		}
+		h.Logger.WarnContext(ctx, "invalid authentication token (base64)", "err", err.Error())
+		SendError(w, r, http.StatusUnauthorized, "invalid or expired token")
 		return
 	}
 
-	// Touch the session to update last access time
-	_ = h.SessionManager.TouchSession(r.Context(), aimsid)
-
-	// Check if session already has an OSCAR bridge
-	if session.OSCARSession != nil {
-		h.Logger.Info("session already has OSCAR bridge",
-			"aimsid", aimsid,
-			"screen_name", session.ScreenName)
-		// Return existing connection details
-		h.returnExistingBridge(w, r, session)
-		return
-	}
-
-	// Parse optional parameters
-	useSSL := h.parseBoolParam(params.Get("useSSL"))
-	compress := h.parseBoolParam(params.Get("compress"))
-
-	// Check SSL availability if requested
-	if useSSL && !h.Config.IsSSLAvailable() {
-		h.Logger.Warn("SSL requested but not available")
-		h.sendError(w, r, http.StatusBadRequest, "SSL not available")
-		return
-	}
-
-	// Create OSCAR authentication cookie
-	cookie, err := h.createOSCARCookie(session)
+	cookie, err := h.OSCARAuthService.CrackCookie(rawCookie)
 	if err != nil {
-		h.Logger.Error("failed to create OSCAR cookie",
-			"error", err,
-			"screen_name", session.ScreenName)
-		h.sendError(w, r, http.StatusInternalServerError, "failed to create authentication cookie")
+		h.Logger.WarnContext(ctx, "invalid authentication token", "err", err.Error())
+		SendError(w, r, http.StatusUnauthorized, "invalid or expired token")
 		return
 	}
 
-	// Get BOS server address
+	// Encryption the server cannot provide degrades to a plaintext host, which a
+	// client doing opportunistic encryption expects when no certificate is named.
+	// The sign-on cookie then crosses the wire in the clear, so the downgrade is
+	// logged rather than left to be inferred from the absent tlsCertName.
+	useTLS := h.parseBoolParam(params.Get("useTLS"))
+	if useTLS && !h.Config.IsSSLAvailable() {
+		h.Logger.WarnContext(ctx, "TLS requested but no SSL listener is configured, advertising a plaintext BOS host",
+			"screen_name", cookie.ScreenName)
+		useTLS = false
+	}
+
 	var host string
 	var port int
-	if useSSL {
+	if useTLS {
 		host, port = h.Config.GetSSLBOSAddress()
 	} else {
 		host, port = h.Config.GetBOSAddress()
 	}
 
-	// Record the bridge details on the session so a repeat startOSCARSession
-	// can return the same connection details via returnExistingBridge.
-	session.OSCARCookie = cookie
-	session.BOSHost = host
-	session.BOSPort = port
-	session.UseSSL = useSSL
+	resp := &StartOSCARSessionResponse{}
+	resp.Response.StatusCode = 200
+	resp.Response.StatusText = "OK"
+	resp.Response.Data.Host = host
+	resp.Response.Data.Port = port
+	// Base64, the encoding the client decodes the cookie with.
+	resp.Response.Data.Cookie = base64.StdEncoding.EncodeToString(rawCookie)
+	if useTLS {
+		// The advertised SSL host is the name the certificate is issued to.
+		resp.Response.Data.TLSCertName = host
+	}
 
-	// Prepare response
-	resp := h.buildResponse(host, port, cookie, useSSL, compress)
-
-	// Send response in requested format
-	h.sendResponse(w, r, resp)
+	SendResponse(w, r, resp, h.Logger)
 
 	h.Logger.InfoContext(ctx, "OSCAR session bridge created",
-		"aimsid", aimsid,
-		"screen_name", session.ScreenName,
+		"screen_name", cookie.ScreenName,
 		"bos_host", host,
 		"bos_port", port,
-		"use_ssl", useSSL,
-		"compress", compress)
-}
-
-// createOSCARCookie generates an OSCAR authentication cookie for the session.
-func (h *OSCARBridgeHandler) createOSCARCookie(session *state.WebAPISession) ([]byte, error) {
-	// Create server cookie with session details
-	serverCookie := state.ServerCookie{
-		Service:       wire.BOS, // Basic OSCAR Service
-		ScreenName:    session.ScreenName,
-		ClientID:      fmt.Sprintf("WebAPI-%s", session.ClientName),
-		MultiConnFlag: 0, // Single connection
-	}
-
-	// Marshal the cookie to bytes
-	buf := &bytes.Buffer{}
-	if err := wire.MarshalBE(serverCookie, buf); err != nil {
-		return nil, fmt.Errorf("failed to marshal server cookie: %w", err)
-	}
-
-	// Issue the cookie with HMAC signature
-	cookie, err := h.CookieBaker.Issue(buf.Bytes())
-	if err != nil {
-		return nil, fmt.Errorf("failed to issue cookie: %w", err)
-	}
-
-	return cookie, nil
+		"use_tls", useTLS)
 }
 
 // hasOSCARBridgeCapability checks if the API key has permission to create OSCAR bridges.
@@ -267,52 +171,4 @@ func (h *OSCARBridgeHandler) hasOSCARBridgeCapability(apiKey *state.WebAPIKey) b
 func (h *OSCARBridgeHandler) parseBoolParam(value string) bool {
 	value = strings.ToLower(value)
 	return value == "true" || value == "1" || value == "yes"
-}
-
-// returnExistingBridge returns details for an existing OSCAR bridge.
-func (h *OSCARBridgeHandler) returnExistingBridge(w http.ResponseWriter, r *http.Request, session *state.WebAPISession) {
-	// Reuse the bridge details recorded on the session by StartOSCARSession.
-	if len(session.OSCARCookie) > 0 {
-		resp := h.buildResponse(session.BOSHost, session.BOSPort, session.OSCARCookie, session.UseSSL, false)
-		h.sendResponse(w, r, resp)
-		return
-	}
-
-	// If we can't retrieve the bridge, return an error
-	h.sendError(w, r, http.StatusInternalServerError, "failed to retrieve existing bridge")
-}
-
-// buildResponse constructs the response object.
-func (h *OSCARBridgeHandler) buildResponse(host string, port int, cookie []byte, useSSL, compress bool) *StartOSCARSessionResponse {
-	resp := &StartOSCARSessionResponse{}
-	resp.Response.StatusCode = 200
-	resp.Response.StatusText = "OK"
-	resp.Response.Data.Host = host
-	resp.Response.Data.Port = port
-	resp.Response.Data.Cookie = hex.EncodeToString(cookie) // Hex encode the cookie
-	resp.Response.Data.UseSSL = useSSL
-
-	// Add encryption info if SSL is used
-	if useSSL {
-		resp.Response.Data.Encryption = "TLS"
-	}
-
-	// Add compression info if requested (not implemented)
-	if compress {
-		resp.Response.Data.Compression = "none" // Compression not implemented
-	}
-
-	return resp
-}
-
-// sendResponse sends the response in the requested format.
-func (h *OSCARBridgeHandler) sendResponse(w http.ResponseWriter, r *http.Request, resp *StartOSCARSessionResponse) {
-	// Use the centralized SendResponse function which handles all formats
-	SendResponse(w, r, resp, h.Logger)
-}
-
-// sendError sends an error response in the appropriate format.
-func (h *OSCARBridgeHandler) sendError(w http.ResponseWriter, r *http.Request, statusCode int, message string) {
-	// SendError already detects format from Content-Type header
-	SendError(w, r, statusCode, message)
 }
