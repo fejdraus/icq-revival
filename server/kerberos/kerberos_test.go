@@ -22,7 +22,7 @@ import (
 func TestKerberosLoginHandler(t *testing.T) {
 	tests := []struct {
 		name               string
-		listeners          []config.Listener
+		listeners          []config.ListenerGroup
 		request            wire.SNACMessage
 		response           wire.SNACMessage
 		responseErr        error
@@ -32,10 +32,10 @@ func TestKerberosLoginHandler(t *testing.T) {
 	}{
 		{
 			name: "successful login with single listener",
-			listeners: []config.Listener{
+			listeners: []config.ListenerGroup{
 				{
-					KerberosListenAddress:  ":1088",
-					BOSAdvertisedHostPlain: "localhost:5190",
+					KerberosListenAddress: ":1088",
+					BOSAdvertisedHostSSL:  "localhost:5190",
 				},
 			},
 			request: wire.SNACMessage{
@@ -62,14 +62,14 @@ func TestKerberosLoginHandler(t *testing.T) {
 		},
 		{
 			name: "successful login with multiple listeners",
-			listeners: []config.Listener{
+			listeners: []config.ListenerGroup{
 				{
-					KerberosListenAddress:  ":1088",
-					BOSAdvertisedHostPlain: "localhost:5190",
+					KerberosListenAddress: ":1088",
+					BOSAdvertisedHostSSL:  "localhost:5190",
 				},
 				{
-					KerberosListenAddress:  ":1089",
-					BOSAdvertisedHostPlain: "localhost:5191",
+					KerberosListenAddress: ":1089",
+					BOSAdvertisedHostSSL:  "localhost:5191",
 				},
 			},
 			request: wire.SNACMessage{
@@ -96,18 +96,18 @@ func TestKerberosLoginHandler(t *testing.T) {
 		},
 		{
 			name: "successful login with three listeners",
-			listeners: []config.Listener{
+			listeners: []config.ListenerGroup{
 				{
-					KerberosListenAddress:  ":1088",
-					BOSAdvertisedHostPlain: "localhost:5190",
+					KerberosListenAddress: ":1088",
+					BOSAdvertisedHostSSL:  "localhost:5190",
 				},
 				{
-					KerberosListenAddress:  ":1089",
-					BOSAdvertisedHostPlain: "localhost:5191",
+					KerberosListenAddress: ":1089",
+					BOSAdvertisedHostSSL:  "localhost:5191",
 				},
 				{
-					KerberosListenAddress:  ":1090",
-					BOSAdvertisedHostPlain: "localhost:5192",
+					KerberosListenAddress: ":1090",
+					BOSAdvertisedHostSSL:  "localhost:5192",
 				},
 			},
 			request: wire.SNACMessage{
@@ -134,9 +134,9 @@ func TestKerberosLoginHandler(t *testing.T) {
 		},
 		{
 			name: "no kerberos listeners defined - server exits cleanly",
-			listeners: []config.Listener{
+			listeners: []config.ListenerGroup{
 				{
-					BOSAdvertisedHostPlain: "localhost:5192",
+					BOSAdvertisedHostSSL: "localhost:5192",
 				},
 			},
 			request:            wire.SNACMessage{},
@@ -148,10 +148,10 @@ func TestKerberosLoginHandler(t *testing.T) {
 		},
 		{
 			name: "invalid request SNAC type",
-			listeners: []config.Listener{
+			listeners: []config.ListenerGroup{
 				{
-					KerberosListenAddress:  ":1088",
-					BOSAdvertisedHostPlain: "localhost:5190",
+					KerberosListenAddress: ":1088",
+					BOSAdvertisedHostSSL:  "localhost:5190",
 				},
 			},
 			request: wire.SNACMessage{
@@ -169,10 +169,10 @@ func TestKerberosLoginHandler(t *testing.T) {
 		},
 		{
 			name: "login runtime error",
-			listeners: []config.Listener{
+			listeners: []config.ListenerGroup{
 				{
-					KerberosListenAddress:  ":1088",
-					BOSAdvertisedHostPlain: "localhost:5190",
+					KerberosListenAddress: ":1088",
+					BOSAdvertisedHostSSL:  "localhost:5190",
 				},
 			},
 			request: wire.SNACMessage{
@@ -271,6 +271,53 @@ func TestKerberosLoginHandler(t *testing.T) {
 
 			assert.NoError(t, srv.Shutdown(context.Background()))
 			wg.Wait()
+		})
+	}
+}
+
+func TestNewKerberosServer_ServesSSLGroupsOnly(t *testing.T) {
+	tests := []struct {
+		name      string
+		listeners []config.ListenerGroup
+		wantAddrs []string
+	}{
+		{
+			name: "SSL group with a kerberos address binds its port once",
+			listeners: []config.ListenerGroup{
+				{
+					KerberosListenAddress: "127.0.0.1:1088",
+					BOSAdvertisedHostSSL:  "localhost:5193",
+				},
+			},
+			wantAddrs: []string{"127.0.0.1:1088"},
+		},
+		{
+			name: "plaintext-only group is not served",
+			listeners: []config.ListenerGroup{
+				{KerberosListenAddress: "127.0.0.1:1088"},
+			},
+			wantAddrs: []string{},
+		},
+		{
+			name: "SSL group without a kerberos address is skipped rather than bound to :80",
+			listeners: []config.ListenerGroup{
+				{KerberosListenAddress: "", BOSAdvertisedHostSSL: "localhost:5193"},
+				{KerberosListenAddress: "127.0.0.1:1089", BOSAdvertisedHostSSL: "localhost:5193"},
+			},
+			wantAddrs: []string{"127.0.0.1:1089"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := NewKerberosServer(tt.listeners, slog.Default(), newMockAuthService(t))
+
+			haveAddrs := make([]string, 0, len(srv.servers))
+			for _, s := range srv.servers {
+				haveAddrs = append(haveAddrs, s.Addr)
+			}
+
+			assert.Equal(t, tt.wantAddrs, haveAddrs)
 		})
 	}
 }

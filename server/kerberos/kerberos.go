@@ -16,25 +16,30 @@ import (
 )
 
 type AuthService interface {
-	KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, advertisedHost string) (wire.SNACMessage, error)
+	KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
 }
 
-func NewKerberosServer(listeners []config.Listener, logger *slog.Logger, authService AuthService) *Server {
-	servers := make([]*http.Server, 0, len(listeners))
+func NewKerberosServer(groups []config.ListenerGroup, logger *slog.Logger, authService AuthService) *Server {
+	servers := make([]*http.Server, 0, len(groups))
 
-	for _, l := range listeners {
-		if l.KerberosListenAddress == "" {
+	for _, group := range groups {
+		if group.KerberosListenAddress == "" {
+			continue
+		}
+		// only support SSL for now
+		endpoint, ok := group.SSLEndpoint()
+		if !ok {
 			continue
 		}
 
 		mux := http.NewServeMux()
 
 		mux.HandleFunc("POST /", func(writer http.ResponseWriter, request *http.Request) {
-			postHandler(writer, request, authService, logger, l.BOSAdvertisedHostSSL)
+			postHandler(writer, request, authService, logger, endpoint)
 		})
 
 		servers = append(servers, &http.Server{
-			Addr:    l.KerberosListenAddress,
+			Addr:    group.KerberosListenAddress,
 			Handler: mux,
 		})
 	}
@@ -87,7 +92,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 // postHandler handles AIM-style Kerberos authentication for AIM 6.0+.
-func postHandler(w http.ResponseWriter, r *http.Request, authService AuthService, logger *slog.Logger, listenAddress string) {
+func postHandler(w http.ResponseWriter, r *http.Request, authService AuthService, logger *slog.Logger, endpointCfg config.Endpoint) {
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "unable to read HTTP body", http.StatusBadRequest)
@@ -111,7 +116,7 @@ func postHandler(w http.ResponseWriter, r *http.Request, authService AuthService
 		return
 	}
 
-	response, err := authService.KerberosLogin(r.Context(), body, listenAddress)
+	response, err := authService.KerberosLogin(r.Context(), body, endpointCfg)
 	if err != nil {
 		logger.Error("authService.KerberosLogin", "err", err.Error())
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -121,7 +126,7 @@ func postHandler(w http.ResponseWriter, r *http.Request, authService AuthService
 	logger = logger.With("ip", r.RemoteAddr)
 	switch v := response.Body.(type) {
 	case wire.SNAC_0x050C_0x0003_KerberosLoginSuccessResponse:
-		logger.InfoContext(r.Context(), "successful kerberos login", "screen_name", v.ClientPrincipal, "redirect_to", listenAddress)
+		logger.InfoContext(r.Context(), "successful kerberos login", "screen_name", v.ClientPrincipal, "redirect_to", endpointCfg.AdvertisedHost())
 	case wire.SNAC_0x050C_0x0004_KerberosLoginErrResponse:
 		logger.InfoContext(r.Context(), "failed kerberos login", "screen_name", v.ScreenName)
 	}

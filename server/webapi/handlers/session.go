@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/server/webapi/middleware"
 	"github.com/mk6i/open-oscar-server/server/webapi/types"
 	"github.com/mk6i/open-oscar-server/state"
@@ -39,10 +40,10 @@ type SessionHandler struct {
 // AuthService defines methods needed for authentication.
 type AuthService interface {
 	BUCPChallenge(ctx context.Context, bodyIn wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error)
-	BUCPLogin(ctx context.Context, bodyIn wire.SNAC_0x17_0x02_BUCPLoginRequest, advertisedHost string) (wire.SNACMessage, error)
+	BUCPLogin(ctx context.Context, bodyIn wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
 	CrackCookie(authCookie []byte) (state.ServerCookie, error)
 	RegisterBOSSession(ctx context.Context, authCookie state.ServerCookie, conf func(sess *state.Session)) (*state.SessionInstance, error)
-	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error)
+	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
 	Signout(ctx context.Context, session *state.Session)
 	SignoutChat(ctx context.Context, sess *state.Session)
 }

@@ -503,7 +503,7 @@ func (s OSCARProxy) ChatAccept(
 			},
 		},
 	}
-	svcReqReply, err := s.OServiceService.ServiceRequest(ctx, wire.BOS, me, wire.SNACFrame{}, svcReqSNAC, config.Listener{})
+	svcReqReply, err := s.OServiceService.ServiceRequest(ctx, wire.BOS, me, wire.SNACFrame{}, svcReqSNAC, config.ListenerGroup{})
 	if err != nil {
 		return 0, s.runtimeErr(ctx, fmt.Errorf("OServiceServiceBOS.ServiceRequest: %w", err))
 	}
@@ -699,7 +699,7 @@ func (s OSCARProxy) ChatJoin(
 			},
 		},
 	}
-	svcReqReply, err := s.OServiceService.ServiceRequest(ctx, wire.BOS, me, wire.SNACFrame{}, svcReqSNAC, config.Listener{})
+	svcReqReply, err := s.OServiceService.ServiceRequest(ctx, wire.BOS, me, wire.SNACFrame{}, svcReqSNAC, config.ListenerGroup{})
 	if err != nil {
 		return 0, s.runtimeErr(ctx, fmt.Errorf("OServiceServiceBOS.ServiceRequest: %w", err))
 	}
@@ -2330,7 +2330,7 @@ func (s OSCARProxy) Signon(ctx context.Context, args []byte, recalcWarning func(
 		signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsMultiConnFlags, wire.MultiConnFlagsRecentClient))
 	}
 
-	block, err := s.AuthService.FLAPLogin(ctx, signonFrame, "")
+	block, err := s.AuthService.FLAPLogin(ctx, signonFrame, config.Endpoint{})
 	if err != nil {
 		return nil, s.runtimeErr(ctx, fmt.Errorf("AuthService.FLAPLogin: %w", err))
 	}

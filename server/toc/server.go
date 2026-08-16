@@ -130,7 +130,7 @@ func (l *IPRateLimiter) Allow(ip string) (allowed bool) {
 }
 
 func NewServer(
-	listenerCfg []string,
+	endpointCfg []string,
 	logger *slog.Logger,
 	BOSProxy OSCARProxy,
 	ipRateLimiter *IPRateLimiter,
@@ -143,17 +143,17 @@ func NewServer(
 	s := &Server{
 		bosProxy:           BOSProxy,
 		conns:              make(map[net.Conn]struct{}),
-		listenerCfg:        listenerCfg,
+		endpointCfg:        endpointCfg,
 		logger:             logger,
 		loginIPRateLimiter: ipRateLimiter,
 		recalcWarning:      recalcWarning,
 		lowerWarnLevel:     lowerWarnLevel,
-		servers:            make([]*http.Server, 0, len(listenerCfg)),
+		servers:            make([]*http.Server, 0, len(endpointCfg)),
 		shutdownCancel:     cancel,
 		shutdownCtx:        ctx,
 	}
 
-	for range listenerCfg {
+	for range endpointCfg {
 		s.servers = append(s.servers, &http.Server{
 			Handler: BOSProxy.NewServeMux(),
 			BaseContext: func(net.Listener) context.Context {
@@ -175,7 +175,7 @@ type Server struct {
 	recalcWarning      func(ctx context.Context, instance *state.SessionInstance) error
 	lowerWarnLevel     func(ctx context.Context, instance *state.SessionInstance)
 
-	listenerCfg []string
+	endpointCfg []string
 	listeners   []net.Listener
 	servers     []*http.Server
 
@@ -192,7 +192,7 @@ type Server struct {
 func (s *Server) ListenAndServe() error {
 	g, ctx := errgroup.WithContext(s.shutdownCtx)
 
-	for i, cfg := range s.listenerCfg {
+	for i, cfg := range s.endpointCfg {
 		ln, err := net.Listen("tcp", cfg)
 		if err != nil {
 			s.cleanupListeners()

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"testing/quick"
 
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 	"github.com/stretchr/testify/mock"
@@ -55,7 +56,7 @@ func TestProperty_ServiceBehavioralEquivalence(t *testing.T) {
 		password := string([]byte{'a' + passByte%26})
 
 		authSvc := newMockAuthService(t)
-		authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, "").
+		authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, config.Endpoint{}).
 			Return(wire.TLVRestBlock{
 				TLVList: []wire.TLV{
 					wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrICQUserErr),

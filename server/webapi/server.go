@@ -81,7 +81,7 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 
 	oscarBridgeHandler := &handlers.OSCARBridgeHandler{
 		OSCARAuthService: handler.AuthService,
-		Config:           handler.OSCARConfig,
+		Listener:         handler.BOSListener,
 		Logger:           logger,
 	}
 

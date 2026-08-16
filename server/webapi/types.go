@@ -24,14 +24,14 @@ type OServiceService interface {
 	IdleNotification(ctx context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x01_0x11_OServiceIdleNotification) error
 	MonitorRateLimits(ctx context.Context, session *state.Session)
 	RateParamsSubAdd(ctx context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x01_0x08_OServiceRateParamsSubAdd)
-	ServiceRequest(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, listener config.Listener) (wire.SNACMessage, error)
+	ServiceRequest(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, listenerGroup config.ListenerGroup) (wire.SNACMessage, error)
 }
 
 type AuthService interface {
 	BUCPChallenge(ctx context.Context, inBody wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error)
-	BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, advertisedHost string) (wire.SNACMessage, error)
+	BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
 	CrackCookie(authCookie []byte) (state.ServerCookie, error)
-	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error)
+	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
 	RegisterBOSSession(ctx context.Context, authCookie state.ServerCookie, conf func(sess *state.Session)) (*state.SessionInstance, error)
 	RegisterChatSession(ctx context.Context, authCookie state.ServerCookie, cfg func(sess *state.Session)) (*state.SessionInstance, error)
 	RetrieveBOSSession(ctx context.Context, authCookie state.ServerCookie) (*state.SessionInstance, error)
@@ -94,13 +94,6 @@ type FeedbagService interface {
 type BuddyBroadcaster interface {
 	BroadcastBuddyArrived(ctx context.Context, screenName state.IdentScreenName, userInfo wire.TLVUserInfo) error
 	BroadcastBuddyDeparted(ctx context.Context, screenName state.IdentScreenName) error
-}
-
-// OSCARConfig provides configuration for OSCAR services.
-type OSCARConfig interface {
-	GetBOSAddress() (host string, port int)
-	GetSSLBOSAddress() (host string, port int)
-	IsSSLAvailable() bool
 }
 
 type ChatSessionManager interface {

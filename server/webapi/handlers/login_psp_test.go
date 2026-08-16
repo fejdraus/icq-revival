@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
@@ -54,7 +55,7 @@ func TestAuthHandler_LoginPSP_POST_Success(t *testing.T) {
 	var got wire.FLAPSignonFrame
 	handler := &AuthHandler{
 		AuthService: &testAuthService{
-			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 				got = inFrame
 				return successfulLoginBlock(), nil
 			},
@@ -105,17 +106,17 @@ func TestAuthHandler_LoginPSP_POST_Success(t *testing.T) {
 func TestAuthHandler_LoginPSP_POST_ServiceErrors(t *testing.T) {
 	tests := []struct {
 		name      string
-		flapLogin func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error)
+		flapLogin func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
 	}{
 		{
 			name: "LoginResponseHasNoCookie",
-			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 				return blockWithoutCookie(), nil
 			},
 		},
 		{
 			name: "AuthServiceUnreachable",
-			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 				return wire.TLVRestBlock{}, errors.New("boom")
 			},
 		},
@@ -148,7 +149,7 @@ func TestAuthHandler_LoginPSP_POST_ServiceErrors(t *testing.T) {
 func TestAuthHandler_LoginPSP_POST_InvalidCredentials(t *testing.T) {
 	handler := &AuthHandler{
 		AuthService: &testAuthService{
-			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 				return failedLoginBlock(), nil
 			},
 		},

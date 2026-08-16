@@ -4,9 +4,12 @@ import (
 	"encoding/base64"
 	"encoding/xml"
 	"log/slog"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/server/webapi/middleware"
 	"github.com/mk6i/open-oscar-server/state"
 )
@@ -16,23 +19,13 @@ import (
 // to present.
 type OSCARBridgeHandler struct {
 	OSCARAuthService OSCARAuthService
-	Config           OSCARConfig
+	Listener         config.ListenerGroup
 	Logger           *slog.Logger
 }
 
 // OSCARAuthService verifies the credential a client presents to the bridge.
 type OSCARAuthService interface {
 	CrackCookie(authCookie []byte) (state.ServerCookie, error)
-}
-
-// OSCARConfig provides configuration for OSCAR services.
-type OSCARConfig interface {
-	// GetBOSAddress returns the BOS server address for client connections
-	GetBOSAddress() (host string, port int)
-	// GetSSLBOSAddress returns the SSL-enabled BOS server address
-	GetSSLBOSAddress() (host string, port int)
-	// IsSSLAvailable checks if SSL is configured for BOS connections
-	IsSSLAvailable() bool
 }
 
 // StartOSCARSessionResponse represents the response for startOSCARSession endpoint.
@@ -116,19 +109,25 @@ func (h *OSCARBridgeHandler) StartOSCARSession(w http.ResponseWriter, r *http.Re
 	// The sign-on cookie then crosses the wire in the clear, so the downgrade is
 	// logged rather than left to be inferred from the absent tlsCertName.
 	useTLS := h.parseBoolParam(params.Get("useTLS"))
-	if useTLS && !h.Config.IsSSLAvailable() {
-		h.Logger.WarnContext(ctx, "TLS requested but no SSL listener is configured, advertising a plaintext BOS host",
-			"screen_name", cookie.ScreenName)
-		useTLS = false
+	endpoint := h.Listener.PlainEndpoint()
+	if useTLS {
+		ssl, ok := h.Listener.SSLEndpoint()
+		if !ok {
+			h.Logger.WarnContext(ctx, "TLS requested but no SSL listener is configured, advertising a plaintext BOS host",
+				"screen_name", cookie.ScreenName)
+			useTLS = false
+		} else {
+			endpoint = ssl
+		}
 	}
 
-	var host string
-	var port int
-	if useTLS {
-		host, port = h.Config.GetSSLBOSAddress()
-	} else {
-		host, port = h.Config.GetBOSAddress()
+	host, portStr, err := net.SplitHostPort(endpoint.AdvertisedHost())
+	if err != nil {
+		h.Logger.ErrorContext(ctx, "unable to split advertised BOS host", "err", err.Error())
+		SendError(w, r, http.StatusInternalServerError, "internal server error")
+		return
 	}
+	port, _ := strconv.Atoi(portStr)
 
 	resp := &StartOSCARSessionResponse{}
 	resp.Response.StatusCode = 200

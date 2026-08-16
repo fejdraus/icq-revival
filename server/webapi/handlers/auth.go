@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -165,7 +166,7 @@ func (h *AuthHandler) authenticateCredentials(ctx context.Context, username, pas
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsClientIdentity, clientID))
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsMultiConnFlags, wire.MultiConnFlagsRecentClient))
 
-	block, err := h.AuthService.FLAPLogin(ctx, signonFrame, "")
+	block, err := h.AuthService.FLAPLogin(ctx, signonFrame, config.Endpoint{})
 	if err != nil {
 		return nil, fmt.Errorf("FLAPLogin: %w", err)
 	}

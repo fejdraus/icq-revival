@@ -8,6 +8,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 	mock "github.com/stretchr/testify/mock"
@@ -113,8 +114,8 @@ func (_c *mockAuthService_BUCPChallenge_Call) RunAndReturn(run func(ctx context.
 }
 
 // BUCPLogin provides a mock function for the type mockAuthService
-func (_mock *mockAuthService) BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, advertisedHost string) (wire.SNACMessage, error) {
-	ret := _mock.Called(ctx, inBody, advertisedHost)
+func (_mock *mockAuthService) BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error) {
+	ret := _mock.Called(ctx, inBody, endpointCfg)
 
 	if len(ret) == 0 {
 		panic("no return value specified for BUCPLogin")
@@ -122,16 +123,16 @@ func (_mock *mockAuthService) BUCPLogin(ctx context.Context, inBody wire.SNAC_0x
 
 	var r0 wire.SNACMessage
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.SNAC_0x17_0x02_BUCPLoginRequest, string) (wire.SNACMessage, error)); ok {
-		return returnFunc(ctx, inBody, advertisedHost)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.SNAC_0x17_0x02_BUCPLoginRequest, config.Endpoint) (wire.SNACMessage, error)); ok {
+		return returnFunc(ctx, inBody, endpointCfg)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.SNAC_0x17_0x02_BUCPLoginRequest, string) wire.SNACMessage); ok {
-		r0 = returnFunc(ctx, inBody, advertisedHost)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.SNAC_0x17_0x02_BUCPLoginRequest, config.Endpoint) wire.SNACMessage); ok {
+		r0 = returnFunc(ctx, inBody, endpointCfg)
 	} else {
 		r0 = ret.Get(0).(wire.SNACMessage)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, wire.SNAC_0x17_0x02_BUCPLoginRequest, string) error); ok {
-		r1 = returnFunc(ctx, inBody, advertisedHost)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, wire.SNAC_0x17_0x02_BUCPLoginRequest, config.Endpoint) error); ok {
+		r1 = returnFunc(ctx, inBody, endpointCfg)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -146,12 +147,12 @@ type mockAuthService_BUCPLogin_Call struct {
 // BUCPLogin is a helper method to define mock.On call
 //   - ctx context.Context
 //   - inBody wire.SNAC_0x17_0x02_BUCPLoginRequest
-//   - advertisedHost string
-func (_e *mockAuthService_Expecter) BUCPLogin(ctx interface{}, inBody interface{}, advertisedHost interface{}) *mockAuthService_BUCPLogin_Call {
-	return &mockAuthService_BUCPLogin_Call{Call: _e.mock.On("BUCPLogin", ctx, inBody, advertisedHost)}
+//   - endpointCfg config.Endpoint
+func (_e *mockAuthService_Expecter) BUCPLogin(ctx interface{}, inBody interface{}, endpointCfg interface{}) *mockAuthService_BUCPLogin_Call {
+	return &mockAuthService_BUCPLogin_Call{Call: _e.mock.On("BUCPLogin", ctx, inBody, endpointCfg)}
 }
 
-func (_c *mockAuthService_BUCPLogin_Call) Run(run func(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, advertisedHost string)) *mockAuthService_BUCPLogin_Call {
+func (_c *mockAuthService_BUCPLogin_Call) Run(run func(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint)) *mockAuthService_BUCPLogin_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -161,9 +162,9 @@ func (_c *mockAuthService_BUCPLogin_Call) Run(run func(ctx context.Context, inBo
 		if args[1] != nil {
 			arg1 = args[1].(wire.SNAC_0x17_0x02_BUCPLoginRequest)
 		}
-		var arg2 string
+		var arg2 config.Endpoint
 		if args[2] != nil {
-			arg2 = args[2].(string)
+			arg2 = args[2].(config.Endpoint)
 		}
 		run(
 			arg0,
@@ -179,7 +180,7 @@ func (_c *mockAuthService_BUCPLogin_Call) Return(sNACMessage wire.SNACMessage, e
 	return _c
 }
 
-func (_c *mockAuthService_BUCPLogin_Call) RunAndReturn(run func(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, advertisedHost string) (wire.SNACMessage, error)) *mockAuthService_BUCPLogin_Call {
+func (_c *mockAuthService_BUCPLogin_Call) RunAndReturn(run func(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)) *mockAuthService_BUCPLogin_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -245,8 +246,8 @@ func (_c *mockAuthService_CrackCookie_Call) RunAndReturn(run func(authCookie []b
 }
 
 // FLAPLogin provides a mock function for the type mockAuthService
-func (_mock *mockAuthService) FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
-	ret := _mock.Called(ctx, inFrame, advertisedHost)
+func (_mock *mockAuthService) FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
+	ret := _mock.Called(ctx, inFrame, endpointCfg)
 
 	if len(ret) == 0 {
 		panic("no return value specified for FLAPLogin")
@@ -254,16 +255,16 @@ func (_mock *mockAuthService) FLAPLogin(ctx context.Context, inFrame wire.FLAPSi
 
 	var r0 wire.TLVRestBlock
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.FLAPSignonFrame, string) (wire.TLVRestBlock, error)); ok {
-		return returnFunc(ctx, inFrame, advertisedHost)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.FLAPSignonFrame, config.Endpoint) (wire.TLVRestBlock, error)); ok {
+		return returnFunc(ctx, inFrame, endpointCfg)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.FLAPSignonFrame, string) wire.TLVRestBlock); ok {
-		r0 = returnFunc(ctx, inFrame, advertisedHost)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.FLAPSignonFrame, config.Endpoint) wire.TLVRestBlock); ok {
+		r0 = returnFunc(ctx, inFrame, endpointCfg)
 	} else {
 		r0 = ret.Get(0).(wire.TLVRestBlock)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, wire.FLAPSignonFrame, string) error); ok {
-		r1 = returnFunc(ctx, inFrame, advertisedHost)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, wire.FLAPSignonFrame, config.Endpoint) error); ok {
+		r1 = returnFunc(ctx, inFrame, endpointCfg)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -278,12 +279,12 @@ type mockAuthService_FLAPLogin_Call struct {
 // FLAPLogin is a helper method to define mock.On call
 //   - ctx context.Context
 //   - inFrame wire.FLAPSignonFrame
-//   - advertisedHost string
-func (_e *mockAuthService_Expecter) FLAPLogin(ctx interface{}, inFrame interface{}, advertisedHost interface{}) *mockAuthService_FLAPLogin_Call {
-	return &mockAuthService_FLAPLogin_Call{Call: _e.mock.On("FLAPLogin", ctx, inFrame, advertisedHost)}
+//   - endpointCfg config.Endpoint
+func (_e *mockAuthService_Expecter) FLAPLogin(ctx interface{}, inFrame interface{}, endpointCfg interface{}) *mockAuthService_FLAPLogin_Call {
+	return &mockAuthService_FLAPLogin_Call{Call: _e.mock.On("FLAPLogin", ctx, inFrame, endpointCfg)}
 }
 
-func (_c *mockAuthService_FLAPLogin_Call) Run(run func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string)) *mockAuthService_FLAPLogin_Call {
+func (_c *mockAuthService_FLAPLogin_Call) Run(run func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint)) *mockAuthService_FLAPLogin_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -293,9 +294,9 @@ func (_c *mockAuthService_FLAPLogin_Call) Run(run func(ctx context.Context, inFr
 		if args[1] != nil {
 			arg1 = args[1].(wire.FLAPSignonFrame)
 		}
-		var arg2 string
+		var arg2 config.Endpoint
 		if args[2] != nil {
-			arg2 = args[2].(string)
+			arg2 = args[2].(config.Endpoint)
 		}
 		run(
 			arg0,
@@ -311,7 +312,7 @@ func (_c *mockAuthService_FLAPLogin_Call) Return(tLVRestBlock wire.TLVRestBlock,
 	return _c
 }
 
-func (_c *mockAuthService_FLAPLogin_Call) RunAndReturn(run func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error)) *mockAuthService_FLAPLogin_Call {
+func (_c *mockAuthService_FLAPLogin_Call) RunAndReturn(run func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)) *mockAuthService_FLAPLogin_Call {
 	_c.Call.Return(run)
 	return _c
 }

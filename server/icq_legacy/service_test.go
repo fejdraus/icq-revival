@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 	"github.com/stretchr/testify/assert"
@@ -40,7 +41,7 @@ func TestICQLegacyService_AuthenticateUser(t *testing.T) {
 				Version:  ICQLegacyVersionV5,
 			},
 			setupAuth: func(authSvc *mockAuthService) {
-				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, "").
+				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, config.Endpoint{}).
 					Return(successBlock, nil)
 				authSvc.EXPECT().CrackCookie(authCookie).
 					Return(serverCookie, nil)
@@ -60,7 +61,7 @@ func TestICQLegacyService_AuthenticateUser(t *testing.T) {
 				Version:  ICQLegacyVersionV5,
 			},
 			setupAuth: func(authSvc *mockAuthService) {
-				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, "").
+				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, config.Endpoint{}).
 					Return(wire.TLVRestBlock{
 						TLVList: []wire.TLV{
 							wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrInvalidPassword),
@@ -80,7 +81,7 @@ func TestICQLegacyService_AuthenticateUser(t *testing.T) {
 				Version:  ICQLegacyVersionV5,
 			},
 			setupAuth: func(authSvc *mockAuthService) {
-				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, "").
+				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, config.Endpoint{}).
 					Return(wire.TLVRestBlock{
 						TLVList: []wire.TLV{
 							wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrICQUserErr),
@@ -111,7 +112,7 @@ func TestICQLegacyService_AuthenticateUser(t *testing.T) {
 				Version:  ICQLegacyVersionV5,
 			},
 			setupAuth: func(authSvc *mockAuthService) {
-				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, "").
+				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, config.Endpoint{}).
 					Return(wire.TLVRestBlock{
 						TLVList: []wire.TLV{
 							wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrInvalidPassword),
@@ -1001,14 +1002,14 @@ func TestICQLegacyService_DeleteUser(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			authSvc := newMockAuthService(t)
 			if tc.wantErr {
-				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, "").
+				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, config.Endpoint{}).
 					Return(wire.TLVRestBlock{
 						TLVList: []wire.TLV{
 							wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrInvalidPassword),
 						},
 					}, nil)
 			} else {
-				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, "").
+				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, config.Endpoint{}).
 					Return(wire.TLVRestBlock{}, nil)
 			}
 

@@ -30,8 +30,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 	cases := []struct {
 		// name is the unit test name
 		name string
-		// advertisedHost is the BOS host the client will connect to upon successful login
-		advertisedHost string
+		// endpointCfg is the listener the client authenticated through
+		endpointCfg config.Endpoint
 		// cfg is the app configuration
 		cfg config.Config
 		// inputSNAC is the SNAC sent from the client to the server
@@ -49,8 +49,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 		maxConcurrentLoginsPerUser int
 	}{
 		{
-			name:           "AIM account exists, correct password, login OK, no concurrent logins",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account exists, correct password, login OK, no concurrent logins",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -113,8 +113,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			maxConcurrentLoginsPerUser: 2,
 		},
 		{
-			name:           "AIM account exists, correct password, login OK, concurrent logins under limit",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account exists, correct password, login OK, concurrent logins under limit",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -185,8 +185,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 		},
 
 		{
-			name:           "login fails when concurrent login limit is reached",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "login fails when concurrent login limit is reached",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -240,8 +240,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			maxConcurrentLoginsPerUser: 2,
 		},
 		{
-			name:           "ICQ account exists, correct password, login OK",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "ICQ account exists, correct password, login OK",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -295,8 +295,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "AIM account exists, incorrect password, login fails",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account exists, incorrect password, login fails",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -331,8 +331,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "AIM account doesn't exist, login fails",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account doesn't exist, login fails",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -367,8 +367,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "AIM account is suspended",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account is suspended",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -405,8 +405,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "ICQ account doesn't exist, login fails",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "ICQ account doesn't exist, login fails",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -441,8 +441,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "account doesn't exist, authentication is disabled, account is created, login succeeds",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "account doesn't exist, authentication is disabled, account is created, login succeeds",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			cfg: config.Config{
 				DisableAuth: true,
 			},
@@ -502,8 +502,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "AIM account doesn't exist, authentication is disabled, screen name has bad format, login fails",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account doesn't exist, authentication is disabled, screen name has bad format, login fails",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			cfg: config.Config{
 				DisableAuth: true,
 			},
@@ -546,8 +546,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "ICQ account doesn't exist, authentication is disabled, UIN has bad format, login fails",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "ICQ account doesn't exist, authentication is disabled, UIN has bad format, login fails",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			cfg: config.Config{
 				DisableAuth: true,
 			},
@@ -590,8 +590,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "account exists, password is invalid, authentication is disabled, login succeeds",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "account exists, password is invalid, authentication is disabled, login succeeds",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			cfg: config.Config{
 				DisableAuth: true,
 			},
@@ -668,8 +668,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			wantErr: io.EOF,
 		},
 		{
-			name:           "login with TOC client - success",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "login with TOC client - success",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -721,8 +721,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "AIM account exists, correct password, linked accounts in response",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account exists, correct password, linked accounts in response",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -783,8 +783,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "feedbag error during login, returns error",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "feedbag error during login, returns error",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -829,8 +829,8 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			wantErr: io.EOF,
 		},
 		{
-			name:           "login with TOC client - failed",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "login with TOC client - failed",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -906,7 +906,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				createAccount:              tc.createAccount,
 				logger:                     slog.Default(),
 			}
-			outputSNAC, err := svc.BUCPLogin(context.Background(), tc.inputSNAC, tc.advertisedHost)
+			outputSNAC, err := svc.BUCPLogin(context.Background(), tc.inputSNAC, tc.endpointCfg)
 			assert.ErrorIs(t, err, tc.wantErr)
 			assert.Equal(t, tc.expectOutput, outputSNAC)
 		})
@@ -924,8 +924,8 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 	cases := []struct {
 		// name is the unit test name
 		name string
-		// advertisedHost is the BOS host the client will connect to upon successful login
-		advertisedHost string
+		// endpointCfg is the listener the client authenticated through
+		endpointCfg config.Endpoint
 		// cfg is the app configuration
 		cfg config.Config
 		// inputSNAC is the authentication FLAP frame sent from the client to the server
@@ -941,8 +941,8 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 		wantErr error
 	}{
 		{
-			name:           "AIM account exists, correct password, login OK",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account exists, correct password, login OK",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.FLAPSignonFrame{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -986,8 +986,59 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "ICQ account exists, correct password, login OK",
-			advertisedHost: "127.0.0.1:5190",
+			name: "AIM account exists, correct password, login OK via SSL listener",
+			endpointCfg: config.Endpoint{
+				Group: config.ListenerGroup{
+					BOSAdvertisedHostPlain: "127.0.0.1:5190",
+					BOSAdvertisedHostSSL:   "ras.dev:5193",
+				},
+				IsSSL: true,
+			},
+			inputSNAC: wire.FLAPSignonFrame{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.LoginTLVTagsRoastedPassword, wire.RoastOSCARPassword([]byte("the_password"))),
+						wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+					},
+				},
+			},
+			mockParams: mockParams{
+				userManagerParams: userManagerParams{
+					getUserParams: getUserParams{
+						{
+							screenName: user.IdentScreenName,
+							result:     &user,
+						},
+					},
+				},
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							dataIn: func() []byte {
+								loginCookie := state.ServerCookie{
+									ScreenName: user.DisplayScreenName,
+								}
+								buf := &bytes.Buffer{}
+								assert.NoError(t, wire.MarshalBE(loginCookie, buf))
+								return buf.Bytes()
+							}(),
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
+			expectOutput: wire.TLVRestBlock{
+				TLVList: wire.TLVList{
+					wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+					wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, "ras.dev:5193"),
+					wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, []byte("the-cookie")),
+					wire.NewTLVBE(wire.OServiceTLVTagsSSLState, wire.OServiceServiceResponseSSLStateResume),
+				},
+			},
+		},
+		{
+			name:        "ICQ account exists, correct password, login OK",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.FLAPSignonFrame{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -1033,8 +1084,8 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "AIM account exists, incorrect password, login fails",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account exists, incorrect password, login fails",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.FLAPSignonFrame{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -1061,8 +1112,8 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "AIM account doesn't exist, login fails",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account doesn't exist, login fails",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.FLAPSignonFrame{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -1089,8 +1140,8 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "ICQ account doesn't exist, login fails",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "ICQ account doesn't exist, login fails",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.FLAPSignonFrame{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -1118,8 +1169,8 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "account doesn't exist, authentication is disabled, account is created, login succeeds",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "account doesn't exist, authentication is disabled, account is created, login succeeds",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			cfg: config.Config{
 				DisableAuth: true,
 			},
@@ -1171,8 +1222,8 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "account exists, password is invalid, authentication is disabled, login succeeds",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "account exists, password is invalid, authentication is disabled, login succeeds",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			cfg: config.Config{
 				DisableAuth: true,
 			},
@@ -1219,8 +1270,8 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "feedbag error during login, returns error",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "feedbag error during login, returns error",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.FLAPSignonFrame{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -1287,8 +1338,8 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			wantErr: io.EOF,
 		},
 		{
-			name:           "login with AIM 1.1.19 for Java - success",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "login with AIM 1.1.19 for Java - success",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.FLAPSignonFrame{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -1334,8 +1385,8 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "login with AIM 1.1.19 for Java - failed",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "login with AIM 1.1.19 for Java - failed",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.FLAPSignonFrame{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -1393,7 +1444,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 				createAccount:  tc.createAccount,
 				logger:         slog.Default(),
 			}
-			outputSNAC, err := svc.FLAPLogin(context.Background(), tc.inputSNAC, tc.advertisedHost)
+			outputSNAC, err := svc.FLAPLogin(context.Background(), tc.inputSNAC, tc.endpointCfg)
 			assert.ErrorIs(t, err, tc.wantErr)
 			assert.Equal(t, tc.expectOutput, outputSNAC)
 		})
@@ -1411,8 +1462,8 @@ func TestAuthService_KerberosLogin(t *testing.T) {
 	cases := []struct {
 		// name is the unit test name
 		name string
-		// advertisedHost is the BOS host the client will connect to upon successful login
-		advertisedHost string
+		// endpointCfg is the SSL listener the client authenticated through
+		endpointCfg config.Endpoint
 		// cfg is the app configuration
 		cfg config.Config
 		// inputSNAC is the kerberos SNAC sent from the client to the server
@@ -1430,8 +1481,8 @@ func TestAuthService_KerberosLogin(t *testing.T) {
 		timeNow func() time.Time
 	}{
 		{
-			name:           "AIM account exists, correct password, login OK",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account exists, correct password, login OK",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostSSL: "127.0.0.1:5190"}, IsSSL: true},
 			timeNow: func() time.Time {
 				return time.Unix(1000, 0)
 			},
@@ -1526,8 +1577,8 @@ func TestAuthService_KerberosLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "AIM account exists, incorrect password, login failed",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account exists, incorrect password, login failed",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostSSL: "127.0.0.1:5190"}, IsSSL: true},
 			timeNow: func() time.Time {
 				return time.Unix(1000, 0)
 			},
@@ -1566,8 +1617,8 @@ func TestAuthService_KerberosLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "AIM account exists, correct roasted password, login OK",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account exists, correct roasted password, login OK",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostSSL: "127.0.0.1:5190"}, IsSSL: true},
 			timeNow: func() time.Time {
 				return time.Unix(1000, 0)
 			},
@@ -1663,8 +1714,8 @@ func TestAuthService_KerberosLogin(t *testing.T) {
 			},
 		},
 		{
-			name:           "AIM account exists, incorrect roasted password, login failed",
-			advertisedHost: "127.0.0.1:5190",
+			name:        "AIM account exists, incorrect roasted password, login failed",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostSSL: "127.0.0.1:5190"}, IsSSL: true},
 			timeNow: func() time.Time {
 				return time.Unix(1000, 0)
 			},
@@ -1738,7 +1789,7 @@ func TestAuthService_KerberosLogin(t *testing.T) {
 				createAccount:              tc.createAccount,
 				logger:                     slog.Default(),
 			}
-			outputSNAC, err := svc.KerberosLogin(context.Background(), tc.inputSNAC, tc.advertisedHost)
+			outputSNAC, err := svc.KerberosLogin(context.Background(), tc.inputSNAC, tc.endpointCfg)
 			assert.ErrorIs(t, err, tc.wantErr)
 			assert.Equal(t, tc.expectOutput, outputSNAC)
 		})
@@ -1750,8 +1801,6 @@ func TestAuthService_BUCPChallengeRequest(t *testing.T) {
 	cases := []struct {
 		// name is the unit test name
 		name string
-		// advertisedHost is the BOS host the client will connect to upon successful login
-		advertisedHost string
 		// cfg is the app configuration
 		cfg config.Config
 		// inputSNAC is the SNAC sent from the client to the server
@@ -1765,8 +1814,7 @@ func TestAuthService_BUCPChallengeRequest(t *testing.T) {
 		wantErr error
 	}{
 		{
-			name:           "login with valid username, expect OK login response",
-			advertisedHost: "127.0.0.1:5190",
+			name: "login with valid username, expect OK login response",
 			inputSNAC: wire.SNAC_0x17_0x06_BUCPChallengeRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{
@@ -1798,8 +1846,7 @@ func TestAuthService_BUCPChallengeRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "login with invalid username, expect OK login response (Cfg.DisableAuth=true)",
-			advertisedHost: "127.0.0.1:5190",
+			name: "login with invalid username, expect OK login response (Cfg.DisableAuth=true)",
 			cfg: config.Config{
 				DisableAuth: true,
 			},
@@ -1831,8 +1878,7 @@ func TestAuthService_BUCPChallengeRequest(t *testing.T) {
 			},
 		},
 		{
-			name:           "login with invalid username, expect failed login response (Cfg.DisableAuth=false)",
-			advertisedHost: "127.0.0.1:5190",
+			name: "login with invalid username, expect failed login response (Cfg.DisableAuth=false)",
 			inputSNAC: wire.SNAC_0x17_0x06_BUCPChallengeRequest{
 				TLVRestBlock: wire.TLVRestBlock{
 					TLVList: wire.TLVList{

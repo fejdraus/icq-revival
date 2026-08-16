@@ -83,7 +83,7 @@ func TestHandler_AdminConfirmRequest(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -183,7 +183,7 @@ func TestHandler_AdminInfoQuery_RegistrationStatus(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -283,7 +283,7 @@ func TestHandler_AdminInfoChangeRequest_ScreenNameFormatted(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -328,7 +328,7 @@ func TestHandler_AlertNotifyCapabilities(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, nil, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, nil, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -373,7 +373,7 @@ func TestHandler_AlertNotifyDisplayCapabilities(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, nil, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, nil, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -450,7 +450,7 @@ func TestHandler_BARTDownloadQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -531,7 +531,7 @@ func TestHandler_BARTDownload2Query(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -614,7 +614,7 @@ func TestHandler_BARTUploadQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -698,7 +698,7 @@ func TestHandler_BuddyRightsQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -770,7 +770,7 @@ func TestHandler_BuddyAddBuddies(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -842,7 +842,7 @@ func TestHandler_BuddyDelBuddies(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -914,7 +914,7 @@ func TestHandler_BuddyAddTempBuddies(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -986,7 +986,7 @@ func TestHandler_BuddyDelTempBuddies(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -1069,7 +1069,7 @@ func TestHandler_ChatNavCreateRoom(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -1119,7 +1119,7 @@ func TestHandler_ChatNavCreateRoom_ReadErr(t *testing.T) {
 	buf := &bytes.Buffer{}
 	assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, ss, config.Listener{}))
+	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, ss, config.Endpoint{}))
 }
 
 func TestHandler_ChatNavRequestChatRights(t *testing.T) {
@@ -1178,7 +1178,7 @@ func TestHandler_ChatNavRequestChatRights(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -1259,7 +1259,7 @@ func TestHandler_ChatNavRequestRoomInfo(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -1340,7 +1340,7 @@ func TestHandler_ChatNavRequestExchangeInfo(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -1458,7 +1458,7 @@ func TestHandler_ChatChannelMsgToHost(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -1583,7 +1583,7 @@ func TestHandler_FeedbagDeleteItem(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -1631,7 +1631,7 @@ func TestHandler_FeedbagEndCluster(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -1756,7 +1756,7 @@ func TestHandler_FeedbagInsertItem(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -1860,7 +1860,7 @@ func TestHandler_FeedbagQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -1943,7 +1943,7 @@ func TestHandler_FeedbagQueryIfModified(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2036,7 +2036,7 @@ func TestHandler_FeedbagRightsQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2093,7 +2093,7 @@ func TestHandler_FeedbagStartCluster(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2218,7 +2218,7 @@ func TestHandler_FeedbagUpdateItem(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2273,7 +2273,7 @@ func TestHandler_FeedbagUse(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2312,7 +2312,7 @@ func TestHandler_FeedbagRespondAuthorizeToHost(t *testing.T) {
 	buf := &bytes.Buffer{}
 	assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, responseWriter, config.Listener{}))
+	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, responseWriter, config.Endpoint{}))
 }
 
 func TestHandler_FeedbagPreAuthorizeBuddy(t *testing.T) {
@@ -2343,7 +2343,7 @@ func TestHandler_FeedbagPreAuthorizeBuddy(t *testing.T) {
 	buf := &bytes.Buffer{}
 	assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{}))
+	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{}))
 }
 
 func TestHandler_ICBMAddParameters(t *testing.T) {
@@ -2382,7 +2382,7 @@ func TestHandler_ICBMAddParameters(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2465,7 +2465,7 @@ func TestHandler_ICBMChannelMsgToHost(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2525,7 +2525,7 @@ func TestHandler_ICBMClientErr(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2585,7 +2585,7 @@ func TestHandler_ICBMClientEvent(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2668,7 +2668,7 @@ func TestHandler_ICBMEvilRequest(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2738,7 +2738,7 @@ func TestHandler_ICBMOfflineRetrieve(t *testing.T) {
 
 			buf := &bytes.Buffer{}
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -2806,7 +2806,7 @@ func TestHandler_ICBMParameterQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -3860,7 +3860,7 @@ func TestHandler_ICQDBQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(tt.reqParams.inBody, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, tt.reqParams.instance, frame, buf, nil, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, tt.reqParams.instance, frame, buf, nil, config.Endpoint{})
 			assert.ErrorIs(t, err, tt.reqParams.wantErr)
 		})
 	}
@@ -4014,7 +4014,7 @@ func TestHandler_ODirInfoQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, ss, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, ss, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4109,7 +4109,7 @@ func TestHandler_ODirKeywordListQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, ss, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, ss, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4185,7 +4185,7 @@ func TestHandler_OServiceServiceClientOnline(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, nil, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, nil, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4252,7 +4252,7 @@ func TestHandler_OServiceServiceServiceRequest(t *testing.T) {
 
 			svc := newMockOServiceService(t)
 			svc.EXPECT().
-				ServiceRequest(mock.Anything, wire.BOS, mock.Anything, input.Frame, input.Body, config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234"}).
+				ServiceRequest(mock.Anything, wire.BOS, mock.Anything, input.Frame, input.Body, config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"}).
 				Return(output, tt.serviceError)
 
 			h := Handler{
@@ -4272,7 +4272,7 @@ func TestHandler_OServiceServiceServiceRequest(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234"})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"}})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4332,7 +4332,7 @@ func TestHandler_OServiceServiceIdleNotification(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4436,7 +4436,7 @@ func TestHandler_OServiceServiceClientVersions(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.Background(), wire.BOS, instance, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.Background(), wire.BOS, instance, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4514,7 +4514,7 @@ func TestHandler_OServiceServiceRateParamsQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4564,7 +4564,7 @@ func TestHandler_OServiceServiceRateParamsSubAdd(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.Background(), wire.BOS, instance, input.Frame, buf, nil, config.Listener{})
+			err := h.Handle(context.Background(), wire.BOS, instance, input.Frame, buf, nil, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4662,7 +4662,7 @@ func TestHandler_OServiceServiceSetUserInfoFields(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4733,7 +4733,7 @@ func TestHandler_OServiceServiceUserInfoQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4775,7 +4775,7 @@ func TestHandler_OServiceServiceNoop(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4825,7 +4825,7 @@ func TestHandler_OServiceServiceSetPrivacyFlags(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4897,7 +4897,7 @@ func TestHandler_PermitDenyRightsQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -4974,7 +4974,7 @@ func TestHandler_PermitDenyAddDenyListEntries(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, nil, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, nil, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -5051,7 +5051,7 @@ func TestHandler_PermitDenyDelDenyListEntries(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, nil, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, nil, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -5128,7 +5128,7 @@ func TestHandler_PermitDenyAddPermListEntries(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, nil, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, nil, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -5205,7 +5205,7 @@ func TestHandler_PermitDenyDelPermListEntries(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, nil, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, nil, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -5258,7 +5258,7 @@ func TestHandler_PermitDenySetGroupPermitMask(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, nil, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, instance, input.Frame, buf, nil, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -5345,7 +5345,7 @@ func TestUserLookupHandler_FindByEmail(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, ss, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, ss, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -5428,7 +5428,7 @@ func TestHandler_LocateGetDirInfo(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -5500,7 +5500,7 @@ func TestHandler_LocateRightsQuery(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -5604,7 +5604,7 @@ func TestHandler_LocateSetDirInfo(t *testing.T) {
 			buf := &bytes.Buffer{}
 			assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{})
+			err := h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{})
 			if tt.expectedError != nil {
 				assert.ErrorIs(t, err, tt.expectedError)
 			} else {
@@ -5649,7 +5649,7 @@ func TestHandler_LocateSetInfo(t *testing.T) {
 	buf := &bytes.Buffer{}
 	assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{}))
+	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{}))
 }
 
 func TestHandler_LocateSetKeywordInfo(t *testing.T) {
@@ -5699,7 +5699,7 @@ func TestHandler_LocateSetKeywordInfo(t *testing.T) {
 	buf := &bytes.Buffer{}
 	assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{}))
+	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{}))
 }
 
 func TestHandler_LocateUserInfoQuery(t *testing.T) {
@@ -5752,7 +5752,7 @@ func TestHandler_LocateUserInfoQuery(t *testing.T) {
 	buf := &bytes.Buffer{}
 	assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{}))
+	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{}))
 }
 
 func TestHandler_LocateUserInfoQuery2(t *testing.T) {
@@ -5805,7 +5805,7 @@ func TestHandler_LocateUserInfoQuery2(t *testing.T) {
 	buf := &bytes.Buffer{}
 	assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Listener{}))
+	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, responseWriter, config.Endpoint{}))
 }
 
 func TestHandler_StatsReportEvents(t *testing.T) {
@@ -5844,7 +5844,7 @@ func TestHandler_StatsReportEvents(t *testing.T) {
 	buf := &bytes.Buffer{}
 	assert.NoError(t, wire.MarshalBE(input.Body, buf))
 
-	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, ss, config.Listener{}))
+	assert.NoError(t, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, buf, ss, config.Endpoint{}))
 }
 
 func TestHandler_RouteNotFound(t *testing.T) {
@@ -5862,5 +5862,5 @@ func TestHandler_RouteNotFound(t *testing.T) {
 		},
 	}
 
-	assert.ErrorIs(t, ErrRouteNotFound, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, nil, nil, config.Listener{}))
+	assert.ErrorIs(t, ErrRouteNotFound, h.Handle(context.TODO(), wire.BOS, nil, input.Frame, nil, nil, config.Endpoint{}))
 }

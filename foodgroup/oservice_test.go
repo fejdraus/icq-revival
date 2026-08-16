@@ -27,7 +27,7 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 		// service is the OSCAR service type
 		service uint16
 		// listener is the connection listener
-		listener config.Listener
+		listenerGroup config.ListenerGroup
 		// instance is the session of the user requesting the chat service
 		// info
 		instance *state.SessionInstance
@@ -43,10 +43,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 		expectErr error
 	}{
 		{
-			name:     "request info for connecting to admin svc, return admin svc connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to admin svc, return admin svc connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -92,10 +92,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request info for connecting to alert svc, return alert svc connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to alert svc, return alert svc connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -141,10 +141,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request info for connecting to BART service, return BART connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to BART service, return BART connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -190,10 +190,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request info for connecting to chat nav, return chat nav connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to chat nav, return chat nav connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -239,10 +239,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request info for connecting to chat room, return chat service and chat room metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to chat room, return chat service and chat room metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -307,10 +307,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			}(),
 		},
 		{
-			name:     "request info for connecting to BART service, return BART connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to BART service, return BART connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -356,10 +356,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request info for connecting to non-existent chat room, return ErrChatRoomNotFound",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to non-existent chat room, return ErrChatRoomNotFound",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -436,10 +436,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request info for connecting to admin svc with SSL, return admin svc SSL connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235", HasSSL: true},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to admin svc with SSL, return admin svc SSL connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -490,10 +490,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request info for connecting to alert svc with SSL, return alert svc SSL connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235", HasSSL: true},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to alert svc with SSL, return alert svc SSL connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -544,10 +544,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request info for connecting to BART service with SSL, return BART SSL connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235", HasSSL: true},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to BART service with SSL, return BART SSL connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -598,10 +598,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request info for connecting to chat nav with SSL, return chat nav SSL connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235", HasSSL: true},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to chat nav with SSL, return chat nav SSL connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -652,10 +652,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request info for connecting to chat room with SSL, return chat service SSL connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235", HasSSL: true},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to chat room with SSL, return chat service SSL connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -721,10 +721,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			}(),
 		},
 		{
-			name:     "request info for connecting to ODir service with SSL, return ODir SSL connection metadata",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235", HasSSL: true},
-			instance: newTestInstance("me"),
+			name:          "request info for connecting to ODir service with SSL, return ODir SSL connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234", BOSAdvertisedHostSSL: "127.0.0.1:1235"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -775,10 +775,10 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:     "request SSL service but listener doesn't support SSL, return error",
-			service:  wire.BOS,
-			listener: config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:1234", HasSSL: false},
-			instance: newTestInstance("me"),
+			name:          "request SSL service but listener doesn't support SSL, return plaintext connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -795,14 +795,38 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			expectOutput: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					FoodGroup: wire.OService,
-					SubGroup:  wire.OServiceErr,
+					SubGroup:  wire.OServiceServiceResponse,
 					RequestID: 1234,
 				},
-				Body: wire.SNACError{
-					Code: wire.ErrorCodeGeneralFailure,
+				Body: wire.SNAC_0x01_0x05_OServiceServiceResponse{
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.OServiceTLVTagsGroupID, wire.Admin),
+							wire.NewTLVBE(wire.OServiceTLVTagsReconnectHere, "127.0.0.1:1234"),
+							wire.NewTLVBE(wire.OServiceTLVTagsLoginCookie, []byte("the-cookie")),
+							wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
+						},
+					},
 				},
 			},
-			mockParams: mockParams{},
+			mockParams: mockParams{
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							dataIn: []byte{
+								0x00, 0x07, // admin service
+								0x02, 'm', 'e',
+								0x0,  // no client ID
+								0x0,  // no chat cookie
+								0x0,  // multi conn flag
+								0x0,  // kerberos flag
+								0x01, // session num
+							},
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
 		},
 	}
 
@@ -831,7 +855,7 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			svc := NewOServiceService(config.Config{}, nil, slog.Default(), cookieIssuer, chatRoomManager, nil, nil, nil, wire.DefaultSNACRateLimits(), chatMessageRelayer, nil, nil, nil)
 
 			outputSNAC, err := svc.ServiceRequest(context.Background(), tc.service, tc.instance, tc.inputSNAC.Frame,
-				tc.inputSNAC.Body.(wire.SNAC_0x01_0x04_OServiceServiceRequest), tc.listener)
+				tc.inputSNAC.Body.(wire.SNAC_0x01_0x04_OServiceServiceRequest), tc.listenerGroup)
 			assert.ErrorIs(t, err, tc.expectErr)
 			if tc.expectErr != nil {
 				return
@@ -1008,7 +1032,7 @@ func TestOServiceService_ServiceRequest_LinkedAccountSignon(t *testing.T) {
 			svc := NewOServiceService(config.Config{}, nil, slog.Default(), cookieIssuer, nil, nil, nil, nil,
 				wire.DefaultSNACRateLimits(), nil, nil, nil, feedbagManager)
 
-			listener := config.Listener{BOSAdvertisedHostPlain: "127.0.0.1:5190"}
+			listener := config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}
 
 			outputSNAC, err := svc.ServiceRequest(context.Background(), wire.BOS, instance,
 				wire.SNACFrame{RequestID: 1234}, tc.inputBody, listener)

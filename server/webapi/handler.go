@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/server/webapi/handlers"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
@@ -22,7 +23,7 @@ type Handler struct {
 	OServiceService    OServiceService
 	SessionRetriever   SessionRetriever
 	BuddyBroadcaster   BuddyBroadcaster
-	OSCARConfig        OSCARConfig
+	BOSListener        config.ListenerGroup
 	BuddyListManager   interface{}
 	RecalcWarning      func(ctx context.Context, instance *state.SessionInstance) error
 	LowerWarnLevel     func(ctx context.Context, instance *state.SessionInstance)

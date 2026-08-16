@@ -11,20 +11,25 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/server/webapi/middleware"
 	"github.com/mk6i/open-oscar-server/state"
 )
 
-// testOSCARConfig implements OSCARConfig with fixed addresses.
-type testOSCARConfig struct {
-	sslAvailable bool
+// testListener is a listener group whose SSL half is present only when the
+// test asks for it.
+func testListener(sslAvailable bool) config.ListenerGroup {
+	g := config.ListenerGroup{
+		Name:                   "local",
+		BOSListenAddress:       "0.0.0.0:5190",
+		BOSAdvertisedHostPlain: "bos.example.com:5190",
+	}
+	if sslAvailable {
+		g.BOSListenAddressSSL = "0.0.0.0:5191"
+		g.BOSAdvertisedHostSSL = "ssl.example.com:5193"
+	}
+	return g
 }
-
-func (c testOSCARConfig) GetBOSAddress() (string, int) { return "bos.example.com", 5190 }
-
-func (c testOSCARConfig) GetSSLBOSAddress() (string, int) { return "ssl.example.com", 5193 }
-
-func (c testOSCARConfig) IsSSLAvailable() bool { return c.sslAvailable }
 
 // bridgeRequest builds a startOSCARSession request carrying the API key the
 // middleware would have put on the context.
@@ -165,7 +170,7 @@ func TestOSCARBridgeHandler_StartOSCARSession(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			handler := &OSCARBridgeHandler{
 				OSCARAuthService: &testAuthService{crackCookie: crackSignedCookie},
-				Config:           testOSCARConfig{sslAvailable: tt.sslAvailable},
+				Listener:         testListener(tt.sslAvailable),
 				Logger:           slog.Default(),
 			}
 
@@ -195,8 +200,8 @@ func TestOSCARBridgeHandler_StartOSCARSession_ReencodesCookie(t *testing.T) {
 				return state.ServerCookie{ScreenName: "testuser"}, nil
 			},
 		},
-		Config: testOSCARConfig{},
-		Logger: slog.Default(),
+		Listener: testListener(false),
+		Logger:   slog.Default(),
 	}
 
 	rr := httptest.NewRecorder()

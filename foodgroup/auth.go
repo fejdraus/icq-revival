@@ -291,9 +291,9 @@ func (s AuthService) BUCPChallenge(ctx context.Context, inBody wire.SNAC_0x17_0x
 // (wire.LoginTLVTagsReconnectHere) and an authorization cookie
 // (wire.LoginTLVTagsAuthorizationCookie). Else, an error code is set
 // (wire.LoginTLVTagsErrorSubcode).
-func (s AuthService) BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, advertisedHost string) (wire.SNACMessage, error) {
+func (s AuthService) BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error) {
 
-	block, err := s.login(ctx, inBody.TLVList, advertisedHost)
+	block, err := s.login(ctx, inBody.TLVList, endpointCfg)
 	if err != nil {
 		return wire.SNACMessage{}, err
 	}
@@ -319,8 +319,8 @@ func (s AuthService) BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_B
 // (wire.LoginTLVTagsReconnectHere) and an authorization cookie
 // (wire.LoginTLVTagsAuthorizationCookie). Else, an error code is set
 // (wire.LoginTLVTagsErrorSubcode).
-func (s AuthService) FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
-	return s.login(ctx, inFrame.TLVList, advertisedHost)
+func (s AuthService) FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
+	return s.login(ctx, inFrame.TLVList, endpointCfg)
 }
 
 // KerberosLogin handles AIM-style Kerberos authentication for AIM 6.0+.
@@ -331,7 +331,7 @@ func (s AuthService) FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame
 //
 // Several values in the response are poorly understood but necessary for proper
 // processing on the client side.
-func (s AuthService) KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, advertisedHost string) (wire.SNACMessage, error) {
+func (s AuthService) KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error) {
 
 	b, ok := inBody.TicketRequestMetadata.Bytes(wire.KerberosTLVTicketRequest)
 	if !ok {
@@ -353,7 +353,7 @@ func (s AuthService) KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_
 	} else {
 		list = append(list, wire.NewTLVBE(wire.LoginTLVTagsPlaintextKerberosPassword, info.Password))
 	}
-	result, err := s.login(ctx, list, advertisedHost)
+	result, err := s.login(ctx, list, endpointCfg)
 	if err != nil {
 		return wire.SNACMessage{}, fmt.Errorf("login: %w", err)
 	}
@@ -403,7 +403,7 @@ func (s AuthService) KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_
 								Unknown: 1,
 								ConnectionInfo: wire.TLVBlock{
 									TLVList: wire.TLVList{
-										wire.NewTLVBE(wire.KerberosTLVHostname, advertisedHost),
+										wire.NewTLVBE(wire.KerberosTLVHostname, endpointCfg.AdvertisedHost()),
 										wire.NewTLVBE(wire.KerberosTLVCookie, cookie),
 										wire.NewTLVBE(wire.KerberosTLVConnSettings, wire.KerberosConnUseSSL),
 									},
@@ -492,7 +492,7 @@ func (l *loginProperties) fromTLV(list wire.TLVList) error {
 
 // login validates a user's credentials and creates their session. it returns
 // metadata used in both BUCP and FLAP authentication responses.
-func (s AuthService) login(ctx context.Context, tlv wire.TLVList, advertisedHost string) (wire.TLVRestBlock, error) {
+func (s AuthService) login(ctx context.Context, tlv wire.TLVList, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 
 	props := loginProperties{}
 	if err := props.fromTLV(tlv); err != nil {
@@ -525,7 +525,7 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, advertisedHost
 		if s.config.DisableAuth {
 			// auth disabled, create the user
 			s.logger.Debug("login: auth disabled, creating user", "screen_name", props.screenName)
-			return s.createUser(ctx, props, advertisedHost)
+			return s.createUser(ctx, props, endpointCfg)
 		}
 		// auth enabled, return separate login errors for ICQ and AIM
 		loginErr := wire.LoginErrInvalidUsernameOrPassword
@@ -551,7 +551,7 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, advertisedHost
 	if s.config.DisableAuth {
 		// user exists, but don't validate
 		s.logger.Debug("login: auth disabled, skipping password validation", "screen_name", props.screenName)
-		return s.loginSuccessResponse(ctx, props, advertisedHost)
+		return s.loginSuccessResponse(ctx, props, endpointCfg)
 	}
 
 	var loginOK bool
@@ -604,10 +604,10 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, advertisedHost
 	}
 
 	s.logger.Debug("login: login successful", "screen_name", props.screenName)
-	return s.loginSuccessResponse(ctx, props, advertisedHost)
+	return s.loginSuccessResponse(ctx, props, endpointCfg)
 }
 
-func (s AuthService) createUser(ctx context.Context, props loginProperties, advertisedHost string) (wire.TLVRestBlock, error) {
+func (s AuthService) createUser(ctx context.Context, props loginProperties, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 	err := s.createAccount(ctx, props.screenName, "welcome1")
 	if err != nil {
 		switch {
@@ -620,10 +620,10 @@ func (s AuthService) createUser(ctx context.Context, props loginProperties, adve
 		}
 	}
 
-	return s.loginSuccessResponse(ctx, props, advertisedHost)
+	return s.loginSuccessResponse(ctx, props, endpointCfg)
 }
 
-func (s AuthService) loginSuccessResponse(ctx context.Context, props loginProperties, advertisedHost string) (wire.TLVRestBlock, error) {
+func (s AuthService) loginSuccessResponse(ctx context.Context, props loginProperties, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 	loginCookie := state.ServerCookie{
 		Service:       wire.BOS,
 		ScreenName:    props.screenName,
@@ -643,17 +643,19 @@ func (s AuthService) loginSuccessResponse(ctx context.Context, props loginProper
 		return wire.TLVRestBlock{}, fmt.Errorf("failed to issue auth cookie: %w", err)
 	}
 
-	reconnectHost := advertisedHost
 	sslState := wire.OServiceServiceResponseSSLStateNotUsed
+	if endpointCfg.IsSSL {
+		sslState = wire.OServiceServiceResponseSSLStateResume
+	}
 
 	s.logger.Debug("loginSuccessResponse: returning login response",
 		"screen_name", props.screenName,
-		"reconnect_host", reconnectHost,
+		"reconnect_host", endpointCfg.AdvertisedHost(),
 		"ssl_state", sslState)
 
 	loginTLVTags := wire.TLVList{
 		wire.NewTLVBE(wire.LoginTLVTagsScreenName, props.screenName),
-		wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, reconnectHost),
+		wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, endpointCfg.AdvertisedHost()),
 		wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, cookie),
 		wire.NewTLVBE(wire.OServiceTLVTagsSSLState, sslState),
 	}

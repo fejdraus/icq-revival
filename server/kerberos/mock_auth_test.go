@@ -7,6 +7,7 @@ package kerberos
 import (
 	"context"
 
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/wire"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -39,8 +40,8 @@ func (_m *mockAuthService) EXPECT() *mockAuthService_Expecter {
 }
 
 // KerberosLogin provides a mock function for the type mockAuthService
-func (_mock *mockAuthService) KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, advertisedHost string) (wire.SNACMessage, error) {
-	ret := _mock.Called(ctx, inBody, advertisedHost)
+func (_mock *mockAuthService) KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error) {
+	ret := _mock.Called(ctx, inBody, endpointCfg)
 
 	if len(ret) == 0 {
 		panic("no return value specified for KerberosLogin")
@@ -48,16 +49,16 @@ func (_mock *mockAuthService) KerberosLogin(ctx context.Context, inBody wire.SNA
 
 	var r0 wire.SNACMessage
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.SNAC_0x050C_0x0002_KerberosLoginRequest, string) (wire.SNACMessage, error)); ok {
-		return returnFunc(ctx, inBody, advertisedHost)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.SNAC_0x050C_0x0002_KerberosLoginRequest, config.Endpoint) (wire.SNACMessage, error)); ok {
+		return returnFunc(ctx, inBody, endpointCfg)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.SNAC_0x050C_0x0002_KerberosLoginRequest, string) wire.SNACMessage); ok {
-		r0 = returnFunc(ctx, inBody, advertisedHost)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, wire.SNAC_0x050C_0x0002_KerberosLoginRequest, config.Endpoint) wire.SNACMessage); ok {
+		r0 = returnFunc(ctx, inBody, endpointCfg)
 	} else {
 		r0 = ret.Get(0).(wire.SNACMessage)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, wire.SNAC_0x050C_0x0002_KerberosLoginRequest, string) error); ok {
-		r1 = returnFunc(ctx, inBody, advertisedHost)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, wire.SNAC_0x050C_0x0002_KerberosLoginRequest, config.Endpoint) error); ok {
+		r1 = returnFunc(ctx, inBody, endpointCfg)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -72,12 +73,12 @@ type mockAuthService_KerberosLogin_Call struct {
 // KerberosLogin is a helper method to define mock.On call
 //   - ctx context.Context
 //   - inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest
-//   - advertisedHost string
-func (_e *mockAuthService_Expecter) KerberosLogin(ctx interface{}, inBody interface{}, advertisedHost interface{}) *mockAuthService_KerberosLogin_Call {
-	return &mockAuthService_KerberosLogin_Call{Call: _e.mock.On("KerberosLogin", ctx, inBody, advertisedHost)}
+//   - endpointCfg config.Endpoint
+func (_e *mockAuthService_Expecter) KerberosLogin(ctx interface{}, inBody interface{}, endpointCfg interface{}) *mockAuthService_KerberosLogin_Call {
+	return &mockAuthService_KerberosLogin_Call{Call: _e.mock.On("KerberosLogin", ctx, inBody, endpointCfg)}
 }
 
-func (_c *mockAuthService_KerberosLogin_Call) Run(run func(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, advertisedHost string)) *mockAuthService_KerberosLogin_Call {
+func (_c *mockAuthService_KerberosLogin_Call) Run(run func(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, endpointCfg config.Endpoint)) *mockAuthService_KerberosLogin_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -87,9 +88,9 @@ func (_c *mockAuthService_KerberosLogin_Call) Run(run func(ctx context.Context, 
 		if args[1] != nil {
 			arg1 = args[1].(wire.SNAC_0x050C_0x0002_KerberosLoginRequest)
 		}
-		var arg2 string
+		var arg2 config.Endpoint
 		if args[2] != nil {
-			arg2 = args[2].(string)
+			arg2 = args[2].(config.Endpoint)
 		}
 		run(
 			arg0,
@@ -105,7 +106,7 @@ func (_c *mockAuthService_KerberosLogin_Call) Return(sNACMessage wire.SNACMessag
 	return _c
 }
 
-func (_c *mockAuthService_KerberosLogin_Call) RunAndReturn(run func(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, advertisedHost string) (wire.SNACMessage, error)) *mockAuthService_KerberosLogin_Call {
+func (_c *mockAuthService_KerberosLogin_Call) RunAndReturn(run func(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)) *mockAuthService_KerberosLogin_Call {
 	_c.Call.Return(run)
 	return _c
 }

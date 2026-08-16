@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -20,7 +21,7 @@ import (
 // testAuthService implements AuthService for ClientLogin tests (only FLAPLogin and
 // CrackCookie are exercised).
 type testAuthService struct {
-	flapLogin   func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error)
+	flapLogin   func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
 	crackCookie func(authCookie []byte) (state.ServerCookie, error)
 }
 
@@ -28,7 +29,7 @@ func (t *testAuthService) BUCPChallenge(ctx context.Context, bodyIn wire.SNAC_0x
 	return wire.SNACMessage{}, nil
 }
 
-func (t *testAuthService) BUCPLogin(ctx context.Context, bodyIn wire.SNAC_0x17_0x02_BUCPLoginRequest, advertisedHost string) (wire.SNACMessage, error) {
+func (t *testAuthService) BUCPLogin(ctx context.Context, bodyIn wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error) {
 	return wire.SNACMessage{}, nil
 }
 
@@ -58,9 +59,9 @@ func (t *testAuthService) RegisterBOSSession(ctx context.Context, authCookie sta
 	return nil, nil
 }
 
-func (t *testAuthService) FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+func (t *testAuthService) FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 	if t.flapLogin != nil {
-		return t.flapLogin(ctx, inFrame, advertisedHost)
+		return t.flapLogin(ctx, inFrame, endpointCfg)
 	}
 	return wire.TLVRestBlock{}, nil
 }
@@ -231,7 +232,7 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			contentType: "application/json",
 			body:        `{"username":"testuser","password":"testpass","devId":"dev123"}`,
 			auth: &testAuthService{
-				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return successfulLoginBlock(), nil
 				},
 			},
@@ -253,7 +254,7 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			contentType: "application/json; charset=utf-8",
 			body:        `{"username":"testuser","password":"testpass","devId":"dev123"}`,
 			auth: &testAuthService{
-				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return successfulLoginBlock(), nil
 				},
 			},
@@ -269,7 +270,7 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			contentType: "application/x-www-form-urlencoded",
 			body:        "s=testuser&pwd=testpass&devId=dev123",
 			auth: &testAuthService{
-				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return successfulLoginBlock(), nil
 				},
 			},
@@ -312,7 +313,7 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			contentType: "application/json",
 			body:        `{"username":"testuser","password":"wrongpass"}`,
 			auth: &testAuthService{
-				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return failedLoginBlock(), nil
 				},
 			},
@@ -329,7 +330,7 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			contentType: "application/json",
 			body:        `{"username":"testuser","password":"testpass"}`,
 			auth: &testAuthService{
-				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return wire.TLVRestBlock{}, errors.New("boom")
 				},
 			},
@@ -356,7 +357,7 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			contentType: "application/x-www-form-urlencoded",
 			body:        "s=testuser&pwd=wrongpass&f=xml",
 			auth: &testAuthService{
-				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return failedLoginBlock(), nil
 				},
 			},
@@ -372,7 +373,7 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			contentType: "application/json",
 			body:        `{"username":"testuser","password":"testpass"}`,
 			auth: &testAuthService{
-				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return blockWithoutCookie(), nil
 				},
 			},
@@ -433,7 +434,7 @@ func TestAuthHandler_ClientLogin_SendsClientIdentity(t *testing.T) {
 			var got wire.FLAPSignonFrame
 			handler := &AuthHandler{
 				AuthService: &testAuthService{
-					flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error) {
+					flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 						got = inFrame
 						return successfulLoginBlock(), nil
 					},

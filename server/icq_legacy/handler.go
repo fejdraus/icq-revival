@@ -284,7 +284,7 @@ type BaseHandler struct {
 
 // AuthService provides OSCAR authentication and BOS session registration.
 type AuthService interface {
-	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, advertisedHost string) (wire.TLVRestBlock, error)
+	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
 	CrackCookie(authCookie []byte) (state.ServerCookie, error)
 	RegisterBOSSession(ctx context.Context, authCookie state.ServerCookie, cfg func(*state.Session)) (*state.SessionInstance, error)
 }

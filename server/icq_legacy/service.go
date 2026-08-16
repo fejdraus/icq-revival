@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -197,7 +198,7 @@ func (s *ICQLegacyService) legacyFLAPLogin(ctx context.Context, uin uint32, pass
 	signonFrame := wire.FLAPSignonFrame{}
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsScreenName, screenName))
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsPlaintextPassword, password))
-	return s.authService.FLAPLogin(ctx, signonFrame, "")
+	return s.authService.FLAPLogin(ctx, signonFrame, config.Endpoint{})
 }
 
 // ProcessContactList processes a contact list and returns online status for each contact.

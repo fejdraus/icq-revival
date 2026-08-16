@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ type Container struct {
 	snacRateLimits         wire.SNACRateLimits
 	sqLiteUserStore        *state.SQLiteUserStore
 	webAPISessionManager   *state.WebAPISessionManager
-	Listeners              []config.Listener
+	Listeners              []config.ListenerGroup
 	feedbagSvc             *foodgroup.FeedbagService
 	icqService             *foodgroup.ICQService
 }
@@ -596,7 +597,10 @@ func WebAPI(deps Container) *webapi.Server {
 		// Phase 2 additions
 		BuddyBroadcaster: oscarBuddyBroadcaster,
 		// Phase 4 additions for OSCAR Bridge
-		OSCARConfig: webapi.NewOSCARConfigAdapter(deps.cfg),
+		// listener groups come back in map order, so pin the web API to one
+		BOSListener: slices.MinFunc(deps.Listeners, func(a, b config.ListenerGroup) int {
+			return strings.Compare(a.Name, b.Name)
+		}),
 		// Phase 5 additions for buddy list and messaging
 		BuddyListManager:   buddyListManager,
 		ChatSessionManager: deps.chatSessionManager,

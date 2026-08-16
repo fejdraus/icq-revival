@@ -1,6 +1,9 @@
 package config
 
 import (
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -11,9 +14,10 @@ func TestParseListenersCfg(t *testing.T) {
 		bosAdvertisedListeners []string
 		bosAdvertisedHostsSSL  []string
 		kerberosListeners      []string
-		want                   []Listener
+		want                   []ListenerGroup
 		wantErr                bool
 		errContains            string
+		bosListenersSSL        []string
 	}{
 		{
 			name:                   "valid single listener with kerberos",
@@ -21,8 +25,9 @@ func TestParseListenersCfg(t *testing.T) {
 			bosAdvertisedListeners: []string{"LOCAL://127.0.0.1:5190"},
 			bosAdvertisedHostsSSL:  []string{},
 			kerberosListeners:      []string{"LOCAL://0.0.0.0:1088"},
-			want: []Listener{
+			want: []ListenerGroup{
 				{
+					Name:                   "local",
 					BOSListenAddress:       "0.0.0.0:5190",
 					BOSAdvertisedHostPlain: "127.0.0.1:5190",
 					KerberosListenAddress:  "0.0.0.0:1088",
@@ -36,8 +41,9 @@ func TestParseListenersCfg(t *testing.T) {
 			bosAdvertisedListeners: []string{"LOCAL://127.0.0.1:5190"},
 			bosAdvertisedHostsSSL:  []string{},
 			kerberosListeners:      []string{},
-			want: []Listener{
+			want: []ListenerGroup{
 				{
+					Name:                   "local",
 					BOSListenAddress:       "0.0.0.0:5190",
 					BOSAdvertisedHostPlain: "127.0.0.1:5190",
 					KerberosListenAddress:  "",
@@ -51,13 +57,15 @@ func TestParseListenersCfg(t *testing.T) {
 			bosAdvertisedListeners: []string{"LAN://192.168.1.10:5190", "WAN://example.com:5191"},
 			bosAdvertisedHostsSSL:  []string{},
 			kerberosListeners:      []string{"LAN://192.168.1.10:1088"},
-			want: []Listener{
+			want: []ListenerGroup{
 				{
+					Name:                   "lan",
 					BOSListenAddress:       "192.168.1.10:5190",
 					BOSAdvertisedHostPlain: "192.168.1.10:5190",
 					KerberosListenAddress:  "192.168.1.10:1088",
 				},
 				{
+					Name:                   "wan",
 					BOSListenAddress:       "0.0.0.0:5191",
 					BOSAdvertisedHostPlain: "example.com:5191",
 					KerberosListenAddress:  "",
@@ -181,27 +189,27 @@ func TestParseListenersCfg(t *testing.T) {
 			bosAdvertisedListeners: []string{"DOCKER://172.17.0.1:5192", "LAN://192.168.1.10:5190", "WAN://example.com:5191"},
 			bosAdvertisedHostsSSL:  []string{},
 			kerberosListeners:      []string{"WAN://0.0.0.0:1089", "LAN://192.168.1.10:1088"},
-			want: []Listener{
+			want: []ListenerGroup{
 				{
-					BOSListenAddress:       "192.168.1.10:5190",
-					BOSAdvertisedHostPlain: "192.168.1.10:5190",
-					BOSAdvertisedHostSSL:   "",
-					KerberosListenAddress:  "192.168.1.10:1088",
-					HasSSL:                 false,
-				},
-				{
-					BOSListenAddress:       "0.0.0.0:5191",
-					BOSAdvertisedHostPlain: "example.com:5191",
-					BOSAdvertisedHostSSL:   "",
-					KerberosListenAddress:  "0.0.0.0:1089",
-					HasSSL:                 false,
-				},
-				{
+					Name:                   "docker",
 					BOSListenAddress:       "172.17.0.1:5192",
 					BOSAdvertisedHostPlain: "172.17.0.1:5192",
 					BOSAdvertisedHostSSL:   "",
 					KerberosListenAddress:  "",
-					HasSSL:                 false,
+				},
+				{
+					Name:                   "lan",
+					BOSListenAddress:       "192.168.1.10:5190",
+					BOSAdvertisedHostPlain: "192.168.1.10:5190",
+					BOSAdvertisedHostSSL:   "",
+					KerberosListenAddress:  "192.168.1.10:1088",
+				},
+				{
+					Name:                   "wan",
+					BOSListenAddress:       "0.0.0.0:5191",
+					BOSAdvertisedHostPlain: "example.com:5191",
+					BOSAdvertisedHostSSL:   "",
+					KerberosListenAddress:  "0.0.0.0:1089",
 				},
 			},
 			wantErr: false,
@@ -239,16 +247,18 @@ func TestParseListenersCfg(t *testing.T) {
 		{
 			name:                   "valid single listener with SSL",
 			bosListeners:           []string{"LOCAL://0.0.0.0:5190"},
+			bosListenersSSL:        []string{"LOCAL://0.0.0.0:5191"},
 			bosAdvertisedListeners: []string{"LOCAL://127.0.0.1:5190"},
 			bosAdvertisedHostsSSL:  []string{"LOCAL://127.0.0.1:5193"},
 			kerberosListeners:      []string{},
-			want: []Listener{
+			want: []ListenerGroup{
 				{
+					Name:                   "local",
 					BOSListenAddress:       "0.0.0.0:5190",
+					BOSListenAddressSSL:    "0.0.0.0:5191",
 					BOSAdvertisedHostPlain: "127.0.0.1:5190",
 					BOSAdvertisedHostSSL:   "127.0.0.1:5193",
 					KerberosListenAddress:  "",
-					HasSSL:                 true,
 				},
 			},
 			wantErr: false,
@@ -256,26 +266,129 @@ func TestParseListenersCfg(t *testing.T) {
 		{
 			name:                   "valid multiple listeners with mixed SSL",
 			bosListeners:           []string{"LAN://192.168.1.10:5190", "WAN://0.0.0.0:5191"},
+			bosListenersSSL:        []string{"LAN://192.168.1.10:5195"},
 			bosAdvertisedListeners: []string{"LAN://192.168.1.10:5190", "WAN://example.com:5191"},
 			bosAdvertisedHostsSSL:  []string{"LAN://192.168.1.10:5193"},
 			kerberosListeners:      []string{},
-			want: []Listener{
+			want: []ListenerGroup{
 				{
+					Name:                   "lan",
 					BOSListenAddress:       "192.168.1.10:5190",
+					BOSListenAddressSSL:    "192.168.1.10:5195",
 					BOSAdvertisedHostPlain: "192.168.1.10:5190",
 					BOSAdvertisedHostSSL:   "192.168.1.10:5193",
 					KerberosListenAddress:  "",
-					HasSSL:                 true,
 				},
 				{
+					Name:                   "wan",
 					BOSListenAddress:       "0.0.0.0:5191",
 					BOSAdvertisedHostPlain: "example.com:5191",
 					BOSAdvertisedHostSSL:   "",
 					KerberosListenAddress:  "",
-					HasSSL:                 false,
 				},
 			},
 			wantErr: false,
+		},
+		{
+			name:                   "advertised SSL host without an SSL listen address",
+			bosListeners:           []string{"LOCAL://0.0.0.0:5190"},
+			bosAdvertisedListeners: []string{"LOCAL://127.0.0.1:5190"},
+			bosAdvertisedHostsSSL:  []string{"LOCAL://127.0.0.1:5193"},
+			kerberosListeners:      []string{},
+			want:                   nil,
+			wantErr:                true,
+			errContains:            "missing SSL BOS listen address for listener `local://`",
+		},
+		{
+			name:                   "SSL listen address without advertised SSL host",
+			bosListeners:           []string{"LOCAL://0.0.0.0:5190"},
+			bosListenersSSL:        []string{"LOCAL://0.0.0.0:5191"},
+			bosAdvertisedListeners: []string{"LOCAL://127.0.0.1:5190"},
+			bosAdvertisedHostsSSL:  []string{},
+			kerberosListeners:      []string{},
+			want: []ListenerGroup{
+				{
+					Name:                   "local",
+					BOSListenAddress:       "0.0.0.0:5190",
+					BOSListenAddressSSL:    "0.0.0.0:5191",
+					BOSAdvertisedHostPlain: "127.0.0.1:5190",
+					BOSAdvertisedHostSSL:   "",
+					KerberosListenAddress:  "",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:                   "SSL listener with kerberos",
+			bosListeners:           []string{"LOCAL://0.0.0.0:5190"},
+			bosListenersSSL:        []string{"LOCAL://0.0.0.0:5191"},
+			bosAdvertisedListeners: []string{"LOCAL://127.0.0.1:5190"},
+			bosAdvertisedHostsSSL:  []string{"LOCAL://127.0.0.1:5193"},
+			kerberosListeners:      []string{"LOCAL://0.0.0.0:1088"},
+			want: []ListenerGroup{
+				{
+					Name:                   "local",
+					BOSListenAddress:       "0.0.0.0:5190",
+					BOSListenAddressSSL:    "0.0.0.0:5191",
+					BOSAdvertisedHostPlain: "127.0.0.1:5190",
+					BOSAdvertisedHostSSL:   "127.0.0.1:5193",
+					KerberosListenAddress:  "0.0.0.0:1088",
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name:                   "duplicate SSL BOS listen address",
+			bosListeners:           []string{"LOCAL://0.0.0.0:5190"},
+			bosListenersSSL:        []string{"LOCAL://0.0.0.0:5191", "LOCAL://0.0.0.0:5192"},
+			bosAdvertisedListeners: []string{"LOCAL://127.0.0.1:5190"},
+			bosAdvertisedHostsSSL:  []string{"LOCAL://127.0.0.1:5193"},
+			kerberosListeners:      []string{},
+			want:                   nil,
+			wantErr:                true,
+			errContains:            "duplicate listener definition",
+		},
+		{
+			name:                   "plaintext and SSL BOS listeners share an address",
+			bosListeners:           []string{"LOCAL://0.0.0.0:5190"},
+			bosListenersSSL:        []string{"LOCAL://0.0.0.0:5190"},
+			bosAdvertisedListeners: []string{"LOCAL://127.0.0.1:5190"},
+			bosAdvertisedHostsSSL:  []string{"LOCAL://127.0.0.1:5193"},
+			kerberosListeners:      []string{},
+			want:                   nil,
+			wantErr:                true,
+			errContains:            "listen address 0.0.0.0:5190 is configured for both OSCAR_LISTENERS `local://` and OSCAR_LISTENERS_SSL `local://`",
+		},
+		{
+			name:                   "BOS listeners in different groups share an address",
+			bosListeners:           []string{"LAN://0.0.0.0:5190", "WAN://0.0.0.0:5190"},
+			bosAdvertisedListeners: []string{"LAN://192.168.1.10:5190", "WAN://example.com:5190"},
+			bosAdvertisedHostsSSL:  []string{},
+			kerberosListeners:      []string{},
+			want:                   nil,
+			wantErr:                true,
+			errContains:            "listen address 0.0.0.0:5190 is configured for both OSCAR_LISTENERS `lan://` and OSCAR_LISTENERS `wan://`",
+		},
+		{
+			name:                   "BOS and kerberos listeners share an address",
+			bosListeners:           []string{"LOCAL://0.0.0.0:5190"},
+			bosAdvertisedListeners: []string{"LOCAL://127.0.0.1:5190"},
+			bosAdvertisedHostsSSL:  []string{},
+			kerberosListeners:      []string{"LOCAL://0.0.0.0:5190"},
+			want:                   nil,
+			wantErr:                true,
+			errContains:            "listen address 0.0.0.0:5190 is configured for both OSCAR_LISTENERS `local://` and KERBEROS_LISTENERS `local://`",
+		},
+		{
+			name:                   "SSL BOS listener missing port",
+			bosListeners:           []string{"LOCAL://0.0.0.0:5190"},
+			bosListenersSSL:        []string{"LOCAL://0.0.0.0"},
+			bosAdvertisedListeners: []string{"LOCAL://127.0.0.1:5190"},
+			bosAdvertisedHostsSSL:  []string{"LOCAL://127.0.0.1:5193"},
+			kerberosListeners:      []string{},
+			want:                   nil,
+			wantErr:                true,
+			errContains:            "missing port",
 		},
 		{
 			name:                   "SSL host without corresponding BOS listener",
@@ -330,30 +443,33 @@ func TestParseListenersCfg(t *testing.T) {
 		{
 			name:                   "complex multi-listener setup with SSL",
 			bosListeners:           []string{"LAN://192.168.1.10:5190", "WAN://0.0.0.0:5191", "DOCKER://172.17.0.1:5192"},
+			bosListenersSSL:        []string{"LAN://192.168.1.10:5195", "WAN://0.0.0.0:5196"},
 			bosAdvertisedListeners: []string{"DOCKER://172.17.0.1:5192", "LAN://192.168.1.10:5190", "WAN://example.com:5191"},
 			bosAdvertisedHostsSSL:  []string{"LAN://192.168.1.10:5193", "WAN://ssl.example.com:5194"},
 			kerberosListeners:      []string{"WAN://0.0.0.0:1089", "LAN://192.168.1.10:1088"},
-			want: []Listener{
+			want: []ListenerGroup{
 				{
-					BOSListenAddress:       "192.168.1.10:5190",
-					BOSAdvertisedHostPlain: "192.168.1.10:5190",
-					BOSAdvertisedHostSSL:   "192.168.1.10:5193",
-					KerberosListenAddress:  "192.168.1.10:1088",
-					HasSSL:                 true,
-				},
-				{
-					BOSListenAddress:       "0.0.0.0:5191",
-					BOSAdvertisedHostPlain: "example.com:5191",
-					BOSAdvertisedHostSSL:   "ssl.example.com:5194",
-					KerberosListenAddress:  "0.0.0.0:1089",
-					HasSSL:                 true,
-				},
-				{
+					Name:                   "docker",
 					BOSListenAddress:       "172.17.0.1:5192",
 					BOSAdvertisedHostPlain: "172.17.0.1:5192",
 					BOSAdvertisedHostSSL:   "",
 					KerberosListenAddress:  "",
-					HasSSL:                 false,
+				},
+				{
+					Name:                   "lan",
+					BOSListenAddress:       "192.168.1.10:5190",
+					BOSListenAddressSSL:    "192.168.1.10:5195",
+					BOSAdvertisedHostPlain: "192.168.1.10:5190",
+					BOSAdvertisedHostSSL:   "192.168.1.10:5193",
+					KerberosListenAddress:  "192.168.1.10:1088",
+				},
+				{
+					Name:                   "wan",
+					BOSListenAddress:       "0.0.0.0:5191",
+					BOSListenAddressSSL:    "0.0.0.0:5196",
+					BOSAdvertisedHostPlain: "example.com:5191",
+					BOSAdvertisedHostSSL:   "ssl.example.com:5194",
+					KerberosListenAddress:  "0.0.0.0:1089",
 				},
 			},
 			wantErr: false,
@@ -364,6 +480,7 @@ func TestParseListenersCfg(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &Config{
 				BOSListeners:            tt.bosListeners,
+				BOSListenersSSL:         tt.bosListenersSSL,
 				BOSAdvertisedHostsPlain: tt.bosAdvertisedListeners,
 				BOSAdvertisedHostsSSL:   tt.bosAdvertisedHostsSSL,
 				KerberosListeners:       tt.kerberosListeners,
@@ -386,47 +503,13 @@ func TestParseListenersCfg(t *testing.T) {
 				return
 			}
 
-			if len(got) != len(tt.want) {
-				t.Errorf("ParseListenersCfg() returned %d listeners, want %d", len(got), len(tt.want))
-				return
-			}
+			// groups come back in map order; want is listed by name
+			slices.SortFunc(got, func(a, b ListenerGroup) int {
+				return strings.Compare(a.Name, b.Name)
+			})
 
-			// Create maps for easier comparison
-			gotMap := make(map[string]Listener)
-			wantMap := make(map[string]Listener)
-
-			for _, l := range got {
-				key := l.BOSListenAddress + "|" + l.BOSAdvertisedHostPlain
-				gotMap[key] = l
-			}
-
-			for _, l := range tt.want {
-				key := l.BOSListenAddress + "|" + l.BOSAdvertisedHostPlain
-				wantMap[key] = l
-			}
-
-			for key, wantListener := range wantMap {
-				gotListener, exists := gotMap[key]
-				if !exists {
-					t.Errorf("ParseListenersCfg() missing listener with key %s", key)
-					continue
-				}
-
-				if gotListener.BOSListenAddress != wantListener.BOSListenAddress {
-					t.Errorf("ParseListenersCfg() BOSListenAddress = %v, want %v", gotListener.BOSListenAddress, wantListener.BOSListenAddress)
-				}
-				if gotListener.BOSAdvertisedHostPlain != wantListener.BOSAdvertisedHostPlain {
-					t.Errorf("ParseListenersCfg() BOSAdvertisedHostPlain = %v, want %v", gotListener.BOSAdvertisedHostPlain, wantListener.BOSAdvertisedHostPlain)
-				}
-				if gotListener.BOSAdvertisedHostSSL != wantListener.BOSAdvertisedHostSSL {
-					t.Errorf("ParseListenersCfg() BOSAdvertisedHostSSL = %v, want %v", gotListener.BOSAdvertisedHostSSL, wantListener.BOSAdvertisedHostSSL)
-				}
-				if gotListener.HasSSL != wantListener.HasSSL {
-					t.Errorf("ParseListenersCfg() HasSSL = %v, want %v", gotListener.HasSSL, wantListener.HasSSL)
-				}
-				if gotListener.KerberosListenAddress != wantListener.KerberosListenAddress {
-					t.Errorf("ParseListenersCfg() KerberosListenAddress = %v, want %v", gotListener.KerberosListenAddress, wantListener.KerberosListenAddress)
-				}
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ParseListenersCfg() = %+v, want %+v", got, tt.want)
 			}
 		})
 	}
