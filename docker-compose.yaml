@@ -41,7 +41,7 @@ services:
       - "rm -rf nss
          && mkdir -p nss
          && certutil -N -d nss --empty-password
-         && certutil -A -n \"RAS\" -t \"CT,,C\" -i server.pem -d nss"
+         && certutil -A -n \"Open OSCAR Server Root CA\" -t \"CT,,C\" -i ca.crt -d nss"
 
   open-oscar-server:
     image: ras:latest
