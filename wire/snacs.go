@@ -2517,6 +2517,7 @@ const (
 	KerberosTLVBOSServerInfo uint16 = 0x0003
 	KerberosTLVHostname      uint16 = 0x0005
 	KerberosTLVCookie        uint16 = 0x0006
+	KerberosTLVTLSCertName   uint16 = 0x008D
 	KerberosTLVConnSettings  uint16 = 0x008E
 
 	KerberosConnUseSSL uint16 = 0x0002

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -374,6 +375,22 @@ func (s AuthService) KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_
 		}, nil
 	}
 
+	connInfo := wire.TLVList{
+		wire.NewTLVBE(wire.KerberosTLVHostname, endpointCfg.AdvertisedHost()),
+		wire.NewTLVBE(wire.KerberosTLVCookie, cookie),
+		// assume SSL is required for now; we may want to enable plaintext
+		// kerberos later
+		wire.NewTLVBE(wire.KerberosTLVConnSettings, wire.KerberosConnUseSSL),
+	}
+
+	if endpointCfg.IsSSL {
+		certName, _, err := net.SplitHostPort(endpointCfg.AdvertisedHost())
+		if err != nil {
+			return wire.SNACMessage{}, fmt.Errorf("split advertised BOS host: %w", err)
+		}
+		connInfo = append(connInfo, wire.NewTLVBE(wire.KerberosTLVTLSCertName, certName))
+	}
+
 	return wire.SNACMessage{
 		Frame: wire.SNACFrame{
 			FoodGroup: wire.Kerberos,
@@ -402,11 +419,7 @@ func (s AuthService) KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_
 							wire.NewTLVBE(wire.KerberosTLVBOSServerInfo, wire.KerberosBOSServerInfo{
 								Unknown: 1,
 								ConnectionInfo: wire.TLVBlock{
-									TLVList: wire.TLVList{
-										wire.NewTLVBE(wire.KerberosTLVHostname, endpointCfg.AdvertisedHost()),
-										wire.NewTLVBE(wire.KerberosTLVCookie, cookie),
-										wire.NewTLVBE(wire.KerberosTLVConnSettings, wire.KerberosConnUseSSL),
-									},
+									TLVList: connInfo,
 								},
 							}),
 						},
