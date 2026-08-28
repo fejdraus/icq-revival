@@ -262,10 +262,13 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		// neither an aimsid nor an API key. Threading a session token through them
 		// instead would leak it into the DOM and defeat caching, since these URLs
 		// outlive the session that produced them. Buddy icons are public assets.
-		expressionsHandler := handlers.NewExpressionsHandler(handler.IconSource, logger)
+		expressionsHandler := handlers.NewExpressionsHandler(
+			handler.IconSource, handler.BARTUploader, handler.FeedbagService, logger)
 		mux.Handle("GET /expressions/get",
 			authMiddleware.CORSMiddleware(
 				http.HandlerFunc(expressionsHandler.Get)))
+		mux.Handle("POST /expressions/upload",
+			oscarRoute(wire.BART, wire.BARTUploadQuery, expressionsHandler.Upload))
 
 		// Web AIM calls lifestream/* on the API host (e.g. /lifestream/getUserDetails).
 		lifestreamStub := &handlers.UserInfoStubHandler{Logger: logger}

@@ -885,6 +885,19 @@ paths:
       tags:
        - Expressions
       summary: 'Returns the expression information - the personalized icons, sounds, and background images - for an AIM user.'
+      description: |-
+        This endpoint answers in three different shapes depending on the parameters:
+
+        * `type=buddyIcon` or `type=bigBuddyIcon` returns the **image bytes** directly,
+          with a `Content-Type` sniffed from the image itself.
+        * `f=redirect` returns a `302` to the icon URL, or `404` when the user has no icon.
+        * Otherwise it returns the JSON envelope described below, listing the user's
+          expressions. This server publishes a single icon per user, offered as
+          `bigBuddyIcon`.
+
+        The endpoint is unauthenticated: the `buddyIcon` URLs it serves are published to
+        clients and loaded as plain `<img>` sources, which carry neither an `aimsid` nor an
+        API key. Buddy icons are public assets.
       parameters:
         - name: f
           in: query
@@ -916,24 +929,147 @@ paths:
           schema:
             $ref: '#/components/schemas/ExpressionType'
           description: 'The type of expression to return, if missing all expressions are returned. Required for the native and redirect format'
+        - name: bartId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: |-
+            Hex-encoded BART content hash naming an exact image. Serving by hash lets the
+            response be cached indefinitely, since the URL changes whenever the icon does.
+            Without it the user's current icon is served as `no-cache`, and a user with no
+            icon gets a blank placeholder so the client's `<img>` still renders.
         - name: defaultId
           in: query
           required: false
           schema:
             type: string
-          description: 'If the user doesn''t have an expression, use this one instead'
+          description: 'If the user doesn''t have an expression, use this one instead. Not implemented by this server.'
         - name: personality
           in: query
           required: false
           schema:
             type: string
-          description: personality name
+          description: personality name. Not implemented by this server.
         - name: noCustom
           in: query
           required: false
           schema:
             type: boolean
-          description: 'if true a custom item isn''t returned, instead the defaultId is returned if available'
+          description: 'if true a custom item isn''t returned, instead the defaultId is returned if available. Not implemented by this server.'
+      responses:
+        '200':
+          description: |-
+            Either the expression list, or the image itself when `type` names an icon.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  response:
+                    type: object
+                    properties:
+                      statusCode:
+                        type: integer
+                      statusText:
+                        type: string
+                      data:
+                        $ref: '#/components/schemas/ExpressionsData'
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+        '302':
+          description: 'Redirect to the icon URL, when f=redirect and the user has an icon.'
+        '400':
+          description: Missing target aimId, or a bartId that is not valid hex.
+        '404':
+          description: 'No icon for this user, when f=redirect or an exact bartId was requested.'
+  /expressions/upload:
+    post:
+      operationId: uploadExpression
+      tags:
+       - Expressions
+      summary: Upload an expression, such as a buddy icon, for the signed-in user.
+      description: |-
+        The image is sent as the **raw request body**.
+      parameters:
+        - name: f
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The format of the data returned
+        - name: c
+          in: query
+          required: false
+          schema:
+            type: string
+          description: JSONP callback
+        - name: r
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Request id
+        - name: k
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 'the AIM Web Key from http://dev.aol.com/aim - not required when aimsid is supplied'
+        - name: aimsid
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Use an AIM Session Id from the startSession call for authentication - k is not required
+        - name: a
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 'Use an AOL Authentication Token for authentication, from the getToken call'
+        - name: ts
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+          description: Epoch timestamp - clientLogin required parameter
+        - name: sig_sha256
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Signature - clientLogin required parameter.
+        - name: type
+          in: query
+          required: true
+          schema:
+            $ref: '#/components/schemas/ExpressionType'
+          description: 'The type of expression being uploaded. This server accepts buddyIcon and bigBuddyIcon.'
+      requestBody:
+        required: true
+        description: The raw image bytes.
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+          application/x-www-form-urlencoded:
+            schema:
+              type: string
+              format: binary
+              description: 'The body is binary image data despite the media type.'
       responses:
         '200':
           description: OK
@@ -941,6 +1077,25 @@ paths:
             application/json:
               schema:
                 type: object
+                properties:
+                  response:
+                    type: object
+                    properties:
+                      statusCode:
+                        type: integer
+                      statusText:
+                        type: string
+                      data:
+                        $ref: '#/components/schemas/UploadExpressionData'
+        '400':
+          description: |-
+            The envelope carries a `statusCode` of `460` when the `type` parameter is
+            missing, and `462` when it names an unsupported type or the body is empty or
+            larger than 64 KB. Also returned when no `aimsid` or `k` is supplied at all.
+        '401':
+          description: Authorization required - the session named by `aimsid` is invalid or expired.
+        '500':
+          description: The asset could not be stored or published.
   /buddylist/addBuddy:
     get:
       operationId: addBuddy
@@ -2133,6 +2288,7 @@ components:
       enum:
         - miniIcon
         - buddyIcon
+        - bigBuddyIcon
         - arriveSound
         - departSound
         - imSound
@@ -2432,6 +2588,26 @@ components:
         - type
         - id
         - url
+    ExpressionsData:
+      type: object
+      properties:
+        expressions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Expression'
+      required:
+        - expressions
+    UploadExpressionData:
+      type: object
+      properties:
+        id:
+          type: string
+          description: |-
+            The id of the expression uploaded: the BART type as four hex digits followed by
+            the asset's content hash. setExpression takes this string with the leading four
+            hex digits stripped off.
+      required:
+        - id
     Personality:
       type: object
       properties:

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"math"
 	"testing"
 
@@ -54,6 +55,67 @@ func TestFeedbagList_upsertItem(t *testing.T) {
 		upserts := fl.PendingUpdates()
 		assert.Len(t, upserts, 1)
 		assert.Equal(t, wire.FeedbagClassIDPermit, upserts[0].ClassID)
+	})
+
+	// Classes at or above FeedbagClassIdMin are client-defined and, like
+	// buddies, live in a group, so GroupID is part of what identifies them.
+	t.Run("updates client-defined item in the same group in place", func(t *testing.T) {
+		fl := NewFeedbagList([]wire.FeedbagItem{
+			{
+				Name:    "custom",
+				ClassID: wire.FeedbagClassIdMin,
+				GroupID: 7,
+				ItemID:  9,
+				TLVLBlock: wire.TLVLBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(0x01, uint16(100)),
+					},
+				},
+			},
+		}, nil)
+
+		result, inserted := fl.upsertItem(wire.FeedbagItem{
+			Name:    "custom",
+			ClassID: wire.FeedbagClassIdMin,
+			GroupID: 7,
+			TLVLBlock: wire.TLVLBlock{
+				TLVList: wire.TLVList{
+					wire.NewTLVBE(0x01, uint16(200)),
+				},
+			},
+		})
+
+		assert.False(t, inserted)
+		assert.Equal(t, uint16(7), result.GroupID)
+		assert.Equal(t, uint16(9), result.ItemID)
+		assert.Len(t, fl.Items(), 1)
+
+		updates := fl.PendingUpdates()
+		assert.Len(t, updates, 1)
+		assert.Equal(t, uint16(7), updates[0].GroupID)
+		assert.Equal(t, uint16(9), updates[0].ItemID)
+		val, ok := updates[0].Uint16BE(0x01)
+		assert.True(t, ok)
+		assert.Equal(t, uint16(200), val)
+	})
+
+	t.Run("client-defined item in another group is a separate item", func(t *testing.T) {
+		fl := NewFeedbagList([]wire.FeedbagItem{
+			{Name: "custom", ClassID: wire.FeedbagClassIdMin, GroupID: 7, ItemID: 9},
+		}, func(n int) int { return 42 })
+
+		result, inserted := fl.upsertItem(wire.FeedbagItem{
+			Name:    "custom",
+			ClassID: wire.FeedbagClassIdMin,
+			GroupID: 8,
+		})
+
+		// The group 7 item must survive untouched rather than be rewritten
+		// into group 8's item.
+		assert.True(t, inserted)
+		assert.Equal(t, uint16(8), result.GroupID)
+		assert.Equal(t, uint16(42), result.ItemID)
+		assert.Len(t, fl.Items(), 2)
 	})
 
 	t.Run("updates existing non-buddy item in place", func(t *testing.T) {
@@ -1322,5 +1384,44 @@ func TestFeedbagList_SetGroupCollapsed(t *testing.T) {
 		fl := NewFeedbagList(nil, nil)
 		err := fl.SetGroupCollapsed("Nope", true)
 		assert.ErrorIs(t, err, ErrGroupNotFound)
+	})
+}
+
+func TestFeedbagList_SetIcon(t *testing.T) {
+	t.Run("first icon gets a nonzero ItemID", func(t *testing.T) {
+		// The feedbag is keyed by (screenName, groupID, itemID), so an icon
+		// left at 0/0 would overwrite the root group's row.
+		fl := NewFeedbagList([]wire.FeedbagItem{
+			{ClassID: wire.FeedbagClassIdGroup, GroupID: 0, ItemID: 0},
+			{Name: "Buddies", ClassID: wire.FeedbagClassIdGroup, GroupID: 1},
+		}, func(n int) int { return 42 })
+
+		item, inserted := fl.SetIcon(wire.BARTTypesBuddyIcon, []byte{0xde, 0xad})
+
+		assert.True(t, inserted)
+		assert.Equal(t, uint16(42), item.ItemID)
+		assert.Equal(t, wire.FeedbagClassIdBart, item.ClassID)
+		assert.Equal(t, "1", item.Name)
+
+		b, ok := item.Bytes(wire.FeedbagAttributesBartInfo)
+		assert.True(t, ok)
+		info := wire.BARTInfo{}
+		assert.NoError(t, wire.UnmarshalBE(&info, bytes.NewBuffer(b)))
+		assert.Equal(t, wire.BARTFlagsCustom, info.Flags)
+		assert.Equal(t, []byte{0xde, 0xad}, info.Hash)
+	})
+
+	t.Run("replacing an icon reuses the stored ItemID", func(t *testing.T) {
+		// A buddy icon lives at group 0, so ItemID alone identifies it.
+		fl := NewFeedbagList([]wire.FeedbagItem{
+			{Name: "1", ClassID: wire.FeedbagClassIdBart, GroupID: 0, ItemID: 9},
+		}, func(n int) int { return 42 })
+
+		item, inserted := fl.SetIcon(wire.BARTTypesBuddyIcon, []byte{0xbe, 0xef})
+
+		assert.False(t, inserted)
+		assert.Zero(t, item.GroupID)
+		assert.Equal(t, uint16(9), item.ItemID)
+		assert.Len(t, fl.Items(), 1)
 	})
 }

@@ -31,6 +31,7 @@ type Handler struct {
 	FeedbagService     FeedbagService
 	DirSearchService   DirSearchService
 	IconSource         handlers.BuddyIconSource
+	BARTUploader       handlers.BARTUploader
 	SNACRateLimits     wire.SNACRateLimits
 }
 

@@ -526,16 +526,18 @@ func WebAPI(deps Container) *webapi.Server {
 		deps.sqLiteUserStore,
 	)
 
+	bartService := foodgroup.NewBARTService(
+		logger,
+		deps.sqLiteUserStore,
+		deps.inMemorySessionManager,
+		deps.sqLiteUserStore,
+		deps.inMemorySessionManager,
+	)
+
 	iconSource := handlers.BuddyIconSource{
 		IconRetriever: deps.sqLiteUserStore,
-		BARTService: foodgroup.NewBARTService(
-			logger,
-			deps.sqLiteUserStore,
-			deps.inMemorySessionManager,
-			deps.sqLiteUserStore,
-			deps.inMemorySessionManager,
-		),
-		Logger: logger,
+		BARTService:   bartService,
+		Logger:        logger,
 	}
 
 	// Create WebAPI buddy list manager (local to WebAPI)
@@ -609,6 +611,7 @@ func WebAPI(deps Container) *webapi.Server {
 		FeedbagService:     deps.feedbagSvc,
 		DirSearchService:   foodgroup.NewODirService(logger, deps.sqLiteUserStore),
 		IconSource:         iconSource,
+		BARTUploader:       bartService,
 		SNACRateLimits:     deps.snacRateLimits,
 	}
 	// Pass SQLiteUserStore as the API key validator (it implements middleware.APIKeyValidator)

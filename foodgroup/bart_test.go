@@ -36,7 +36,7 @@ func TestBARTService_UpsertItem(t *testing.T) {
 		instanceMatch func(instance *state.SessionInstance)
 	}{
 		{
-			name: "insert new buddy icon for current session",
+			name: "awaiting upload, icon not yet in the BART store",
 			instance: newTestInstance("user_screen_name", sessOptBuddyIcon(wire.BARTID{
 				Type: wire.BARTTypesBuddyIcon,
 				BARTInfo: wire.BARTInfo{
@@ -131,7 +131,7 @@ func TestBARTService_UpsertItem(t *testing.T) {
 			},
 		},
 		{
-			name: "insert existing buddy icon for current session",
+			name: "awaiting upload, icon already in the BART store",
 			instance: newTestInstance("user_screen_name", sessOptBuddyIcon(wire.BARTID{
 				Type: wire.BARTTypesBuddyIcon,
 				BARTInfo: wire.BARTInfo{
@@ -220,6 +220,109 @@ func TestBARTService_UpsertItem(t *testing.T) {
 					Type: wire.BARTTypesBuddyIcon,
 					BARTInfo: wire.BARTInfo{
 						Flags: wire.BARTFlagsCustom | wire.BARTFlagsKnown,
+						Hash:  itemHash,
+					},
+				}
+				assert.Equal(t, want, have)
+			},
+		},
+		{
+			name: "re-upload of an icon already uploaded this session",
+			instance: newTestInstance("user_screen_name", sessOptBuddyIcon(wire.BARTID{
+				Type: wire.BARTTypesBuddyIcon,
+				BARTInfo: wire.BARTInfo{
+					Flags: wire.BARTFlagsCustom,
+					Hash:  itemHash,
+				},
+			})),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x02_BARTUploadQuery{
+					Type: wire.BARTTypesBuddyIcon,
+					Data: itemData,
+				},
+			},
+			mockParams: mockParams{
+				bartItemManagerParams: bartItemManagerParams{
+					bartItemManagerUpsertParams: bartItemManagerUpsertParams{
+						{
+							itemHash: itemHash,
+							payload:  itemData,
+							bartType: wire.BARTTypesBuddyIcon,
+							err:      state.ErrBARTItemExists,
+						},
+					},
+				},
+				buddyBroadcasterParams: buddyBroadcasterParams{
+					broadcastBuddyArrivedParams: broadcastBuddyArrivedParams{
+						{
+							screenName: state.DisplayScreenName("user_screen_name"),
+							bodyMatcher: func(tlvInfo wire.TLVUserInfo) bool {
+								b, exists := tlvInfo.Bytes(wire.OServiceUserInfoBARTInfo)
+								if !exists || !bytes.Contains(b, itemHash) {
+									return false
+								}
+								// buddies must not be told the icon still
+								// needs uploading
+								bartID := wire.BARTID{}
+								if err := wire.UnmarshalBE(&bartID, bytes.NewBuffer(b)); err != nil {
+									return false
+								}
+								return bartID.Flags&wire.BARTFlagsUnknown == 0
+							},
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNameParams: relayToScreenNameParams{
+						{
+							screenName: state.NewIdentScreenName("user_screen_name"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.OService,
+									SubGroup:  wire.OServiceUserInfoUpdate,
+								},
+								Body: func(val any) bool {
+									snac, ok := val.(wire.SNAC_0x01_0x0F_OServiceUserInfoUpdate)
+									if !ok {
+										return false
+									}
+									bartID, exists := snac.UserInfo[0].Bytes(wire.OServiceUserInfoBARTInfo)
+									return exists &&
+										snac.UserInfo[0].ScreenName == "user_screen_name" &&
+										bytes.Contains(bartID, itemHash)
+								},
+							},
+						},
+					},
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.BART,
+					SubGroup:  wire.BARTUploadReply,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x03_BARTUploadReply{
+					Code: wire.BARTReplyCodesSuccess,
+					ID: wire.BARTID{
+						Type: wire.BARTTypesBuddyIcon,
+						BARTInfo: wire.BARTInfo{
+							Flags: wire.BARTFlagsCustom,
+							Hash:  itemHash,
+						},
+					},
+				},
+			},
+			instanceMatch: func(instance *state.SessionInstance) {
+				have, hasIcon := instance.Session().BuddyIcon()
+				assert.True(t, hasIcon)
+				want := wire.BARTID{
+					Type: wire.BARTTypesBuddyIcon,
+					BARTInfo: wire.BARTInfo{
+						Flags: wire.BARTFlagsCustom,
 						Hash:  itemHash,
 					},
 				}

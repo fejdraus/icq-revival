@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strconv"
 
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -50,6 +51,26 @@ func (f *FeedbagList) SetMode(mode uint8) {
 		TLVLBlock: wire.TLVLBlock{
 			TLVList: wire.TLVList{
 				wire.NewTLVBE(wire.FeedbagAttributesPdMode, mode),
+			},
+		},
+	})
+}
+
+// SetIcon upserts the BART reference item that points at the user's buddy
+// icon for the given BART type. Returns the stored item and true if a new item
+// was inserted, or the existing item and false if it was updated in place.
+func (f *FeedbagList) SetIcon(bartType uint16, hash []byte) (wire.FeedbagItem, bool) {
+	return f.upsertItem(wire.FeedbagItem{
+		ClassID: wire.FeedbagClassIdBart,
+		// The item is keyed by BART type, held as its decimal string — the
+		// shape BuddyIconMetadata queries for.
+		Name: strconv.FormatUint(uint64(bartType), 10),
+		TLVLBlock: wire.TLVLBlock{
+			TLVList: wire.TLVList{
+				wire.NewTLVBE(wire.FeedbagAttributesBartInfo, wire.BARTInfo{
+					Flags: wire.BARTFlagsCustom,
+					Hash:  hash,
+				}),
 			},
 		},
 	})
@@ -491,9 +512,9 @@ func (f *FeedbagList) trackUpdate(item *wire.FeedbagItem) {
 }
 
 // itemsMatch reports whether two feedbag items are considered the same for
-// upsert/delete (buddy: ClassID, Name, GroupID; others: ClassID and Name).
-// Stored items are assumed to have normalized names; the input (b) name is
-// normalized for comparison when the class is buddy, permit, or deny.
+// upsert/delete (grouped classes: ClassID, Name, GroupID; others: ClassID and
+// Name). Stored items are assumed to have normalized names; the input (b) name
+// is normalized for comparison when the class is buddy, permit, or deny.
 func (f *FeedbagList) itemsMatch(a, b *wire.FeedbagItem) bool {
 	if a.ClassID != b.ClassID {
 		return false
@@ -507,14 +528,15 @@ func (f *FeedbagList) itemsMatch(a, b *wire.FeedbagItem) bool {
 	if !nameMatch {
 		return false
 	}
-	if a.ClassID == wire.FeedbagClassIdBuddy {
+	// these two classes are allowed within groups
+	if a.ClassID == wire.FeedbagClassIdBuddy || a.ClassID == wire.FeedbagClassIdMin {
 		return a.GroupID == b.GroupID
 	}
 	return true
 }
 
 // deleteItem removes the first item matching the same criteria as upsertItem:
-// buddy items by ClassID, Name, and GroupID; other items by ClassID and Name.
+// grouped items by ClassID, Name, and GroupID; other items by ClassID and Name.
 // Returns the deleted item and true if found, or a zero item and false otherwise.
 func (f *FeedbagList) deleteItem(item wire.FeedbagItem) (wire.FeedbagItem, bool) {
 	for i, existing := range f.items {
@@ -527,11 +549,11 @@ func (f *FeedbagList) deleteItem(item wire.FeedbagItem) (wire.FeedbagItem, bool)
 	return wire.FeedbagItem{}, false
 }
 
-// upsertItem updates an existing feedbag item or inserts a new one. Buddy
-// items are matched by GroupID, ClassID, and Name; all other items are matched
-// by ClassID and Name. When matched, the existing item is replaced in place
-// (preserving its ItemID). When no match is found, a new item is inserted with
-// an auto-generated ItemID. Names for buddy, permit, and deny items are
+// upsertItem updates an existing feedbag item or inserts a new one. Items of a
+// grouped class are matched by GroupID, ClassID, and Name; all other items are
+// matched by ClassID and Name. When matched, the existing item is replaced in
+// place (preserving its ItemID). When no match is found, a new item is inserted
+// with an auto-generated ItemID. Names for buddy, permit, and deny items are
 // normalized before storage. Returns the stored item and true if a new item
 // was inserted, or the existing item and false if it was updated/unchanged.
 func (f *FeedbagList) upsertItem(item wire.FeedbagItem) (wire.FeedbagItem, bool) {
@@ -542,6 +564,7 @@ func (f *FeedbagList) upsertItem(item wire.FeedbagItem) (wire.FeedbagItem, bool)
 		if f.itemsMatch(existing, &item) {
 			if !existing.IsEqual(item) {
 				item.ItemID = existing.ItemID
+				item.GroupID = existing.GroupID
 				*existing = item
 				f.trackUpdate(existing)
 			}

@@ -60,7 +60,7 @@ func (s BARTService) UpsertItem(ctx context.Context, instance *state.SessionInst
 	bartID, hasIcon := instance.Session().BuddyIcon()
 	if hasIcon && bytes.Equal(hash, bartID.Hash) {
 		// unset unknown flag
-		bartID.Flags ^= wire.BARTFlagsUnknown
+		bartID.Flags &^= wire.BARTFlagsUnknown
 		instance.Session().SetBuddyIcon(bartID)
 
 		s.messageRelayer.RelayToScreenName(ctx, instance.IdentScreenName(), wire.SNACMessage{
