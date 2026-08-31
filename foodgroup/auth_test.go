@@ -72,6 +72,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName:    user.DisplayScreenName,
@@ -113,6 +114,61 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			maxConcurrentLoginsPerUser: 2,
 		},
 		{
+			name:        "client requests a longer token TTL",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
+			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+						wire.NewTLVBE(wire.LoginTLVTagsPasswordHash, user.StrongMD5Pass),
+						wire.NewTLVBE(wire.LoginTLVTagsTokenTTL, uint32(3600)),
+					},
+				},
+			},
+			mockParams: mockParams{
+				userManagerParams: userManagerParams{
+					getUserParams: getUserParams{
+						{
+							screenName: user.IdentScreenName,
+							result:     &user,
+						},
+					},
+				},
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							ttlIn: time.Hour,
+							dataIn: func() []byte {
+								loginCookie := state.ServerCookie{
+									ScreenName: user.DisplayScreenName,
+								}
+								buf := &bytes.Buffer{}
+								assert.NoError(t, wire.MarshalBE(loginCookie, buf))
+								return buf.Bytes()
+							}(),
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.BUCP,
+					SubGroup:  wire.BUCPLoginResponse,
+				},
+				Body: wire.SNAC_0x17_0x03_BUCPLoginResponse{
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+							wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, "127.0.0.1:5190"),
+							wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, []byte("the-cookie")),
+							wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
+						},
+					},
+				},
+			},
+		},
+		{
 			name:        "AIM account exists, correct password, login OK, concurrent logins under limit",
 			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
@@ -136,6 +192,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName:    user.DisplayScreenName,
@@ -263,6 +320,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -466,6 +524,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -615,6 +674,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -690,6 +750,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -743,6 +804,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -805,6 +867,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -877,7 +940,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			cookieBaker := newMockCookieBaker(t)
 			for _, params := range tc.mockParams.cookieIssueParams {
 				cookieBaker.EXPECT().
-					Issue(params.dataIn).
+					Issue(params.dataIn, params.ttlIn).
 					Return(params.cookieOut, params.err)
 			}
 
@@ -963,6 +1026,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -982,6 +1046,138 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 					wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, "127.0.0.1:5190"),
 					wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, []byte("the-cookie")),
 					wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
+				},
+			},
+		},
+		{
+			name:        "client requests a longer token TTL",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
+			inputSNAC: wire.FLAPSignonFrame{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.LoginTLVTagsRoastedPassword, wire.RoastOSCARPassword([]byte("the_password"))),
+						wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+						wire.NewTLVBE(wire.LoginTLVTagsTokenTTL, uint32(3600)),
+					},
+				},
+			},
+			mockParams: mockParams{
+				userManagerParams: userManagerParams{
+					getUserParams: getUserParams{
+						{
+							screenName: user.IdentScreenName,
+							result:     &user,
+						},
+					},
+				},
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							ttlIn: time.Hour,
+							dataIn: func() []byte {
+								loginCookie := state.ServerCookie{
+									ScreenName: user.DisplayScreenName,
+								}
+								buf := &bytes.Buffer{}
+								assert.NoError(t, wire.MarshalBE(loginCookie, buf))
+								return buf.Bytes()
+							}(),
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
+			expectOutput: wire.TLVRestBlock{
+				TLVList: wire.TLVList{
+					wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+					wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, "127.0.0.1:5190"),
+					wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, []byte("the-cookie")),
+					wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
+				},
+			},
+		},
+		{
+			name:        "client requests exactly the max token TTL",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
+			inputSNAC: wire.FLAPSignonFrame{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.LoginTLVTagsRoastedPassword, wire.RoastOSCARPassword([]byte("the_password"))),
+						wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+						wire.NewTLVBE(wire.LoginTLVTagsTokenTTL, uint32(maxTokenTTL.Seconds())),
+					},
+				},
+			},
+			mockParams: mockParams{
+				userManagerParams: userManagerParams{
+					getUserParams: getUserParams{
+						{
+							screenName: user.IdentScreenName,
+							result:     &user,
+						},
+					},
+				},
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							ttlIn: maxTokenTTL,
+							dataIn: func() []byte {
+								loginCookie := state.ServerCookie{
+									ScreenName: user.DisplayScreenName,
+								}
+								buf := &bytes.Buffer{}
+								assert.NoError(t, wire.MarshalBE(loginCookie, buf))
+								return buf.Bytes()
+							}(),
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
+			expectOutput: wire.TLVRestBlock{
+				TLVList: wire.TLVList{
+					wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+					wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, "127.0.0.1:5190"),
+					wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, []byte("the-cookie")),
+					wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
+				},
+			},
+		},
+		{
+			name:        "client requests a zero token TTL, login fails",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
+			inputSNAC: wire.FLAPSignonFrame{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.LoginTLVTagsRoastedPassword, wire.RoastOSCARPassword([]byte("the_password"))),
+						wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+						wire.NewTLVBE(wire.LoginTLVTagsTokenTTL, uint32(0)),
+					},
+				},
+			},
+			expectOutput: wire.TLVRestBlock{
+				TLVList: []wire.TLV{
+					wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+					wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrInternalClientError),
+				},
+			},
+		},
+		{
+			name:        "client requests a token TTL beyond the max, login fails",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
+			inputSNAC: wire.FLAPSignonFrame{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.LoginTLVTagsRoastedPassword, wire.RoastOSCARPassword([]byte("the_password"))),
+						wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+						wire.NewTLVBE(wire.LoginTLVTagsTokenTTL, uint32(maxTokenTTL.Seconds())+1),
+					},
+				},
+			},
+			expectOutput: wire.TLVRestBlock{
+				TLVList: []wire.TLV{
+					wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+					wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrInternalClientError),
 				},
 			},
 		},
@@ -1014,6 +1210,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -1060,6 +1257,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -1194,6 +1392,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -1247,6 +1446,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -1292,6 +1492,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -1361,6 +1562,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									ScreenName: user.DisplayScreenName,
@@ -1426,7 +1628,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			cookieBaker := newMockCookieBaker(t)
 			for _, params := range tc.mockParams.cookieIssueParams {
 				cookieBaker.EXPECT().
-					Issue(params.dataIn).
+					Issue(params.dataIn, params.ttlIn).
 					Return(params.cookieOut, params.err)
 			}
 			feedbagManager := newMockFeedbagManager(t)
@@ -1436,13 +1638,21 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 					Return(params.results, params.err)
 			}
 			feedbagManager.EXPECT().Feedbag(matchContext(), mock.Anything).Return(nil, nil).Maybe()
+			sessionRetriever := newMockSessionRetriever(t)
+			for _, params := range tc.mockParams.retrieveSessionParams {
+				sessionRetriever.EXPECT().
+					RetrieveSession(params.screenName).
+					Return(params.result)
+			}
 			svc := AuthService{
-				config:         tc.cfg,
-				cookieBaker:    cookieBaker,
-				userManager:    userManager,
-				feedbagManager: feedbagManager,
-				createAccount:  tc.createAccount,
-				logger:         slog.Default(),
+				config:                     tc.cfg,
+				cookieBaker:                cookieBaker,
+				userManager:                userManager,
+				feedbagManager:             feedbagManager,
+				createAccount:              tc.createAccount,
+				sessionRetriever:           sessionRetriever,
+				maxConcurrentLoginsPerUser: 2,
+				logger:                     slog.Default(),
 			}
 			outputSNAC, err := svc.FLAPLogin(context.Background(), tc.inputSNAC, tc.endpointCfg)
 			assert.ErrorIs(t, err, tc.wantErr)
@@ -1509,6 +1719,7 @@ func TestAuthService_KerberosLogin(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									Service:       wire.BOS,
@@ -1647,6 +1858,7 @@ func TestAuthService_KerberosLogin(t *testing.T) {
 				cookieBakerParams: cookieBakerParams{
 					cookieIssueParams: cookieIssueParams{
 						{
+							ttlIn: state.DefaultCookieTTL,
 							dataIn: func() []byte {
 								loginCookie := state.ServerCookie{
 									Service:       wire.BOS,
@@ -1769,7 +1981,7 @@ func TestAuthService_KerberosLogin(t *testing.T) {
 			cookieBaker := newMockCookieBaker(t)
 			for _, params := range tc.mockParams.cookieIssueParams {
 				cookieBaker.EXPECT().
-					Issue(params.dataIn).
+					Issue(params.dataIn, params.ttlIn).
 					Return(params.cookieOut, params.err)
 			}
 			sessionRetriever := newMockSessionRetriever(t)

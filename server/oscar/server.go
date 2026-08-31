@@ -233,7 +233,7 @@ func (s oscarServer) connectToOSCARService(
 		return errors.New("unable to get session id from payload")
 	}
 
-	cookie, err := s.authService.CrackCookie(authCookie)
+	cookie, _, err := s.authService.CrackCookie(authCookie)
 	if err != nil {
 		return err
 	}

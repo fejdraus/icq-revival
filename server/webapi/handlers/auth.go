@@ -4,11 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"mime"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -71,13 +70,6 @@ type OServiceService interface {
 	RateParamsSubAdd(ctx context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x01_0x08_OServiceRateParamsSubAdd)
 }
 
-// ClientLoginRequest represents the request body for clientLogin.
-type ClientLoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	DevID    string `json:"devId"`
-}
-
 // GetToken handles GET /auth/getToken requests.
 // The Web AIM client uses this JSONP endpoint to exchange SSO session cookies for an API token.
 func (h *AuthHandler) GetToken(w http.ResponseWriter, r *http.Request) {
@@ -88,7 +80,7 @@ func (h *AuthHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 	// so a browser holding a dead token stops presenting it.
 	clearBOSTokenCookie(w)
 
-	loginID, authCookie, ok := h.resolveGetTokenSession(r)
+	loginID, authCookie, expiry, ok := h.resolveGetTokenSession(r)
 	if !ok {
 		h.Logger.DebugContext(ctx, "getToken: no token, returning redirect",
 			"devId", devID,
@@ -106,9 +98,8 @@ func (h *AuthHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 	resp.Response.StatusText = "OK"
 	resp.Response.Data = &GetTokenData{
 		Token: AuthToken{
-			A: base64.URLEncoding.EncodeToString(authCookie),
-			// A string, not a number: that is how the client is given it.
-			ExpiresIn: strconv.Itoa(int(bosTokenTTL.Seconds())),
+			A:         base64.URLEncoding.EncodeToString(authCookie),
+			ExpiresIn: strconv.Itoa(int(math.Round(time.Until(expiry).Seconds()))),
 		},
 		UserData: UserData{Attributes: UserAttributes{LoginID: string(loginID)}},
 	}
@@ -118,13 +109,11 @@ func (h *AuthHandler) GetToken(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveGetTokenSession identifies the caller from the BOS token parked at
-// sign-in. That cookie is the only credential getToken ever receives: the client
-// sends no token of its own, only f, attributes, devId and r. A token past its
-// brief life fails to crack and reads the same as no token at all.
-func (h *AuthHandler) resolveGetTokenSession(r *http.Request) (state.DisplayScreenName, []byte, bool) {
+// sign-in.
+func (h *AuthHandler) resolveGetTokenSession(r *http.Request) (state.DisplayScreenName, []byte, time.Time, bool) {
 	c, err := r.Cookie(bosTokenCookie)
 	if err != nil || c.Value == "" {
-		return "", nil, false
+		return "", nil, time.Time{}, false
 	}
 	token, err := url.QueryUnescape(c.Value)
 	if err != nil {
@@ -132,13 +121,13 @@ func (h *AuthHandler) resolveGetTokenSession(r *http.Request) (state.DisplayScre
 	}
 	rawCookie, err := base64.URLEncoding.DecodeString(strings.TrimSpace(token))
 	if err != nil {
-		return "", nil, false
+		return "", nil, time.Time{}, false
 	}
-	serverCookie, err := h.AuthService.CrackCookie(rawCookie)
+	serverCookie, expiry, err := h.AuthService.CrackCookie(rawCookie)
 	if err != nil {
-		return "", nil, false
+		return "", nil, time.Time{}, false
 	}
-	return serverCookie.ScreenName, rawCookie, true
+	return serverCookie.ScreenName, rawCookie, expiry, true
 }
 
 // Web API status codes, which a client reads from the envelope rather than from
@@ -148,9 +137,43 @@ func (h *AuthHandler) resolveGetTokenSession(r *http.Request) (state.DisplayScre
 const (
 	statusMoreAuthRequired = 330
 	statusMissingParameter = 460
+	// statusParameterError is for a parameter that is present but unusable
+	statusParameterError = 462
 
 	detailBadPassword = 3011
 )
+
+// The lifetimes the clientLogin tokenType parameter names.
+const (
+	shortTermTTL = 24 * time.Hour
+	longTermTTL  = 365 * 24 * time.Hour
+)
+
+// tokenTypeTTL resolves the clientLogin tokenType parameter to a token lifetime.
+// The parameter is "shortterm" (the default), "longterm", or a count of seconds,
+// and the server grants no more than longTermTTL either way.
+func tokenTypeTTL(tokenType string) (time.Duration, error) {
+	tokenType = strings.TrimSpace(tokenType)
+
+	switch strings.ToLower(tokenType) {
+	case "", "shortterm":
+		return shortTermTTL, nil
+	case "longterm":
+		return longTermTTL, nil
+	}
+
+	secs, err := strconv.ParseUint(tokenType, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("tokenType %q is not shortterm, longterm, or a count of seconds", tokenType)
+	}
+	// bound the count before scaling it, so an absurd value is an error rather
+	// than an overflowed duration
+	maxSecs := uint64(longTermTTL / time.Second)
+	if secs == 0 || secs > maxSecs {
+		return 0, fmt.Errorf("tokenType %q is outside the range 1-%d seconds", tokenType, maxSecs)
+	}
+	return time.Duration(secs) * time.Second, nil
+}
 
 // errInvalidCredentials reports that the auth service rejected the screen name or
 // password, as opposed to failing to answer at all.
@@ -159,12 +182,13 @@ var errInvalidCredentials = errors.New("invalid screen name or password")
 // authenticateCredentials verifies the credentials and returns the auth cookie minted
 // by the OSCAR auth service. It returns errInvalidCredentials when the credentials are
 // rejected.
-func (h *AuthHandler) authenticateCredentials(ctx context.Context, username, password, clientID string) ([]byte, error) {
+func (h *AuthHandler) authenticateCredentials(ctx context.Context, username, password, clientID string, ttl time.Duration) ([]byte, error) {
 	signonFrame := wire.FLAPSignonFrame{}
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsScreenName, username))
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsPlaintextPassword, password))
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsClientIdentity, clientID))
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsMultiConnFlags, wire.MultiConnFlagsRecentClient))
+	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsTokenTTL, uint32(ttl.Seconds())))
 
 	block, err := h.AuthService.FLAPLogin(ctx, signonFrame, config.Endpoint{})
 	if err != nil {
@@ -197,10 +221,13 @@ func (h *AuthHandler) loginRedirectURL(r *http.Request) string {
 	return fmt.Sprintf("%s://%s/_cqr/login/login.psp", scheme, r.Host)
 }
 
-// Logout sends the browser to the login page. There is nothing to clear: the
-// token cookie is spent by the getToken that signed this client in, and nothing
-// else survives a request.
+// Logout clears the token cookie and sends the browser to the login page. A
+// sign-in whose getToken never ran leaves a token in the browser for the rest of
+// its life, so signing out has to spend it rather than trust that something
+// else already did.
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	clearBOSTokenCookie(w)
+
 	loginURL := h.loginRedirectURL(r)
 	q := url.Values{}
 	if devID := r.URL.Query().Get("devId"); devID != "" {
@@ -220,48 +247,28 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 // ClientLogin handles POST /auth/clientLogin requests.
 // This endpoint authenticates users and returns an authentication token.
 func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
-	var username, password, devID string
-
-	// The media type alone decides how to read the body: a caller that states a
-	// charset sends "application/json; charset=utf-8", which is still JSON.
-	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-
-	if mediaType == "application/json" {
-		// Parse JSON body
-		var req ClientLoginRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			h.Logger.Error("failed to parse JSON clientLogin request", "error", err)
-			SendError(w, r, http.StatusBadRequest, "invalid JSON format")
-			return
-		}
-		username = req.Username
-		password = req.Password
-		devID = req.DevID
-	} else {
-		// Parse form-encoded or URL parameters
-		if err := r.ParseForm(); err != nil {
-			h.Logger.Error("failed to parse form data", "error", err)
-			SendError(w, r, http.StatusBadRequest, "invalid form data")
-			return
-		}
-
-		// Try form values first, then fall back to query parameters
-		username = r.FormValue("s")
-		if username == "" {
-			username = r.FormValue("username")
-		}
-		password = r.FormValue("pwd")
-		if password == "" {
-			password = r.FormValue("password")
-		}
-		devID = r.FormValue("devId")
-
-		h.Logger.Debug("form-encoded login attempt",
-			"username", username,
-			"has_password", password != "",
-			"devId", devID,
-			"form", r.Form)
+	if err := r.ParseForm(); err != nil {
+		h.Logger.Error("failed to parse form data", "error", err)
+		SendError(w, r, http.StatusBadRequest, "invalid form data")
+		return
 	}
+
+	username := r.PostFormValue("s")
+	if username == "" {
+		username = r.PostFormValue("username")
+	}
+	password := r.PostFormValue("pwd")
+	if password == "" {
+		password = r.PostFormValue("password")
+	}
+	devID := r.PostFormValue("devId")
+	tokenType := r.PostFormValue("tokenType")
+
+	h.Logger.Debug("clientLogin attempt",
+		"username", username,
+		"has_password", password != "",
+		"devId", devID,
+		"form", r.Form)
 
 	// Validate required fields
 	if username == "" || password == "" {
@@ -269,7 +276,14 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authCookie, err := h.authenticateCredentials(r.Context(), username, password, clientIDForDevID(devID))
+	ttl, err := tokenTypeTTL(tokenType)
+	if err != nil {
+		h.Logger.DebugContext(r.Context(), "clientLogin rejected tokenType", "tokenType", tokenType, "error", err)
+		SendErrorDetail(w, r, http.StatusBadRequest, statusParameterError, 0, err.Error())
+		return
+	}
+
+	authCookie, err := h.authenticateCredentials(r.Context(), username, password, clientIDForDevID(devID), ttl)
 	if err != nil {
 		h.Logger.DebugContext(r.Context(), "clientLogin failed", "username", username, "error", err)
 		if errors.Is(err, errInvalidCredentials) {
@@ -299,14 +313,14 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 	resp.Response.Data = &ClientLoginData{
 		Token: AuthToken{
 			A:         base64.URLEncoding.EncodeToString(authCookie),
-			ExpiresIn: strconv.Itoa(int(bosTokenTTL.Seconds())),
+			ExpiresIn: strconv.Itoa(int(ttl.Seconds())),
 		},
 		LoginID:       username,
 		ScreenName:    username,
 		SessionSecret: sessionSecret,
 		HostTime:      time.Now().Unix(),
 		// A number here where token.expiresIn is a string, as the client expects.
-		TokenExpiresIn: int(bosTokenTTL.Seconds()),
+		TokenExpiresIn: int(ttl.Seconds()),
 	}
 
 	// Send response in requested format (JSON, JSONP, XML, or AMF)
@@ -314,7 +328,8 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 
 	h.Logger.Info("user authenticated successfully",
 		"username", username,
-		"screenName", username)
+		"screenName", username,
+		"tokenTTL", ttl)
 }
 
 // generateToken generates a secure random token.

@@ -6,6 +6,7 @@ package toc
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/mk6i/open-oscar-server/config"
@@ -186,7 +187,7 @@ func (_c *mockAuthService_BUCPLogin_Call) RunAndReturn(run func(ctx context.Cont
 }
 
 // CrackCookie provides a mock function for the type mockAuthService
-func (_mock *mockAuthService) CrackCookie(authCookie []byte) (state.ServerCookie, error) {
+func (_mock *mockAuthService) CrackCookie(authCookie []byte) (state.ServerCookie, time.Time, error) {
 	ret := _mock.Called(authCookie)
 
 	if len(ret) == 0 {
@@ -194,8 +195,9 @@ func (_mock *mockAuthService) CrackCookie(authCookie []byte) (state.ServerCookie
 	}
 
 	var r0 state.ServerCookie
-	var r1 error
-	if returnFunc, ok := ret.Get(0).(func([]byte) (state.ServerCookie, error)); ok {
+	var r1 time.Time
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func([]byte) (state.ServerCookie, time.Time, error)); ok {
 		return returnFunc(authCookie)
 	}
 	if returnFunc, ok := ret.Get(0).(func([]byte) state.ServerCookie); ok {
@@ -203,12 +205,17 @@ func (_mock *mockAuthService) CrackCookie(authCookie []byte) (state.ServerCookie
 	} else {
 		r0 = ret.Get(0).(state.ServerCookie)
 	}
-	if returnFunc, ok := ret.Get(1).(func([]byte) error); ok {
+	if returnFunc, ok := ret.Get(1).(func([]byte) time.Time); ok {
 		r1 = returnFunc(authCookie)
 	} else {
-		r1 = ret.Error(1)
+		r1 = ret.Get(1).(time.Time)
 	}
-	return r0, r1
+	if returnFunc, ok := ret.Get(2).(func([]byte) error); ok {
+		r2 = returnFunc(authCookie)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
 }
 
 // mockAuthService_CrackCookie_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CrackCookie'
@@ -235,12 +242,12 @@ func (_c *mockAuthService_CrackCookie_Call) Run(run func(authCookie []byte)) *mo
 	return _c
 }
 
-func (_c *mockAuthService_CrackCookie_Call) Return(serverCookie state.ServerCookie, err error) *mockAuthService_CrackCookie_Call {
-	_c.Call.Return(serverCookie, err)
+func (_c *mockAuthService_CrackCookie_Call) Return(serverCookie state.ServerCookie, time1 time.Time, err error) *mockAuthService_CrackCookie_Call {
+	_c.Call.Return(serverCookie, time1, err)
 	return _c
 }
 
-func (_c *mockAuthService_CrackCookie_Call) RunAndReturn(run func(authCookie []byte) (state.ServerCookie, error)) *mockAuthService_CrackCookie_Call {
+func (_c *mockAuthService_CrackCookie_Call) RunAndReturn(run func(authCookie []byte) (state.ServerCookie, time.Time, error)) *mockAuthService_CrackCookie_Call {
 	_c.Call.Return(run)
 	return _c
 }

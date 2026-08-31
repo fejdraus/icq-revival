@@ -2,6 +2,7 @@ package webapi
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/mk6i/open-oscar-server/config"
@@ -30,7 +31,7 @@ type OServiceService interface {
 type AuthService interface {
 	BUCPChallenge(ctx context.Context, inBody wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error)
 	BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
-	CrackCookie(authCookie []byte) (state.ServerCookie, error)
+	CrackCookie(authCookie []byte) (state.ServerCookie, time.Time, error)
 	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
 	RegisterBOSSession(ctx context.Context, authCookie state.ServerCookie, conf func(sess *state.Session)) (*state.SessionInstance, error)
 	RegisterChatSession(ctx context.Context, authCookie state.ServerCookie, cfg func(sess *state.Session)) (*state.SessionInstance, error)
@@ -64,12 +65,13 @@ type BuddyListRegistry interface {
 // These tokens are used for authenticating client sessions with AIM services.
 type CookieBaker interface {
 	// Crack verifies and decodes a previously issued authentication token.
-	// Returns the original payload if the token is valid.
-	Crack(data []byte) ([]byte, error)
+	// Returns the original payload and the token's expiry if it is valid.
+	Crack(data []byte) ([]byte, time.Time, error)
 
-	// Issue creates a new authentication token from the given payload.
-	// The resulting token can later be verified using Crack.
-	Issue(data []byte) ([]byte, error)
+	// Issue creates a new authentication token from the given payload that
+	// stays valid for ttl. The resulting token can later be verified using
+	// Crack.
+	Issue(data []byte, ttl time.Duration) ([]byte, error)
 }
 
 // SessionRetriever provides methods to retrieve OSCAR sessions.

@@ -160,7 +160,7 @@ func (s *ICQLegacyService) AuthenticateUser(ctx context.Context, req AuthRequest
 		return nil, fmt.Errorf("authorization cookie missing from auth response")
 	}
 
-	serverCookie, err := s.authService.CrackCookie(authCookie)
+	serverCookie, _, err := s.authService.CrackCookie(authCookie)
 	if err != nil {
 		return nil, fmt.Errorf("AuthService.CrackCookie: %w", err)
 	}

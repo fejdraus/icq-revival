@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -974,7 +975,7 @@ func TestOSCARProxy_RecvClientCmd_ChatAccept(t *testing.T) {
 			for _, params := range tc.mockParams.crackCookieParams {
 				authSvc.EXPECT().
 					CrackCookie(params.cookieIn).
-					Return(params.cookieOut, params.err)
+					Return(params.cookieOut, time.Now().Add(time.Minute), params.err)
 			}
 
 			svc := OSCARProxy{
@@ -1506,7 +1507,7 @@ func TestOSCARProxy_RecvClientCmd_ChatJoin(t *testing.T) {
 			for _, params := range tc.mockParams.crackCookieParams {
 				authSvc.EXPECT().
 					CrackCookie(params.cookieIn).
-					Return(params.cookieOut, params.err)
+					Return(params.cookieOut, time.Now().Add(time.Minute), params.err)
 			}
 
 			svc := OSCARProxy{
@@ -2600,7 +2601,7 @@ func TestOSCARProxy_RecvClientCmd_GetDirSearchURL(t *testing.T) {
 			cookieBaker := newMockCookieBaker(t)
 			for _, params := range tc.mockParams.issueParams {
 				cookieBaker.EXPECT().
-					Issue(params.data).
+					Issue(params.data, state.DefaultCookieTTL).
 					Return(params.returnData, params.returnErr)
 			}
 
@@ -2677,7 +2678,7 @@ func TestOSCARProxy_RecvClientCmd_GetDirURL(t *testing.T) {
 			cookieBaker := newMockCookieBaker(t)
 			for _, params := range tc.mockParams.issueParams {
 				cookieBaker.EXPECT().
-					Issue(params.data).
+					Issue(params.data, state.DefaultCookieTTL).
 					Return(params.returnData, params.returnErr)
 			}
 
@@ -2753,7 +2754,7 @@ func TestOSCARProxy_RecvClientCmd_GetInfoURL(t *testing.T) {
 			cookieBaker := newMockCookieBaker(t)
 			for _, params := range tc.mockParams.issueParams {
 				cookieBaker.EXPECT().
-					Issue(params.data).
+					Issue(params.data, state.DefaultCookieTTL).
 					Return(params.returnData, params.returnErr)
 			}
 
@@ -6952,7 +6953,7 @@ func TestOSCARProxy_Signon(t *testing.T) {
 			for _, params := range tc.mockParams.crackCookieParams {
 				authSvc.EXPECT().
 					CrackCookie(params.cookieIn).
-					Return(params.cookieOut, params.err)
+					Return(params.cookieOut, time.Now().Add(time.Minute), params.err)
 			}
 			for _, params := range tc.mockParams.registerBOSSessionParams {
 				authSvc.EXPECT().

@@ -41,7 +41,7 @@ type SessionHandler struct {
 type AuthService interface {
 	BUCPChallenge(ctx context.Context, bodyIn wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error)
 	BUCPLogin(ctx context.Context, bodyIn wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
-	CrackCookie(authCookie []byte) (state.ServerCookie, error)
+	CrackCookie(authCookie []byte) (state.ServerCookie, time.Time, error)
 	RegisterBOSSession(ctx context.Context, authCookie state.ServerCookie, conf func(sess *state.Session)) (*state.SessionInstance, error)
 	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
 	Signout(ctx context.Context, session *state.Session)
@@ -217,7 +217,7 @@ func (h *SessionHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, r, http.StatusUnauthorized, "invalid or expired token")
 		return
 	}
-	cookie, err := h.OSCARAuthService.CrackCookie(rawCookie)
+	cookie, _, err := h.OSCARAuthService.CrackCookie(rawCookie)
 	if err != nil {
 		h.Logger.Warn("invalid authentication token", "error", err)
 		h.sendError(w, r, http.StatusUnauthorized, "invalid or expired token")

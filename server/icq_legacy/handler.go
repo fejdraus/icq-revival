@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"time"
 
 	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/state"
@@ -285,7 +286,7 @@ type BaseHandler struct {
 // AuthService provides OSCAR authentication and BOS session registration.
 type AuthService interface {
 	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
-	CrackCookie(authCookie []byte) (state.ServerCookie, error)
+	CrackCookie(authCookie []byte) (state.ServerCookie, time.Time, error)
 	RegisterBOSSession(ctx context.Context, authCookie state.ServerCookie, cfg func(*state.Session)) (*state.SessionInstance, error)
 }
 

@@ -44,7 +44,7 @@ func TestICQLegacyService_AuthenticateUser(t *testing.T) {
 				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, config.Endpoint{}).
 					Return(successBlock, nil)
 				authSvc.EXPECT().CrackCookie(authCookie).
-					Return(serverCookie, nil)
+					Return(serverCookie, time.Now().Add(time.Minute), nil)
 				authSvc.EXPECT().RegisterBOSSession(mock.Anything, serverCookie, mock.Anything).
 					Return(oscarSession, nil)
 			},

@@ -648,6 +648,7 @@ type cookieBakerParams struct {
 // CookieBaker.Issue call site
 type cookieIssueParams []struct {
 	dataIn    []byte
+	ttlIn     time.Duration
 	cookieOut []byte
 	err       error
 }

@@ -522,7 +522,7 @@ func (s OSCARProxy) ChatAccept(
 	}
 
 	// todo: naming for cookie: login cookie, server cookie, or auth cookie?
-	serverCookie, err := s.AuthService.CrackCookie(loginCookie)
+	serverCookie, _, err := s.AuthService.CrackCookie(loginCookie)
 	if err != nil {
 		return 0, s.runtimeErr(ctx, fmt.Errorf("AuthService.CrackCookie: %w", err))
 	}
@@ -718,7 +718,7 @@ func (s OSCARProxy) ChatJoin(
 	}
 
 	// todo: naming for cookie: login cookie, server cookie, or auth cookie?
-	serverCookie, err := s.AuthService.CrackCookie(loginCookie)
+	serverCookie, _, err := s.AuthService.CrackCookie(loginCookie)
 	if err != nil {
 		return 0, s.runtimeErr(ctx, fmt.Errorf("AuthService.CrackCookie: %w", err))
 	}
@@ -2346,7 +2346,7 @@ func (s OSCARProxy) Signon(ctx context.Context, args []byte, recalcWarning func(
 	}
 
 	// todo: naming for cookie: login cookie, server cookie, or auth cookie?
-	serverCookie, err := s.AuthService.CrackCookie(authCookie)
+	serverCookie, _, err := s.AuthService.CrackCookie(authCookie)
 	if err != nil {
 		return nil, s.runtimeErr(ctx, fmt.Errorf("AuthService.CrackCookie: %w", err))
 	}
@@ -2571,7 +2571,7 @@ func buildToc2Config(fb []wire.FeedbagItem) ([]string, error) {
 
 // newHTTPAuthToken creates a HMAC token for authenticating TOC HTTP requests
 func (s OSCARProxy) newHTTPAuthToken(me state.IdentScreenName) (string, error) {
-	cookie, err := s.CookieBaker.Issue([]byte(me.String()))
+	cookie, err := s.CookieBaker.Issue([]byte(me.String()), state.DefaultCookieTTL)
 	if err != nil {
 		return "", err
 	}

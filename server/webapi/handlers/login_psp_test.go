@@ -47,8 +47,14 @@ func TestAuthHandler_Logout(t *testing.T) {
 	assert.Equal(t, "dev1", loc.Query().Get("devId"))
 	assert.Equal(t, "http://localhost:8000/.client/", loc.Query().Get("succUrl"))
 
-	// Nothing to clear: getToken spent the token cookie signing this client in.
-	assert.Empty(t, rr.Result().Cookies())
+	// Signing out spends the token cookie, whether or not getToken already did.
+	// A 24h token left behind would sign the next person in as this account.
+	cleared := rr.Result().Cookies()
+	if assert.Len(t, cleared, 1) {
+		assert.Equal(t, bosTokenCookie, cleared[0].Name)
+		assert.Empty(t, cleared[0].Value)
+		assert.Less(t, cleared[0].MaxAge, 1)
+	}
 }
 
 func TestAuthHandler_LoginPSP_POST_Success(t *testing.T) {
@@ -89,13 +95,18 @@ func TestAuthHandler_LoginPSP_POST_Success(t *testing.T) {
 		raw, err := base64.URLEncoding.DecodeString(tokenCookie.Value)
 		assert.NoError(t, err)
 		assert.Equal(t, loginBlockCookie, raw)
-		// It outlives the redirect but little else.
-		assert.Equal(t, int(bosTokenTTL.Seconds()), tokenCookie.MaxAge)
+		// The browser drops it on the same schedule the server stops honouring it.
+		assert.Equal(t, 86400, tokenCookie.MaxAge)
 	}
 
 	for _, name := range []string{"RSP_USER", "RSP_LOCAL", "localAuthUser"} {
 		assert.NotContains(t, set, name)
 	}
+
+	// The Web API asks login for a token that outlives the browser round trip.
+	ttl, ok := got.Uint32BE(wire.LoginTLVTagsTokenTTL)
+	assert.True(t, ok)
+	assert.Equal(t, uint32(86400), ttl)
 
 	// The devId names the client on the resulting session.
 	clientID, ok := got.String(wire.LoginTLVTagsClientIdentity)

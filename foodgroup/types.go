@@ -239,12 +239,13 @@ type ClientSideBuddyListManager interface {
 // These tokens are used for authenticating client sessions with AIM services.
 type CookieBaker interface {
 	// Crack verifies and decodes a previously issued authentication token.
-	// Returns the original payload if the token is valid.
-	Crack(data []byte) ([]byte, error)
+	// Returns the original payload and the token's expiry if it is valid.
+	Crack(data []byte) ([]byte, time.Time, error)
 
-	// Issue creates a new authentication token from the given payload.
-	// The resulting token can later be verified using Crack.
-	Issue(data []byte) ([]byte, error)
+	// Issue creates a new authentication token from the given payload that
+	// stays valid for ttl. The resulting token can later be verified using
+	// Crack.
+	Issue(data []byte, ttl time.Duration) ([]byte, error)
 }
 
 // FeedbagManager is the interface for reading and modifying server-side buddy

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/server/webapi/middleware"
@@ -25,7 +26,7 @@ type OSCARBridgeHandler struct {
 
 // OSCARAuthService verifies the credential a client presents to the bridge.
 type OSCARAuthService interface {
-	CrackCookie(authCookie []byte) (state.ServerCookie, error)
+	CrackCookie(authCookie []byte) (state.ServerCookie, time.Time, error)
 }
 
 // StartOSCARSessionResponse represents the response for startOSCARSession endpoint.
@@ -97,7 +98,7 @@ func (h *OSCARBridgeHandler) StartOSCARSession(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	cookie, err := h.OSCARAuthService.CrackCookie(rawCookie)
+	cookie, _, err := h.OSCARAuthService.CrackCookie(rawCookie)
 	if err != nil {
 		h.Logger.WarnContext(ctx, "invalid authentication token", "err", err.Error())
 		SendError(w, r, http.StatusUnauthorized, "invalid or expired token")

@@ -5,6 +5,8 @@
 package toc
 
 import (
+	"time"
+
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -36,7 +38,7 @@ func (_m *mockCookieBaker) EXPECT() *mockCookieBaker_Expecter {
 }
 
 // Crack provides a mock function for the type mockCookieBaker
-func (_mock *mockCookieBaker) Crack(data []byte) ([]byte, error) {
+func (_mock *mockCookieBaker) Crack(data []byte) ([]byte, time.Time, error) {
 	ret := _mock.Called(data)
 
 	if len(ret) == 0 {
@@ -44,8 +46,9 @@ func (_mock *mockCookieBaker) Crack(data []byte) ([]byte, error) {
 	}
 
 	var r0 []byte
-	var r1 error
-	if returnFunc, ok := ret.Get(0).(func([]byte) ([]byte, error)); ok {
+	var r1 time.Time
+	var r2 error
+	if returnFunc, ok := ret.Get(0).(func([]byte) ([]byte, time.Time, error)); ok {
 		return returnFunc(data)
 	}
 	if returnFunc, ok := ret.Get(0).(func([]byte) []byte); ok {
@@ -55,12 +58,17 @@ func (_mock *mockCookieBaker) Crack(data []byte) ([]byte, error) {
 			r0 = ret.Get(0).([]byte)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func([]byte) error); ok {
+	if returnFunc, ok := ret.Get(1).(func([]byte) time.Time); ok {
 		r1 = returnFunc(data)
 	} else {
-		r1 = ret.Error(1)
+		r1 = ret.Get(1).(time.Time)
 	}
-	return r0, r1
+	if returnFunc, ok := ret.Get(2).(func([]byte) error); ok {
+		r2 = returnFunc(data)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
 }
 
 // mockCookieBaker_Crack_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Crack'
@@ -87,19 +95,19 @@ func (_c *mockCookieBaker_Crack_Call) Run(run func(data []byte)) *mockCookieBake
 	return _c
 }
 
-func (_c *mockCookieBaker_Crack_Call) Return(bytes []byte, err error) *mockCookieBaker_Crack_Call {
-	_c.Call.Return(bytes, err)
+func (_c *mockCookieBaker_Crack_Call) Return(bytes []byte, time1 time.Time, err error) *mockCookieBaker_Crack_Call {
+	_c.Call.Return(bytes, time1, err)
 	return _c
 }
 
-func (_c *mockCookieBaker_Crack_Call) RunAndReturn(run func(data []byte) ([]byte, error)) *mockCookieBaker_Crack_Call {
+func (_c *mockCookieBaker_Crack_Call) RunAndReturn(run func(data []byte) ([]byte, time.Time, error)) *mockCookieBaker_Crack_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // Issue provides a mock function for the type mockCookieBaker
-func (_mock *mockCookieBaker) Issue(data []byte) ([]byte, error) {
-	ret := _mock.Called(data)
+func (_mock *mockCookieBaker) Issue(data []byte, ttl time.Duration) ([]byte, error) {
+	ret := _mock.Called(data, ttl)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Issue")
@@ -107,18 +115,18 @@ func (_mock *mockCookieBaker) Issue(data []byte) ([]byte, error) {
 
 	var r0 []byte
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func([]byte) ([]byte, error)); ok {
-		return returnFunc(data)
+	if returnFunc, ok := ret.Get(0).(func([]byte, time.Duration) ([]byte, error)); ok {
+		return returnFunc(data, ttl)
 	}
-	if returnFunc, ok := ret.Get(0).(func([]byte) []byte); ok {
-		r0 = returnFunc(data)
+	if returnFunc, ok := ret.Get(0).(func([]byte, time.Duration) []byte); ok {
+		r0 = returnFunc(data, ttl)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).([]byte)
 		}
 	}
-	if returnFunc, ok := ret.Get(1).(func([]byte) error); ok {
-		r1 = returnFunc(data)
+	if returnFunc, ok := ret.Get(1).(func([]byte, time.Duration) error); ok {
+		r1 = returnFunc(data, ttl)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -132,18 +140,24 @@ type mockCookieBaker_Issue_Call struct {
 
 // Issue is a helper method to define mock.On call
 //   - data []byte
-func (_e *mockCookieBaker_Expecter) Issue(data interface{}) *mockCookieBaker_Issue_Call {
-	return &mockCookieBaker_Issue_Call{Call: _e.mock.On("Issue", data)}
+//   - ttl time.Duration
+func (_e *mockCookieBaker_Expecter) Issue(data interface{}, ttl interface{}) *mockCookieBaker_Issue_Call {
+	return &mockCookieBaker_Issue_Call{Call: _e.mock.On("Issue", data, ttl)}
 }
 
-func (_c *mockCookieBaker_Issue_Call) Run(run func(data []byte)) *mockCookieBaker_Issue_Call {
+func (_c *mockCookieBaker_Issue_Call) Run(run func(data []byte, ttl time.Duration)) *mockCookieBaker_Issue_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 []byte
 		if args[0] != nil {
 			arg0 = args[0].([]byte)
 		}
+		var arg1 time.Duration
+		if args[1] != nil {
+			arg1 = args[1].(time.Duration)
+		}
 		run(
 			arg0,
+			arg1,
 		)
 	})
 	return _c
@@ -154,7 +168,7 @@ func (_c *mockCookieBaker_Issue_Call) Return(bytes []byte, err error) *mockCooki
 	return _c
 }
 
-func (_c *mockCookieBaker_Issue_Call) RunAndReturn(run func(data []byte) ([]byte, error)) *mockCookieBaker_Issue_Call {
+func (_c *mockCookieBaker_Issue_Call) RunAndReturn(run func(data []byte, ttl time.Duration) ([]byte, error)) *mockCookieBaker_Issue_Call {
 	_c.Call.Return(run)
 	return _c
 }

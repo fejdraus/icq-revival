@@ -413,7 +413,7 @@ func TestOscarServer_RouteConnection_BOS(t *testing.T) {
 
 	authService.EXPECT().
 		CrackCookie(mock.Anything).
-		Return(state.ServerCookie{Service: wire.BOS}, nil)
+		Return(state.ServerCookie{Service: wire.BOS}, time.Now().Add(time.Minute), nil)
 
 	onlineNotifier := newMockOnlineNotifier(t)
 	onlineNotifier.EXPECT().
@@ -532,7 +532,7 @@ func TestOscarServer_RouteConnection_BOS_MultiSessionSignoff(t *testing.T) {
 
 	authService.EXPECT().
 		CrackCookie(mock.Anything).
-		Return(state.ServerCookie{Service: wire.BOS}, nil)
+		Return(state.ServerCookie{Service: wire.BOS}, time.Now().Add(time.Minute), nil)
 
 	onlineNotifier := newMockOnlineNotifier(t)
 	onlineNotifier.EXPECT().
@@ -636,7 +636,7 @@ func TestOscarServer_RouteConnection_BOS_MaxConcurrentSessionsReached(t *testing
 
 	authService.EXPECT().
 		CrackCookie(mock.Anything).
-		Return(state.ServerCookie{Service: wire.BOS}, nil)
+		Return(state.ServerCookie{Service: wire.BOS}, time.Now().Add(time.Minute), nil)
 
 	rt := oscarServer{
 		rateLimitUpdater: noopRateLimitUpdater{},
@@ -721,7 +721,7 @@ func TestOscarServer_RouteConnection_Chat(t *testing.T) {
 
 	authService.EXPECT().
 		CrackCookie(mock.Anything).
-		Return(state.ServerCookie{Service: wire.Chat}, nil)
+		Return(state.ServerCookie{Service: wire.Chat}, time.Now().Add(time.Minute), nil)
 
 	onlineNotifier := newMockOnlineNotifier(t)
 	onlineNotifier.EXPECT().
@@ -821,7 +821,7 @@ func TestOscarServer_RouteConnection_Admin(t *testing.T) {
 	authService := newMockAuthService(t)
 	authService.EXPECT().
 		CrackCookie(mock.Anything).
-		Return(state.ServerCookie{Service: wire.Admin}, nil)
+		Return(state.ServerCookie{Service: wire.Admin}, time.Now().Add(time.Minute), nil)
 	authService.EXPECT().
 		RetrieveBOSSession(mock.Anything, state.ServerCookie{Service: wire.Admin}).
 		Return(instance, nil)
@@ -966,7 +966,7 @@ func Test_oscarServer_receiveSessMessages_BOS_integration(t *testing.T) {
 	authService := newMockAuthService(t)
 	authService.EXPECT().
 		CrackCookie(mock.Anything).
-		Return(state.ServerCookie{Service: wire.BOS}, nil)
+		Return(state.ServerCookie{Service: wire.BOS}, time.Now().Add(time.Minute), nil)
 	authService.EXPECT().
 		RegisterBOSSession(mock.Anything, state.ServerCookie{Service: wire.BOS}, mock.Anything).
 		Run(func(ctx context.Context, cookie state.ServerCookie, conf func(*state.Session)) {
@@ -1118,7 +1118,7 @@ func Test_oscarServer_receiveSessMessages_Chat_integration(t *testing.T) {
 	authService := newMockAuthService(t)
 	authService.EXPECT().
 		CrackCookie(mock.Anything).
-		Return(state.ServerCookie{Service: wire.Chat}, nil)
+		Return(state.ServerCookie{Service: wire.Chat}, time.Now().Add(time.Minute), nil)
 	authService.EXPECT().
 		RegisterChatSession(mock.Anything, state.ServerCookie{Service: wire.Chat}, mock.Anything).
 		Run(func(_ context.Context, _ state.ServerCookie, cfg func(*state.Session)) {

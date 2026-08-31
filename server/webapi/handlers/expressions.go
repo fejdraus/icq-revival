@@ -27,10 +27,6 @@ type Expression struct {
 
 const bartUploadMaxBytes = 64 << 10
 
-// statusParameterError is the Web API code for a parameter that is present but
-// unusable, as distinct from statusMissingParameter for one that is absent.
-const statusParameterError = 462
-
 // BARTUploader stores a BART asset and returns its content-addressed ID.
 type BARTUploader interface {
 	UpsertItem(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x10_0x02_BARTUploadQuery) (wire.SNACMessage, error)

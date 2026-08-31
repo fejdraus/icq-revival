@@ -3,6 +3,7 @@ package foodgroup
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -22,6 +23,13 @@ import (
 // MaxConcurrentLoginsPerUser is the maximum number of concurrent logins allowed
 // for a single user.
 const MaxConcurrentLoginsPerUser = 5
+
+// maxTokenTTL is the longest auth cookie lifetime a client may request.
+const maxTokenTTL = 365 * 24 * time.Hour
+
+// errInvalidTokenTTL indicates the client asked for an auth cookie lifetime the
+// server won't grant.
+var errInvalidTokenTTL = errors.New("invalid token TTL")
 
 // NewAuthService creates a new instance of AuthService.
 func NewAuthService(
@@ -97,19 +105,21 @@ func (s AuthService) RegisterChatSession(ctx context.Context, authCookie state.S
 	return sess, err
 }
 
-func (s AuthService) CrackCookie(authCookie []byte) (state.ServerCookie, error) {
+// CrackCookie verifies authCookie and reports both its contents and the instant
+// it expires.
+func (s AuthService) CrackCookie(authCookie []byte) (state.ServerCookie, time.Time, error) {
 	c := state.ServerCookie{}
 
-	buf, err := s.cookieBaker.Crack(authCookie)
+	buf, expiry, err := s.cookieBaker.Crack(authCookie)
 	if err != nil {
-		return c, err
+		return c, time.Time{}, err
 	}
 
 	if err := wire.UnmarshalBE(&c, bytes.NewBuffer(buf)); err != nil {
-		return c, err
+		return c, time.Time{}, err
 	}
 
-	return c, nil
+	return c, expiry, nil
 }
 
 // RegisterBOSSession adds a new session to the session registry.
@@ -445,6 +455,7 @@ type loginProperties struct {
 	plaintextPassword       []byte
 	roastedPass             []byte
 	screenName              state.DisplayScreenName
+	tokenTTL                time.Duration
 }
 
 // fromTLV creates an instance of loginProperties from a TLV list.
@@ -500,6 +511,15 @@ func (l *loginProperties) fromTLV(list wire.TLVList) error {
 		l.multiConnFlag = multiConnFlags
 	}
 
+	l.tokenTTL = state.DefaultCookieTTL
+	if b, found := list.Bytes(wire.LoginTLVTagsTokenTTL); found {
+		ttl := time.Duration(binary.BigEndian.Uint32(b)) * time.Second
+		if ttl <= 0 || ttl > maxTokenTTL {
+			return errInvalidTokenTTL
+		}
+		l.tokenTTL = ttl
+	}
+
 	return nil
 }
 
@@ -510,6 +530,9 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, endpointCfg co
 	props := loginProperties{}
 	if err := props.fromTLV(tlv); err != nil {
 		s.logger.Debug("login: failed to parse TLVs", "err", err.Error())
+		if errors.Is(err, errInvalidTokenTTL) {
+			return loginFailureResponse(props, wire.LoginErrInternalClientError), nil
+		}
 		return wire.TLVRestBlock{}, err
 	}
 
@@ -651,7 +674,7 @@ func (s AuthService) loginSuccessResponse(ctx context.Context, props loginProper
 	if err := wire.MarshalBE(loginCookie, buf); err != nil {
 		return wire.TLVRestBlock{}, err
 	}
-	cookie, err := s.cookieBaker.Issue(buf.Bytes())
+	cookie, err := s.cookieBaker.Issue(buf.Bytes(), props.tokenTTL)
 	if err != nil {
 		return wire.TLVRestBlock{}, fmt.Errorf("failed to issue auth cookie: %w", err)
 	}

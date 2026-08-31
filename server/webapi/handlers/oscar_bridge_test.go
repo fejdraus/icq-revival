@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -195,9 +196,9 @@ func TestOSCARBridgeHandler_StartOSCARSession_ReencodesCookie(t *testing.T) {
 	var cracked []byte
 	handler := &OSCARBridgeHandler{
 		OSCARAuthService: &testAuthService{
-			crackCookie: func(authCookie []byte) (state.ServerCookie, error) {
+			crackCookie: func(authCookie []byte) (state.ServerCookie, time.Time, error) {
 				cracked = authCookie
-				return state.ServerCookie{ScreenName: "testuser"}, nil
+				return state.ServerCookie{ScreenName: "testuser"}, time.Now().Add(shortTermTTL), nil
 			},
 		},
 		Listener: testListener(false),

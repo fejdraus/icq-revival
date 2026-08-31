@@ -16,11 +16,6 @@ import (
 // path finds what it expects.
 const bosTokenCookie = "oldAimToken"
 
-// bosTokenTTL mirrors the expiry stamped by HMACCookieBaker.Issue
-// (state/cookie.go). The token only has to survive login.psp -> getToken ->
-// startSession, so its brief life is what makes every later visit sign in again.
-const bosTokenTTL = time.Minute
-
 var loginPSPPage = template.Must(template.New("login.psp").Parse(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -104,7 +99,7 @@ func (h *AuthHandler) LoginPSP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		authCookie, err := h.authenticateCredentials(r.Context(), loginID, password, clientIDForDevID(data.DevID))
+		authCookie, err := h.authenticateCredentials(r.Context(), loginID, password, clientIDForDevID(data.DevID), shortTermTTL)
 		if err != nil {
 			if errors.Is(err, errInvalidCredentials) {
 				h.Logger.DebugContext(r.Context(), "login.psp failed", "loginId", loginID)
@@ -138,18 +133,14 @@ func (h *AuthHandler) renderLoginPSP(w http.ResponseWriter, r *http.Request, dat
 	}
 }
 
-// setBOSTokenCookie hands the BOS token from the login response to the browser,
-// which carries it as far as the getToken that follows the redirect. It is a
-// bearer credential, so HttpOnly keeps it out of reach of page scripts, and its
-// MaxAge matches the token's own life so the browser drops it on the same
-// schedule the server stops honouring it.
+// setBOSTokenCookie hands the BOS token from the login response to the browser.
 func setBOSTokenCookie(w http.ResponseWriter, authCookie []byte) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     bosTokenCookie,
 		Value:    base64.URLEncoding.EncodeToString(authCookie),
 		Path:     "/",
-		Expires:  time.Now().Add(bosTokenTTL),
-		MaxAge:   int(bosTokenTTL.Seconds()),
+		Expires:  time.Now().Add(shortTermTTL),
+		MaxAge:   int(shortTermTTL.Seconds()),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})

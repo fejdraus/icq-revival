@@ -844,7 +844,7 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			cookieIssuer := newMockCookieBaker(t)
 			for _, params := range tc.mockParams.cookieIssueParams {
 				cookieIssuer.EXPECT().
-					Issue(params.dataIn).
+					Issue(params.dataIn, state.DefaultCookieTTL).
 					Return(params.cookieOut, params.err)
 			}
 			chatMessageRelayer := newMockChatMessageRelayer(t)
@@ -1016,7 +1016,7 @@ func TestOServiceService_ServiceRequest_LinkedAccountSignon(t *testing.T) {
 			cookieIssuer := newMockCookieBaker(t)
 			if tc.setupCookie {
 				cookieIssuer.EXPECT().
-					Issue(cookieDataFor(linkedUser, instance.MultiConnFlag())).
+					Issue(cookieDataFor(linkedUser, instance.MultiConnFlag()), state.DefaultCookieTTL).
 					Return([]byte("the-cookie"), nil)
 			}
 

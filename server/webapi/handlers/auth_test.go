@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -22,7 +23,7 @@ import (
 // CrackCookie are exercised).
 type testAuthService struct {
 	flapLogin   func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
-	crackCookie func(authCookie []byte) (state.ServerCookie, error)
+	crackCookie func(authCookie []byte) (state.ServerCookie, time.Time, error)
 }
 
 func (t *testAuthService) BUCPChallenge(ctx context.Context, bodyIn wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error) {
@@ -33,11 +34,11 @@ func (t *testAuthService) BUCPLogin(ctx context.Context, bodyIn wire.SNAC_0x17_0
 	return wire.SNACMessage{}, nil
 }
 
-func (t *testAuthService) CrackCookie(authCookie []byte) (state.ServerCookie, error) {
+func (t *testAuthService) CrackCookie(authCookie []byte) (state.ServerCookie, time.Time, error) {
 	if t.crackCookie != nil {
 		return t.crackCookie(authCookie)
 	}
-	return state.ServerCookie{}, nil
+	return state.ServerCookie{}, time.Now().Add(shortTermTTL), nil
 }
 
 // signedCookieFor stands in for a CookieBaker-signed cookie naming screenName.
@@ -46,13 +47,22 @@ func signedCookieFor(screenName string) []byte {
 }
 
 // crackSignedCookie accepts only cookies produced by signedCookieFor, standing in
-// for the signature check the real baker performs.
-func crackSignedCookie(authCookie []byte) (state.ServerCookie, error) {
-	name, ok := strings.CutPrefix(string(authCookie), "signed:")
-	if !ok {
-		return state.ServerCookie{}, errors.New("bad signature")
+// for the signature check the real baker performs. The token reads as freshly
+// minted; crackSignedCookieExpiring stands in for an older one.
+func crackSignedCookie(authCookie []byte) (state.ServerCookie, time.Time, error) {
+	return crackSignedCookieExpiring(shortTermTTL)(authCookie)
+}
+
+// crackSignedCookieExpiring cracks like crackSignedCookie, reporting a token
+// with remaining life left on it.
+func crackSignedCookieExpiring(remaining time.Duration) func([]byte) (state.ServerCookie, time.Time, error) {
+	return func(authCookie []byte) (state.ServerCookie, time.Time, error) {
+		name, ok := strings.CutPrefix(string(authCookie), "signed:")
+		if !ok {
+			return state.ServerCookie{}, time.Time{}, errors.New("bad signature")
+		}
+		return state.ServerCookie{ScreenName: state.DisplayScreenName(name)}, time.Now().Add(remaining), nil
 	}
-	return state.ServerCookie{ScreenName: state.DisplayScreenName(name)}, nil
 }
 
 func (t *testAuthService) RegisterBOSSession(ctx context.Context, authCookie state.ServerCookie, conf func(sess *state.Session)) (*state.SessionInstance, error) {
@@ -97,8 +107,10 @@ func TestAuthHandler_GetToken(t *testing.T) {
 	validToken := base64.URLEncoding.EncodeToString(signedCookieFor("testuser"))
 
 	tests := []struct {
-		name      string
-		query     string
+		name  string
+		query string
+		// remaining is the life left in the parked token; 0 means a fresh one.
+		remaining time.Duration
 		cookies   []*http.Cookie
 		checkBody func(*testing.T, string)
 	}{
@@ -114,7 +126,23 @@ func TestAuthHandler_GetToken(t *testing.T) {
 				assert.Contains(t, body, `"loginId":"testuser"`)
 				// The parked token is handed straight back, not re-minted.
 				assert.Contains(t, body, `"a":"`+validToken+`"`)
-				assert.Contains(t, body, `"expiresIn":"60"`)
+				assert.Contains(t, body, `"expiresIn":"86400"`)
+			},
+		},
+		{
+			// getToken hands back the token minted at sign-in, so a browser that
+			// sat on it for most of a day must be told the life that is actually
+			// left, not the life the token was born with.
+			name:      "Success_AgedTokenReportsRemainingLife",
+			query:     "f=json&attributes=loginId&devId=ao1yOLlHVHhsa3o6&c=_callbacks_._0mq8wqdav",
+			remaining: time.Hour,
+			cookies: []*http.Cookie{
+				{Name: bosTokenCookie, Value: validToken},
+			},
+			checkBody: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"statusCode":200`)
+				assert.Contains(t, body, `"expiresIn":"3600"`)
+				assert.NotContains(t, body, `"expiresIn":"86400"`)
 			},
 		},
 		{
@@ -159,8 +187,12 @@ func TestAuthHandler_GetToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			crack := crackSignedCookie
+			if tt.remaining > 0 {
+				crack = crackSignedCookieExpiring(tt.remaining)
+			}
 			handler := &AuthHandler{
-				AuthService: &testAuthService{crackCookie: crackSignedCookie},
+				AuthService: &testAuthService{crackCookie: crack},
 				Logger:      slog.Default(),
 			}
 
@@ -218,19 +250,21 @@ func TestAuthHandler_GetToken_IsOneShot(t *testing.T) {
 
 func TestAuthHandler_ClientLogin(t *testing.T) {
 	tests := []struct {
-		name               string
-		method             string
-		contentType        string
-		body               string
+		name        string
+		method      string
+		contentType string
+		body        string
+		// query is appended to the request URL, to prove it is not read.
+		query              string
 		auth               *testAuthService
 		expectedStatusCode int
 		checkResponse      func(*testing.T, string)
 	}{
 		{
-			name:        "Success_JSONBody",
+			name:        "Success_FormEncoded",
 			method:      "POST",
-			contentType: "application/json",
-			body:        `{"username":"testuser","password":"testpass","devId":"dev123"}`,
+			contentType: "application/x-www-form-urlencoded",
+			body:        "s=testuser&pwd=testpass&devId=dev123",
 			auth: &testAuthService{
 				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return successfulLoginBlock(), nil
@@ -248,11 +282,12 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			},
 		},
 		{
-			// A caller that states a charset is still sending JSON.
-			name:        "Success_JSONBodyWithCharset",
+			// The legacy aliases the form path has always accepted alongside the
+			// spec's s and pwd.
+			name:        "Success_LegacyFieldNames",
 			method:      "POST",
-			contentType: "application/json; charset=utf-8",
-			body:        `{"username":"testuser","password":"testpass","devId":"dev123"}`,
+			contentType: "application/x-www-form-urlencoded",
+			body:        "username=testuser&password=testpass&devId=dev123",
 			auth: &testAuthService{
 				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return successfulLoginBlock(), nil
@@ -265,7 +300,44 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			},
 		},
 		{
-			name:        "Success_FormEncoded",
+			// "longterm" is a year, and the response reports what was granted.
+			name:        "Success_TokenTypeLongterm",
+			method:      "POST",
+			contentType: "application/x-www-form-urlencoded",
+			body:        "s=testuser&pwd=testpass&devId=dev123&tokenType=longterm",
+			auth: &testAuthService{
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
+					return successfulLoginBlock(), nil
+				},
+			},
+			expectedStatusCode: http.StatusOK,
+			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"statusCode":200`)
+				assert.Contains(t, body, `"expiresIn":"31536000"`)
+				assert.Contains(t, body, `"tokenExpiresIn":31536000`)
+			},
+		},
+		{
+			// A bare count of seconds is a valid tokenType.
+			name:        "Success_TokenTypeSeconds",
+			method:      "POST",
+			contentType: "application/x-www-form-urlencoded",
+			body:        "s=testuser&pwd=testpass&devId=dev123&tokenType=3600",
+			auth: &testAuthService{
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
+					return successfulLoginBlock(), nil
+				},
+			},
+			expectedStatusCode: http.StatusOK,
+			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"statusCode":200`)
+				assert.Contains(t, body, `"expiresIn":"3600"`)
+				assert.Contains(t, body, `"tokenExpiresIn":3600`)
+			},
+		},
+		{
+			// Omitting tokenType is "shortterm", a day.
+			name:        "Success_TokenTypeDefaultsToShortterm",
 			method:      "POST",
 			contentType: "application/x-www-form-urlencoded",
 			body:        "s=testuser&pwd=testpass&devId=dev123",
@@ -276,15 +348,72 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			},
 			expectedStatusCode: http.StatusOK,
 			checkResponse: func(t *testing.T, body string) {
-				assert.Contains(t, body, `"statusCode":200`)
-				assert.Contains(t, body, `"loginId":"testuser"`)
+				assert.Contains(t, body, `"expiresIn":"86400"`)
+				assert.Contains(t, body, `"tokenExpiresIn":86400`)
+			},
+		},
+		{
+			// A tokenType the server cannot honour is a parameter error, and the
+			// credentials are never checked.
+			name:               "Error_TokenTypeUnparsable",
+			method:             "POST",
+			contentType:        "application/x-www-form-urlencoded",
+			body:               "s=testuser&pwd=testpass&tokenType=forever",
+			auth:               &testAuthService{},
+			expectedStatusCode: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"statusCode":462`)
+			},
+		},
+		{
+			name:               "Error_TokenTypeBeyondMax",
+			method:             "POST",
+			contentType:        "application/x-www-form-urlencoded",
+			body:               "s=testuser&pwd=testpass&tokenType=31536001",
+			auth:               &testAuthService{},
+			expectedStatusCode: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"statusCode":462`)
+			},
+		},
+		{
+			// The spec puts these in the body, and a password in a URL is one
+			// that has already been logged. Credentials in the query string are
+			// not credentials at all.
+			name:               "Error_CredentialsInQueryStringAreIgnored",
+			method:             "POST",
+			contentType:        "application/x-www-form-urlencoded",
+			body:               "",
+			query:              "?s=testuser&pwd=testpass&devId=dev123",
+			auth:               &testAuthService{},
+			expectedStatusCode: http.StatusBadRequest,
+			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"statusCode":460`)
+			},
+		},
+		{
+			// A body value stands on its own; the query is not consulted even to
+			// fill a gap.
+			name:        "Success_BodyWinsOverQueryString",
+			method:      "POST",
+			contentType: "application/x-www-form-urlencoded",
+			body:        "s=testuser&pwd=testpass&tokenType=longterm",
+			query:       "?tokenType=600",
+			auth: &testAuthService{
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
+					return successfulLoginBlock(), nil
+				},
+			},
+			expectedStatusCode: http.StatusOK,
+			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"expiresIn":"31536000"`)
 			},
 		},
 		{
 			name:               "Error_MissingUsername",
 			method:             "POST",
-			contentType:        "application/json",
-			body:               `{"username":"","password":"testpass"}`,
+			contentType:        "application/x-www-form-urlencoded",
+			body:               "pwd=testpass",
 			auth:               &testAuthService{},
 			expectedStatusCode: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, body string) {
@@ -298,8 +427,8 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 		{
 			name:               "Error_MissingPassword",
 			method:             "POST",
-			contentType:        "application/json",
-			body:               `{"username":"testuser","password":""}`,
+			contentType:        "application/x-www-form-urlencoded",
+			body:               "s=testuser",
 			auth:               &testAuthService{},
 			expectedStatusCode: http.StatusBadRequest,
 			checkResponse: func(t *testing.T, body string) {
@@ -310,8 +439,8 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 		{
 			name:        "Error_AuthFailed",
 			method:      "POST",
-			contentType: "application/json",
-			body:        `{"username":"testuser","password":"wrongpass"}`,
+			contentType: "application/x-www-form-urlencoded",
+			body:        "s=testuser&pwd=wrongpass",
 			auth: &testAuthService{
 				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return failedLoginBlock(), nil
@@ -327,8 +456,8 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 		{
 			name:        "Error_FLAPLoginError",
 			method:      "POST",
-			contentType: "application/json",
-			body:        `{"username":"testuser","password":"testpass"}`,
+			contentType: "application/x-www-form-urlencoded",
+			body:        "s=testuser&pwd=testpass",
 			auth: &testAuthService{
 				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return wire.TLVRestBlock{}, errors.New("boom")
@@ -337,17 +466,6 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			expectedStatusCode: http.StatusInternalServerError,
 			checkResponse: func(t *testing.T, body string) {
 				assert.Contains(t, body, "internal server error")
-			},
-		},
-		{
-			name:               "Error_InvalidJSON",
-			method:             "POST",
-			contentType:        "application/json",
-			body:               `{invalid json`,
-			auth:               &testAuthService{},
-			expectedStatusCode: http.StatusBadRequest,
-			checkResponse: func(t *testing.T, body string) {
-				assert.Contains(t, body, "invalid JSON format")
 			},
 		},
 		{
@@ -370,8 +488,8 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 		{
 			name:        "Error_LoginResponseHasNoCookie",
 			method:      "POST",
-			contentType: "application/json",
-			body:        `{"username":"testuser","password":"testpass"}`,
+			contentType: "application/x-www-form-urlencoded",
+			body:        "s=testuser&pwd=testpass",
 			auth: &testAuthService{
 				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
 					return blockWithoutCookie(), nil
@@ -393,7 +511,7 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 				Logger:      logger,
 			}
 
-			req, err := http.NewRequest(tt.method, "/auth/clientLogin", strings.NewReader(tt.body))
+			req, err := http.NewRequest(tt.method, "/auth/clientLogin"+tt.query, strings.NewReader(tt.body))
 			assert.NoError(t, err)
 			req.Header.Set("Content-Type", tt.contentType)
 
@@ -419,12 +537,12 @@ func TestAuthHandler_ClientLogin_SendsClientIdentity(t *testing.T) {
 	}{
 		{
 			name:             "DevIDNamesTheClient",
-			body:             `{"username":"testuser","password":"testpass","devId":"dev123"}`,
+			body:             "s=testuser&pwd=testpass&devId=dev123",
 			expectedClientID: "dev123",
 		},
 		{
 			name:             "MissingDevIDFallsBack",
-			body:             `{"username":"testuser","password":"testpass"}`,
+			body:             "s=testuser&pwd=testpass",
 			expectedClientID: "WebAIM",
 		},
 	}
@@ -443,12 +561,102 @@ func TestAuthHandler_ClientLogin_SendsClientIdentity(t *testing.T) {
 			}
 
 			req := httptest.NewRequest(http.MethodPost, "/auth/clientLogin", strings.NewReader(tt.body))
-			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			handler.ClientLogin(httptest.NewRecorder(), req)
 
 			clientID, ok := got.String(wire.LoginTLVTagsClientIdentity)
 			assert.True(t, ok, "signon frame should carry a client identity")
 			assert.Equal(t, tt.expectedClientID, clientID)
+		})
+	}
+}
+
+func TestAuthHandler_ClientLogin_SendsRequestedTokenTTL(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantTTL uint32
+	}{
+		{
+			name:    "OmittedIsShortterm",
+			body:    "s=testuser&pwd=testpass",
+			wantTTL: 86400,
+		},
+		{
+			name:    "Shortterm",
+			body:    "s=testuser&pwd=testpass&tokenType=shortterm",
+			wantTTL: 86400,
+		},
+		{
+			name:    "Longterm",
+			body:    "s=testuser&pwd=testpass&tokenType=longterm",
+			wantTTL: 31536000,
+		},
+		{
+			name:    "ExplicitSeconds",
+			body:    "s=testuser&pwd=testpass&tokenType=600",
+			wantTTL: 600,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got wire.FLAPSignonFrame
+			handler := &AuthHandler{
+				AuthService: &testAuthService{
+					flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
+						got = inFrame
+						return successfulLoginBlock(), nil
+					},
+				},
+				Logger: slog.Default(),
+			}
+
+			req := httptest.NewRequest(http.MethodPost, "/auth/clientLogin", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			handler.ClientLogin(httptest.NewRecorder(), req)
+
+			// What the client asked for is what login is asked to mint.
+			ttl, ok := got.Uint32BE(wire.LoginTLVTagsTokenTTL)
+			assert.True(t, ok, "signon frame should carry a token TTL")
+			assert.Equal(t, tt.wantTTL, ttl)
+		})
+	}
+}
+
+func TestTokenTypeTTL(t *testing.T) {
+	tests := []struct {
+		name      string
+		tokenType string
+		want      time.Duration
+		wantErr   bool
+	}{
+		{name: "omitted", tokenType: "", want: shortTermTTL},
+		{name: "shortterm", tokenType: "shortterm", want: shortTermTTL},
+		{name: "shortterm mixed case", tokenType: "ShortTerm", want: shortTermTTL},
+		{name: "longterm", tokenType: "longterm", want: longTermTTL},
+		{name: "longterm padded", tokenType: "  longterm  ", want: longTermTTL},
+		{name: "seconds", tokenType: "3600", want: time.Hour},
+		{name: "one second", tokenType: "1", want: time.Second},
+		{name: "exactly the max", tokenType: "31536000", want: longTermTTL},
+		{name: "zero seconds", tokenType: "0", wantErr: true},
+		{name: "one past the max", tokenType: "31536001", wantErr: true},
+		// large enough that scaling to a Duration would overflow int64
+		{name: "overflowing seconds", tokenType: "99999999999999999", wantErr: true},
+		{name: "negative", tokenType: "-1", wantErr: true},
+		{name: "unrecognized word", tokenType: "forever", wantErr: true},
+		{name: "float", tokenType: "60.5", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tokenTypeTTL(tt.tokenType)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

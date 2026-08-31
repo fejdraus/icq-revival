@@ -109,12 +109,16 @@ const (
 	LoginTLVTagsRoastedTOCPassword        uint16 = 0x1337
 	LoginTLVTagsPlaintextKerberosPassword uint16 = 0x1338
 	LoginTLVTagsPlaintextPassword         uint16 = 0x1339
-	LoginTLVTagsUseBigTime                uint16 = 0x2038
+	// LoginTLVTagsTokenTTL is the auth cookie lifetime the client requests, a
+	// uint32 count of seconds. Absent, the server picks its own default.
+	LoginTLVTagsTokenTTL   uint16 = 0x133A
+	LoginTLVTagsUseBigTime uint16 = 0x2038
 )
 
 const (
 	LoginErrInvalidUsernameOrPassword uint16 = 0x0001
 	LoginErrInvalidPassword           uint16 = 0x0005 // invalid password
+	LoginErrInternalClientError       uint16 = 0x0006 // client sent a malformed request
 	LoginErrInvalidAccount            uint16 = 0x0007
 	LoginErrDeletedAccount            uint16 = 0x0008
 	LoginErrExpiredAccount            uint16 = 0x0009

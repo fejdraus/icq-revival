@@ -121,7 +121,7 @@ func (s OSCARProxy) AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		if _, err = s.CookieBaker.Crack(data); err != nil {
+		if _, _, err = s.CookieBaker.Crack(data); err != nil {
 			s.Logger.DebugContext(ctx, "error cracking auth cookie", "err", err.Error())
 			http.Error(w, "invalid auth cookie", http.StatusForbidden)
 			return

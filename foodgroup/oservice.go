@@ -607,7 +607,7 @@ func (s OServiceService) ServiceRequest(ctx context.Context, service uint16, ins
 		if err := wire.MarshalBE(val, buf); err != nil {
 			return nil, err
 		}
-		return s.cookieIssuer.Issue(buf.Bytes())
+		return s.cookieIssuer.Issue(buf.Bytes(), state.DefaultCookieTTL)
 	}
 
 	cookie, err := func() ([]byte, error) {
