@@ -23,12 +23,11 @@ import (
 	oscarmiddleware "github.com/mk6i/open-oscar-server/server/oscar/middleware"
 	"github.com/mk6i/open-oscar-server/server/toc"
 	"github.com/mk6i/open-oscar-server/server/webapi"
-	"github.com/mk6i/open-oscar-server/server/webapi/handlers"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
-// Container groups together common dependencies.
+// Container groups common dependencies together.
 type Container struct {
 	cfg                    config.Config
 	chatSessionManager     *state.InMemoryChatSessionManager
@@ -39,7 +38,7 @@ type Container struct {
 	rateLimitClasses       wire.RateLimitClasses
 	snacRateLimits         wire.SNACRateLimits
 	sqLiteUserStore        *state.SQLiteUserStore
-	webAPISessionManager   *state.WebAPISessionManager
+	webAPISessionManager   *webapi.SessionManager
 	Listeners              []config.ListenerGroup
 	feedbagSvc             *foodgroup.FeedbagService
 	icqService             *foodgroup.ICQService
@@ -80,7 +79,7 @@ func MakeCommonDeps() (Container, error) {
 	c.logger = oscarmiddleware.NewLogger(c.cfg)
 	c.inMemorySessionManager = state.NewInMemorySessionManager(c.logger)
 	c.chatSessionManager = state.NewInMemoryChatSessionManager(c.logger)
-	c.webAPISessionManager = state.NewWebAPISessionManager()
+	c.webAPISessionManager = webapi.NewSessionManager()
 	c.rateLimitClasses = wire.DefaultRateLimitClasses()
 	c.snacRateLimits = wire.DefaultSNACRateLimits()
 
@@ -525,7 +524,6 @@ func WebAPI(deps Container) *webapi.Server {
 		deps.inMemorySessionManager,
 		deps.sqLiteUserStore,
 	)
-
 	bartService := foodgroup.NewBARTService(
 		logger,
 		deps.sqLiteUserStore,
@@ -533,22 +531,17 @@ func WebAPI(deps Container) *webapi.Server {
 		deps.sqLiteUserStore,
 		deps.inMemorySessionManager,
 	)
-
-	iconSource := handlers.BuddyIconSource{
+	iconSource := webapi.BuddyIconSource{
 		IconRetriever: deps.sqLiteUserStore,
 		BARTService:   bartService,
 		Logger:        logger,
 	}
-
-	// Create WebAPI buddy list manager (local to WebAPI)
-	buddyListManager := handlers.NewBuddyListManager(
+	buddyListManager := webapi.NewBuddyListManager(
 		deps.feedbagSvc,
 		locateService,
 		iconSource,
 		logger,
 	)
-
-	// Create the OSCAR buddy broadcaster for WebAPI to use
 	oscarBuddyBroadcaster := foodgroup.NewBuddyService(
 		deps.inMemorySessionManager,
 		deps.sqLiteUserStore,
@@ -557,7 +550,6 @@ func WebAPI(deps Container) *webapi.Server {
 		deps.sqLiteUserStore,
 		deps.sqLiteUserStore,
 	)
-
 	handler := webapi.Handler{
 		AuthService: foodgroup.NewAuthService(
 			deps.cfg,
@@ -575,7 +567,6 @@ func WebAPI(deps Container) *webapi.Server {
 			logger,
 		),
 		BuddyListRegistry: deps.sqLiteUserStore,
-		CookieBaker:       deps.hmacCookieBaker,
 		ICBMService:       deps.icbmSvc,
 		LocateService:     locateService,
 		Logger:            logger,
@@ -594,16 +585,10 @@ func WebAPI(deps Container) *webapi.Server {
 			deps.sqLiteUserStore,
 			deps.sqLiteUserStore,
 		),
-		// New fields for WebAPI handlers
-		SessionRetriever: deps.inMemorySessionManager,
-		// Phase 2 additions
 		BuddyBroadcaster: oscarBuddyBroadcaster,
-		// Phase 4 additions for OSCAR Bridge
-		// listener groups come back in map order, so pin the web API to one
 		BOSListener: slices.MinFunc(deps.Listeners, func(a, b config.ListenerGroup) int {
 			return strings.Compare(a.Name, b.Name)
 		}),
-		// Phase 5 additions for buddy list and messaging
 		BuddyListManager:   buddyListManager,
 		ChatSessionManager: deps.chatSessionManager,
 		RecalcWarning:      deps.icbmSvc.RestoreWarningLevel,
@@ -611,10 +596,10 @@ func WebAPI(deps Container) *webapi.Server {
 		FeedbagService:     deps.feedbagSvc,
 		DirSearchService:   foodgroup.NewODirService(logger, deps.sqLiteUserStore),
 		IconSource:         iconSource,
-		BARTUploader:       bartService,
+		BARTService:        bartService,
 		SNACRateLimits:     deps.snacRateLimits,
 	}
-	// Pass SQLiteUserStore as the API key validator (it implements middleware.APIKeyValidator)
+
 	return webapi.NewServer(deps.cfg.WebAPIListeners, logger, handler, deps.sqLiteUserStore, deps.webAPISessionManager)
 }
 
