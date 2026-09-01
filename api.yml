@@ -1612,11 +1612,6 @@ components:
           type: string
           format: date-time
           description: Timestamp when the key was created.
-        last_used:
-          type: string
-          format: date-time
-          nullable: true
-          description: Timestamp when the key was last used.
         is_active:
           type: boolean
           description: Whether the API key is currently active.

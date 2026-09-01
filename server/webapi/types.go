@@ -18,7 +18,6 @@ type SessionResolver interface {
 // APIKeyValidator validates the dev_key a client sends as its "k" parameter.
 type APIKeyValidator interface {
 	GetAPIKeyByDevKey(ctx context.Context, devKey string) (*state.WebAPIKey, error)
-	UpdateLastUsed(ctx context.Context, devKey string) error
 }
 
 // AuthService cracks auth cookies and registers the BOS sessions they name.

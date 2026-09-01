@@ -192,22 +192,16 @@ func handleList(args []string) {
 
 	// Create a tabwriter for formatted output
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "DEV ID\tAPP NAME\tACTIVE\tRATE LIMIT\tCREATED\tLAST USED")
-	_, _ = fmt.Fprintln(w, "------\t--------\t------\t----------\t-------\t---------")
+	_, _ = fmt.Fprintln(w, "DEV ID\tAPP NAME\tACTIVE\tRATE LIMIT\tCREATED")
+	_, _ = fmt.Fprintln(w, "------\t--------\t------\t----------\t-------")
 
 	for _, key := range keys {
-		lastUsed := "Never"
-		if key.LastUsed != nil {
-			lastUsed = key.LastUsed.Format("2006-01-02 15:04")
-		}
-
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%v\t%d/min\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%v\t%d/min\t%s\n",
 			truncateString(key.DevID, 20),
 			truncateString(key.AppName, 20),
 			key.IsActive,
 			key.RateLimit,
 			key.CreatedAt.Format("2006-01-02"),
-			lastUsed,
 		)
 	}
 	_ = w.Flush()
@@ -252,11 +246,6 @@ func handleShow(args []string) {
 	fmt.Printf("Active:        %v\n", key.IsActive)
 	fmt.Printf("Rate Limit:    %d requests/minute\n", key.RateLimit)
 	fmt.Printf("Created:       %s\n", key.CreatedAt.Format("2006-01-02 15:04:05"))
-	if key.LastUsed != nil {
-		fmt.Printf("Last Used:     %s\n", key.LastUsed.Format("2006-01-02 15:04:05"))
-	} else {
-		fmt.Println("Last Used:     Never")
-	}
 	if len(key.AllowedOrigins) > 0 {
 		fmt.Printf("Origins:       %s\n", strings.Join(key.AllowedOrigins, ", "))
 	} else {

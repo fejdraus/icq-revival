@@ -325,15 +325,14 @@ type createWebAPIKeyRequest struct {
 }
 
 type webAPIKeyResponse struct {
-	DevID          string     `json:"dev_id"`
-	DevKey         string     `json:"dev_key,omitempty"` // Only shown on creation
-	AppName        string     `json:"app_name"`
-	CreatedAt      time.Time  `json:"created_at"`
-	LastUsed       *time.Time `json:"last_used,omitempty"`
-	IsActive       bool       `json:"is_active"`
-	RateLimit      int        `json:"rate_limit"`
-	AllowedOrigins []string   `json:"allowed_origins,omitempty"`
-	Capabilities   []string   `json:"capabilities,omitempty"`
+	DevID          string    `json:"dev_id"`
+	DevKey         string    `json:"dev_key,omitempty"` // Only shown on creation
+	AppName        string    `json:"app_name"`
+	CreatedAt      time.Time `json:"created_at"`
+	IsActive       bool      `json:"is_active"`
+	RateLimit      int       `json:"rate_limit"`
+	AllowedOrigins []string  `json:"allowed_origins,omitempty"`
+	Capabilities   []string  `json:"capabilities,omitempty"`
 }
 
 // icqProfileHandle is the JSON representation of a full ICQ user profile.

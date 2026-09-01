@@ -204,13 +204,6 @@ func (m *AuthMiddleware) Authenticate(next http.Handler) http.Handler {
 			return
 		}
 
-		// Update last used timestamp asynchronously
-		go func() {
-			if err := m.Validator.UpdateLastUsed(context.Background(), apiKey); err != nil {
-				m.Logger.Error("failed to update last_used timestamp", "err", err.Error())
-			}
-		}()
-
 		// Add API key info to context for use in handlers
 		ctx = context.WithValue(ctx, ContextKeyAPIKey, key)
 
@@ -416,13 +409,6 @@ func (m *AuthMiddleware) AuthenticateFlexible(next http.Handler) http.Handler {
 			SendEnvelopeStatus(w, r, http.StatusTooManyRequests, "rate limit exceeded", m.Logger)
 			return
 		}
-
-		// Update last used timestamp asynchronously
-		go func() {
-			if err := m.Validator.UpdateLastUsed(context.Background(), apiKey); err != nil {
-				m.Logger.Error("failed to update last_used timestamp", "err", err.Error())
-			}
-		}()
 
 		// Add API key info to context for use in handlers
 		ctx = context.WithValue(ctx, ContextKeyAPIKey, key)

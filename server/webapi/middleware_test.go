@@ -34,8 +34,6 @@ func (s *stubValidator) GetAPIKeyByDevKey(_ context.Context, devKey string) (*st
 	return s.key, nil
 }
 
-func (s *stubValidator) UpdateLastUsed(context.Context, string) error { return nil }
-
 func newTestMiddleware(v APIKeyValidator) *AuthMiddleware {
 	return NewAuthMiddleware(v, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
