@@ -1,9 +1,11 @@
 package webapi
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -67,7 +69,15 @@ type MemberDirInfo struct {
 
 // MemberDirResults wraps a directory search result set.
 type MemberDirResults struct {
-	Results MemberDirInfoArray `json:"results" xml:"results"`
+	Results MemberDirSearchResults `json:"results" xml:"results"`
+}
+
+// MemberDirSearchResults is the matched profile list plus its counters.
+type MemberDirSearchResults struct {
+	NTotal    int             `json:"nTotal" xml:"nTotal"`
+	NSkipped  int             `json:"nSkipped" xml:"nSkipped"`
+	NProfiles int             `json:"nProfiles" xml:"nProfiles"`
+	InfoArray []MemberDirInfo `json:"infoArray" xml:"infoArray>info"`
 }
 
 // MemberDirInfoArray is the list of matched profiles.
@@ -75,29 +85,57 @@ type MemberDirInfoArray struct {
 	InfoArray []MemberDirInfo `json:"infoArray" xml:"infoArray>info"`
 }
 
-// Search handles GET /memberDir/search. The web client sends the raw add-contact
-// input as a "match" parameter shaped like "keyword=<x>" or
-// "firstName=<x>,lastName=<y>". We translate that into an OSCAR ODir InfoQuery
-// and let the ODir service pick the search mode.
+// Search handles GET /memberDir/search.
 func (h *MemberDirHandler) Search(w http.ResponseWriter, r *http.Request, session *Session) {
 	ctx := r.Context()
 
 	fields := parseMatch(r.URL.Query().Get("match"))
-	inBody := buildDirInfoQuery(fields)
+	self := session.ScreenName.IdentScreenName()
 
-	reply, err := h.DirSearchService.InfoQuery(ctx, wire.SNACFrame{}, inBody)
-	if err != nil {
-		h.Logger.ErrorContext(ctx, "memberDir search failed", "err", err.Error())
-		SendOK(w, r, &MemberDirResults{Results: MemberDirInfoArray{InfoArray: []MemberDirInfo{}}}, h.Logger)
-		return
+	// ODir matches interests, names and email but never the screen name, so an
+	// identity lookup runs alongside the directory search.
+	profiles := make([]MemberDirProfile, 0, 8)
+	seen := make(map[string]bool)
+	addProfile := func(profile MemberDirProfile) {
+		// Exclude the requesting user from their own search results.
+		if profile.AimID == "" || profile.AimID == self.String() || seen[profile.AimID] {
+			return
+		}
+		seen[profile.AimID] = true
+		profiles = append(profiles, profile)
 	}
 
-	body, ok := reply.Body.(wire.SNAC_0x0F_0x03_InfoReply)
-	if !ok || body.Status != wire.ODirSearchResponseOK {
-		// Missing/insufficient params or an empty directory: return no results
-		// rather than an error so the client simply shows an empty result set.
-		SendOK(w, r, &MemberDirResults{Results: MemberDirInfoArray{InfoArray: []MemberDirInfo{}}}, h.Logger)
+	named, found, err := h.exactScreenNameMatch(ctx, fields["keyword"])
+	if err != nil {
+		h.Logger.ErrorContext(ctx, "memberDir search: screen name lookup failed",
+			"screenName", fields["keyword"], "err", err.Error())
+		SendEnvelopeStatus(w, r, http.StatusInternalServerError, "internal server error", h.Logger)
 		return
+	}
+	if found {
+		addProfile(named)
+	}
+
+	reply, err := h.DirSearchService.InfoQuery(ctx, wire.SNACFrame{}, buildDirInfoQuery(fields))
+	if err != nil {
+		h.Logger.ErrorContext(ctx, "memberDir search failed", "err", err.Error())
+		SendEnvelopeStatus(w, r, http.StatusInternalServerError, "internal server error", h.Logger)
+		return
+	}
+	if body, ok := reply.Body.(wire.SNAC_0x0F_0x03_InfoReply); ok && body.Status == wire.ODirSearchResponseOK {
+		for _, result := range body.Results.List {
+			profile := MemberDirProfile{}
+			if sn, ok := result.String(wire.ODirTLVScreenName); ok && sn != "" {
+				profile.DisplayID = sn
+				profile.AimID = state.NewIdentScreenName(sn).String()
+			}
+			profile.FirstName, _ = result.String(wire.ODirTLVFirstName)
+			profile.LastName, _ = result.String(wire.ODirTLVLastName)
+			profile.State, _ = result.String(wire.ODirTLVState)
+			profile.City, _ = result.String(wire.ODirTLVCity)
+			profile.Country, _ = result.String(wire.ODirTLVCountry)
+			addProfile(profile)
+		}
 	}
 
 	limit := defaultMemberDirLimit
@@ -106,28 +144,25 @@ func (h *MemberDirHandler) Search(w http.ResponseWriter, r *http.Request, sessio
 			limit = n
 		}
 	}
-	self := session.ScreenName.IdentScreenName()
-
-	infoArray := make([]MemberDirInfo, 0, len(body.Results.List))
-	for _, result := range body.Results.List {
-		profile := MemberDirProfile{}
-		if sn, ok := result.String(wire.ODirTLVScreenName); ok && sn != "" {
-			profile.DisplayID = sn
-			profile.AimID = state.NewIdentScreenName(sn).String()
+	skip := 0
+	if v := r.URL.Query().Get("nToSkip"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			skip = n
 		}
-		profile.FirstName, _ = result.String(wire.ODirTLVFirstName)
-		profile.LastName, _ = result.String(wire.ODirTLVLastName)
-		profile.State, _ = result.String(wire.ODirTLVState)
-		profile.City, _ = result.String(wire.ODirTLVCity)
-		profile.Country, _ = result.String(wire.ODirTLVCountry)
-		// Exclude the requesting user from their own search results.
-		if profile.AimID == self.String() {
+	}
+	// matched counts every profile the query matched; infoArray holds the page of
+	// them this response carries, after nToSkip and nToGet are applied.
+	matched := 0
+	infoArray := make([]MemberDirInfo, 0, len(profiles))
+	for _, profile := range profiles {
+		matched++
+		if matched <= skip {
+			continue
+		}
+		if len(infoArray) >= limit {
 			continue
 		}
 		infoArray = append(infoArray, MemberDirInfo{Profile: profile})
-		if len(infoArray) >= limit {
-			break
-		}
 	}
 
 	h.Logger.DebugContext(ctx, "memberDir search",
@@ -136,7 +171,46 @@ func (h *MemberDirHandler) Search(w http.ResponseWriter, r *http.Request, sessio
 		"results", len(infoArray),
 	)
 
-	SendOK(w, r, &MemberDirResults{Results: MemberDirInfoArray{InfoArray: infoArray}}, h.Logger)
+	SendOK(w, r, &MemberDirResults{Results: MemberDirSearchResults{
+		NTotal:    matched,
+		NSkipped:  skip,
+		NProfiles: len(infoArray),
+		InfoArray: infoArray,
+	}}, h.Logger)
+}
+
+// exactScreenNameMatch resolves query as a screen name, reporting whether a user
+// by that name exists along with their directory profile.
+func (h *MemberDirHandler) exactScreenNameMatch(ctx context.Context, query string) (MemberDirProfile, bool, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return MemberDirProfile{}, false, nil
+	}
+
+	reply, err := h.LocateService.DirInfo(ctx, wire.SNACFrame{}, wire.SNAC_0x02_0x0B_LocateGetDirInfo{ScreenName: query})
+	if err != nil {
+		return MemberDirProfile{}, false, fmt.Errorf("DirInfo: %w", err)
+	}
+	body, ok := reply.Body.(wire.SNAC_0x02_0x0C_LocateGetDirReply)
+	if !ok {
+		return MemberDirProfile{}, false, nil
+	}
+	// DirInfo answers for any name, appending directory TLVs only for a user that
+	// exists, so their presence — not their values — is the existence test.
+	if !body.HasTag(wire.ODirTLVFirstName) {
+		return MemberDirProfile{}, false, nil
+	}
+
+	profile := MemberDirProfile{
+		AimID:     state.NewIdentScreenName(query).String(),
+		DisplayID: query,
+	}
+	profile.FirstName, _ = body.String(wire.ODirTLVFirstName)
+	profile.LastName, _ = body.String(wire.ODirTLVLastName)
+	profile.State, _ = body.String(wire.ODirTLVState)
+	profile.City, _ = body.String(wire.ODirTLVCity)
+	profile.Country, _ = body.String(wire.ODirTLVCountry)
+	return profile, true, nil
 }
 
 // Get handles GET /memberDir/get. The "t" param names the screen names to look
@@ -188,17 +262,16 @@ func (h *MemberDirHandler) Get(w http.ResponseWriter, r *http.Request, session *
 	SendOK(w, r, &MemberDirInfoArray{InfoArray: infoArray}, h.Logger)
 }
 
-// Update handles GET /memberDir/update. The "Edit Your Name" form sends repeated
-// "set=key=value" params — always firstName and lastName, plus a hideLevel
-// web-search visibility flag. We persist first/last name into the user's OSCAR
-// directory info; hideLevel has no directory storage, so it is ignored.
+// Update handles /memberDir/update over GET and POST. Clients send repeated
+// "set=key=value" params; first and last name are persisted to the directory
+// record and every other field is ignored, having nowhere to be stored.
 //
 // SetDirectoryInfo replaces the whole directory record, so we read the current
 // info first and re-send every field, overlaying only what the form changed.
 func (h *MemberDirHandler) Update(w http.ResponseWriter, r *http.Request, session *Session) {
 	ctx := r.Context()
 
-	sets := parseSet(r.URL.Query()["set"])
+	sets := memberDirSets(r)
 
 	// Seed from the current record so untouched fields survive the replace. A
 	// failed read must abort: writing a record we couldn't seed would blank
@@ -267,13 +340,20 @@ func buildDirInfoQuery(fields map[string]string) wire.SNAC_0x0F_0x02_InfoQuery {
 			inBody.Append(wire.NewTLVBE(wire.ODirTLVLastName, v))
 		}
 	case fields["keyword"] != "":
-		inBody.Append(wire.NewTLVBE(wire.ODirTLVInterest, fields["keyword"]))
+		// "keyword" carries either an interest or an identifier. An address can
+		// only be the latter, and ODir searches email directly.
+		if kw := fields["keyword"]; strings.Contains(kw, "@") {
+			inBody.Append(wire.NewTLVBE(wire.ODirTLVEmailAddress, kw))
+		} else {
+			inBody.Append(wire.NewTLVBE(wire.ODirTLVInterest, kw))
+		}
 	}
 	return inBody
 }
 
-// parseMatch splits the web client's "match" value ("key=value,key=value")
-// into a field map.
+// parseMatch splits a client's "match" value ("key=value,key=value") into a field
+// map. Values may carry a second layer of escaping, so they are unescaped
+// after the split, the separators never being escaped themselves.
 func parseMatch(match string) map[string]string {
 	fields := make(map[string]string)
 	for pair := range strings.SplitSeq(match, ",") {
@@ -281,9 +361,27 @@ func parseMatch(match string) map[string]string {
 		if !ok {
 			continue
 		}
-		if key = strings.TrimSpace(key); key != "" {
-			fields[key] = strings.TrimSpace(val)
+		if key = strings.TrimSpace(key); key == "" {
+			continue
 		}
+		if unescaped, err := url.PathUnescape(val); err == nil {
+			val = unescaped
+		}
+		fields[key] = strings.TrimSpace(val)
+	}
+	return fields
+}
+
+// memberDirSets reads the repeated "set" params into a field map. Body values arrive
+// doubly encoded and need a second unescape; query values are already decoded, and
+// unescaping those again would corrupt a literal '%'.
+func memberDirSets(r *http.Request) map[string]string {
+	fields := parseSet(r.URL.Query()["set"])
+	for key, val := range parseSet(bodyValues(r, "set")) {
+		if decoded, err := url.QueryUnescape(val); err == nil {
+			val = decoded
+		}
+		fields[key] = val
 	}
 	return fields
 }

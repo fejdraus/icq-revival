@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -129,7 +130,7 @@ type StartSessionData struct {
 	WellKnownUrls *WellKnownUrls      `json:"wellKnownUrls,omitempty" xml:"wellKnownUrls,omitempty"`
 }
 
-// StartSession handles GET /aim/startSession requests.
+// StartSession handles GET|POST /aim/startSession requests.
 func (h *AimHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -140,24 +141,20 @@ func (h *AimHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse parameters
-	params := r.URL.Query()
-
-	// Get authentication token if provided
-	authToken := params.Get("a")
+	authToken := param(r, "a")
 
 	// Get client info
-	clientName := params.Get("clientName")
+	clientName := param(r, "clientName")
 	if clientName == "" {
 		clientName = "WebAIM"
 	}
-	clientVersion := params.Get("clientVersion")
+	clientVersion := param(r, "clientVersion")
 	if clientVersion == "" {
 		clientVersion = "1.0"
 	}
 
 	// Get events to subscribe to
-	eventsParam := params.Get("events")
+	eventsParam := param(r, "events")
 	var events []string
 	if eventsParam != "" {
 		events = strings.Split(eventsParam, ",")
@@ -175,7 +172,7 @@ func (h *AimHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 
 	// Get timeout settings
 	timeout := 60000 // Default 60 seconds for better stability with Gromit
-	if t := params.Get("timeout"); t != "" {
+	if t := param(r, "timeout"); t != "" {
 		if val, err := strconv.Atoi(t); err == nil && val > 0 {
 			timeout = val * 1000 // Convert to milliseconds
 		}
@@ -571,8 +568,8 @@ func (h *AimHandler) FetchEvents(w http.ResponseWriter, r *http.Request, session
 	// Fetch events from the queue (will block until events available or timeout)
 	events, err := session.EventQueue.Fetch(fetchCtx, lastSeqNum, timeout)
 	if err != nil {
-		if err == context.DeadlineExceeded {
-			// Timeout is normal - return empty events array
+		if errors.Is(err, context.DeadlineExceeded) {
+			// timeout is normal - return empty events array
 			events = []Event{}
 		} else {
 			h.Logger.ErrorContext(ctx, "failed to fetch events", "err", err.Error())
@@ -585,6 +582,12 @@ func (h *AimHandler) FetchEvents(w http.ResponseWriter, r *http.Request, session
 	newLastSeqNum := lastSeqNum
 	if len(events) > 0 {
 		newLastSeqNum = events[len(events)-1].SeqNum
+	}
+
+	// A nil slice renders as JSON null, which a client reading data.events
+	// strictly rejects.
+	if events == nil {
+		events = []Event{}
 	}
 
 	// Prepare response
@@ -811,7 +814,7 @@ func (h *AimHandler) StartOSCARSession(w http.ResponseWriter, r *http.Request) {
 
 	resp := &StartOSCARSessionResponse{}
 	resp.Response.StatusCode = 200
-	resp.Response.StatusText = "OK"
+	resp.Response.StatusText = "Ok"
 	resp.Response.Data.Host = host
 	resp.Response.Data.Port = port
 	// Base64, the encoding the client decodes the cookie with.
@@ -890,7 +893,7 @@ func seedRateLimitAlert(session *Session, classID wire.RateLimitClassID) {
 // user-object merge deletes friendly and capabilities before merging, so both
 // must be present on each push or the badge loses them. Time-sensitive fields
 // (onlineTime, memberSince) are intentionally excluded — a mid-session refresh
-// omits them so the client keeps the signon time it already has; the startSession
+// omits them so the client keeps the signon time it already has; the
 // builders add them explicitly. buddyIcon is included only when non-empty; an
 // empty value would be dropped by the client merge anyway, and the placeholder
 // URL (not "") is what clears an icon.

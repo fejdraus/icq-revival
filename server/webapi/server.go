@@ -105,8 +105,6 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 				authMiddleware.AuthenticateFlexible(h))
 		}
 
-		// Exact root only. Pattern "GET /" matches every GET path in Go 1.22+ (prefix /), which
-		// would steal /getAggregated and other lifestream URLs before stubs/404.
 		mux.Handle("GET /{$}", http.HandlerFunc(handler.GetHelloWorldHandler))
 
 		// Unauthenticated and outside every middleware: Flash Player fetches the
@@ -114,8 +112,6 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		// error envelope.
 		mux.Handle("GET /crossdomain.xml", &CrossDomainPolicyHandler{Logger: logger})
 
-		// Authentication endpoint (public - no API key required for user login)
-		// Using pattern with explicit method for Go 1.22+ routing.
 		mux.Handle("POST /auth/clientLogin", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Set CORS headers for public endpoint
 			w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -147,6 +143,24 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 			w.WriteHeader(http.StatusNoContent)
 		})
 
+		// No SSO cookie is involved, so this sits outside the session middleware.
+		// Both methods, since clients differ on which they use.
+		getInfo := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			authHandler.GetInfo(w, r)
+		})
+		mux.Handle("GET /auth/getInfo", getInfo)
+		mux.Handle("POST /auth/getInfo", getInfo)
+
+		mux.HandleFunc("OPTIONS /auth/getInfo", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+		})
+
 		// Web AIM navigates the browser here on File > Logout; clear SSO state
 		// and redirect to the login screen.
 		mux.Handle("GET /auth/logout", http.HandlerFunc(authHandler.Logout))
@@ -158,12 +172,11 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		mux.Handle("GET /_cqr/login/login.psp", loginPSP)
 		mux.Handle("POST /_cqr/login/login.psp", loginPSP)
 
-		// Authenticated Web AIM API endpoints
-		// SessionInstance management - supports multiple auth methods (k, a, ts+sig_sha256).
-		mux.Handle("GET /aim/startSession",
-			authMiddleware.CORSMiddleware(
-				authMiddleware.AuthenticateFlexible(
-					http.HandlerFunc(aimHandler.StartSession))))
+		startSession := authMiddleware.CORSMiddleware(
+			authMiddleware.AuthenticateFlexible(
+				http.HandlerFunc(aimHandler.StartSession)))
+		mux.Handle("GET /aim/startSession", startSession)
+		mux.Handle("POST /aim/startSession", startSession)
 
 		// End session - uses aimsid for auth, no k required
 		mux.Handle("GET /aim/endSession", sessionRoute(aimHandler.EndSession))
@@ -230,11 +243,11 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		// <img> sources that carry no aimsid.
 		mux.Handle("GET /presence/icon", http.HandlerFunc(presenceHandler.Icon))
 
-		// Member directory search and self directory-info retrieval. Both use
-		// aimsid-based auth, so we use flexible auth.
 		mux.Handle("GET /memberDir/search", oscarRoute(wire.ODir, wire.ODirInfoQuery, memberDirHandler.Search))
 		mux.Handle("GET /memberDir/get", oscarRoute(wire.Locate, wire.LocateGetDirInfo, memberDirHandler.Get))
-		mux.Handle("GET /memberDir/update", oscarRoute(wire.Locate, wire.LocateSetDirInfo, memberDirHandler.Update))
+		memberDirUpdate := oscarRoute(wire.Locate, wire.LocateSetDirInfo, memberDirHandler.Update)
+		mux.Handle("GET /memberDir/update", memberDirUpdate)
+		mux.Handle("POST /memberDir/update", memberDirUpdate)
 
 		// These endpoints support aimsid-based auth, so we use a flexible auth approach
 		mux.Handle("GET /preference/set", oscarRoute(wire.Feedbag, wire.FeedbagUpdateItem, preferenceHandler.SetPreferences))
@@ -243,19 +256,15 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		mux.Handle("GET /preference/getPermitDeny", oscarRoute(wire.Feedbag, wire.FeedbagQuery, preferenceHandler.GetPermitDeny))
 
 		// Expressions endpoint (for buddy icons, etc.).
-		//
-		// Unauthenticated, like /presence/icon: the buddyIcon URLs this serves are
-		// published to the client and loaded as plain <img> sources, which carry
-		// neither an aimsid nor an API key. Threading a session token through them
-		// instead would leak it into the DOM and defeat caching, since these URLs
-		// outlive the session that produced them. Buddy icons are public assets.
 		expressionsHandler := NewExpressionsHandler(
 			handler.IconSource, handler.BARTService, handler.FeedbagService, logger)
 		mux.Handle("GET /expressions/get",
 			authMiddleware.CORSMiddleware(
 				http.HandlerFunc(expressionsHandler.Get)))
+		// WithBinaryBody: the body is the raw image, and a missed parameter lookup
+		// would otherwise feed it to ParseForm and consume it.
 		mux.Handle("POST /expressions/upload",
-			oscarRoute(wire.BART, wire.BARTUploadQuery, expressionsHandler.Upload))
+			WithBinaryBody(oscarRoute(wire.BART, wire.BARTUploadQuery, expressionsHandler.Upload)))
 
 		// Web AIM calls lifestream/* on the API host (e.g. /lifestream/getUserDetails).
 		lifestreamStub := &UserInfoStubHandler{Logger: logger}
@@ -274,19 +283,9 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		serviceStub := &ServiceStubHandler{Logger: logger}
 		mux.Handle("GET /service/getAttributes", stubRoute(serviceStub.GetAttributes))
 
-		// Go 1.22 patterns are method-exact, so an OPTIONS preflight matches none of
-		// the "GET /x" routes above and would otherwise fall through to the 404
-		// handler, failing the preflight. CORSMiddleware answers OPTIONS with a 204
-		// and the appropriate headers before ever reaching the handler below.
 		mux.Handle("OPTIONS /", authMiddleware.CORSMiddleware(
 			http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
 
-		// Unmatched paths (pattern "/" matches anything not covered by routes above).
-		//
-		// Wrapped in CORS: the client probes endpoints this server does not
-		// implement (/service/getAttributes, /metrics/sendIM), and a 404 without
-		// Access-Control-Allow-Origin is blocked by the browser rather than read as
-		// a 404, which latches the client into JSONP for the rest of the session.
 		mux.Handle("/", authMiddleware.CORSMiddleware(
 			http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				logger.Debug("webapi 404", "method", r.Method, "path", r.URL.Path)
@@ -465,7 +464,7 @@ func (h Handler) GetHelloWorldHandler(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"response": map[string]interface{}{
 			"statusCode": 200,
-			"statusText": "OK",
+			"statusText": "Ok",
 			"data":       map[string]interface{}{},
 		},
 	}

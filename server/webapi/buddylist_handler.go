@@ -23,8 +23,11 @@ func (h *BuddyListHandler) AddBuddy(w http.ResponseWriter, r *http.Request, sess
 	ctx := r.Context()
 	aimsid := r.URL.Query().Get("aimsid")
 
-	buddyName := strings.TrimSpace(r.URL.Query().Get("buddy"))
-	groupName := strings.TrimSpace(r.URL.Query().Get("group"))
+	buddyName := strings.TrimSpace(param(r, "buddy"))
+	groupName := strings.TrimSpace(param(r, "group"))
+
+	preAuthorized := isTrueParam(param(r, "preAuthorized"))
+	authorizationMsg := strings.TrimSpace(param(r, "authorizationMsg"))
 
 	if buddyName == "" {
 		SendError(w, r, http.StatusBadRequest, "missing buddy parameter")
@@ -36,30 +39,16 @@ func (h *BuddyListHandler) AddBuddy(w http.ResponseWriter, r *http.Request, sess
 	}
 
 	// Add buddy to feedbag
-	resultCode, buddyInfo := h.addBuddyToFeedbag(ctx, session, buddyName, groupName)
+	resultCode := h.addBuddyToFeedbag(ctx, session, buddyName, groupName, preAuthorized, authorizationMsg)
 
 	// Prepare response
-	responseData := &ResultCodeData{ResultCode: resultCode}
-	if resultCode == "success" {
-		responseData.BuddyInfo = buddyInfo
-	}
-
-	SendOK(w, r, responseData, h.Logger)
-
-	if resultCode == "success" {
-		groups, err := h.BuddyListManager.GetBuddyListForUser(ctx, session)
-		if err != nil {
-			h.Logger.ErrorContext(ctx, "failed to get buddy list for event", "err", err.Error())
-		} else {
-			blPayload := &BuddyListData{Groups: groups}
-			session.EventQueue.Push(EventTypeBuddyList, blPayload)
-		}
-	}
+	sendMutationResult(w, r, resultCode, h.Logger)
 
 	h.Logger.InfoContext(ctx, "buddy added",
 		"aimsid", aimsid,
 		"buddy", buddyName,
 		"group", groupName,
+		"preAuthorized", preAuthorized,
 		"result", resultCode,
 	)
 }
@@ -77,17 +66,7 @@ func (h *BuddyListHandler) AddGroup(w http.ResponseWriter, r *http.Request, sess
 
 	resultCode := h.addGroupToFeedbag(ctx, session, groupName)
 
-	SendOK(w, r, &ResultCodeData{ResultCode: resultCode}, h.Logger)
-
-	if resultCode == "success" {
-		groups, err := h.BuddyListManager.GetBuddyListForUser(ctx, session)
-		if err != nil {
-			h.Logger.ErrorContext(ctx, "failed to get buddy list for event", "err", err.Error())
-		} else {
-			blPayload := &BuddyListData{Groups: groups}
-			session.EventQueue.Push(EventTypeBuddyList, blPayload)
-		}
-	}
+	sendMutationResult(w, r, resultCode, h.Logger)
 
 	h.Logger.InfoContext(ctx, "buddy list group added",
 		"aimsid", aimsid,
@@ -127,7 +106,7 @@ func (h *BuddyListHandler) addGroupToFeedbag(ctx context.Context, sess *Session,
 		return "error"
 	}
 
-	return "success"
+	return resultSuccess
 }
 
 // RemoveBuddy handles GET /buddylist/removeBuddy requests.
@@ -149,17 +128,7 @@ func (h *BuddyListHandler) RemoveBuddy(w http.ResponseWriter, r *http.Request, s
 		h.Logger.ErrorContext(ctx, "remove buddy failed", "err", rmErr.Error())
 	}
 
-	SendOK(w, r, &ResultCodeData{ResultCode: resultCode}, h.Logger)
-
-	if resultCode == "success" {
-		groups, err := h.BuddyListManager.GetBuddyListForUser(ctx, session)
-		if err != nil {
-			h.Logger.ErrorContext(ctx, "failed to get buddy list for event", "err", err.Error())
-		} else {
-			blPayload := &BuddyListData{Groups: groups}
-			session.EventQueue.Push(EventTypeBuddyList, blPayload)
-		}
-	}
+	sendMutationResult(w, r, resultCode, h.Logger)
 
 	h.Logger.InfoContext(ctx, "buddy removed",
 		"aimsid", aimsid,
@@ -186,17 +155,7 @@ func (h *BuddyListHandler) RemoveGroup(w http.ResponseWriter, r *http.Request, s
 		h.Logger.ErrorContext(ctx, "remove group failed", "err", rmErr.Error())
 	}
 
-	SendOK(w, r, &ResultCodeData{ResultCode: resultCode}, h.Logger)
-
-	if resultCode == "success" {
-		groups, err := h.BuddyListManager.GetBuddyListForUser(ctx, session)
-		if err != nil {
-			h.Logger.ErrorContext(ctx, "failed to get buddy list for event", "err", err.Error())
-		} else {
-			blPayload := &BuddyListData{Groups: groups}
-			session.EventQueue.Push(EventTypeBuddyList, blPayload)
-		}
-	}
+	sendMutationResult(w, r, resultCode, h.Logger)
 
 	h.Logger.InfoContext(ctx, "buddy list group removed",
 		"aimsid", aimsid,
@@ -206,7 +165,7 @@ func (h *BuddyListHandler) RemoveGroup(w http.ResponseWriter, r *http.Request, s
 }
 
 // addBuddyToFeedbag adds a buddy to the user's feedbag.
-func (h *BuddyListHandler) addBuddyToFeedbag(ctx context.Context, sess *Session, buddyName, groupName string) (string, *BuddyPresenceInfo) {
+func (h *BuddyListHandler) addBuddyToFeedbag(ctx context.Context, sess *Session, buddyName, groupName string, preAuthorized bool, authorizationMsg string) string {
 	defer sess.InvalidateAliases()
 
 	// Retrieve current feedbag
@@ -214,13 +173,13 @@ func (h *BuddyListHandler) addBuddyToFeedbag(ctx context.Context, sess *Session,
 	snac, err := h.FeedbagService.Query(ctx, sess.OSCARSession, frame)
 	if err != nil {
 		h.Logger.ErrorContext(ctx, "failed to retrieve feedbag", "err", err.Error())
-		return "error", nil
+		return "error"
 	}
 
 	reply, ok := snac.Body.(wire.SNAC_0x13_0x06_FeedbagReply)
 	if !ok {
 		// todo what
-		return "error", nil
+		return "error"
 	}
 
 	fl := state.NewFeedbagList(reply.Items, rand.Intn)
@@ -230,17 +189,17 @@ func (h *BuddyListHandler) addBuddyToFeedbag(ctx context.Context, sess *Session,
 		frame := wire.SNACFrame{FoodGroup: wire.Feedbag, SubGroup: wire.FeedbagInsertItem}
 		if _, err := h.FeedbagService.UpsertItem(ctx, sess.OSCARSession, frame, pending); err != nil {
 			h.Logger.ErrorContext(ctx, "failed to add buddy", "err", err.Error())
-			return "error", nil
+			return "error"
 		}
 	}
 
 	added, err := fl.AddBuddy(groupName, buddyName, "", "")
 	if err != nil {
 		h.Logger.ErrorContext(ctx, "failed to add buddy to feedbag", "err", err.Error())
-		return "error", nil
+		return "error"
 	}
 	if !added {
-		return "alreadyExists", nil
+		return "alreadyExists"
 	}
 
 	if pending := fl.PendingUpdates(); len(pending) > 0 {
@@ -259,7 +218,7 @@ func (h *BuddyListHandler) addBuddyToFeedbag(ctx context.Context, sess *Session,
 			frame := wire.SNACFrame{FoodGroup: wire.Feedbag, SubGroup: wire.FeedbagInsertItem}
 			if _, err := h.FeedbagService.UpsertItem(ctx, sess.OSCARSession, frame, buddies); err != nil {
 				h.Logger.ErrorContext(ctx, "failed to add buddy", "err", err.Error())
-				return "error", nil
+				return "error"
 			}
 		}
 
@@ -268,23 +227,25 @@ func (h *BuddyListHandler) addBuddyToFeedbag(ctx context.Context, sess *Session,
 				frame := wire.SNACFrame{FoodGroup: wire.Feedbag, SubGroup: wire.FeedbagUpdateItem}
 				if _, err := h.FeedbagService.UpsertItem(ctx, sess.OSCARSession, frame, []wire.FeedbagItem{item}); err != nil {
 					h.Logger.ErrorContext(ctx, "failed to add buddy", "err", err.Error())
-					return "error", nil
+					return "error"
 				}
 			}
 		}
 	}
 
-	// Get current presence for the buddy
-	buddyInfo := &BuddyPresenceInfo{
-		AimID:     state.NewIdentScreenName(buddyName).String(),
-		DisplayID: buddyName,
-		State:     "offline", // Default to offline
-		UserType:  "aim",
+	if preAuthorized {
+		frame := wire.SNACFrame{FoodGroup: wire.Feedbag, SubGroup: wire.FeedbagPreAuthorizeBuddy}
+		body := wire.SNAC_0x13_0x14_FeedbagPreAuthorizeBuddy{
+			ScreenName: buddyName,
+			Message:    authorizationMsg,
+		}
+		if _, err := h.FeedbagService.PreAuthorizeBuddy(ctx, sess.OSCARSession, frame, body); err != nil {
+			h.Logger.ErrorContext(ctx, "failed to pre-authorize buddy",
+				"buddy", buddyName, "err", err.Error())
+		}
 	}
 
-	// TODO: Check actual presence status and update buddyInfo accordingly
-
-	return "success", buddyInfo
+	return resultSuccess
 }
 
 // RenameGroup handles GET /buddylist/renameGroup requests.
@@ -308,11 +269,7 @@ func (h *BuddyListHandler) RenameGroup(w http.ResponseWriter, r *http.Request, s
 		h.Logger.ErrorContext(ctx, "rename group failed", "err", rnErr.Error())
 	}
 
-	SendOK(w, r, &ResultCodeData{ResultCode: resultCode}, h.Logger)
-
-	if resultCode == "success" {
-		h.pushBuddyListEvent(ctx, session)
-	}
+	sendMutationResult(w, r, resultCode, h.Logger)
 
 	h.Logger.InfoContext(ctx, "buddy list group renamed",
 		"aimsid", aimsid,
@@ -350,11 +307,7 @@ func (h *BuddyListHandler) MoveBuddy(w http.ResponseWriter, r *http.Request, ses
 		h.Logger.ErrorContext(ctx, "move buddy failed", "err", mvErr.Error())
 	}
 
-	SendOK(w, r, &ResultCodeData{ResultCode: resultCode}, h.Logger)
-
-	if resultCode == "success" {
-		h.pushBuddyListEvent(ctx, session)
-	}
+	sendMutationResult(w, r, resultCode, h.Logger)
 
 	h.Logger.InfoContext(ctx, "buddy moved",
 		"aimsid", aimsid,
@@ -387,11 +340,7 @@ func (h *BuddyListHandler) SetBuddyAttribute(w http.ResponseWriter, r *http.Requ
 		h.Logger.ErrorContext(ctx, "set buddy attribute failed", "err", saErr.Error())
 	}
 
-	SendOK(w, r, &ResultCodeData{ResultCode: resultCode}, h.Logger)
-
-	if resultCode == "success" {
-		h.pushBuddyListEvent(ctx, session)
-	}
+	sendMutationResult(w, r, resultCode, h.Logger)
 
 	h.Logger.InfoContext(ctx, "buddy attribute set",
 		"aimsid", aimsid,
@@ -424,11 +373,7 @@ func (h *BuddyListHandler) SetGroupAttribute(w http.ResponseWriter, r *http.Requ
 		h.Logger.ErrorContext(ctx, "set group attribute failed", "err", saErr.Error())
 	}
 
-	SendOK(w, r, &ResultCodeData{ResultCode: resultCode}, h.Logger)
-
-	if resultCode == "success" {
-		h.pushBuddyListEvent(ctx, session)
-	}
+	sendMutationResult(w, r, resultCode, h.Logger)
 
 	h.Logger.InfoContext(ctx, "buddy list group attribute set",
 		"aimsid", aimsid,
@@ -438,15 +383,17 @@ func (h *BuddyListHandler) SetGroupAttribute(w http.ResponseWriter, r *http.Requ
 	)
 }
 
-// pushBuddyListEvent refreshes the buddy list and pushes it to the session's
-// event queue so the Web client re-renders after a mutation.
-func (h *BuddyListHandler) pushBuddyListEvent(ctx context.Context, session *Session) {
-	groups, err := h.BuddyListManager.GetBuddyListForUser(ctx, session)
-	if err != nil {
-		h.Logger.ErrorContext(ctx, "failed to get buddy list for event", "err", err.Error())
+// resultSuccess is the result code the buddy list methods no longer report; see
+// sendMutationResult.
+const resultSuccess = "success"
+
+func sendMutationResult(w http.ResponseWriter, r *http.Request, resultCode string, logger *slog.Logger) {
+	if resultCode == resultSuccess {
+		// Nil data renders as an empty "data":{} — no resultCode, no buddyInfo.
+		SendOK(w, r, nil, logger)
 		return
 	}
-	session.EventQueue.Push(EventTypeBuddyList, &BuddyListData{Groups: groups})
+	SendOK(w, r, &ResultCodeData{ResultCode: resultCode}, logger)
 }
 
 // ResultCodeData is the payload the buddy list editing methods answer with.
@@ -455,8 +402,6 @@ func (h *BuddyListHandler) pushBuddyListEvent(ctx context.Context, session *Sess
 // reads resultCode from it, so the server sends one.
 type ResultCodeData struct {
 	ResultCode string `json:"resultCode" xml:"resultCode"`
-	// BuddyInfo accompanies a successful addBuddy only.
-	BuddyInfo *BuddyPresenceInfo `json:"buddyInfo,omitempty" xml:"buddyInfo,omitempty"`
 	// BuddyNames accompanies the temp-buddy methods only.
 	BuddyNames []string `json:"buddyNames,omitempty" xml:"buddyNames>buddyName,omitempty"`
 }

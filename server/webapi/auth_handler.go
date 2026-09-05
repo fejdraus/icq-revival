@@ -46,6 +46,18 @@ type UserAttributes struct {
 	LoginID string `json:"loginId" xml:"loginId"`
 }
 
+// GetInfoData is the auth/getInfo payload.
+type GetInfoData struct {
+	UserData GetInfoUser `json:"userData" xml:"userData"`
+}
+
+// GetInfoUser names the account the presented token belongs to. Clients read both
+// keys strictly, so neither is omitted when empty.
+type GetInfoUser struct {
+	LoginID     string `json:"loginId" xml:"loginId"`
+	DisplayName string `json:"displayName" xml:"displayName"`
+}
+
 // ClientLoginData is the clientLogin payload.
 type ClientLoginData struct {
 	Token          AuthToken `json:"token" xml:"token"`
@@ -194,11 +206,9 @@ func clientIDForDevID(devID string) string {
 }
 
 func (h *AuthHandler) loginRedirectURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	return fmt.Sprintf("%s://%s/_cqr/login/login.psp", scheme, r.Host)
+	// requestScheme, not r.TLS: TLS is terminated upstream, so the scheme survives
+	// only in the header.
+	return fmt.Sprintf("%s://%s/_cqr/login/login.psp", requestScheme(r), r.Host)
 }
 
 // Logout clears the token cookie and sends the browser to the login page. A
@@ -306,6 +316,101 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		"username", username,
 		"screenName", username,
 		"tokenTTL", ttl)
+}
+
+// defaultAuthFreshness is the reqAuthFreshness applied when a caller names none.
+const defaultAuthFreshness = 24 * time.Hour
+
+// GetInfo handles GET and POST /auth/getInfo, reporting which account the token in
+// "a" belongs to. It mints nothing: a caller that cannot be answered is told to
+// authenticate again.
+func (h *AuthHandler) GetInfo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// This endpoint does not renew. Refusing gives a client expecting a token some
+	// status to react to; a 200 with no token gives it nothing.
+	if isTrueParam(param(r, "renewToken")) {
+		h.Logger.DebugContext(ctx, "getInfo: refused a renewal request")
+		h.sendGetInfoRedirect(w, r, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	token := param(r, "a")
+	if token == "" {
+		h.sendGetInfoRedirect(w, r, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	rawCookie, err := base64.URLEncoding.DecodeString(strings.TrimSpace(token))
+	if err != nil {
+		h.Logger.DebugContext(ctx, "getInfo: token is not valid base64", "error", err)
+		h.sendGetInfoRedirect(w, r, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	serverCookie, expiry, err := h.AuthService.CrackCookie(rawCookie)
+	if err != nil {
+		h.Logger.DebugContext(ctx, "getInfo: token rejected", "error", err)
+		h.sendGetInfoRedirect(w, r, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	if serverCookie.Service != wire.BOS || serverCookie.ChatCookie != "" || serverCookie.TokenTTL == 0 {
+		h.Logger.WarnContext(ctx, "getInfo: rejected a cookie that is not a login token",
+			"service", serverCookie.Service, "loginId", serverCookie.ScreenName)
+		h.sendGetInfoRedirect(w, r, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
+
+	freshness, ok := authFreshness(r)
+	if !ok {
+		SendEnvelopeStatus(w, r, statusParameterError, "reqAuthFreshness is not a count of seconds", h.Logger)
+		return
+	}
+
+	if age := authAge(serverCookie, expiry); age > freshness {
+		h.Logger.DebugContext(ctx, "getInfo: authentication is too stale",
+			"loginId", serverCookie.ScreenName, "age", age, "required", freshness)
+		h.sendGetInfoRedirect(w, r, statusMoreAuthRequired, "More authentication required")
+		return
+	}
+
+	SendOK(w, r, &GetInfoData{
+		UserData: GetInfoUser{
+			LoginID:     serverCookie.ScreenName.String(),
+			DisplayName: serverCookie.ScreenName.String(),
+		},
+	}, h.Logger)
+}
+
+// sendGetInfoRedirect refuses a getInfo, naming where to authenticate instead.
+// SendEnvelopeStatus cannot be used: it sends no data, so the client has nowhere to
+// go.
+func (h *AuthHandler) sendGetInfoRedirect(w http.ResponseWriter, r *http.Request, statusCode int, statusText string) {
+	resp := BaseResponse{}
+	resp.Response.StatusCode = statusCode
+	resp.Response.StatusText = statusText
+	resp.Response.Data = &RedirectData{RedirectURL: h.loginRedirectURL(r)}
+	SendResponse(w, r, resp, h.Logger)
+}
+
+// authFreshness reads the reqAuthFreshness parameter, reporting false when it is
+// present but unusable. Absent, it is the spec's 24 hours.
+func authFreshness(r *http.Request) (time.Duration, bool) {
+	raw := strings.TrimSpace(param(r, "reqAuthFreshness"))
+	if raw == "" {
+		return defaultAuthFreshness, true
+	}
+	secs, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	return time.Duration(secs) * time.Second, true
+}
+
+func authAge(cookie state.ServerCookie, expiry time.Time) time.Duration {
+	issued := expiry.Add(-time.Duration(cookie.TokenTTL) * time.Second)
+	return max(time.Since(issued), 0)
 }
 
 // generateToken generates a secure random token.
