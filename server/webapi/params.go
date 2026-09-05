@@ -80,6 +80,21 @@ func bodyValues(r *http.Request, key string) []string {
 	return r.PostForm[key]
 }
 
+// targetNames returns the screen names a request's "t" parameter asks about.
+// Both spellings of the list are accepted and combined: one t carrying comma-
+// separated names, and t repeated once per name.
+func targetNames(r *http.Request) []string {
+	var targets []string
+	for _, value := range paramValues(r, "t") {
+		for _, name := range strings.Split(value, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				targets = append(targets, name)
+			}
+		}
+	}
+	return targets
+}
+
 // isTrueParam reports whether a boolean-ish parameter is set. Clients spell these
 // inconsistently, so both "1" and "true" are accepted.
 func isTrueParam(v string) bool {

@@ -19,9 +19,7 @@ import (
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
-// AimHandler serves the /aim/* Web AIM API endpoints: the session lifecycle,
-// the long-poll event fetch, session-local temp buddies, the OSCAR protocol
-// handoff, and the stubs the client calls during startup.
+// AimHandler serves the /aim/* Web AIM API endpoints.
 type AimHandler struct {
 	SessionManager   *SessionManager
 	AuthService      AuthService
@@ -29,6 +27,7 @@ type AimHandler struct {
 	ICBMService      ICBMService
 	OServiceService  OServiceService
 	BuddyListManager *BuddyListManager
+	BuddyService     BuddyService
 	IconSource       BuddyIconSource
 	// BOSListener is the listener group startOSCARSession advertises a BOS
 	// address from.
@@ -395,7 +394,7 @@ func (h *AimHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 			MaxPermits:           500,
 			MaxWatchers:          3000,
 			MaxBuddies:           500,
-			MaxTempBuddies:       160,
+			MaxTempBuddies:       maxTempBuddies,
 			MaxIMSize:            3987,
 			MinInterIcbmInterval: 1000,
 			MaxSourceEvil:        900,
@@ -611,40 +610,41 @@ func (h *AimHandler) FetchEvents(w http.ResponseWriter, r *http.Request, session
 	}
 }
 
+// maxTempBuddies caps how many screen names one addTempBuddy or removeTempBuddy
+// call may carry.
+const maxTempBuddies = 160
+
 // AddTempBuddy handles GET /aim/addTempBuddy requests.
-// This adds temporary buddies to the session without persisting them to the feedbag.
-// The temporary buddies are only visible for the duration of the session.
+// Temporary buddies live for the duration of the OSCAR session; they are not
+// persisted to the feedbag.
 func (h *AimHandler) AddTempBuddy(w http.ResponseWriter, r *http.Request, session *Session) {
 	ctx := r.Context()
 	aimsid := r.URL.Query().Get("aimsid")
 
-	buddyNames := r.URL.Query()["t"]
+	buddyNames := targetNames(r)
 	if len(buddyNames) == 0 {
 		SendError(w, r, http.StatusBadRequest, "missing buddy names (t parameter)")
 		return
 	}
-
-	// Store temporary buddies in the session
-	// Note: These are not persisted to the feedbag database
-	if session.TempBuddies == nil {
-		session.TempBuddies = make(map[string]bool)
+	if len(buddyNames) > maxTempBuddies {
+		SendError(w, r, http.StatusBadRequest, fmt.Sprintf("too many buddy names (max %d)", maxTempBuddies))
+		return
 	}
 
+	snac := wire.SNAC_0x03_0x0F_BuddyAddTempBuddies{}
 	for _, buddyName := range buddyNames {
-		buddyName = strings.TrimSpace(buddyName)
-		if buddyName != "" {
-			session.TempBuddies[buddyName] = true
-		}
+		snac.Buddies = append(snac.Buddies, struct {
+			ScreenName string `oscar:"len_prefix=uint8"`
+		}{ScreenName: buddyName})
 	}
 
-	// Prepare response
-	responseData := &ResultCodeData{ResultCode: "success", BuddyNames: buddyNames}
+	if _, err := h.BuddyService.AddTempBuddies(ctx, session.OSCARSession, wire.SNACFrame{}, snac); err != nil {
+		h.Logger.ErrorContext(ctx, "add temp buddies failed", "aimsid", aimsid, "err", err.Error())
+		SendError(w, r, http.StatusInternalServerError, "unable to add temporary buddies")
+		return
+	}
 
-	SendOK(w, r, responseData, h.Logger)
-
-	// Do not push buddylist events for temp buddies. The Web AIM client handles
-	// addTempBuddy via the API response; a buddylist event without "groups" causes
-	// the client to clear the entire contact list (zC always calls clear() first).
+	SendOK(w, r, nil, h.Logger)
 
 	h.Logger.InfoContext(ctx, "temporary buddies added",
 		"aimsid", aimsid,
@@ -659,30 +659,35 @@ func (h *AimHandler) RemoveTempBuddy(w http.ResponseWriter, r *http.Request, ses
 	ctx := r.Context()
 	aimsid := r.URL.Query().Get("aimsid")
 
-	buddyNames := r.URL.Query()["t"]
+	buddyNames := targetNames(r)
 	if len(buddyNames) == 0 {
 		SendError(w, r, http.StatusBadRequest, "missing buddy names (t parameter)")
 		return
 	}
-
-	removed := make([]string, 0, len(buddyNames))
-	for _, buddyName := range buddyNames {
-		buddyName = strings.TrimSpace(buddyName)
-		if buddyName == "" {
-			continue
-		}
-		if session.TempBuddies != nil {
-			delete(session.TempBuddies, buddyName)
-		}
-		removed = append(removed, buddyName)
+	if len(buddyNames) > maxTempBuddies {
+		SendError(w, r, http.StatusBadRequest, fmt.Sprintf("too many buddy names (max %d)", maxTempBuddies))
+		return
 	}
 
-	SendOK(w, r, &ResultCodeData{ResultCode: "success", BuddyNames: removed}, h.Logger)
+	snac := wire.SNAC_0x03_0x10_BuddyDelTempBuddies{}
+	for _, buddyName := range buddyNames {
+		snac.Buddies = append(snac.Buddies, struct {
+			ScreenName string `oscar:"len_prefix=uint8"`
+		}{ScreenName: buddyName})
+	}
+
+	if err := h.BuddyService.DelTempBuddies(ctx, session.OSCARSession, snac); err != nil {
+		h.Logger.ErrorContext(ctx, "remove temp buddies failed", "aimsid", aimsid, "err", err.Error())
+		SendError(w, r, http.StatusInternalServerError, "unable to remove temporary buddies")
+		return
+	}
+
+	SendOK(w, r, nil, h.Logger)
 
 	h.Logger.InfoContext(ctx, "temporary buddies removed",
 		"aimsid", aimsid,
-		"buddies", removed,
-		"count", len(removed),
+		"buddies", buddyNames,
+		"count", len(buddyNames),
 	)
 }
 

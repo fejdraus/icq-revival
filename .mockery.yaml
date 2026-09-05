@@ -291,6 +291,9 @@ packages:
       BuddyIconRetriever:
         config:
           filename: "mock_buddy_icon_retriever_test.go"
+      BuddyService:
+        config:
+          filename: "mock_buddy_service_test.go"
       DirSearchService:
         config:
           filename: "mock_dir_search_service_test.go"

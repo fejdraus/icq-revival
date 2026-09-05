@@ -542,7 +542,7 @@ func WebAPI(deps Container) *webapi.Server {
 		iconSource,
 		logger,
 	)
-	oscarBuddyBroadcaster := foodgroup.NewBuddyService(
+	buddyService := foodgroup.NewBuddyService(
 		deps.inMemorySessionManager,
 		deps.sqLiteUserStore,
 		deps.sqLiteUserStore,
@@ -585,7 +585,8 @@ func WebAPI(deps Container) *webapi.Server {
 			deps.sqLiteUserStore,
 			deps.sqLiteUserStore,
 		),
-		BuddyBroadcaster: oscarBuddyBroadcaster,
+		BuddyBroadcaster: buddyService,
+		BuddyService:     buddyService,
 		BOSListener: slices.MinFunc(deps.Listeners, func(a, b config.ListenerGroup) int {
 			return strings.Compare(a.Name, b.Name)
 		}),

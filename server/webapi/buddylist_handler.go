@@ -402,6 +402,4 @@ func sendMutationResult(w http.ResponseWriter, r *http.Request, resultCode strin
 // reads resultCode from it, so the server sends one.
 type ResultCodeData struct {
 	ResultCode string `json:"resultCode" xml:"resultCode"`
-	// BuddyNames accompanies the temp-buddy methods only.
-	BuddyNames []string `json:"buddyNames,omitempty" xml:"buddyNames>buddyName,omitempty"`
 }

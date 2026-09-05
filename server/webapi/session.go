@@ -72,7 +72,6 @@ type Session struct {
 	FetchTimeout        int                                            // Long-polling timeout in milliseconds
 	TimeToNextFetch     int                                            // Suggested delay before next fetch
 	RemoteAddr          string                                         // Client IP address
-	TempBuddies         map[string]bool                                // Temporary buddies for this session only
 	BuddyListRefresher  func(ctx context.Context) (interface{}, error) // Called on feedbag changes to push buddylist event
 	PermitDenyRefresher func(ctx context.Context) (interface{}, error) // Called on feedbag changes to push permitDeny event
 	MyInfoRefresher     func(ctx context.Context) (interface{}, error) // Called on self user-info updates (e.g. icon change) to push myInfo event

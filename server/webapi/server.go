@@ -34,6 +34,7 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		ICBMService:      handler.ICBMService,
 		OServiceService:  handler.OServiceService,
 		BuddyListManager: handler.BuddyListManager,
+		BuddyService:     handler.BuddyService,
 		IconSource:       handler.IconSource,
 		BOSListener:      handler.BOSListener,
 		SNACRateLimits:   handler.SNACRateLimits,
@@ -181,13 +182,8 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, apiKeyV
 		// End session - uses aimsid for auth, no k required
 		mux.Handle("GET /aim/endSession", sessionRoute(aimHandler.EndSession))
 
-		// Event fetching - uses aimsid for auth, no k required. This is the
-		// long-poll loop the client runs continuously.
 		mux.Handle("GET /aim/fetchEvents", sessionRoute(aimHandler.FetchEvents))
 
-		// Temp buddies are session-local rather than feedbag-backed, but they
-		// are the Web API's equivalent of the BUDDY temp buddy SNACs and are
-		// charged as such.
 		mux.Handle("GET /aim/addTempBuddy", oscarRoute(wire.Buddy, wire.BuddyAddTempBuddies, aimHandler.AddTempBuddy))
 		mux.Handle("GET /aim/removeTempBuddy", oscarRoute(wire.Buddy, wire.BuddyDelTempBuddies, aimHandler.RemoveTempBuddy))
 
@@ -444,6 +440,7 @@ type Handler struct {
 	Logger             *slog.Logger
 	OServiceService    OServiceService
 	BuddyBroadcaster   BuddyBroadcaster
+	BuddyService       BuddyService
 	BOSListener        config.ListenerGroup
 	BuddyListManager   *BuddyListManager
 	RecalcWarning      func(ctx context.Context, instance *state.SessionInstance) error

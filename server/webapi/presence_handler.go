@@ -42,21 +42,6 @@ type SetStateData struct {
 	OnlineTime int64  `json:"onlineTime" xml:"onlineTime"`
 }
 
-// presenceTargets returns the screen names a presence/get request asks about.
-// Both spellings of the list are accepted and combined: one t carrying comma-
-// separated names, and t repeated once per name.
-func presenceTargets(r *http.Request) []string {
-	var targets []string
-	for _, value := range paramValues(r, "t") {
-		for _, name := range strings.Split(value, ",") {
-			if name = strings.TrimSpace(name); name != "" {
-				targets = append(targets, name)
-			}
-		}
-	}
-	return targets
-}
-
 // PresenceData contains presence information. Each query fills in one field and
 // leaves the other nil.
 //
@@ -122,7 +107,7 @@ func (h *PresenceHandler) GetPresence(w http.ResponseWriter, r *http.Request, se
 	// mdir asks for member-directory fields alongside presence.
 	wantDirInfo := isTrueParam(r.URL.Query().Get("mdir"))
 
-	targetUsers := presenceTargets(r)
+	targetUsers := targetNames(r)
 
 	// Create PresenceData struct to hold the response data
 	presenceData := PresenceData{}

@@ -40,6 +40,13 @@ type BuddyBroadcaster interface {
 	BroadcastBuddyDeparted(ctx context.Context, screenName state.IdentScreenName) error
 }
 
+// BuddyService adds and removes buddies that live only for the duration of the
+// user's session.
+type BuddyService interface {
+	AddTempBuddies(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x03_0x0F_BuddyAddTempBuddies) (*wire.SNACMessage, error)
+	DelTempBuddies(ctx context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x03_0x10_BuddyDelTempBuddies) error
+}
+
 // DirSearchService runs ODir member-directory searches.
 type DirSearchService interface {
 	InfoQuery(ctx context.Context, inFrame wire.SNACFrame, inBody wire.SNAC_0x0F_0x02_InfoQuery) (wire.SNACMessage, error)
