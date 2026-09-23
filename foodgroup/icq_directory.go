@@ -523,12 +523,6 @@ func takeCode(tlvs wire.TLVList, tag uint16, dst *uint16) {
 	}
 }
 
-func takeWord(tlvs wire.TLVList, tag uint16, dst *uint16) {
-	if v, ok := tlvs.Uint16BE(tag); ok {
-		*dst = v
-	}
-}
-
 // directoryProfile lays a profile out into the directory protocol tags.
 func directoryProfile(user state.User, uid string) ([]byte, error) {
 	basic := user.ICQInfo.Basic

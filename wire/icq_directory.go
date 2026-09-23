@@ -197,7 +197,7 @@ func ICQDirRecordList(records []ICQDirRecord) ([]byte, error) {
 	}
 	for _, rec := range records {
 		body := &bytes.Buffer{}
-		if err := MarshalBE(TLVRestBlock{TLVList: rec.TLVList}, body); err != nil {
+		if err := MarshalBE(TLVRestBlock(rec), body); err != nil {
 			return nil, err
 		}
 		if body.Len() > math.MaxUint16 {

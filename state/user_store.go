@@ -202,7 +202,7 @@ func (f SQLiteUserStore) EmailOwner(ctx context.Context, email string) (DisplayS
 	for rows.Next() {
 		var sn string
 		if err := rows.Scan(&sn); err != nil {
-			return "", fmt.Errorf("Scan: %w", err)
+			return "", fmt.Errorf("scan: %w", err)
 		}
 		found = append(found, DisplayScreenName(sn))
 	}

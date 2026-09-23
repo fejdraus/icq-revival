@@ -1057,7 +1057,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 					User(matchContext(), params.screenName).
 					Return(params.result, params.err)
 			}
-			for _, params := range tc.mockParams.userManagerParams.emailOwnerParams {
+			for _, params := range tc.mockParams.emailOwnerParams {
 				userManager.EXPECT().
 					EmailOwner(matchContext(), params.email).
 					Return(params.result, params.err)
