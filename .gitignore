@@ -7,3 +7,6 @@ certs/
 .vscode/
 .cursor/
 clients/
+
+# Python bytecode from the client tools
+__pycache__/

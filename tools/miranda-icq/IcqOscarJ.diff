@@ -1,0 +1,1986 @@
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/icqoscar8.vcxproj b/icqoscar8.vcxproj
+--- a/icqoscar8.vcxproj	2026-09-22 23:33:29.191985800 +0300
++++ b/icqoscar8.vcxproj	2026-09-22 23:33:29.445675600 +0300
+@@ -25,4 +25,101 @@
+   <ImportGroup Label="PropertySheets">
+     <Import Project="$(ProjectDir)..\..\build\vc.common\plugin.props" />
+   </ImportGroup>
++  <ItemGroup>
++    <ClCompile Include="src\stdafx.cxx">
++      <PrecompiledHeader>Create</PrecompiledHeader>
++    </ClCompile>
++    <ClCompile Include="src\askauthentication.cpp" />
++    <ClCompile Include="src\capabilities.cpp" />
++    <ClCompile Include="src\chan_01login.cpp" />
++    <ClCompile Include="src\chan_02data.cpp" />
++    <ClCompile Include="src\chan_03error.cpp" />
++    <ClCompile Include="src\chan_04close.cpp" />
++    <ClCompile Include="src\chan_05ping.cpp" />
++    <ClCompile Include="src\constants.cpp" />
++    <ClCompile Include="src\cookies.cpp" />
++    <ClCompile Include="src\db.cpp" />
++    <ClCompile Include="src\directpackets.cpp" />
++    <ClCompile Include="src\dlgproc.cpp" />
++    <ClCompile Include="src\editlist.cpp" />
++    <ClCompile Include="src\editstring.cpp" />
++    <ClCompile Include="src\fam_01service.cpp" />
++    <ClCompile Include="src\fam_02location.cpp" />
++    <ClCompile Include="src\fam_03buddy.cpp" />
++    <ClCompile Include="src\fam_04message.cpp" />
++    <ClCompile Include="src\fam_09bos.cpp" />
++    <ClCompile Include="src\fam_0alookup.cpp" />
++    <ClCompile Include="src\fam_0bstatus.cpp" />
++    <ClCompile Include="src\fam_13servclist.cpp" />
++    <ClCompile Include="src\fam_15icqserver.cpp" />
++    <ClCompile Include="src\fam_17signon.cpp" />
++    <ClCompile Include="src\i18n.cpp" />
++    <ClCompile Include="src\icq_advsearch.cpp" />
++    <ClCompile Include="src\icq_avatar.cpp" />
++    <ClCompile Include="src\icq_clients.cpp" />
++    <ClCompile Include="src\icq_db.cpp" />
++    <ClCompile Include="src\icq_direct.cpp" />
++    <ClCompile Include="src\icq_directmsg.cpp" />
++    <ClCompile Include="src\icq_fieldnames.cpp" />
++    <ClCompile Include="src\icq_filerequests.cpp" />
++    <ClCompile Include="src\icq_filetransfer.cpp" />
++    <ClCompile Include="src\icq_firstrun.cpp" />
++    <ClCompile Include="src\icq_infoupdate.cpp" />
++    <ClCompile Include="src\icq_menu.cpp" />
++    <ClCompile Include="src\icq_opts.cpp" />
++    <ClCompile Include="src\icq_packet.cpp" />
++    <ClCompile Include="src\icq_popups.cpp" />
++    <ClCompile Include="src\icq_proto.cpp" />
++    <ClCompile Include="src\icq_rates.cpp" />
++    <ClCompile Include="src\icq_server.cpp" />
++    <ClCompile Include="src\icq_servlist.cpp" />
++    <ClCompile Include="src\icq_uploadui.cpp" />
++    <ClCompile Include="src\icq_xstatus.cpp" />
++    <ClCompile Include="src\icq_xtraz.cpp" />
++    <ClCompile Include="src\icqosc_svcs.cpp" />
++    <ClCompile Include="src\init.cpp" />
++    <ClCompile Include="src\log.cpp" />
++    <ClCompile Include="src\loginpassword.cpp" />
++    <ClCompile Include="src\oscar_filetransfer.cpp" />
++    <ClCompile Include="src\stdpackets.cpp" />
++    <ClCompile Include="src\tlv.cpp" />
++    <ClCompile Include="src\upload.cpp" />
++    <ClCompile Include="src\userinfotab.cpp" />
++    <ClCompile Include="src\utilities.cpp" />
++  </ItemGroup>
++  <ItemGroup>
++    <ClInclude Include="src\capabilities.h" />
++    <ClInclude Include="src\changeinfo.h" />
++    <ClInclude Include="src\channels.h" />
++    <ClInclude Include="src\cookies.h" />
++    <ClInclude Include="src\families.h" />
++    <ClInclude Include="src\globals.h" />
++    <ClInclude Include="src\guids.h" />
++    <ClInclude Include="src\i18n.h" />
++    <ClInclude Include="src\icq_advsearch.h" />
++    <ClInclude Include="src\icq_avatar.h" />
++    <ClInclude Include="src\icq_constants.h" />
++    <ClInclude Include="src\icq_direct.h" />
++    <ClInclude Include="src\icq_fieldnames.h" />
++    <ClInclude Include="src\icq_http.h" />
++    <ClInclude Include="src\icq_packet.h" />
++    <ClInclude Include="src\icq_popups.h" />
++    <ClInclude Include="src\icq_proto.h" />
++    <ClInclude Include="src\icq_rates.h" />
++    <ClInclude Include="src\icq_server.h" />
++    <ClInclude Include="src\icq_servlist.h" />
++    <ClInclude Include="src\icqosc_svcs.h" />
++    <ClInclude Include="src\log.h" />
++    <ClInclude Include="src\oscar_filetransfer.h" />
++    <ClInclude Include="src\resource.h" />
++    <ClInclude Include="src\stdafx.h" />
++    <ClInclude Include="src\stdpackets.h" />
++    <ClInclude Include="src\tlv.h" />
++    <ClInclude Include="src\utilities.h" />
++    <ClInclude Include="src\version.h" />
++  </ItemGroup>
++  <ItemGroup>
++    <ResourceCompile Include="res\resources.rc" />
++    <ResourceCompile Include="res\version.rc" />
++  </ItemGroup>
+ </Project>
+\ No newline at end of file
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/res/resources.rc b/res/resources.rc
+--- a/res/resources.rc	2026-09-22 23:33:29.247678600 +0300
++++ b/res/resources.rc	2026-09-22 23:33:29.462802100 +0300
+@@ -125,7 +125,7 @@
+     CTEXT           "Note: The options marked with an asterisk have important side-effects or caveats that may not be initially apparent documented in the help.",IDC_STATIC,10,212,290,16
+ END
+ 
+-IDD_OPT_ICQFEATURES DIALOGEX 0, 0, 310, 200
++IDD_OPT_ICQFEATURES DIALOGEX 0, 0, 310, 226
+ STYLE DS_SETFONT | DS_FIXEDSYS | WS_CHILD
+ EXSTYLE WS_EX_CONTROLPARENT
+ FONT 8, "MS Shell Dlg", 0, 0, 0x1
+@@ -152,6 +152,9 @@
+     CONTROL         "Auto-retrieve Custom status details",IDC_XSTATUSAUTO,
+                     "Button",BS_AUTOCHECKBOX | WS_TABSTOP,12,153,288,10
+     CONTROL         "Block known Spam Bots",IDC_KILLSPAMBOTS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,12,166,288,10
++    GROUPBOX        "Web Pages",IDC_STATIC,4,185,302,37
++    LTEXT           "Server address for registration and password recovery links:",IDC_STATIC,12,197,288,10
++    EDITTEXT        IDC_WEBBASE,12,207,288,12,ES_AUTOHSCROLL
+ END
+ 
+ IDD_OPT_ICQPRIVACY DIALOGEX 0, 0, 310, 234
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/chan_04close.cpp b/src/chan_04close.cpp
+--- a/src/chan_04close.cpp	2026-09-22 23:33:29.257260700 +0300
++++ b/src/chan_04close.cpp	2026-09-22 23:33:29.469813600 +0300
+@@ -152,12 +152,6 @@
+ 			}
+ 		}
+ 	}
+-	else { // TODO: We should really do some checks here
+-		debugLogA("Walking in Gateway to %s", info->newServer);
+-		// TODO: This REQUIRES more work (most probably some kind of mid-netlib module)
+-		icq_httpGatewayWalkTo(hServerConn, &nloc);
+-		res = 1;
+-	}
+ 	if (!res) SAFE_FREE((void**)&info->cookieData);
+ 
+ 	// Free allocated memory
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/dlgproc.cpp b/src/dlgproc.cpp
+--- a/src/dlgproc.cpp	2026-09-22 23:33:29.266268900 +0300
++++ b/src/dlgproc.cpp	2026-09-22 23:33:29.478813500 +0300
+@@ -216,19 +216,16 @@
+ 		switch (((LPNMHDR)lParam)->idFrom) {
+ 		case 0:
+ 			switch (((LPNMHDR)lParam)->code) {
+-			case PSN_PARAMCHANGED:
+-				dat->ppro = (CIcqProto*)((PSHNOTIFY*)lParam)->lParam;
+-				dat->LoadSettingsFromDb(0);
++			case PSN_INFOCHANGED:
++				// The protocol already came in through lParam of WM_INITDIALOG; in
++				// this notification lParam is the contact, not a protocol pointer.
++				dat->LoadSettingsFromDb(1);
+ 				{
+ 					char *pwd = dat->ppro->GetUserPassword(TRUE);
+-					mir_strcpy(dat->Password, (pwd) ? pwd : ""); /// FIXME
++					mir_strcpy(dat->Password, (pwd) ? pwd : "");
+ 				}
+ 				break;
+ 
+-			case PSN_INFOCHANGED:
+-				dat->LoadSettingsFromDb(1);
+-				break;
+-
+ 			case PSN_KILLACTIVE:
+ 				dat->EndStringEdit(1);
+ 				dat->EndListEdit(1);
+@@ -455,7 +452,7 @@
+ 			ACKDATA *ack = (ACKDATA*)lParam;
+ 			int i, done;
+ 
+-			if (ack->type != ACKTYPE_SETINFO) break;
++			if (ack->type != ICQACK_SETINFO) break;
+ 			if (ack->result == ACKRESULT_SUCCESS) {
+ 				for (i = 0; i < _countof(dat->hUpload); i++)
+ 					if (dat->hUpload[i] && ack->hProcess == dat->hUpload[i])
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_01service.cpp b/src/fam_01service.cpp
+--- a/src/fam_01service.cpp	2026-09-22 23:33:29.268270500 +0300
++++ b/src/fam_01service.cpp	2026-09-22 23:33:29.481899900 +0300
+@@ -358,8 +358,6 @@
+ 
+ 			// establish connection
+ 			NETLIBOPENCONNECTION nloc = { 0 };
+-			if (m_bGatewayMode)
+-				nloc.flags |= NLOCF_HTTPGATEWAY;
+ 			nloc.szHost = pServer;
+ 			nloc.wPort = wPort;
+ 
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_02location.cpp b/src/fam_02location.cpp
+--- a/src/fam_02location.cpp	2026-09-22 23:33:29.269270700 +0300
++++ b/src/fam_02location.cpp	2026-09-22 23:33:29.548069300 +0300
+@@ -246,11 +246,11 @@
+ 			disposeChain(&pChain);
+ 		}
+ 
+-		PROTORECVEVENT pre = { 0 };
+-		pre.szMessage = szMsg ? szMsg : (char *)"";
+-		pre.timestamp = time(0);
+-		pre.lParam = dwCookie;
+-		ProtoChainRecv(hContact, PSR_AWAYMSG, status, (LPARAM)&pre);
++		DB::EventInfo dbei;
++		dbei.pBlob = szMsg ? szMsg : (char *)"";
++		dbei.cbBlob = (int)mir_strlen(dbei.pBlob) + 1;
++		dbei.iTimestamp = time(0);
++		RecvAwayMsg(hContact, status, dbei);
+ 
+ 		SAFE_FREE((void**)&szMsg);
+ 	}
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_03buddy.cpp b/src/fam_03buddy.cpp
+--- a/src/fam_03buddy.cpp	2026-09-22 23:33:29.270269600 +0300
++++ b/src/fam_03buddy.cpp	2026-09-22 23:33:29.482909700 +0300
+@@ -244,7 +244,7 @@
+ 			if (wClass & CLASS_AWAY)
+ 				wStatus = ID_STATUS_AWAY;
+ 			else if (wClass & CLASS_WIRELESS)
+-				wStatus = ID_STATUS_ONTHEPHONE;
++				wStatus = ID_STATUS_OCCUPIED;
+ 			else
+ 				wStatus = ID_STATUS_ONLINE;
+ 
+@@ -262,7 +262,7 @@
+ 		if (wClass & CLASS_AWAY)
+ 			wStatus = ID_STATUS_AWAY;
+ 		else if (wClass & CLASS_WIRELESS)
+-			wStatus = ID_STATUS_ONTHEPHONE;
++			wStatus = ID_STATUS_OCCUPIED;
+ 		else
+ 			wStatus = ID_STATUS_ONLINE;
+ 
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/src/fam_04message.cpp
+--- a/src/fam_04message.cpp	2026-09-22 23:33:29.271269400 +0300
++++ b/src/fam_04message.cpp	2026-09-22 23:33:29.484910400 +0300
+@@ -233,7 +233,7 @@
+ 				DWORD dwRecvTime;
+ 				char* szMsg = nullptr;
+ 				bool bUtf8 = false;
+-				PROTORECVEVENT pre = { 0 };
++				DB::EventInfo dbei;
+ 
+ 				int bAdded;
+ 				MCONTACT hContact = HContactFromUID(dwUin, szUID, &bAdded);
+@@ -339,9 +339,10 @@
+ 						}
+ 					}
+ 					// Create and send the message event
+-					pre.timestamp = dwRecvTime;
+-					pre.szMessage = (char *)szMsg;
+-					ProtoChainRecvMsg(hContact, &pre);
++					dbei.iTimestamp = dwRecvTime;
++					dbei.pBlob = (char *)szMsg;
++					dbei.cbBlob = (int)mir_strlen((char *)szMsg) + 1;
++					ProtoChainRecvMsg(hContact, dbei);
+ 
+ 					debugLogA("Message (format 1) received");
+ 
+@@ -1034,11 +1035,11 @@
+ 				// ack the message
+ 				icq_sendContactsAck(dwUin, szUID, dwID1, dwID2);
+ 
+-				PROTORECVEVENT pre = { 0 };
+-				pre.timestamp = (DWORD)time(0);
+-				pre.szMessage = (char *)contacts;
+-				pre.lParam = nContacts;
+-				ProtoChainRecv(hContact, PSR_CONTACTS, 0, (LPARAM)&pre);
++				DB::EventInfo dbei;
++				dbei.iTimestamp = time(0);
++				dbei.pBlob = (char *)contacts;
++				dbei.cbBlob = (int)nContacts;
++				ProtoChainRecv(hContact, PSR_CONTACTS, 0, (LPARAM)&dbei);
+ 			}
+ 
+ 			for (int i = 0; i < iContact; i++) {
+@@ -1412,11 +1413,11 @@
+ 	}
+ 
+ 	// it is probably UTF-8 status reply
+-	PROTORECVEVENT pre = { 0 };
+-	pre.szMessage = (char*)szMsg;
+-	pre.timestamp = time(0);
+-	pre.lParam = wCookie;
+-	ProtoChainRecv(hContact, PSR_AWAYMSG, status, (LPARAM)&pre);
++	DB::EventInfo dbei;
++	dbei.pBlob = (char *)szMsg;
++	dbei.cbBlob = (int)mir_strlen((char *)szMsg) + 1;
++	dbei.iTimestamp = time(0);
++	RecvAwayMsg(hContact, status, dbei);
+ }
+ 
+ 
+@@ -1456,8 +1457,8 @@
+ void CIcqProto::sendMessageTypesAck(MCONTACT hContact, int bUnicode, message_ack_params *pArgs)
+ {
+ 	if (pArgs) {
+-		if ((pArgs->msgType == MTYPE_PLAIN && !CallService(MS_IGNORE_ISIGNORED, hContact, IGNOREEVENT_MESSAGE))
+-			|| (pArgs->msgType == MTYPE_URL && !CallService(MS_IGNORE_ISIGNORED, hContact, IGNOREEVENT_URL))
++		if ((pArgs->msgType == MTYPE_PLAIN && !Ignore_IsIgnored(hContact, IGNOREEVENT_MESSAGE))
++			|| (pArgs->msgType == MTYPE_URL && !Ignore_IsIgnored(hContact, IGNOREEVENT_MESSAGE))
+ 			|| pArgs->msgType == MTYPE_CONTACTS) {
+ 			if (pArgs->bType == MAT_SERVER_ADVANCED) { // Only ack message packets
+ 				icq_sendAdvancedMsgAck(pArgs->dwUin, pArgs->dwMsgID1, pArgs->dwMsgID2, pArgs->wCookie, (BYTE)pArgs->msgType, pArgs->bFlags);
+@@ -1516,7 +1517,7 @@
+ 	switch (type) {
+ 	case MTYPE_PLAIN:    /* plain message */
+ 		{
+-			PROTORECVEVENT pre = { 0 };
++			DB::EventInfo dbei;
+ 			bool bUtf8 = false;
+ 
+ 			// Check if this message is marked as UTF8 encoded
+@@ -1575,9 +1576,10 @@
+ 				}
+ 			}
+ 
+-			pre.timestamp = dwTimestamp;
+-			pre.szMessage = (char *)szMsg;
+-			ProtoChainRecvMsg(hContact, &pre);
++			dbei.iTimestamp = dwTimestamp;
++			dbei.pBlob = (char *)szMsg;
++			dbei.cbBlob = (int)mir_strlen((char *)szMsg) + 1;
++			ProtoChainRecvMsg(hContact, dbei);
+ 		}
+ 		break;
+ 
+@@ -1603,10 +1605,11 @@
+ 			SAFE_FREE(&szDataDescr);
+ 			SAFE_FREE(&szDataUrl);
+ 
+-			PROTORECVEVENT pre = { 0 };
+-			pre.timestamp = dwTimestamp;
+-			pre.szMessage = (char *)szBlob;
+-			ProtoChainRecvMsg(hContact, &pre);
++			DB::EventInfo dbei;
++			dbei.iTimestamp = dwTimestamp;
++			dbei.pBlob = (char *)szBlob;
++			dbei.cbBlob = (int)mir_strlen((char *)szBlob) + 1;
++			ProtoChainRecvMsg(hContact, dbei);
+ 			SAFE_FREE(&szBlob);
+ 		}
+ 		break;
+@@ -1618,14 +1621,14 @@
+ 			break;
+ 		}
+ 		{
+-			DB_AUTH_BLOB blob(hContact, pszMsgField[0], pszMsgField[1], pszMsgField[2], pszMsgField[3], pszMsgField[5]);
++			DB::AUTH_BLOB blob(hContact, pszMsgField[0], pszMsgField[1], pszMsgField[2], pszMsgField[3], pszMsgField[5]);
+ 			blob.set_uin(dwUin);
+ 
+-			PROTORECVEVENT pre = { 0 };
+-			pre.timestamp = dwTimestamp;
+-			pre.lParam = blob.size();
+-			pre.szMessage = blob;
+-			ProtoChainRecv(hContact, PSR_AUTH, 0, (LPARAM)&pre);
++			DB::EventInfo dbei;
++			dbei.iTimestamp = dwTimestamp;
++			dbei.pBlob = blob;
++			dbei.cbBlob = (int)blob.size();
++			ProtoChainRecv(hContact, PSR_AUTH, 0, (LPARAM)&dbei);
+ 		}
+ 		break;
+ 
+@@ -1686,11 +1689,11 @@
+ 					hContact = HContactFromUIN(dwUin, &bAdded);
+ 					sendMessageTypesAck(hContact, 0, pAckParams);
+ 
+-					PROTORECVEVENT pre = { 0 };
+-					pre.timestamp = dwTimestamp;
+-					pre.szMessage = (char *)isrList;
+-					pre.lParam = nContacts;
+-					ProtoChainRecv(hContact, PSR_CONTACTS, 0, (LPARAM)&pre);
++					DB::EventInfo dbei;
++					dbei.iTimestamp = dwTimestamp;
++					dbei.pBlob = (char *)isrList;
++					dbei.cbBlob = (int)nContacts;
++					ProtoChainRecv(hContact, PSR_CONTACTS, 0, (LPARAM)&dbei);
+ 				}
+ 
+ 				for (int i = 0; i < nContacts; i++) {
+@@ -2089,7 +2092,7 @@
+ 					break;
+ 
+ 				case MTYPE_URL:
+-					ackType = ACKTYPE_URL;
++					ackType = ACKTYPE_MESSAGE;
+ 					break;
+ 
+ 				case MTYPE_CONTACTS:
+@@ -2156,7 +2159,7 @@
+ 			break;
+ 
+ 		case MTYPE_URL:
+-			ackType = ACKTYPE_URL;
++			ackType = ACKTYPE_MESSAGE;
+ 			break;
+ 
+ 		case MTYPE_AUTHOK:
+@@ -2321,7 +2324,7 @@
+ 			break;
+ 
+ 		case MTYPE_URL:
+-			nMessageType = ACKTYPE_URL;
++			nMessageType = ACKTYPE_MESSAGE;
+ 			break;
+ 
+ 		case MTYPE_CONTACTS:
+@@ -2391,7 +2394,7 @@
+ 					break;
+ 
+ 				case MTYPE_URL:
+-					ackType = ACKTYPE_URL;
++					ackType = ACKTYPE_MESSAGE;
+ 					break;
+ 
+ 				case MTYPE_FILEREQ:
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_13servclist.cpp b/src/fam_13servclist.cpp
+--- a/src/fam_13servclist.cpp	2026-09-22 23:33:29.275269700 +0300
++++ b/src/fam_13servclist.cpp	2026-09-22 23:33:29.487909300 +0300
+@@ -1080,7 +1080,7 @@
+ 					// Set apparent mode & ignore
+ 					setWord(hContact, "ApparentMode", ID_STATUS_OFFLINE);
+ 					// set ignore all events
+-					CallService(MS_IGNORE_IGNORE, hContact, IGNOREEVENT_ALL);
++					Ignore_Ignore(hContact, IGNOREEVENT_ALL);
+ 					debugLogA("Ignore-contact (%s)", szRecordName);
+ 				}
+ 				else { // failed to add or other error
+@@ -1391,17 +1391,17 @@
+ 	else
+ 		szNick = null_strdup(szUid);
+ 
+-	DB_AUTH_BLOB blob(hContact, szNick, nullptr, nullptr, nullptr, szReason);
++	DB::AUTH_BLOB blob(hContact, szNick, nullptr, nullptr, nullptr, szReason);
+ 	blob.set_uin(dwUin);
+ 
+ 	setByte(hContact, "Grant", 1);
+ 
+ 	// TODO: Change for new auth system, include all known informations
+-	PROTORECVEVENT pre = { 0 };
+-	pre.timestamp = time(0);
+-	pre.lParam = blob.size();
+-	pre.szMessage = blob;
+-	ProtoChainRecv(hContact, PSR_AUTH, 0, (LPARAM)&pre);
++	DB::EventInfo dbei;
++	dbei.iTimestamp = time(0);
++	dbei.pBlob = blob;
++	dbei.cbBlob = (int)blob.size();
++	ProtoChainRecv(hContact, PSR_AUTH, 0, (LPARAM)&dbei);
+ 
+ 	SAFE_FREE(&szNick);
+ 	SAFE_FREE(&szReason);
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_15icqserver.cpp b/src/fam_15icqserver.cpp
+--- a/src/fam_15icqserver.cpp	2026-09-22 23:33:29.277789900 +0300
++++ b/src/fam_15icqserver.cpp	2026-09-22 23:33:29.488910100 +0300
+@@ -91,7 +91,7 @@
+ 						}
+ 						else if (wSubType == META_SET_PASSWORD_REQ) {
+ 							// failed to change user password, report to UI
+-							ProtoBroadcastAck(NULL, ACKTYPE_SETINFO, ACKRESULT_FAILED, (HANDLE)wCookie, 0);
++							ProtoBroadcastAck(NULL, ICQACK_SETINFO, ACKRESULT_FAILED, (HANDLE)wCookie, 0);
+ 
+ 							debugLogA("Meta change password request failed, error 0x%02x", wErrorCode);
+ 						}
+@@ -447,9 +447,9 @@
+ 	switch (wReplySubtype) {
+ 	case META_SET_PASSWORD_ACK:  // Set user password server ack
+ 		if (bResultCode == 0xA)
+-			ProtoBroadcastAck(NULL, ACKTYPE_SETINFO, ACKRESULT_SUCCESS, (HANDLE)wCookie, 0);
++			ProtoBroadcastAck(NULL, ICQACK_SETINFO, ACKRESULT_SUCCESS, (HANDLE)wCookie, 0);
+ 		else
+-			ProtoBroadcastAck(NULL, ACKTYPE_SETINFO, ACKRESULT_FAILED, (HANDLE)wCookie, 0);
++			ProtoBroadcastAck(NULL, ICQACK_SETINFO, ACKRESULT_FAILED, (HANDLE)wCookie, 0);
+ 
+ 		FreeCookie(wCookie);
+ 		break;
+@@ -507,7 +507,8 @@
+ UserInfoRecordItem rInterest[] =
+ {
+ 	{ 0x64, DBVT_UTF8, "Interest%uText" },
+-	{ 0x6E, DBVT_WORD, "Interest%uCat" }
++	// A name, not a code: the core reads the interest list as a string.
++	{ 0x6E, DBVT_WORD, "Interest%uCat", interestsField }
+ };
+ 
+ int CIcqProto::parseUserInfoRecord(MCONTACT hContact, oscar_tlv *pData, UserInfoRecordItem pRecordDef[], int nRecordDef, int nMaxRecords)
+@@ -533,7 +534,10 @@
+ 					break;
+ 
+ 				case DBVT_WORD:
+-					writeDbInfoSettingTLVWord(hContact, szItemKey, cItem, pRecordDef[i].wTLV);
++					if (pRecordDef[i].pNames)
++						writeDbInfoSettingTLVName(hContact, szItemKey, cItem, pRecordDef[i].wTLV, pRecordDef[i].pNames);
++					else
++						writeDbInfoSettingTLVWord(hContact, szItemKey, cItem, pRecordDef[i].wTLV);
+ 					break;
+ 				}
+ 			}
+@@ -847,9 +851,11 @@
+ 	writeDbInfoSettingTLVStringUtf(hContact, "Homepage", cDetails, 0xFA);
+ 	writeDbInfoSettingTLVDate(hContact, "BirthYear", "BirthMonth", "BirthDay", cDetails, 0x1A4);
+ 
+-	writeDbInfoSettingTLVByte(hContact, "Language1", cDetails, 0xAA);
+-	writeDbInfoSettingTLVByte(hContact, "Language2", cDetails, 0xB4);
+-	writeDbInfoSettingTLVByte(hContact, "Language3", cDetails, 0xBE);
++	// Names, not codes: the core prints these fields as they are (stdinfo.cpp),
++	// so the details window would show a number in place of a language.
++	writeDbInfoSettingTLVName(hContact, "Language1", cDetails, 0xAA, languageField);
++	writeDbInfoSettingTLVName(hContact, "Language2", cDetails, 0xB4, languageField);
++	writeDbInfoSettingTLVName(hContact, "Language3", cDetails, 0xBE, languageField);
+ 
+ 	writeDbInfoSettingTLVByte(hContact, "MaritalStatus", cDetails, 0x12C);
+ 	// Interests
+@@ -1040,7 +1046,7 @@
+ 		debugLogA("Error: Directory request failed, status %u", requestResult);
+ 
+ 		if (pCookieData->bRequestType == DIRECTORYREQUEST_UPDATEOWNER)
+-			ProtoBroadcastAck(NULL, ACKTYPE_SETINFO, ACKRESULT_FAILED, (HANDLE)wCookie, 0);
++			ProtoBroadcastAck(NULL, ICQACK_SETINFO, ACKRESULT_FAILED, (HANDLE)wCookie, 0);
+ 
+ 		ReleaseCookie(wCookie);
+ 		return;
+@@ -1053,7 +1059,7 @@
+ 		debugLogA("Warning: Data in error message present!");
+ 
+ 	if (pCookieData->bRequestType == DIRECTORYREQUEST_UPDATEOWNER)
+-		ProtoBroadcastAck(NULL, ACKTYPE_SETINFO, ACKRESULT_SUCCESS, (HANDLE)wCookie, 0);
++		ProtoBroadcastAck(NULL, ICQACK_SETINFO, ACKRESULT_SUCCESS, (HANDLE)wCookie, 0);
+ 	if (wPacketLen == 0x18) {
+ 		DWORD64 qwMetaTime;
+ 		BYTE pbEmptyMetaToken[0x10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/families.h b/src/families.h
+--- a/src/families.h	2026-09-22 23:33:29.279283900 +0300
++++ b/src/families.h	2026-09-22 23:33:29.490910700 +0300
+@@ -57,6 +57,11 @@
+ 	WORD wTLV;
+ 	int dbType;
+ 	char *szDbSetting;
++	// Name table for a numeric code. The Miranda core prints such fields as they
++	// are (stdinfo.cpp), and reads the interest list as a string through
++	// db_get_wsa - a number never comes out of that, leaving the list empty.
++	// When a table is given, the code is stored as its name instead.
++	const struct FieldNamesItem *pNames;
+ };
+ 
+ /*---------* Functions *---------------*/
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.cpp b/src/icq_avatar.cpp
+--- a/src/icq_avatar.cpp	2026-09-22 23:33:29.287878900 +0300
++++ b/src/icq_avatar.cpp	2026-09-22 23:33:29.496916900 +0300
+@@ -80,8 +80,8 @@
+ 
+ 	FOLDERSGETDATA fgd = { sizeof(fgd) };
+ 	fgd.nMaxPathSize = _countof(szPath);
+-	fgd.szPathT = szPath;
+-	fgd.flags = FF_TCHAR;
++	fgd.szPath.w = szPath;
++	fgd.flags = FF_UNICODE;
+ 
+ 	// fill the destination
+ 	mir_wstrncpy(pszDest, szPath, cbLen - 1);
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_constants.h b/src/icq_constants.h
+--- a/src/icq_constants.h	2026-09-22 23:33:29.291878600 +0300
++++ b/src/icq_constants.h	2026-09-22 23:33:29.499919300 +0300
+@@ -613,6 +613,9 @@
+ // Internal Constants
+ #define ICQ_PROTOCOL_NAME           "ICQ"
+ #define ICQ_PLUG_VERSION            PLUGIN_MAKE_VERSION(__MAJOR_VERSION, __MINOR_VERSION, __RELEASE_NUM, __BUILD_NUM)
++#define ICQACK_SETINFO      1001
++
++
+ #define ICQ_VERSION                 11        // Protocol version
+ #define DC_TYPE                     DC_NORMAL // Used for DC settings
+ #define MAX_CONTACTSSEND            15
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_db.cpp b/src/icq_db.cpp
+--- a/src/icq_db.cpp	2026-09-22 23:33:29.292877700 +0300
++++ b/src/icq_db.cpp	2026-09-22 23:33:29.500915100 +0300
+@@ -184,7 +184,7 @@
+ 
+ int CIcqProto::IsICQContact(MCONTACT hContact)
+ {
+-	char* szProto = GetContactProto(hContact);
++	char* szProto = Proto_GetBaseAccountName(hContact);
+ 
+ 	return !mir_strcmp(szProto, m_szModuleName);
+ }
+@@ -193,11 +193,11 @@
+ {
+ 	DBEVENTINFO dbei = {};
+ 	dbei.szModule = m_szModuleName;
+-	dbei.timestamp = dwTime;
++	dbei.iTimestamp = dwTime;
+ 	dbei.flags = flags;
+ 	dbei.eventType = wType;
+-	dbei.cbBlob = (DWORD)cbBlob;
+-	dbei.pBlob = pBlob;
++	dbei.cbBlob = (int)cbBlob;
++	dbei.pBlob = (char *)pBlob;
+ 	return db_event_add(hContact, &dbei);
+ }
+ 
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_directmsg.cpp b/src/icq_directmsg.cpp
+--- a/src/icq_directmsg.cpp	2026-09-22 23:33:29.295878500 +0300
++++ b/src/icq_directmsg.cpp	2026-09-22 23:33:29.503916600 +0300
+@@ -166,7 +166,7 @@
+ 					ackType = ACKTYPE_MESSAGE;
+ 					break;
+ 				case MTYPE_URL:
+-					ackType = ACKTYPE_URL;
++					ackType = ACKTYPE_MESSAGE;
+ 					break;
+ 				case MTYPE_CONTACTS:
+ 					ackType = ACKTYPE_CONTACTS;
+@@ -281,7 +281,7 @@
+ 				ackType = ACKTYPE_MESSAGE;
+ 				break;
+ 			case MTYPE_URL:
+-				ackType = ACKTYPE_URL;
++				ackType = ACKTYPE_MESSAGE;
+ 				break;
+ 			case MTYPE_CONTACTS:
+ 				ackType = ACKTYPE_CONTACTS;
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_filerequests.cpp b/src/icq_filerequests.cpp
+--- a/src/icq_filerequests.cpp	2026-09-22 23:33:29.299886700 +0300
++++ b/src/icq_filerequests.cpp	2026-09-22 23:33:29.507914900 +0300
+@@ -154,16 +154,12 @@
+ 	// Send chain event
+ 	wchar_t* ptszFileName = mir_utf8decodeW(pszFileName);
+ 
+-	PROTORECVFILE pre = { 0 };
+-	pre.dwFlags = PRFF_UNICODE;
+-	pre.fileCount = 1;
+-	pre.timestamp = time(0);
+-	pre.descr.w = mir_utf8decodeW(pszDescription);
+-	pre.files.w = &ptszFileName;
+-	pre.lParam = (LPARAM)ft;
+-	ProtoChainRecvFile(hContact, &pre);
++	ptrW ptszDescr(mir_utf8decodeW(pszDescription));
++
++	DB::EventInfo dbei;
++	dbei.iTimestamp = time(0);
++	ProtoChainRecvFile(hContact, DB::FILE_BLOB(ptszFileName, ptszDescr), dbei);
+ 
+-	mir_free(pre.descr.w);
+ 	mir_free(ptszFileName);
+ }
+ 
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_firstrun.cpp b/src/icq_firstrun.cpp
+--- a/src/icq_firstrun.cpp	2026-09-22 23:33:29.301886100 +0300
++++ b/src/icq_firstrun.cpp	2026-09-22 23:33:29.509913700 +0300
+@@ -68,7 +68,7 @@
+ 	case WM_COMMAND:
+ 		switch (LOWORD(wParam)) {
+ 		case IDC_REGISTER:
+-			Utils_OpenUrl(URL_REGISTER);
++			Utils_OpenUrl(IcqWebUrl(URL_REGISTER, "/icq/register"));
+ 			break;
+ 
+ 		case IDC_UIN:
+@@ -102,7 +102,7 @@
+ 	return FALSE;
+ }
+ 
+-INT_PTR CIcqProto::OnCreateAccMgrUI(WPARAM, LPARAM lParam)
++MWindow CIcqProto::OnCreateAccMgrUI(MWindow hwndParent)
+ {
+-	return (INT_PTR)CreateDialogParam(g_plugin.getInst(), MAKEINTRESOURCE(IDD_ICQACCOUNT), (HWND)lParam, icq_FirstRunDlgProc, LPARAM(this));
++	return CreateDialogParam(g_plugin.getInst(), MAKEINTRESOURCE(IDD_ICQACCOUNT), hwndParent, icq_FirstRunDlgProc, LPARAM(this));
+ }
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_menu.cpp b/src/icq_menu.cpp
+--- a/src/icq_menu.cpp	2026-09-22 23:33:29.306886800 +0300
++++ b/src/icq_menu.cpp	2026-09-22 23:33:29.513427900 +0300
+@@ -106,7 +106,10 @@
+ 
+ INT_PTR CIcqProto::OpenWebProfile(WPARAM hContact, LPARAM)
+ {
+-	Utils_OpenUrl(CMStringA(FORMAT, "http://www.icq.com/people/%d", getContactUin(hContact)));
++	DWORD dwUin = getContactUin(hContact);
++	Utils_OpenUrl(IcqWebUrl(
++		CMStringA(FORMAT, "http://www.icq.com/people/%d", dwUin),
++		CMStringA(FORMAT, "/icq/whitepages?icq=%d", dwUin)));
+ 	return 0;
+ }
+ 
+@@ -120,9 +123,9 @@
+ 
+ 		DWORD dwUin = getContactUin(hContact);
+ 
+-		Menu_ShowItem(m_hmiReqAuth, dwUin && (bCtrlPressed || (getByte(hContact, "Auth", 0) && getWord(hContact, DBSETTING_SERVLIST_ID, 0))));
+-		Menu_ShowItem(m_hmiGrantAuth, dwUin && (bCtrlPressed || getByte(hContact, "Grant", 0)));
+-		Menu_ShowItem(m_hmiRevokeAuth, dwUin && (bCtrlPressed || (getByte("PrivacyItems", 0) && !getByte(hContact, "Grant", 0))));
++		Menu_ShowItem(GetMenuItem(PROTO_MENU_REQ_AUTH), dwUin && (bCtrlPressed || (getByte(hContact, "Auth", 0) && getWord(hContact, DBSETTING_SERVLIST_ID, 0))));
++		Menu_ShowItem(GetMenuItem(PROTO_MENU_GRANT_AUTH), dwUin && (bCtrlPressed || getByte(hContact, "Grant", 0)));
++		Menu_ShowItem(GetMenuItem(PROTO_MENU_REVOKE_AUTH), dwUin && (bCtrlPressed || (getByte("PrivacyItems", 0) && !getByte(hContact, "Grant", 0))));
+ 
+ 		Menu_ShowItem(g_hContactMenuItems[ICMI_ADD_TO_SERVLIST],
+ 			m_bSsiEnabled && !getWord(hContact, DBSETTING_SERVLIST_ID, 0) &&
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_opts.cpp b/src/icq_opts.cpp
+--- a/src/icq_opts.cpp	2026-09-22 23:33:29.307886500 +0300
++++ b/src/icq_opts.cpp	2026-09-22 23:33:29.513935600 +0300
+@@ -25,8 +25,6 @@
+ 
+ #include "stdafx.h"
+ 
+-#include <win2k.h>
+-
+ extern BOOL bPopupService;
+ 
+ static const wchar_t* szLogLevelDescr[] = {
+@@ -107,11 +105,11 @@
+ 	case WM_COMMAND:
+ 		switch (LOWORD(wParam)) {
+ 		case IDC_LOOKUPLINK:
+-			Utils_OpenUrl(URL_FORGOT_PASSWORD);
++			Utils_OpenUrl(IcqWebUrl(URL_FORGOT_PASSWORD, "/icq/password"));
+ 			return TRUE;
+ 
+ 		case IDC_NEWUINLINK:
+-			Utils_OpenUrl(URL_REGISTER);
++			Utils_OpenUrl(IcqWebUrl(URL_REGISTER, "/icq/register"));
+ 			return TRUE;
+ 
+ 		case IDC_RESETSERVER:
+@@ -363,6 +361,9 @@
+ 			LoadDBCheckState(ppro, hwndDlg, IDC_XSTATUSRESET, "XStatusReset", DEFAULT_XSTATUS_RESET);
+ 			LoadDBCheckState(ppro, hwndDlg, IDC_KILLSPAMBOTS, "KillSpambots", DEFAULT_KILLSPAM_ENABLED);
+ 
++			ptrA szWebBase(db_get_sa(0, ICQ_PROTOCOL_NAME, "WebBase"));
++			SetDlgItemTextA(hwndDlg, IDC_WEBBASE, szWebBase ? szWebBase : "");
++
+ 			hCpCombo = GetDlgItem(hwndDlg, IDC_UTFCODEPAGE);
+ 			int sCodePage = ppro->getWord("AnsiCodePage", CP_ACP);
+ 			ComboBoxAddStringUtf(GetDlgItem(hwndDlg, IDC_UTFCODEPAGE), LPGEN("System default codepage"), 0);
+@@ -422,6 +423,13 @@
+ 			StoreDBCheckState(ppro, hwndDlg, IDC_XSTATUSAUTO, "XStatusAuto");
+ 			StoreDBCheckState(ppro, hwndDlg, IDC_XSTATUSRESET, "XStatusReset");
+ 			StoreDBCheckState(ppro, hwndDlg, IDC_KILLSPAMBOTS, "KillSpambots");
++
++			char szWebBase[256];
++			GetDlgItemTextA(hwndDlg, IDC_WEBBASE, szWebBase, _countof(szWebBase));
++			if (szWebBase[0])
++				db_set_s(0, ICQ_PROTOCOL_NAME, "WebBase", szWebBase);
++			else
++				db_unset(0, ICQ_PROTOCOL_NAME, "WebBase");
+ 			return TRUE;
+ 		}
+ 		break;
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_packet.cpp b/src/icq_packet.cpp
+--- a/src/icq_packet.cpp	2026-09-22 23:33:29.308886700 +0300
++++ b/src/icq_packet.cpp	2026-09-22 23:33:29.514941200 +0300
+@@ -41,6 +41,8 @@
+ 	pPacket->pData = (BYTE*)SAFE_MALLOC(pPacket->wLen);
+ }
+ 
++#define HTTP_PROXY_VERSION  0x0443
++
+ void write_httphdr(icq_packet *pPacket, WORD wType, DWORD dwSeq)
+ {
+ 	init_generic_packet(pPacket, 14);
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_popups.cpp b/src/icq_popups.cpp
+--- a/src/icq_popups.cpp	2026-09-22 23:33:29.311393600 +0300
++++ b/src/icq_popups.cpp	2026-09-22 23:33:29.549079300 +0300
+@@ -195,7 +195,7 @@
+ int CIcqProto::ShowPopupMsg(MCONTACT hContact, const char *szTitle, const char *szMsg, BYTE bType)
+ {
+ 	if (bPopupService && getByte("PopupsEnabled", DEFAULT_POPUPS_ENABLED)) {
+-		POPUPDATAT ppd = { 0 };
++		POPUPDATAW ppd;
+ 		LPWSTR rsIcon;
+ 		char szPrefix[32], szSetting[32];
+ 		mir_strcpy(szPrefix, "Popups");
+@@ -273,7 +273,7 @@
+ 		ppd.lchContact = hContact;
+ 		ppd.PluginWindowProc = nullptr;
+ 		ppd.PluginData = nullptr;
+-		return PUAddPopupT(&ppd);
++		return PUAddPopupW(&ppd) != nullptr;
+ 	}
+ 	return -1; // Failure
+ }
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/icq_proto.cpp
+--- a/src/icq_proto.cpp	2026-09-22 23:33:29.313909400 +0300
++++ b/src/icq_proto.cpp	2026-09-22 23:33:29.516949200 +0300
+@@ -105,16 +105,11 @@
+ 	db_set_resident(m_szModuleName, DBSETTING_STATUS_MOOD);
+ 
+ 	// Setup services
+-	CreateProtoService(PS_CREATEACCMGRUI, &CIcqProto::OnCreateAccMgrUI);
+ 	CreateProtoService(MS_ICQ_SENDSMS, &CIcqProto::SendSms);
+ 	CreateProtoService(PS_SETMYNICKNAME, &CIcqProto::SetNickName);
+ 
+ 	CreateProtoService(PS_GETMYAWAYMSG, &CIcqProto::GetMyAwayMsg);
+ 
+-	CreateProtoService(PS_GETINFOSETTING, &CIcqProto::GetInfoSetting);
+-
+-	CreateProtoService(PSS_ADDED, &CIcqProto::SendYouWereAdded);
+-
+ 	// ChangeInfo API
+ 	CreateProtoService(PS_CHANGEINFOEX, &CIcqProto::ChangeInfoEx);
+ 
+@@ -161,12 +156,6 @@
+ 	nlu.flags = NUF_OUTGOING | NUF_HTTPCONNS | NUF_UNICODE;
+ 	nlu.szDescriptiveName.w = szBuffer;
+ 	nlu.szSettingsModule = m_szModuleName;
+-	nlu.szHttpGatewayHello = "http://http.proxy.icq.com/hello";
+-	nlu.szHttpGatewayUserAgent = NETLIB_USER_AGENT;
+-	nlu.pfnHttpGatewayInit = icq_httpGatewayInit;
+-	nlu.pfnHttpGatewayBegin = icq_httpGatewayBegin;
+-	nlu.pfnHttpGatewayWrapSend = icq_httpGatewayWrapSend;
+-	nlu.pfnHttpGatewayUnwrapRecv = icq_httpGatewayUnwrapRecv;
+ 	m_hNetlibUser = Netlib_RegisterUser(&nlu);
+ 
+ 	char szP2PModuleName[MAX_PATH];
+@@ -179,7 +168,7 @@
+ 	m_hDirectNetlibUser = Netlib_RegisterUser(&nlu);
+ 
+ 	// Register custom database events
+-	DBEVENTTYPEDESCR eventType = { sizeof(eventType) };
++	DBEVENTTYPEDESCR eventType = {};
+ 	eventType.eventType = ICQEVENTTYPE_MISSEDMESSAGE;
+ 	eventType.module = m_szModuleName;
+ 	eventType.descr = "Missed message notifications";
+@@ -317,7 +306,7 @@
+ 	if ((dbei.cbBlob = db_event_getBlobSize(hDbEvent)) == -1)
+ 		return 0;
+ 
+-	dbei.pBlob = (PBYTE)_alloca(dbei.cbBlob + 1);
++	dbei.pBlob = (char *)_alloca(dbei.cbBlob + 1);
+ 	dbei.pBlob[dbei.cbBlob] = '\0';
+ 
+ 	if (db_event_get(hDbEvent, &dbei))
+@@ -424,10 +413,10 @@
+ ////////////////////////////////////////////////////////////////////////////////////////
+ // PSR_AUTH
+ 
+-int CIcqProto::AuthRecv(MCONTACT hContact, PROTORECVEVENT* pre)
++int CIcqProto::AuthRecv(MCONTACT hContact, DB::EventInfo &dbei)
+ {
+ 	setContactHidden(hContact, 0);
+-	ICQAddRecvEvent(NULL, EVENTTYPE_AUTHREQUEST, pre, pre->lParam, (PBYTE)pre->szMessage, 0);
++	ICQAddRecvEvent(NULL, EVENTTYPE_AUTHREQUEST, dbei, dbei.cbBlob, (PBYTE)dbei.pBlob, 0);
+ 	return 0;
+ }
+ 
+@@ -570,7 +559,7 @@
+ ////////////////////////////////////////////////////////////////////////////////////////
+ // PS_FileResume - processes file renaming etc
+ 
+-int CIcqProto::FileResume(HANDLE hTransfer, int* action, const wchar_t** szFilename)
++int CIcqProto::FileResume(HANDLE hTransfer, int action, const wchar_t *szFilename)
+ {
+ 	if (icqOnline() && hTransfer) {
+ 		basic_filetransfer *ft = (basic_filetransfer *)hTransfer;
+@@ -579,12 +568,12 @@
+ 			return 1; // Invalid transfer
+ 
+ 		if (ft->ft_magic == FT_MAGIC_ICQ) {
+-			char *szFileNameUtf = make_utf8_string(*szFilename);
+-			icq_sendFileResume((filetransfer *)hTransfer, *action, szFileNameUtf);
++			char *szFileNameUtf = make_utf8_string(szFilename);
++			icq_sendFileResume((filetransfer *)hTransfer, action, szFileNameUtf);
+ 			SAFE_FREE(&szFileNameUtf);
+ 		}
+ 		else if (ft->ft_magic == FT_MAGIC_OSCAR) {
+-			oftFileResume((oscar_filetransfer *)hTransfer, *action, *szFilename);
++			oftFileResume((oscar_filetransfer *)hTransfer, action, szFilename);
+ 		}
+ 		else
+ 			return 1; // Failure
+@@ -606,10 +595,10 @@
+ 	switch (type) {
+ 
+ 	case PFLAGNUM_1:
+-		nReturn = PF1_IM | PF1_URL | PF1_AUTHREQ | PF1_BASICSEARCH | PF1_ADDSEARCHRES |
+-			PF1_VISLIST | PF1_INVISLIST | PF1_MODEMSG | PF1_FILE | PF1_EXTSEARCH |
++		nReturn = PF1_IM | PF1_AUTHREQ | PF1_BASICSEARCH | PF1_ADDSEARCHRES |
++			PF1_MODEMSG | PF1_FILE | PF1_EXTSEARCH |
+ 			PF1_EXTSEARCHUI | PF1_SEARCHBYEMAIL | PF1_SEARCHBYNAME |
+-			PF1_ADDED | PF1_CONTACT;
++			PF1_CONTACT;
+ 
+ 		if (m_bSsiEnabled && getByte("ServerAddRemove", DEFAULT_SS_ADDSERVER))
+ 			nReturn |= PF1_SERVERCLIST;
+@@ -617,23 +606,23 @@
+ 
+ 	case PFLAGNUM_2:
+ 		return PF2_ONLINE | PF2_SHORTAWAY | PF2_LONGAWAY | PF2_LIGHTDND | PF2_HEAVYDND |
+-			PF2_FREECHAT | PF2_INVISIBLE | PF2_ONTHEPHONE;
++			PF2_FREECHAT | PF2_INVISIBLE;
+ 
+ 	case PFLAGNUM_3:
+ 		return PF2_ONLINE | PF2_SHORTAWAY | PF2_LONGAWAY | PF2_LIGHTDND | PF2_HEAVYDND |
+ 			PF2_FREECHAT | PF2_INVISIBLE;
+ 
+ 	case PFLAGNUM_4:
+-		nReturn = PF4_SUPPORTIDLE | PF4_IMSENDOFFLINE | PF4_INFOSETTINGSVC | PF4_SUPPORTTYPING;
++		nReturn = PF4_SUPPORTIDLE | PF4_IMSENDOFFLINE | PF4_SUPPORTTYPING;
+ 		if (m_bAvatarsEnabled)
+ 			nReturn |= PF4_AVATARS;
+ 		break;
+ 
+ 	case PFLAGNUM_5:
+-		return PF2_FREECHAT | PF2_ONTHEPHONE;
++		return PF2_FREECHAT;
+ 
+ 	case PFLAG_UNIQUEIDTEXT:
+-		return (INT_PTR)Translate("User ID");
++		return (INT_PTR)TranslateT("User ID");
+ 
+ 	case PFLAG_MAXLENOFMESSAGE:
+ 		return MAX_MESSAGESNACSIZE - 102;
+@@ -802,8 +791,7 @@
+ 	return nullptr; // Failure
+ }
+ 
+-
+-HWND CIcqProto::CreateExtendedSearchUI(HWND parent)
++MWindow CIcqProto::CreateExtendedSearchUI(MWindow parent)
+ {
+ 	if (parent && g_plugin.getInst())
+ 		return CreateDialog(g_plugin.getInst(), MAKEINTRESOURCE(IDD_ICQADVANCEDSEARCH), parent, AdvancedSearchDlgProc);
+@@ -811,7 +799,7 @@
+ 	return nullptr; // Failure
+ }
+ 
+-HWND CIcqProto::SearchAdvanced(HWND hwndDlg)
++HANDLE CIcqProto::SearchAdvanced(MWindow hwndDlg)
+ {
+ 	if (icqOnline() && IsWindow(hwndDlg)) {
+ 		size_t nDataLen;
+@@ -831,14 +819,15 @@
+ ////////////////////////////////////////////////////////////////////////////////////////
+ // RecvContacts
+ 
+-int CIcqProto::RecvContacts(MCONTACT hContact, PROTORECVEVENT* pre)
++int CIcqProto::RecvContacts(MCONTACT hContact, DB::EventInfo &dbei)
+ {
+-	ICQSEARCHRESULT **isrList = (ICQSEARCHRESULT**)pre->szMessage;
++	ICQSEARCHRESULT **isrList = (ICQSEARCHRESULT**)dbei.pBlob;
++	const size_t nContacts = dbei.cbBlob;
+ 	int i;
+ 	size_t cbBlob = 0;
+ 	DWORD flags = DBEF_UTF;
+ 
+-	for (i = 0; i < pre->lParam; i++) {
++	for (i = 0; i < (int)nContacts; i++) {
+ 		cbBlob += mir_strlen((char*)isrList[i]->hdr.nick.w) + 2; // both trailing zeros
+ 		if (isrList[i]->uin)
+ 			cbBlob += getUINLen(isrList[i]->uin);
+@@ -846,7 +835,7 @@
+ 			cbBlob += mir_strlen((char*)isrList[i]->hdr.id.w);
+ 	}
+ 	PBYTE pBlob = (PBYTE)_alloca(cbBlob), pCurBlob;
+-	for (i = 0, pCurBlob = pBlob; i < pre->lParam; i++) {
++	for (i = 0, pCurBlob = pBlob; i < (int)nContacts; i++) {
+ 		mir_strcpy((char*)pCurBlob, (char*)isrList[i]->hdr.nick.w);
+ 		pCurBlob += mir_strlen((char*)pCurBlob) + 1;
+ 		if (isrList[i]->uin) {
+@@ -860,7 +849,7 @@
+ 		pCurBlob += mir_strlen((char*)pCurBlob) + 1;
+ 	}
+ 
+-	ICQAddRecvEvent(hContact, EVENTTYPE_CONTACTS, pre, cbBlob, pBlob, flags);
++	ICQAddRecvEvent(hContact, EVENTTYPE_CONTACTS, dbei, cbBlob, pBlob, flags);
+ 	return 0;
+ }
+ 
+@@ -868,10 +857,10 @@
+ ////////////////////////////////////////////////////////////////////////////////////////
+ // RecvMsg
+ 
+-MEVENT CIcqProto::RecvMsg(MCONTACT hContact, PROTORECVEVENT* pre)
++MEVENT CIcqProto::RecvMsg(MCONTACT hContact, DB::EventInfo &dbei)
+ {
+-	size_t cbBlob = mir_strlen(pre->szMessage) + 1;
+-	ICQAddRecvEvent(hContact, EVENTTYPE_MESSAGE, pre, cbBlob, (PBYTE)pre->szMessage, DBEF_UTF);
++	size_t cbBlob = mir_strlen((const char *)dbei.pBlob) + 1;
++	ICQAddRecvEvent(hContact, EVENTTYPE_MESSAGE, dbei, cbBlob, (PBYTE)dbei.pBlob, DBEF_UTF);
+ 
+ 	// stop contact from typing - some clients do not sent stop notify
+ 	if (CheckContactCapabilities(hContact, CAPF_TYPING))
+@@ -1219,7 +1208,7 @@
+ ////////////////////////////////////////////////////////////////////////////////////////
+ // PS_SendMessage - sends a message
+ 
+-int CIcqProto::SendMsg(MCONTACT hContact, int, const char* pszSrc)
++int CIcqProto::SendMsg(MCONTACT hContact, MEVENT, const char* pszSrc)
+ {
+ 	if (hContact == NULL || pszSrc == nullptr)
+ 		return NULL;
+@@ -1345,13 +1334,13 @@
+ 
+ 	DWORD dwUin;
+ 	if (getContactUid(hContact, &dwUin, nullptr)) // Invalid contact
+-		return ReportGenericSendError(hContact, ACKTYPE_URL, "The receiver has an invalid user ID.");
++		return ReportGenericSendError(hContact, ACKTYPE_MESSAGE, "The receiver has an invalid user ID.");
+ 
+ 	WORD wRecipientStatus = getContactStatus(hContact);
+ 
+ 	// Failure
+ 	if (!icqOnline()) {
+-		ReportGenericSendError(hContact, ACKTYPE_URL, "You cannot send messages when you are offline.");
++		ReportGenericSendError(hContact, ACKTYPE_MESSAGE, "You cannot send messages when you are offline.");
+ 		return 0;
+ 	}
+ 
+@@ -1377,7 +1366,7 @@
+ 	// Rate check
+ 	if (IsServerOverRate(ICQ_MSG_FAMILY, ICQ_MSG_SRV_SEND, RML_LIMIT)) { // rate is too high, the message will not go thru...
+ 		SAFE_FREE((void**)&pCookieData);
+-		return ReportGenericSendError(hContact, ACKTYPE_URL, "The message could not be delivered. You are sending too fast. Wait a while and try again.");
++		return ReportGenericSendError(hContact, ACKTYPE_MESSAGE, "The message could not be delivered. You are sending too fast. Wait a while and try again.");
+ 	}
+ 
+ 	// Select channel and send
+@@ -1391,7 +1380,7 @@
+ 
+ 	// This will stop the message dialog from waiting for the real message delivery ack
+ 	if (pCookieData->nAckType == ACKTYPE_NONE) {
+-		SendProtoAck(hContact, dwCookie, ACKRESULT_SUCCESS, ACKTYPE_URL, nullptr);
++		SendProtoAck(hContact, dwCookie, ACKRESULT_SUCCESS, ACKTYPE_MESSAGE, nullptr);
+ 		// We need to free this here since we will never see the real ack
+ 		// The actual cookie value will still have to be returned to the message dialog though
+ 		ReleaseCookie(dwCookie);
+@@ -1699,14 +1688,14 @@
+ 
+ 
+ ////////////////////////////////////////////////////////////////////////////////////////
+-// PSR_AWAYMSG - processes received status mode message
++// Receiving an away message
+ 
+-int CIcqProto::RecvAwayMsg(MCONTACT hContact, int, PROTORECVEVENT* evt)
++int CIcqProto::RecvAwayMsg(MCONTACT hContact, int, DB::EventInfo &dbei)
+ {
+-	setStatusMsgVar(hContact, evt->szMessage, false);
++	setStatusMsgVar(hContact, dbei.pBlob, false);
+ 
+-	wchar_t* pszMsg = mir_utf8decodeW(evt->szMessage);
+-	ProtoBroadcastAck(hContact, ACKTYPE_AWAYMSG, ACKRESULT_SUCCESS, (HANDLE)evt->lParam, (LPARAM)pszMsg);
++	wchar_t* pszMsg = mir_utf8decodeW(dbei.pBlob);
++	ProtoBroadcastAck(hContact, ACKTYPE_AWAYMSG, ACKRESULT_SUCCESS, nullptr, (LPARAM)pszMsg);
+ 	mir_free(pszMsg);
+ 	return 0;
+ }
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/icq_proto.h
+--- a/src/icq_proto.h	2026-09-22 23:33:29.314915100 +0300
++++ b/src/icq_proto.h	2026-09-22 23:33:29.517948900 +0300
+@@ -59,48 +59,47 @@
+ 
+ 	int      Authorize(MEVENT hDbEvent) override;
+ 	int      AuthDeny(MEVENT hDbEvent, const wchar_t *szReason) override;
+-	int      AuthRecv(MCONTACT hContact, PROTORECVEVENT*) override;
++	int      AuthRecv(MCONTACT hContact, DB::EventInfo &dbei) override;
+ 	int      AuthRequest(MCONTACT hContact, const wchar_t *szMessage) override;
+ 
+ 	HANDLE   FileAllow(MCONTACT hContact, HANDLE hTransfer, const wchar_t *szPath) override;
+ 	int      FileCancel(MCONTACT hContact, HANDLE hTransfer) override;
+ 	int      FileDeny(MCONTACT hContact, HANDLE hTransfer, const wchar_t *szReason) override;
+-	int      FileResume( HANDLE hTransfer, int *action, const wchar_t **szFilename) override;
++	int      FileResume(HANDLE hTransfer, int action, const wchar_t *szFilename) override;
+ 
+-	INT_PTR  GetCaps(int type, MCONTACT hContact = NULL) override;
++	INT_PTR  GetCaps(int type, MCONTACT hContact = 0) override;
+ 	int      GetInfo(MCONTACT hContact, int infoType) override;
+ 
+ 	HANDLE   SearchBasic(const wchar_t *id) override;
+ 	HANDLE   SearchByEmail(const wchar_t *email) override;
+ 	HANDLE   SearchByName(const wchar_t *nick, const wchar_t *firstName, const wchar_t *lastName) override;
+-	HWND     SearchAdvanced(HWND owner) override;
+-	HWND     CreateExtendedSearchUI(HWND owner) override;
++	HANDLE   SearchAdvanced(MWindow owner) override;
++	MWindow  CreateExtendedSearchUI(MWindow owner) override;
+ 
+-	int      RecvContacts(MCONTACT hContact, PROTORECVEVENT*) override;
+-	MEVENT   RecvMsg(MCONTACT hContact, PROTORECVEVENT*) override;
++	int      RecvContacts(MCONTACT hContact, DB::EventInfo &dbei) override;
++	MEVENT   RecvMsg(MCONTACT hContact, DB::EventInfo &dbei) override;
+ 
+ 	int      SendContacts(MCONTACT hContact, int flags, int nContacts, MCONTACT *hContactsList) override;
+ 	HANDLE   SendFile(MCONTACT hContact, const wchar_t *szDescription, wchar_t **ppszFiles) override;
+-	int      SendMsg(MCONTACT hContact, int flags, const char *msg) override;
+-	int      SendUrl(MCONTACT hContact, int flags, const char *url) override;
++	int      SendMsg(MCONTACT hContact, MEVENT hReplyEvent, const char *msg) override;
++	int      SendUrl(MCONTACT hContact, int flags, const char *url);
+ 
+-	int      SetApparentMode(MCONTACT hContact, int mode) override;
++	int      SetApparentMode(MCONTACT hContact, int mode);
+ 	int      SetStatus(int iNewStatus) override;
+ 
+ 	HANDLE   GetAwayMsg(MCONTACT hContact) override;
+-	int      RecvAwayMsg(MCONTACT hContact, int mode, PROTORECVEVENT *evt) override;
+-	int      SetAwayMsg(int m_iStatus, const wchar_t *msg) override;
++	int      RecvAwayMsg(MCONTACT hContact, int mode, DB::EventInfo &dbei);
++	int      SetAwayMsg(int iStatus, const wchar_t *msg) override;
+ 
+ 	int      UserIsTyping(MCONTACT hContact, int type) override;
+ 
+-	void     OnContactDeleted(MCONTACT) override;
++	bool     OnContactDeleted(MCONTACT, uint32_t flags) override;
+ 	void     OnErase() override;
+ 	void     OnModulesLoaded() override;
+ 	void     OnShutdown() override;
+ 
+ 	//====| Services |====================================================================
+ 	INT_PTR  __cdecl AddServerContact(WPARAM wParam, LPARAM lParam);
+-	INT_PTR  __cdecl GetInfoSetting(WPARAM wParam, LPARAM lParam);
+ 	INT_PTR  __cdecl ChangeInfoEx(WPARAM wParam, LPARAM lParam);
+ 	INT_PTR  __cdecl GetAvatarCaps(WPARAM wParam, LPARAM lParam);
+ 	INT_PTR  __cdecl GetAvatarInfo(WPARAM wParam, LPARAM lParam);
+@@ -122,7 +121,7 @@
+ 	INT_PTR  __cdecl SetXStatusEx(WPARAM wParam, LPARAM lParam);
+ 	INT_PTR  __cdecl ShowXStatusDetails(WPARAM wParam, LPARAM lParam);
+ 
+-	INT_PTR  __cdecl OnCreateAccMgrUI(WPARAM, LPARAM);
++	MWindow  OnCreateAccMgrUI(MWindow hwndParent) override;
+ 
+     //====| Events |======================================================================
+ 	int  __cdecl OnIdleChanged(WPARAM, LPARAM);
+@@ -742,7 +741,7 @@
+ 	MCONTACT AddToListByUIN(DWORD dwUin, DWORD dwFlags);
+ 	MCONTACT AddToListByUID(const char *szUID, DWORD dwFlags);
+ 
+-	void   ICQAddRecvEvent(MCONTACT hContact, WORD wType, PROTORECVEVENT* pre, size_t cbBlob, PBYTE pBlob, DWORD flags);
++	void   ICQAddRecvEvent(MCONTACT hContact, WORD wType, const DB::EventInfo &dbei, size_t cbBlob, PBYTE pBlob, DWORD flags);
+ 	INT_PTR __cdecl IcqAddCapability(WPARAM wParam, LPARAM lParam);
+ 	INT_PTR __cdecl IcqCheckCapability(WPARAM wParam, LPARAM lParam);
+ 
+@@ -794,7 +793,7 @@
+ 	void   SafeReleaseFileTransfer(basic_filetransfer **ft);
+ 	oscar_filetransfer* FindOscarTransfer(MCONTACT hContact, DWORD dwID1, DWORD dwID2);
+ 
+-	oscar_listener* CreateOscarListener(oscar_filetransfer *ft, NETLIBNEWCONNECTIONPROC_V2 handler);
++	oscar_listener* CreateOscarListener(oscar_filetransfer *ft, NETLIBNEWCONNECTIONPROC handler);
+ 	void   ReleaseOscarListener(oscar_listener **pListener);
+ 
+ 	void   OpenOscarConnection(MCONTACT hContact, oscar_filetransfer *ft, int type);
+@@ -861,7 +860,7 @@
+ 	void   AddToSpammerList(DWORD dwUIN);
+ 	BOOL   IsOnSpammerList(DWORD dwUIN);
+ 
+-	HNETLIBBIND NetLib_BindPort(NETLIBNEWCONNECTIONPROC_V2 pFunc, void* lParam, WORD *pwPort, DWORD *pdwIntIP);
++	HNETLIBBIND NetLib_BindPort(NETLIBNEWCONNECTIONPROC pFunc, void* lParam, WORD *pwPort, DWORD *pdwIntIP);
+ 
+ 	MCONTACT HandleFromCacheByUid(DWORD dwUin, const char *szUid);
+ 	MCONTACT HContactFromUIN(DWORD dwUin, int *Added);
+@@ -882,6 +881,7 @@
+ 	void   writeDbInfoSettingTLVStringUtf(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
+ 	void   writeDbInfoSettingTLVWord(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
+ 	void   writeDbInfoSettingTLVByte(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
++	void   writeDbInfoSettingTLVName(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv, const struct FieldNamesItem *pNames);
+ 	void   writeDbInfoSettingTLVDouble(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
+ 	void   writeDbInfoSettingTLVDate(MCONTACT hContact, const char *szSettingYear, const char *szSettingMonth, const char *szSettingDay, oscar_tlv_chain *chain, WORD wTlv);
+ 	void   writeDbInfoSettingTLVBlob(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.cpp b/src/icq_server.cpp
+--- a/src/icq_server.cpp	2026-09-22 23:33:29.318923800 +0300
++++ b/src/icq_server.cpp	2026-09-22 23:33:29.519948500 +0300
+@@ -54,9 +54,6 @@
+ 	{
+ 		NETLIBOPENCONNECTION nloc = infoParam->nloc;
+ 		nloc.timeout = 6;
+-		if (m_bGatewayMode)
+-			nloc.flags |= NLOCF_HTTPGATEWAY;
+-
+ 		hServerConn = NetLib_OpenConnection(m_hNetlibUser, nullptr, &nloc);
+ 
+ 		SAFE_FREE((void**)&nloc.szHost);
+@@ -86,7 +83,7 @@
+ 	DWORD dwInternalIP;
+ 	BYTE bConstInternalIP = getByte("ConstRealIP", 0);
+ 
+-	info.hDirectBoundPort = NetLib_BindPort(icq_newConnectionReceived, this, &wListenPort, &dwInternalIP);
++	info.hDirectBoundPort = NetLib_BindPort((NETLIBNEWCONNECTIONPROC)icq_newConnectionReceived, this, &wListenPort, &dwInternalIP);
+ 	if (!info.hDirectBoundPort) {
+ 		icq_LogUsingErrorCode(LOG_WARNING, GetLastError(), LPGEN("Miranda was unable to allocate a port to listen for direct peer-to-peer connections between clients. You will be able to use most of the ICQ network without problems but you may be unable to send or receive files.\n\nIf you have a firewall this may be blocking Miranda, in which case you should configure your firewall to leave some ports open and tell Miranda which ports to use in Options -> Network -> ICQ client-to-client connections."));
+ 		wListenPort = 0;
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.h b/src/icq_server.h
+--- a/src/icq_server.h	2026-09-22 23:33:29.319923800 +0300
++++ b/src/icq_server.h	2026-09-22 23:33:29.520949700 +0300
+@@ -30,6 +30,14 @@
+ #ifndef __ICQ_SERVER_H
+ #define __ICQ_SERVER_H
+ 
++struct NETLIBOPENCONNECTION
++{
++	const char *szHost;
++	uint16_t    wPort;
++	uint32_t    flags;
++	uint32_t    timeout;
++};
++
+ struct serverthread_start_info
+ {
+ 	NETLIBOPENCONNECTION nloc;
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_servlist.cpp b/src/icq_servlist.cpp
+--- a/src/icq_servlist.cpp	2026-09-22 23:33:29.320922900 +0300
++++ b/src/icq_servlist.cpp	2026-09-22 23:33:29.521949200 +0300
+@@ -2259,7 +2259,7 @@
+ }
+ 
+ 
+-void CIcqProto::OnContactDeleted(MCONTACT hContact)
++bool CIcqProto::OnContactDeleted(MCONTACT hContact, uint32_t)
+ {
+ 	DeleteFromContactsCache(hContact);
+ 
+@@ -2268,13 +2268,13 @@
+ 		setWord(hContact, "SrvRecordCount", 0);
+ 
+ 	if (!icqOnline() || !m_bSsiEnabled)
+-		return;
++		return true;
+ 
+ 	// we need all server contacts on local buddy list
+ 	DWORD dwUIN;
+ 	uid_str szUID;
+ 	if (getContactUid(hContact, &dwUIN, &szUID))
+-		return;
++		return true;
+ 
+ 	WORD wContactID = getWord(hContact, DBSETTING_SERVLIST_ID, 0);
+ 	WORD wGroupID = getWord(hContact, DBSETTING_SERVLIST_GROUP, 0);
+@@ -2301,6 +2301,7 @@
+ 		if (wIgnoreID) // delete ignore record
+ 			icq_removeServerPrivacyItem(hContact, dwUIN, szUID, wIgnoreID, SSI_ITEM_IGNORE);
+ 	}
++	return true;
+ }
+ 
+ 
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_xtraz.cpp b/src/icq_xtraz.cpp
+--- a/src/icq_xtraz.cpp	2026-09-22 23:33:29.325923300 +0300
++++ b/src/icq_xtraz.cpp	2026-09-22 23:33:29.526948800 +0300
+@@ -328,12 +328,13 @@
+ 				mir_strcat(szWork, szNum);
+ 
+ 				// Create message to notify user
+-				PROTORECVEVENT pre = { 0 };
+-				pre.timestamp = time(0);
+-				pre.szMessage = szWork;
++				DB::EventInfo dbei;
++				dbei.iTimestamp = time(0);
++				dbei.pBlob = szWork;
++				dbei.cbBlob = (int)mir_strlen(szWork) + 1;
+ 
+ 				int bAdded;
+-				ProtoChainRecvMsg(HContactFromUIN(dwUin, &bAdded), &pre);
++				ProtoChainRecvMsg(HContactFromUIN(dwUin, &bAdded), dbei);
+ 
+ 				SAFE_FREE(&szWork);
+ 			}
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icqosc_svcs.cpp b/src/icqosc_svcs.cpp
+--- a/src/icqosc_svcs.cpp	2026-09-22 23:33:29.326923400 +0300
++++ b/src/icqosc_svcs.cpp	2026-09-22 23:33:29.527950000 +0300
+@@ -73,84 +73,6 @@
+ 	return 0; // Success
+ }
+ 
+-INT_PTR CIcqProto::GetInfoSetting(WPARAM hContact, LPARAM lParam)
+-{
+-	DBCONTACTGETSETTING *cgs = (DBCONTACTGETSETTING*)lParam;
+-	BYTE type = cgs->pValue->type;
+-	INT_PTR rc = db_get_s(hContact, cgs->szModule, cgs->szSetting, cgs->pValue, 0);
+-	if (rc)
+-		return rc;
+-
+-	// Success
+-	DBVARIANT dbv = *cgs->pValue;
+-	if (dbv.type == DBVT_BLOB) {
+-		cgs->pValue->pbVal = (BYTE*)mir_alloc(dbv.cpbVal);
+-		memcpy(cgs->pValue->pbVal, dbv.pbVal, dbv.cpbVal);
+-	}
+-	else if (dbv.type == DBVT_ASCIIZ || dbv.type == DBVT_UTF8) {
+-		//  convert to the desired type
+-		if (!type)
+-			type = dbv.type;
+-
+-		// type is correct, only move it to miranda's heap
+-		if (dbv.type == type)
+-			cgs->pValue->pszVal = mir_strdup(dbv.pszVal);
+-		else if (type == DBVT_WCHAR) {
+-			if (dbv.type != DBVT_UTF8) {
+-				int len = MultiByteToWideChar(CP_ACP, 0, dbv.pszVal, -1, nullptr, 0);
+-				cgs->pValue->pwszVal = (WCHAR*)mir_alloc((len + 1) * sizeof(WCHAR));
+-				if (cgs->pValue->pwszVal == nullptr)
+-					rc = 1;
+-				else {
+-					MultiByteToWideChar(CP_ACP, 0, dbv.pszVal, -1, cgs->pValue->pwszVal, len);
+-					cgs->pValue->pwszVal[len] = '\0';
+-				}
+-			}
+-			else {
+-				char *savePtr = dbv.pszVal ? mir_strcpy((char*)_alloca(mir_strlen(dbv.pszVal) + 1), dbv.pszVal) : nullptr;
+-				if (!mir_utf8decode(savePtr, &cgs->pValue->pwszVal))
+-					rc = 1;
+-			}
+-		}
+-		else if (type == DBVT_UTF8) {
+-			cgs->pValue->pszVal = mir_utf8encode(dbv.pszVal);
+-			if (cgs->pValue->pszVal == nullptr)
+-				rc = 1;
+-		}
+-		else if (type == DBVT_ASCIIZ) {
+-			cgs->pValue->pszVal = mir_strdup(dbv.pszVal);
+-			mir_utf8decode(cgs->pValue->pszVal, nullptr);
+-		}
+-
+-		cgs->pValue->type = type;
+-	}
+-	else if (!mir_strcmp(cgs->szModule, m_szModuleName) && (dbv.type == DBVT_BYTE || dbv.type == DBVT_WORD || dbv.type == DBVT_DWORD)) {
+-		int code = (dbv.type == DBVT_BYTE) ? dbv.bVal : ((dbv.type == DBVT_WORD) ? dbv.wVal : dbv.dVal);
+-
+-		if (!mir_strcmp(cgs->szSetting, "Language1") || !mir_strcmp(cgs->szSetting, "Language2") || !mir_strcmp(cgs->szSetting, "Language3"))
+-			rc = LookupDatabaseSetting(languageField, code, cgs->pValue, type);
+-		else if (!mir_strcmp(cgs->szSetting, "Country") || !mir_strcmp(cgs->szSetting, "OriginCountry") || !mir_strcmp(cgs->szSetting, "CompanyCountry")) {
+-			if (code == 420) code = 42; // conversion of obsolete codes (OMG!)
+-			else if (code == 421) code = 4201;
+-			else if (code == 102) code = 1201;
+-			rc = LookupDatabaseSetting(countryField, code, cgs->pValue, type);
+-		}
+-		else if (!mir_strcmp(cgs->szSetting, "Gender"))
+-			rc = LookupDatabaseSetting(genderField, code, cgs->pValue, type);
+-		else if (!mir_strcmp(cgs->szSetting, "MaritalStatus"))
+-			rc = LookupDatabaseSetting(maritalField, code, cgs->pValue, type);
+-		else if (!mir_strcmp(cgs->szSetting, "StudyLevel"))
+-			rc = LookupDatabaseSetting(studyLevelField, code, cgs->pValue, type);
+-		else if (!mir_strcmp(cgs->szSetting, "CompanyIndustry"))
+-			rc = LookupDatabaseSetting(industryField, code, cgs->pValue, type);
+-		else if (!mir_strcmp(cgs->szSetting, "Interest0Cat") || !mir_strcmp(cgs->szSetting, "Interest1Cat") || !mir_strcmp(cgs->szSetting, "Interest2Cat") || !mir_strcmp(cgs->szSetting, "Interest3Cat"))
+-			rc = LookupDatabaseSetting(interestsField, code, cgs->pValue, type);
+-	}
+-	// Release database memory
+-	db_free(&dbv);
+-	return rc;
+-}
+-
+ INT_PTR CIcqProto::ChangeInfoEx(WPARAM wParam, LPARAM)
+ {
+ 	if (!icqOnline() || !wParam)
+@@ -585,10 +507,10 @@
+ 
+ /////////////////////////////////////////////////////////////////////////////////////////
+ 
+-void CIcqProto::ICQAddRecvEvent(MCONTACT hContact, WORD wType, PROTORECVEVENT* pre, size_t cbBlob, PBYTE pBlob, DWORD flags)
++void CIcqProto::ICQAddRecvEvent(MCONTACT hContact, WORD wType, const DB::EventInfo &dbei, size_t cbBlob, PBYTE pBlob, DWORD flags)
+ {
+ 	flags |= DBEF_UTF;
+-	if (pre->flags & PREF_CREATEREAD)
++	if (dbei.flags & DBEF_READ)
+ 		flags |= DBEF_READ;
+ 
+ 	if (hContact && db_get_b(hContact, "CList", "Hidden", 0)) {
+@@ -601,7 +523,7 @@
+ 		}
+ 	}
+ 
+-	AddEvent(hContact, wType, pre->timestamp, flags, cbBlob, pBlob);
++	AddEvent(hContact, wType, (DWORD)dbei.iTimestamp, flags, cbBlob, pBlob);
+ }
+ 
+ INT_PTR __cdecl CIcqProto::IcqAddCapability(WPARAM, LPARAM lParam)
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.cpp
+--- a/src/init.cpp	2026-09-22 23:33:29.328924700 +0300
++++ b/src/init.cpp	2026-09-22 23:33:29.529949500 +0300
+@@ -43,7 +43,7 @@
+ 	__COPYRIGHT,
+ 	__AUTHORWEB,
+ 	UNICODE_AWARE,   //doesn't replace anything built-in
+-	{ 0x73a9615c, 0x7d4e, 0x4555, { 0xba, 0xdb, 0xee, 0x5, 0xdc, 0x92, 0x8e, 0xff } } // {73A9615C-7D4E-4555-BADB-EE05DC928EFF}
++	{ 0xa5b4a32d, 0xd2a8, 0x4925, { 0xae, 0x3e, 0x14, 0x80, 0xe4, 0x1a, 0x7, 0xb3 } } // {A5B4A32D-D2A8-4925-AE3E-1480E41A07B3}
+ };
+ 
+ CMPlugin::CMPlugin() :
+@@ -64,7 +64,7 @@
+ 
+ int ModuleLoad(WPARAM, LPARAM)
+ {
+-	bPopupService = ServiceExists(MS_POPUP_ADDPOPUPT);
++	bPopupService = ServiceExists(MS_POPUP_ADDPOPUPW);
+ 	return 0;
+ }
+ 
+@@ -86,7 +86,7 @@
+ 
+ 	// Init extra statuses
+ 	InitXStatusIcons();
+-	HookEvent(ME_SKIN2_ICONSCHANGED, OnReloadIcons);
++	HookEvent(ME_SKIN_ICONSCHANGED, OnReloadIcons);
+ 
+ 	HookEvent(ME_SYSTEM_MODULELOAD, ModuleLoad);
+ 	HookEvent(ME_SYSTEM_MODULEUNLOAD, ModuleLoad);
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/m_icq.h b/src/m_icq.h
+--- a/src/m_icq.h	1970-01-01 02:00:00.000000000 +0200
++++ b/src/m_icq.h	2026-09-22 23:33:29.546464300 +0300
+@@ -0,0 +1,189 @@
++// ---------------------------------------------------------------------------80
++//                ICQ plugin for Miranda Instant Messenger
++//                ________________________________________
++//
++// Copyright (c) 2000-01 Richard Hughes, Roland Rabien, Tristan Van de Vreede
++// Copyright (c) 2001-02 Jon Keating, Richard Hughes
++// Copyright (c) 2002-04 Martin Öberg, Sam Kothari, Robert Rainwater
++// Copyright (c) 2004-10 Joe Kucera
++// Copyright (c) 2012-18 Miranda NG team (https://miranda-ng.org)
++//
++// This program is free software; you can redistribute it and/or
++// modify it under the terms of the GNU General Public License
++// as published by the Free Software Foundation; either version 2
++// of the License, or (at your option) any later version.
++//
++// This program is distributed in the hope that it will be useful,
++// but WITHOUT ANY WARRANTY; without even the implied warranty of
++// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++// GNU General Public License for more details.
++//
++// You should have received a copy of the GNU General Public License
++// along with this program; if not, write to the Free Software
++// Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
++//
++// -----------------------------------------------------------------------------
++// DESCRIPTION:
++//
++//  Public headers for ICQ protocol plug-in
++//
++// -----------------------------------------------------------------------------
++
++#ifndef M_ICQ_H__
++#define M_ICQ_H__ 1
++
++#include <m_protosvc.h>
++
++//extended search result structure, used for all searches
++typedef struct {
++  PROTOSEARCHRESULT hdr;
++  DWORD uin;
++  BYTE auth;
++  BYTE gender;
++  BYTE age;
++  DWORD country;
++  BYTE maritalStatus;
++} ICQSEARCHRESULT;
++
++
++// Open ICQ profile
++// wParam = (WPARAM)hContact
++#define MS_OPEN_PROFILE "/OpenProfile"
++
++// Add contact to server-list
++// wParam = (WPARAM)hContact
++#define MS_ICQ_ADDSERVCONTACT "/AddServerContact"
++
++// Display XStatus detail (internal use only)
++// wParam = (WPARAM)hContact;
++#define MS_XSTATUS_SHOWDETAILS "/ShowXStatusDetails"
++
++//Send an SMS via the ICQ network
++//wParam = (WPARAM)(const char*)szPhoneNumber
++//lParam = (LPARAM)(const char*)szMessage
++//Returns a HANDLE to the send on success, or NULL on failure
++//szPhoneNumber should be the full number with international code and preceeded
++//by a +
++
++//When the server acks the send, an ack will be broadcast:
++// type = ICQACKTYPE_SMS, result = ACKRESULT_SENTREQUEST, lParam = (LPARAM)(char*)szInfo
++//At this point the message is queued to be delivered. szInfo contains the raw
++//XML data of the ack. Here's what I got when I tried:
++//"<sms_response><source>airbornww.com</source><deliverable>Yes</deliverable><network>BT Cellnet, United Kingdom</network><message_id>[my uin]-1-1955988055-[destination phone#, without +]</message_id><messages_left>0</messages_left></sms_response>\r\n"
++
++//Now the hProcess has been deleted. The only way to track which receipt
++//corresponds with which response is to parse the <message_id> field.
++
++//At a (possibly much) later time the SMS will have been delivered. An ack will
++//be broadcast:
++// type = ICQACKTYPE_SMS, result = ACKRESULT_SUCCESS, hProcess = NULL, lParam = (LPARAM)(char*)szInfo
++//Note that the result will always be success even if the send failed, just to
++//save needing to have an attempt at an XML parser in the ICQ module.
++//Here's the szInfo for a success:
++//"<sms_delivery_receipt><message_id>[my uin]-1--1461632229-[dest phone#, without +]</message_id><destination>[dest phone#, without +]</destination><delivered>Yes</delivered><text>[first 20 bytes of message]</text><submition_time>Tue, 30 Oct 2001 22:35:16 GMT</submition_time><delivery_time>Tue, 30 Oct 2001 22:34:00 GMT</delivery_time></sms_delivery_receipt>"
++//And here's a failure:
++//"<sms_delivery_receipt><message_id>[my uin]-1-1955988055-[destination phone#, without leading +]</message_id><destination>[destination phone#, without leading +]</destination><delivered>No</delivered><submition_time>Tue, 23 Oct 2001 23:17:02 GMT</submition_time><error_code>999999</error_code><error><id>15</id><params><param>0</param><param>Multiple message submittion failed</param></params></error></sms_delivery_receipt>"
++
++//SMSes received from phones come through this same ack, again to avoid having
++//an XML parser in the protocol module. Here's one I got:
++//"<sms_message><source>MTN</source><destination_UIN>[UIN of recipient, ie this account]</destination_UIN><sender>[sending phone number, without +]</sender><senders_network>[contains one space, because I sent from ICQ]</senders_network><text>[body of the message]</text><time>Fri, 16 Nov 2001 03:12:33 GMT</time></sms_message>"
++#define ICQACKTYPE_SMS      1001
++#define ICQEVENTTYPE_SMS    2001    //database event type
++#define MS_ICQ_SENDSMS      "/SendSMS"
++
++//e-mail express
++//db event added to NULL contact
++//blob format is:
++//ASCIIZ    text, usually of the form "Subject: %s\r\n%s"
++//ASCIIZ    from name
++//ASCIIZ    from e-mail
++#define ICQEVENTTYPE_EMAILEXPRESS 2002  //database event type
++
++//www pager
++//db event added to NULL contact
++//blob format is:
++//ASCIIZ    text, usually "Sender IP: xxx.xxx.xxx.xxx\r\n%s"
++//ASCIIZ    from name
++//ASCIIZ    from e-mail
++#define ICQEVENTTYPE_WEBPAGER   2003    //database event type
++
++//missed message notification
++//db event added to contact's history
++//blob format is:
++//WORD      error code
++#define ICQEVENTTYPE_MISSEDMESSAGE 2004 //database event type
++
++
++//for server-side lists, used internally only
++//hProcess = dwSequence
++//lParam = server's error code, 0 for success
++#define ICQACKTYPE_SERVERCLIST  1003
++
++//for rate warning distribution (mainly upload dlg)
++//hProcess = Rate class ID
++//lParam = server's status code
++#define ICQACKTYPE_RATEWARNING  1004
++
++//received Xtraz Notify response
++//hProcess = dwSequence
++//lParam = contents of RES node
++#define ICQACKTYPE_XTRAZNOTIFY_RESPONSE 1005
++
++//received Custom Status details response
++//hProcess = dwSequence
++//lParam = 0
++#define ICQACKTYPE_XSTATUS_RESPONSE 1006
++
++
++//Update user details on server
++//Permited operation types:
++#define CIXT_BASIC      0x0001
++#define CIXT_MORE       0x0002
++#define CIXT_WORK       0x0004
++#define CIXT_CONTACT    0x0008
++#define CIXT_LOCATION   0x0010
++#define CIXT_BACKGROUND 0x0020
++#define CIXT_EDUCATION  0x0040
++#define CIXT_EXTRA      0x0080
++#define CIXT_FULL       0x00FF
++
++//wParam = operationType
++#define PS_CHANGEINFOEX "/ChangeInfoEx"
++
++//miranda/icqoscar/statusmsgreq event
++//called when our status message is requested
++//wParam = (BYTE)msgType
++//lParam = (DWORD)uin
++//msgType is one of the ICQ_MSGTYPE_GET###MSG constants in icq_constants.h
++//uin is the UIN of the contact requesting our status message
++#define ME_ICQ_STATUSMSGREQ      "/StatusMsgReq"
++
++// Request Custom status details (messages) for specified contact
++//wParam = hContact  // request custom status details for this contact
++//lParam = 0
++//return = (int)dwSequence   // if successful it is sequence for ICQACKTYPE_XSTATUS_RESPONSE
++                             // 0 failed to request (e.g. auto-request enabled)
++                             // -1 delayed (rate control) - sequence unknown
++#define PS_ICQ_REQUESTCUSTOMSTATUS "/RequestXStatusDetails"
++
++#define MAX_CAPNAME 64
++typedef struct
++{
++	int cbSize;
++	char caps[0x10];
++	HANDLE hIcon;
++	char name[MAX_CAPNAME];
++} ICQ_CUSTOMCAP;
++
++// Add a custom icq capability.
++// wParam = 0;
++// lParam = (LPARAM)(ICQ_CUSTOMCAP *)&icqCustomCap;
++#define PS_ICQ_ADDCAPABILITY "/IcqAddCapability"
++
++// Check if capability is supportes. Only icqCustomCap.caps does matter.
++// wParam = (WPARAM)(HANDLE)hContact;
++// lParam = (LPARAM)(ICQ_CUSTOMCAP *)&icqCustomCap;
++// returns non-zero if capability is supported
++#define PS_ICQ_CHECKCAPABILITY "/IcqCheckCapability"
++
++#endif // M_ICQ_H__
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/oscar_filetransfer.cpp b/src/oscar_filetransfer.cpp
+--- a/src/oscar_filetransfer.cpp	2026-09-22 23:33:29.334716900 +0300
++++ b/src/oscar_filetransfer.cpp	2026-09-22 23:33:29.533956700 +0300
+@@ -263,7 +263,7 @@
+ 	return dwCheck;
+ }
+ 
+-oscar_listener* CIcqProto::CreateOscarListener(oscar_filetransfer *ft, NETLIBNEWCONNECTIONPROC_V2 handler)
++oscar_listener* CIcqProto::CreateOscarListener(oscar_filetransfer *ft, NETLIBNEWCONNECTIONPROC handler)
+ {
+ 	oscar_listener *listener = (oscar_listener*)SAFE_MALLOC(sizeof(oscar_listener));
+ 	if (listener) {
+@@ -476,16 +476,12 @@
+ 
+ 				wchar_t* ptszFileName = mir_utf8decodeW(pszFileName);
+ 
+-				PROTORECVFILE pre = { 0 };
+-				pre.dwFlags = PRFF_UNICODE;
+-				pre.fileCount = 1;
+-				pre.timestamp = time(0);
+-				pre.descr.w = mir_utf8decodeW(pszDescription);
+-				pre.files.w = &ptszFileName;
+-				pre.lParam = (LPARAM)ft;
+-				ProtoChainRecvFile(ft->hContact, &pre);
++				ptrW ptszDescr(mir_utf8decodeW(pszDescription));
++
++				DB::EventInfo dbei;
++				dbei.iTimestamp = time(0);
++				ProtoChainRecvFile(ft->hContact, DB::FILE_BLOB(ptszFileName, ptszDescr), dbei);
+ 
+-				mir_free(pre.descr.w);
+ 				mir_free(ptszFileName);
+ 			}
+ 			else if (wAckType == 2) { // First attempt failed, reverse requested
+@@ -815,7 +811,7 @@
+ 		}
+ 
+ 		// Create listener
+-		ft->listener = CreateOscarListener(ft, oft_newConnectionReceived);
++		ft->listener = CreateOscarListener(ft, (NETLIBNEWCONNECTIONPROC)oft_newConnectionReceived);
+ 
+ 		// Send packet
+ 		if (ft->listener) {
+@@ -1057,8 +1053,6 @@
+ 	nloc.wPort = getWord("OscarPort", m_bSecureConnection ? DEFAULT_SERVER_PORT_SSL : DEFAULT_SERVER_PORT);
+ 	if (nloc.wPort == 0)
+ 		nloc.wPort = RandRange(1024, 65535);
+-	if (m_bGatewayMode)
+-		nloc.flags |= NLOCF_HTTPGATEWAY;
+ 
+ 	oc->hConnection = NetLib_OpenConnection(m_hNetlibUser, "Proxy ", &nloc);
+ 	if (!oc->hConnection) // proxy connection failed
+@@ -1137,7 +1131,7 @@
+ 			ProtoBroadcastAck(oc.ft->hContact, ACKTYPE_FILE, ACKRESULT_CONNECTING, oc.ft, 0);
+ 
+ 			if (!addr.S_un.S_addr && oc.type == OCT_NORMAL) { // IP to connect to is empty, request reverse
+-				oscar_listener* listener = CreateOscarListener(oc.ft, oft_newConnectionReceived);
++				oscar_listener* listener = CreateOscarListener(oc.ft, (NETLIBNEWCONNECTIONPROC)oft_newConnectionReceived);
+ 
+ 				if (listener) { // we got listening port, fine send request
+ 					oc.ft->listener = listener;
+@@ -1164,7 +1158,7 @@
+ 				}
+ 				if (!oc.hConnection) {
+ 					if (oc.type == OCT_NORMAL) { // connection failed, try reverse
+-						oscar_listener* listener = CreateOscarListener(oc.ft, oft_newConnectionReceived);
++						oscar_listener* listener = CreateOscarListener(oc.ft, (NETLIBNEWCONNECTIONPROC)oft_newConnectionReceived);
+ 
+ 						if (listener) { // we got listening port, fine send request
+ 							oc.ft->listener = listener;
+@@ -1212,8 +1206,6 @@
+ 				nloc.wPort = getWord("OscarPort", m_bSecureConnection ? DEFAULT_SERVER_PORT_SSL : DEFAULT_SERVER_PORT);
+ 				if (nloc.wPort == 0)
+ 					nloc.wPort = RandRange(1024, 65535);
+-				if (m_bGatewayMode)
+-					nloc.flags |= NLOCF_HTTPGATEWAY;
+ 				oc.hConnection = NetLib_OpenConnection(m_hNetlibUser, "Proxy ", &nloc);
+ 				if (!oc.hConnection) { // proxy connection failed, we are out of possibilities
+ 					ProtoBroadcastAck(oc.ft->hContact, ACKTYPE_FILE, ACKRESULT_FAILED, oc.ft, 0);
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/resource.h b/src/resource.h
+--- a/src/resource.h	2026-09-22 23:33:29.336718000 +0300
++++ b/src/resource.h	2026-09-22 23:33:29.534958100 +0300
+@@ -72,6 +72,7 @@
+ #define IDC_XSTATUSRESET                1042
+ #define IDC_MOODSENABLE                 1043
+ #define IDC_KILLSPAMBOTS                1045
++#define IDC_WEBBASE                     1603
+ #define IDC_EMAIL                       1048
+ #define IDC_NICK                        1053
+ #define IDC_GENDER                      1060
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/stdafx.h b/src/stdafx.h
+--- a/src/stdafx.h	2026-09-22 23:33:29.338719200 +0300
++++ b/src/stdafx.h	2026-09-22 23:33:29.537957600 +0300
+@@ -72,13 +72,13 @@
+ #include <m_idle.h>
+ #include <m_skin.h>
+ #include <m_popup.h>
++#include <m_popup_int.h>
+ #include <m_cluiframes.h>
+ #include <m_ignore.h>
+ #include <m_icolib.h>
+ #include <m_avatars.h>
+ #include <m_xstatus.h>
+ #include <m_timezones.h>
+-#include <win2k.h>
+ #include <m_gui.h>
+ 
+ // Project resources
+@@ -96,7 +96,6 @@
+ #include "icq_server.h"
+ #include "icqosc_svcs.h"
+ #include "icq_servlist.h"
+-#include "icq_http.h"
+ #include "icq_fieldnames.h"
+ #include "icq_constants.h"
+ #include "capabilities.h"
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/userinfotab.cpp b/src/userinfotab.cpp
+--- a/src/userinfotab.cpp	2026-09-22 23:33:29.346226500 +0300
++++ b/src/userinfotab.cpp	2026-09-22 23:33:29.542957600 +0300
+@@ -190,16 +190,15 @@
+ 	switch (msg) {
+ 	case WM_INITDIALOG:
+ 		TranslateDialogDefault(hwndDlg);
++		// The protocol pointer used to arrive with PSN_PARAMCHANGED, which the
++		// current core no longer sends; the adapter page now passes it in lParam.
++		SetWindowLongPtr(hwndDlg, GWLP_USERDATA, lParam);
+ 		break;
+ 
+ 	case WM_NOTIFY:
+ 		switch (((LPNMHDR)lParam)->idFrom) {
+ 		case 0:
+ 			switch (((LPNMHDR)lParam)->code) {
+-			case PSN_PARAMCHANGED:
+-				SetWindowLongPtr(hwndDlg, GWLP_USERDATA, ((PSHNOTIFY*)lParam)->lParam);
+-				break;
+-
+ 			case PSN_INFOCHANGED:
+ 				CIcqProto * ppro = (CIcqProto*)GetWindowLongPtr(hwndDlg, GWLP_USERDATA);
+ 				if (!ppro)
+@@ -211,7 +210,7 @@
+ 				if (hContact == NULL)
+ 					szProto = ppro->m_szModuleName;
+ 				else
+-					szProto = GetContactProto(hContact);
++					szProto = Proto_GetBaseAccountName(hContact);
+ 
+ 				if (!szProto)
+ 					break;
+@@ -263,28 +262,130 @@
+ 
+ /////////////////////////////////////////////////////////////////////////////////////////
+ 
++// In the current core the details pages are CUserInfoPageDlg objects, while
++// both of our procedures are left over from the old API. The adapter passes
++// messages through unchanged and adds what the core no longer sends: the
++// protocol pointer in lParam of WM_INITDIALOG (it used to come with
++// PSN_PARAMCHANGED) and PSN_INFOCHANGED whenever the details window asks for a
++// refresh (the window used to send it itself).
++class CIcqUserInfoPage : public CUserInfoPageDlg
++{
++	CIcqProto *m_ppro;
++	DLGPROC m_pfnProc;
++	int m_idPage;
++
++public:
++	CIcqUserInfoPage(CIcqProto *ppro, int idDialog, DLGPROC pfnProc) :
++		CUserInfoPageDlg(g_plugin, idDialog),
++		m_ppro(ppro),
++		m_pfnProc(pfnProc),
++		m_idPage(idDialog)
++	{
++		m_autoClose = 0; // the details window closes itself; a page must not
++	}
++
++	// The details window stretches a page to its own size, but only this handler
++	// recomputes the layout from the template: without it the contents stay in
++	// the top left corner as a frame that never moves.
++	int Resizer(UTILRESIZECONTROL *urc) override
++	{
++		if (m_idPage == IDD_INFO_CHANGEINFO) {
++			switch (urc->wId) {
++			case IDC_SAVE:
++				return RD_ANCHORX_RIGHT | RD_ANCHORY_BOTTOM;
++			case IDC_UPLOADING:
++				return RD_ANCHORX_WIDTH | RD_ANCHORY_BOTTOM;
++			default: // the settings list
++				return RD_ANCHORX_WIDTH | RD_ANCHORY_HEIGHT;
++			}
++		}
++
++		// The details page is a set of label-and-value pairs: labels stay put,
++		// values stretch with the width.
++		switch (urc->wId) {
++		case -1: // labels the template leaves without an id
++		case IDC_UINSTATIC:
++		case IDC_SUPTIME:
++			return RD_ANCHORX_LEFT | RD_ANCHORY_TOP;
++		default:
++			return RD_ANCHORX_WIDTH | RD_ANCHORY_TOP;
++		}
++	}
++
++	bool OnInitDialog() override
++	{
++		m_pfnProc(m_hwnd, WM_INITDIALOG, 0, (LPARAM)m_ppro);
++		return true;
++	}
++
++	bool OnRefresh() override
++	{
++		PSHNOTIFY pshn = {};
++		pshn.hdr.code = PSN_INFOCHANGED;
++		pshn.hdr.hwndFrom = m_hwnd;
++		pshn.hdr.idFrom = 0;
++		pshn.lParam = (LPARAM)m_hContact;
++		m_pfnProc(m_hwnd, WM_NOTIFY, 0, (LPARAM)&pshn);
++		return false;
++	}
++
++	INT_PTR DlgProc(UINT msg, WPARAM wParam, LPARAM lParam) override
++	{
++		switch (msg) {
++		case WM_INITDIALOG:
++			break; // sent from OnInitDialog instead, once the window exists
++
++		case WM_NOTIFY:
++			// PSN_INFOCHANGED arrives through OnRefresh; forwarding it here as
++			// well would fill the page twice.
++			if (((LPNMHDR)lParam)->idFrom == 0 && ((LPNMHDR)lParam)->code == PSN_INFOCHANGED)
++				break;
++			[[fallthrough]];
++
++		default:
++			if (INT_PTR res = m_pfnProc(m_hwnd, msg, wParam, lParam))
++				return res;
++		}
++
++		return CUserInfoPageDlg::DlgProc(msg, wParam, lParam);
++	}
++};
++
++/////////////////////////////////////////////////////////////////////////////////////////
++
+ int CIcqProto::OnUserInfoInit(WPARAM wParam, LPARAM lParam)
+ {
+ 	if ((!IsICQContact(lParam)) && lParam)
+ 		return 0;
+ 
+-	OPTIONSDIALOGPAGE odp = {};
+-	odp.flags = ODPF_UNICODE | ODPF_USERINFOTAB | ODPF_DONTTRANSLATE;
+-	odp.dwInitParam = LPARAM(this);
+-	odp.szTitle.w = m_tszUserName;
+-
+-	odp.pfnDlgProc = IcqDlgProc;
+-	odp.position = -1900000000;
+-	odp.szTab.w = LPGENW("Details");
+-	odp.pszTemplate = MAKEINTRESOURCEA(IDD_INFO_ICQ);
+-	g_plugin.addUserInfo(wParam, &odp);
++	USERINFOPAGE uip = {};
++	uip.flags = ODPF_UNICODE | ODPF_USERINFOTAB | ODPF_DONTTRANSLATE;
++	uip.szGroup.w = m_tszUserName;
++	uip.szProto = m_szModuleName;
++
++	uip.position = -1900000000;
++	uip.szTitle.w = LPGENW("Details");
++	uip.pDialog = new CIcqUserInfoPage(this, IDD_INFO_ICQ, IcqDlgProc);
++	g_plugin.addUserInfo(wParam, &uip);
+ 
++	// Only the user's own profile is editable; there is nothing to change on
++	// somebody else's contact.
+ 	if (!lParam) {
+-		odp.szTab.w = LPGENW("Account");
+-		odp.position = -1899999999;
+-		odp.pszTemplate = MAKEINTRESOURCEA(IDD_INFO_CHANGEINFO);
+-		odp.pfnDlgProc = ChangeInfoDlgProc;
+-		g_plugin.addUserInfo(wParam, &odp);
++		uip.position = -1899999999;
++		uip.szTitle.w = LPGENW("Account");
++		uip.pDialog = new CIcqUserInfoPage(this, IDD_INFO_CHANGEINFO, ChangeInfoDlgProc);
++		g_plugin.addUserInfo(wParam, &uip);
++
++		// For the user's own profile the details window asks nobody: it calls
++		// PS_GETINFO through CallContactService, which finds no account for
++		// hContact == 0 and silently reports success. The window then waits for an
++		// acknowledgement that never comes - hence the endless "Updating" caption
++		// and the greyed-out button. Ask for our own profile ourselves, and when
++		// there is nobody to ask, end the wait with a deferred failure (it cannot
++		// be immediate: the window has not started waiting yet).
++		if (GetInfo(0, SGIF_ONOPEN))
++			ProtoBroadcastAsync(0, ACKTYPE_GETINFO, ACKRESULT_FAILED, nullptr, 0);
+ 	}
++
+ 	return 0;
+ }
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.cpp b/src/utilities.cpp
+--- a/src/utilities.cpp	2026-09-22 23:33:29.347236300 +0300
++++ b/src/utilities.cpp	2026-09-22 23:33:29.543956700 +0300
+@@ -125,12 +125,10 @@
+ 		nIcqStatus = ICQ_STATUS_AWAY;
+ 		break;
+ 
+-	case ID_STATUS_OUTTOLUNCH:
+ 	case ID_STATUS_NA:
+ 		nIcqStatus = ICQ_STATUS_NA;
+ 		break;
+ 
+-	case ID_STATUS_ONTHEPHONE:
+ 	case ID_STATUS_OCCUPIED:
+ 		nIcqStatus = ICQ_STATUS_OCCUPIED;
+ 		break;
+@@ -184,15 +182,6 @@
+ 		nSupportedStatus = ID_STATUS_ONLINE;
+ 		break;
+ 
+-		// This mode is not support and must be mapped to something else
+-	case ID_STATUS_OUTTOLUNCH:
+-		nSupportedStatus = ID_STATUS_NA;
+-		break;
+-
+-		// This mode is not support and must be mapped to something else
+-	case ID_STATUS_ONTHEPHONE:
+-		nSupportedStatus = ID_STATUS_OCCUPIED;
+-		break;
+ 
+ 		// This is not supposed to happen.
+ 	default:
+@@ -525,7 +514,7 @@
+ 
+ 	DBEVENTINFO dbei = {};
+ 	dbei.cbBlob = sizeof(DWORD) * 2;
+-	dbei.pBlob = (PBYTE)&body;
++	dbei.pBlob = (char *)&body;
+ 
+ 	if (db_event_get(hEvent, &dbei))
+ 		return INVALID_CONTACT_ID;
+@@ -1149,6 +1138,20 @@
+ }
+ 
+ 
++// Stores the name that matches the numeric code of a tag. Needed where the
++// Miranda core expects a string: it reads the interest list from the database
++// through db_get_wsa, where a numeric setting reads as empty, and prints the
++// languages as they are.
++void CIcqProto::writeDbInfoSettingTLVName(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv, const FieldNamesItem *pNames)
++{
++	int num = chain->getNumber(wTlv, 1);
++	char szName[MAX_PATH];
++	if (num > 0 && num != 0x7FFF && LookupFieldNameUtf(pNames, num, szName, _countof(szName)))
++		db_set_utf(hContact, m_szModuleName, szSetting, szName);
++	else
++		delSetting(hContact, szSetting);
++}
++
+ void CIcqProto::writeDbInfoSettingTLVStringUtf(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv)
+ {
+ 	oscar_tlv *pTLV = chain->getTLV(wTlv, 1);
+@@ -1332,20 +1335,30 @@
+ }
+ 
+ 
++CMStringA IcqWebUrl(const char *szDefault, const char *szPath)
++{
++	ptrA szBase(db_get_sa(0, "ICQ", "WebBase"));
++	if (!szBase || !*szBase)
++		return szDefault;
++
++	CMStringA res(szBase);
++	res.TrimRight('/');
++	res.Append(szPath);
++	return res;
++}
++
+ HNETLIBCONN NetLib_OpenConnection(HNETLIBUSER hUser, const char* szIdent, NETLIBOPENCONNECTION* nloc)
+ {
+ 	Netlib_Logf(hUser, "%sConnecting to %s:%u", szIdent ? szIdent : "", nloc->szHost, nloc->wPort);
+ 
+-	nloc->cbSize = sizeof(NETLIBOPENCONNECTION);
+-	nloc->flags |= NLOCF_V2;
+-	return Netlib_OpenConnection(hUser, nloc);
++	return Netlib_OpenConnection(hUser, nloc->szHost, nloc->wPort, nloc->timeout, nloc->flags);
+ }
+ 
+ 
+-HNETLIBBIND CIcqProto::NetLib_BindPort(NETLIBNEWCONNECTIONPROC_V2 pFunc, void* lParam, WORD* pwPort, DWORD* pdwIntIP)
++HNETLIBBIND CIcqProto::NetLib_BindPort(NETLIBNEWCONNECTIONPROC pFunc, void* lParam, WORD* pwPort, DWORD* pdwIntIP)
+ {
+ 	NETLIBBIND nlb = {};
+-	nlb.pfnNewConnectionV2 = pFunc;
++	nlb.pfnNewConnection = pFunc;
+ 	nlb.pExtra = lParam;
+ 	SetLastError(ERROR_INVALID_PARAMETER); // this must be here - NetLib does not set any error :((
+ 
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.h b/src/utilities.h
+--- a/src/utilities.h	2026-09-22 23:33:29.348235800 +0300
++++ b/src/utilities.h	2026-09-22 23:33:29.544956700 +0300
+@@ -132,4 +132,6 @@
+ void   setContactExtraIcon(MCONTACT hContact, int xstatus);
+ int    OnReloadIcons(WPARAM wParam, LPARAM lParam);
+ 
++CMStringA IcqWebUrl(const char *szDefault, const char *szPath);
++
+ #endif /* __UTILITIES_H */
