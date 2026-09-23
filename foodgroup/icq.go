@@ -836,7 +836,7 @@ func (s *ICQService) SetICQInfo(ctx context.Context, instance *state.SessionInst
 		}
 	}
 
-name := instance.IdentScreenName()
+	name := instance.IdentScreenName()
 	if err := s.userUpdater.SetICQInfo(ctx, name, user.ICQInfo); err != nil {
 		return err
 	}
