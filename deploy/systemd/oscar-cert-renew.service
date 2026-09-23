@@ -1,0 +1,9 @@
+[Unit]
+Description=ICQ Revival - TLS certificate renewal
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/oscar-cert-renew.sh
+Environment="OSCAR_TLS_DOMAIN=chat.example.ts.net"

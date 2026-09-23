@@ -1,0 +1,708 @@
+{
+  "random_chat_help": {
+    "links": [
+      "/today",
+      "/whitepages"
+    ],
+    "now": true,
+    "en": {
+      "title": "Random Chat",
+      "text": "The server picks someone to talk to out of everyone who is online right now with Random Chat switched on in the same group — music, romance, help with a computer.",
+      "use": [
+        "In the contact list open <b>Chat With A Friend</b>.",
+        "Tick «I want to be available to chat with a friend» and pick a group.",
+        "Press <b>Find a Chat Partner</b> — the server hands you somebody else who is online in the same group."
+      ],
+      "note": "Matching is by group only; the «chat topic» field is not used. With a handful of friends you will often get nobody — an honest answer, not a failure."
+    },
+    "uk": {
+      "title": "Випадковий чат",
+      "text": "Сервер знаходить співрозмовника серед усіх, хто зараз у мережі та увімкнув випадковий чат у тій самій групі — музика, романтика, допомога з комп’ютером.",
+      "use": [
+        "У списку контактів відкрийте <b>Chat With A Friend</b>.",
+        "Поставте позначку «I want to be available to chat with a friend» і оберіть групу.",
+        "Натисніть <b>Find a Chat Partner</b> — сервер дасть когось іншого, хто зараз у мережі в тій самій групі."
+      ],
+      "note": "Підбір іде лише за групою, поле «тема розмови» не враховується. При кількох друзях часто нікого не знайдеться — це чесна відповідь, а не збій."
+    }
+  },
+  "chat_rooms": {
+    "links": [
+      "/today"
+    ],
+    "now": true,
+    "en": {
+      "title": "Chat rooms",
+      "text": "Group chat is part of the protocol: several people in one window, invited from the contact list. The Chat Center that listed public rooms was a page on ICQ.com.",
+      "here": "This server speaks the chat part of the protocol, so group chats between clients work, but there is no public directory to browse."
+    },
+    "uk": {
+      "title": "Кімнати чату",
+      "text": "Групова розмова — частина протоколу: кілька людей в одному вікні, запрошених зі списку контактів. Каталог загальнодоступних кімнат був сторінкою на ICQ.com.",
+      "here": "Сервер підтримує групові чати між клієнтами, але загальнодоступного каталогу кімнат тут немає."
+    }
+  },
+  "free_chat_help": {
+    "links": [
+      "/today"
+    ],
+    "now": true,
+    "en": {
+      "title": "Chat rooms",
+      "text": "How group chat works: you open a room, invite people from the contact list and they join you in one window.",
+      "here": "Group chats between clients work; the public directory of rooms was part of ICQ.com and is gone."
+    },
+    "uk": {
+      "title": "Кімнати чату",
+      "text": "Як влаштована групова розмова: ви відкриваєте кімнату, запрошуєте людей зі списку контактів, і всі опиняються в одному вікні.",
+      "here": "Групові чати між клієнтами працюють; загальнодоступний каталог кімнат був частиною ICQ.com і зник."
+    }
+  },
+  "white_pages": {
+    "links": [
+      "/whitepages",
+      "/today"
+    ],
+    "now": true,
+    "en": {
+      "title": "White Pages",
+      "text": "A search over the people of this server: by number, and by the name, city and interests they put in their details.",
+      "here": "Search by number always works. Search by name, city or interests finds only those who filled those fields in — your own are on the profile page."
+    },
+    "uk": {
+      "title": "Білі сторінки",
+      "text": "Пошук серед людей цього сервера: за номером, а також за іменем, містом та інтересами, які вони вказали в анкеті.",
+      "here": "Пошук за номером працює завжди. За іменем, містом чи інтересами знайдуться лише ті, хто заповнив ці поля, — свої ви заповните на сторінці профілю."
+    }
+  },
+  "white_pages_directories": {
+    "links": [
+      "/whitepages"
+    ],
+    "en": {
+      "title": "Other directories",
+      "text": "ICQ offered to publish your number in outside catalogues and put a «page me» button on your own web page.",
+      "here": "Nothing is published anywhere from here. If you want to be reachable, simply give out your number."
+    },
+    "uk": {
+      "title": "Інші каталоги",
+      "text": "ICQ пропонувала розмістити ваш номер у сторонніх каталогах і кнопку «напишіть мені» на власній сторінці.",
+      "here": "Звідси нікуди нічого не публікується. Щоб вас знайшли, просто дайте свій номер."
+    }
+  },
+  "user_list": {
+    "links": [
+      "/today",
+      "/whitepages"
+    ],
+    "en": {
+      "title": "User lists",
+      "text": "Themed lists of people you could join — by city, hobby, profession — so that strangers with the same interest could find each other.",
+      "here": "There is no such directory here: everyone on this server already knows each other."
+    },
+    "uk": {
+      "title": "Списки користувачів",
+      "text": "Тематичні списки, до яких можна було приєднатися — за містом, захопленням, фахом, — щоб незнайомці зі спільним інтересом знаходили одне одного.",
+      "here": "Такого каталогу тут немає: на цьому сервері всі й так знайомі."
+    }
+  },
+  "homepage_directory": {
+    "links": [
+      "/whitepages"
+    ],
+    "now": true,
+    "en": {
+      "title": "Homepage directory",
+      "text": "The client can serve a small personal web page straight from your own computer while you are online. ICQ.com additionally listed those pages in a catalogue.",
+      "here": "The client can still start that server locally, but the catalogue that made pages findable is gone."
+    },
+    "uk": {
+      "title": "Каталог домашніх сторінок",
+      "text": "Клієнт уміє віддавати невелику особисту сторінку просто з вашого комп’ютера, поки ви в мережі. ICQ.com ще й збирала такі сторінки в каталог.",
+      "here": "Клієнт і досі вміє піднімати цей сервер локально, але каталогу, який робив сторінки знайденими, більше немає."
+    }
+  },
+  "webfront_help": {
+    "links": [],
+    "now": true,
+    "en": {
+      "title": "Personal web page",
+      "text": "\"Homepage Factory\" builds a small site from templates and publishes it through your client while you are online.",
+      "here": "The feature lives in the client and still works on your own machine; the templates and hosting were on ICQ.com."
+    },
+    "uk": {
+      "title": "Особиста вебсторінка",
+      "text": "«Homepage Factory» збирає невеликий сайт із шаблонів і віддає його через ваш клієнт, поки ви в мережі.",
+      "here": "Сама можливість лишилася в клієнті й працює на вашому комп’ютері; шаблони та розміщення були на ICQ.com."
+    }
+  },
+  "wwpager_help": {
+    "links": [
+      "/wwp",
+      "/whitepages"
+    ],
+    "now": true,
+    "en": {
+      "title": "World Wide Pager",
+      "text": "A page anyone can open to send a message to your number without having ICQ installed — the way someone reaches you from a borrowed computer.",
+      "use": [
+        "Open the web pager, type the number and the message.",
+        "If the person is offline the message waits on the server and arrives at their next sign-in."
+      ]
+    },
+    "uk": {
+      "title": "World Wide Pager",
+      "text": "Сторінка, з якої будь-хто надішле повідомлення на ваш номер, не маючи ICQ, — так до вас достукаються з чужого комп’ютера.",
+      "use": [
+        "Відкрийте веб-пейджер, вкажіть номер і текст.",
+        "Якщо людини немає в мережі, повідомлення зачекає на сервері й надійде при наступному вході."
+      ]
+    }
+  },
+  "email_center": {
+    "links": [],
+    "en": {
+      "title": "Email Express",
+      "text": "ICQ could send short e-mails straight from the client through ICQ.com, and warn you about new mail in your ICQ mailbox.",
+      "here": "There is no mail gateway on this server. Messages go to ICQ numbers only."
+    },
+    "uk": {
+      "title": "Email Express",
+      "text": "ICQ могла надсилати короткі листи просто з клієнта через ICQ.com і повідомляти про нову пошту в скриньці ICQ.",
+      "here": "Поштового шлюзу на цьому сервері немає. Повідомлення надходять лише на номери ICQ."
+    }
+  },
+  "emailexpress_help": {
+    "links": [],
+    "en": {
+      "title": "Email Express",
+      "text": "Sending a short e-mail to someone from the contact list without opening a mail program — ICQ.com relayed it.",
+      "here": "No mail relay here; write to the number instead."
+    },
+    "uk": {
+      "title": "Email Express",
+      "text": "Надсилання короткого листа комусь зі списку контактів, не відкриваючи поштову програму: пересилала ICQ.com.",
+      "here": "Пересилання пошти тут немає; пишіть на номер."
+    }
+  },
+  "smtp_help": {
+    "links": [],
+    "en": {
+      "title": "Mail settings",
+      "text": "How to point the client at your outgoing mail server so Email Express could send through it.",
+      "here": "Not used here — the client talks only to this server."
+    },
+    "uk": {
+      "title": "Налаштування пошти",
+      "text": "Як вказати клієнту сервер вихідної пошти, щоб Email Express надсилав через нього.",
+      "here": "Тут не використовується — клієнт спілкується лише з цим сервером."
+    }
+  },
+  "pop3_help": {
+    "links": [],
+    "now": true,
+    "en": {
+      "title": "Mail notifications",
+      "text": "The client can check a POP3 mailbox of yours and tell you about new letters.",
+      "here": "The setting is still in the client and works with any mailbox of your own; it has nothing to do with this server."
+    },
+    "uk": {
+      "title": "Сповіщення про пошту",
+      "text": "Клієнт уміє перевіряти вашу поштову скриньку POP3 й повідомляти про нові листи.",
+      "here": "Налаштування лишилося в клієнті й працює з вашою власною скринькою; цього сервера воно не стосується."
+    }
+  },
+  "icqmail": {
+    "links": [],
+    "en": {
+      "title": "ICQ Mail",
+      "text": "A free mailbox at icqmail.com that came with your number.",
+      "here": "Closed long ago together with the rest of ICQ.com."
+    },
+    "uk": {
+      "title": "Пошта ICQ",
+      "text": "Безкоштовна скринька на icqmail.com, що йшла в комплекті з номером.",
+      "here": "Закрилася давно разом з рештою ICQ.com."
+    }
+  },
+  "sms": {
+    "links": [
+      "/wwp"
+    ],
+    "en": {
+      "title": "SMS",
+      "text": "ICQ sent text messages to mobile phones free of charge through deals with operators, and let people reply back into the client.",
+      "here": "There is no SMS gateway. The web pager does the same job inside the server."
+    },
+    "uk": {
+      "title": "SMS",
+      "text": "ICQ безкоштовно надсилала повідомлення на мобільні телефони за домовленістю з операторами й дозволяла відповідати назад у клієнт.",
+      "here": "Шлюзу SMS немає. Ту саму роль усередині сервера виконує веб-пейджер."
+    }
+  },
+  "sms_nw": {
+    "links": [
+      "/wwp"
+    ],
+    "en": {
+      "title": "SMS networks",
+      "text": "The list of mobile operators ICQ could deliver text messages to — it differed by country and changed often.",
+      "here": "No SMS from this server. Use the web pager."
+    },
+    "uk": {
+      "title": "Мережі SMS",
+      "text": "Перелік мобільних операторів, куди ICQ могла доставляти повідомлення; він відрізнявся за країнами й часто змінювався.",
+      "here": "SMS із цього сервера немає. Скористайтеся веб-пейджером."
+    }
+  },
+  "phone_center": {
+    "links": [],
+    "en": {
+      "title": "Telephony",
+      "text": "ICQ tied the client to voice calls: PC-to-PC, PC-to-phone through partner providers, and a «call me» request to a contact.",
+      "here": "Voice was never part of the protocol this server speaks, and the providers are gone."
+    },
+    "uk": {
+      "title": "Телефонія",
+      "text": "ICQ пов’язувала клієнт із голосовими дзвінками: між комп’ютерами, на телефон через партнерів і запит «зателефонуй мені».",
+      "here": "Голос ніколи не був частиною протоколу, яким говорить цей сервер, а партнерів більше немає."
+    }
+  },
+  "phone_guides": {
+    "links": [],
+    "en": {
+      "title": "Call request",
+      "text": "Asking a contact to call you back on a real phone number you had published in your details.",
+      "here": "The fields are still in the client, but nothing sends such a request any more."
+    },
+    "uk": {
+      "title": "Запит дзвінка",
+      "text": "Прохання передзвонити на справжній телефонний номер, вказаний у ваших даних.",
+      "here": "Поля лишилися в клієнті, але сам запит більше нікуди не надсилається."
+    }
+  },
+  "phone_help": {
+    "links": [],
+    "en": {
+      "title": "Telephony",
+      "text": "How to set up voice calls and the phone numbers shown in your details.",
+      "here": "Voice calling was an ICQ.com service and is gone; the phone fields in your details still work as plain text."
+    },
+    "uk": {
+      "title": "Телефонія",
+      "text": "Як налаштувати голосові дзвінки та телефонні номери у ваших даних.",
+      "here": "Голосові дзвінки були службою ICQ.com і зникли; поля з телефонами у даних лишилися звичайним текстом."
+    }
+  },
+  "birthday_center": {
+    "links": [
+      "/whitepages"
+    ],
+    "now": true,
+    "en": {
+      "title": "Birthday centre",
+      "text": "The client reminds you about birthdays of people on your list who filled the date in. The greeting cards came from ICQ.com.",
+      "here": "The client still shows a reminder if a contact filled in their date; the cards came from ICQ.com."
+    },
+    "uk": {
+      "title": "Центр днів народження",
+      "text": "Клієнт нагадує про дні народження тих зі списку, хто вказав дату. Листівки були на ICQ.com.",
+      "here": "Клієнт і досі нагадає, якщо контакт заповнив дату; листівки надавала ICQ.com."
+    }
+  },
+  "zodiac": {
+    "links": [],
+    "en": {
+      "title": "Horoscopes",
+      "text": "A channel on ICQ.com with daily horoscopes, delivered into the client as a subscription.",
+      "here": "The channels are gone. Nothing on this server sends you content you did not ask for."
+    },
+    "uk": {
+      "title": "Гороскопи",
+      "text": "Канал на ICQ.com із щоденними гороскопами, який надходив у клієнт за підпискою.",
+      "here": "Каналів більше немає. Цей сервер нічого не надсилає вам без запиту."
+    }
+  },
+  "icq_book": {
+    "links": [
+      "/howto"
+    ],
+    "en": {
+      "title": "ICQ user’s guide",
+      "text": "A long official manual covering every feature of the client, from adding a contact to running a chat room.",
+      "here": "Most of it described services that no longer exist. The short version of what matters here is on our own page."
+    },
+    "uk": {
+      "title": "Посібник користувача ICQ",
+      "text": "Великий офіційний посібник про всі можливості клієнта — від додавання контакту до ведення кімнати чату.",
+      "here": "Більша його частина описувала служби, яких уже немає. Коротко про те, що важливо тут, — на нашій сторінці."
+    }
+  },
+  "howto": {
+    "alias": "/howto"
+  },
+  "make_friend": {
+    "alias": "/howto"
+  },
+  "advanced": {
+    "alias": "/howto"
+  },
+  "about_security": {
+    "links": [
+      "/account"
+    ],
+    "en": {
+      "title": "Security",
+      "text": "ICQ.com explained how to pick a password, avoid strangers reading your details and recognise scams.",
+      "here": "Two things are worth knowing: the protocol sends your password in a weak hash and the traffic is unencrypted on the plain port, so use the SSL port if your client can, and do not reuse an important password here."
+    },
+    "uk": {
+      "title": "Безпека",
+      "text": "ICQ.com пояснювала, як обрати пароль, не дати стороннім читати ваші дані й розпізнати шахрайство.",
+      "here": "Варто знати дві речі: протокол передає пароль слабким хешем, а на звичайному порту трафік не шифрується. Якщо клієнт уміє SSL — увімкніть його, і не використовуйте тут важливий пароль."
+    }
+  },
+  "spam": {
+    "links": [
+      "/account"
+    ],
+    "en": {
+      "title": "Unwanted messages",
+      "text": "Advice on blocking strangers and reporting mass mailings, which were a plague on the public network.",
+      "here": "Nobody outside your circle can write to you here: the server is private and reachable only inside your own network."
+    },
+    "uk": {
+      "title": "Небажані повідомлення",
+      "text": "Поради, як блокувати незнайомців і скаржитися на масові розсилки — на загальнодоступній мережі це було лихом.",
+      "here": "Тут вам не напише ніхто поза вашим колом: сервер приватний і доступний лише всередині вашої мережі."
+    }
+  },
+  "filter_wordlist": {
+    "links": [],
+    "now": true,
+    "en": {
+      "title": "Word filter",
+      "text": "A list of words that makes the client hide a message before you see it.",
+      "here": "The filter is part of the client and still works; it never involved the server."
+    },
+    "uk": {
+      "title": "Фільтр слів",
+      "text": "Список слів, за якими клієнт ховає повідомлення, перш ніж ви його побачите.",
+      "here": "Фільтр лишається в клієнті й працює; сервера він ніколи не стосувався."
+    }
+  },
+  "webaware_security": {
+    "links": [],
+    "now": true,
+    "en": {
+      "title": "Web Aware",
+      "text": "A setting that decides whether anything outside the client may see that you are online. On ICQ.com it was how \"page me\" buttons knew your status.",
+      "here": "Nothing here publishes your status outside the server."
+    },
+    "uk": {
+      "title": "Web Aware",
+      "text": "Налаштування, яке вирішує, чи може щось поза клієнтом бачити, що ви в мережі. На ICQ.com саме так кнопки «напиши мені» дізнавалися ваш стан.",
+      "here": "Тут ваш стан за межі сервера не публікується."
+    }
+  },
+  "webfront_security": {
+    "links": [],
+    "en": {
+      "title": "Privacy",
+      "text": "The ICQ.com privacy policy: what the company collected and who it was shared with.",
+      "here": "This server keeps your number, your password hash, your contact list and messages that have not been delivered yet. Nothing leaves it."
+    },
+    "uk": {
+      "title": "Приватність",
+      "text": "Політика приватності ICQ.com: що компанія збирала і з ким ділилася.",
+      "here": "Цей сервер зберігає ваш номер, хеш пароля, список контактів і ще не доставлені повідомлення. За його межі нічого не йде."
+    }
+  },
+  "legal": {
+    "links": [],
+    "en": {
+      "title": "Terms of service",
+      "text": "The agreement between you and the company that ran ICQ.",
+      "here": "There is no company and no agreement. The server is run by whoever set it up, for the people they invited."
+    },
+    "uk": {
+      "title": "Умови користування",
+      "text": "Угода між вами та компанією, що керувала ICQ.",
+      "here": "Немає ні компанії, ні угоди. Сервер тримає той, хто його підняв, для тих, кого запросив."
+    }
+  },
+  "connection": {
+    "links": [
+      "/howto"
+    ],
+    "now": true,
+    "en": {
+      "title": "Connection problems",
+      "text": "What to do when the client cannot reach the server: address, port, proxy, firewall.",
+      "here": "If the client cannot sign in, check the server address and port in its settings — they are on our short page."
+    },
+    "uk": {
+      "title": "Проблеми зі зв’язком",
+      "text": "Що робити, коли клієнт не дістає сервера: адреса, порт, проксі, брандмауер.",
+      "here": "Якщо клієнт не входить, перевірте адресу сервера й порт у його налаштуваннях — вони є на нашій короткій сторінці."
+    }
+  },
+  "network_status": {
+    "links": [
+      "/today"
+    ],
+    "now": true,
+    "en": {
+      "title": "Network status",
+      "text": "Whether the server itself is having trouble.",
+      "here": "If this page opened, the server is up — you are reading it from the server."
+    },
+    "uk": {
+      "title": "Стан мережі",
+      "text": "Чи не має проблем сам сервер.",
+      "here": "Якщо ця сторінка відкрилася, сервер працює — ви читаєте її саме з нього."
+    }
+  },
+  "firewall_help": {
+    "links": [
+      "/howto"
+    ],
+    "now": true,
+    "en": {
+      "title": "Firewalls",
+      "text": "How to get the client through a corporate firewall or a proxy.",
+      "here": "The same settings still apply, but the address and port are now those of this server."
+    },
+    "uk": {
+      "title": "Мережні екрани",
+      "text": "Як провести клієнта крізь корпоративний брандмауер або проксі.",
+      "here": "Ті самі налаштування чинні, але адреса й порт тепер належать цьому серверу."
+    }
+  },
+  "preferences": {
+    "links": [],
+    "now": true,
+    "en": {
+      "title": "Preferences",
+      "text": "A tour of the client settings: sounds, alerts, what to show in the contact list.",
+      "here": "All of that is inside the client and works as it did; nothing of it depends on a server."
+    },
+    "uk": {
+      "title": "Налаштування",
+      "text": "Огляд налаштувань клієнта: звуки, сповіщення, що показувати у списку контактів.",
+      "here": "Усе це всередині клієнта й працює як раніше; від сервера воно не залежить."
+    }
+  },
+  "public_private_modes": {
+    "links": [],
+    "now": true,
+    "en": {
+      "title": "Public and private mode",
+      "text": "In private mode only people on your list see you; in public mode anyone on the server can find you in the search.",
+      "here": "The setting still works, but there are no strangers here to hide from."
+    },
+    "uk": {
+      "title": "Відкритий і закритий режим",
+      "text": "У приватному режимі вас бачать лише люди зі списку; у публічному вас знайде пошуком будь-хто на сервері.",
+      "here": "Налаштування працює, але ховатися тут нема від кого."
+    }
+  },
+  "shared_files": {
+    "links": [],
+    "now": true,
+    "en": {
+      "title": "Shared files",
+      "text": "You can open a folder for people on your list to browse and download from, directly between the two computers.",
+      "here": "This goes from client to client and does not touch the server, so it still works — both sides need to be able to reach each other on the network."
+    },
+    "uk": {
+      "title": "Спільні файли",
+      "text": "Ви можете відкрити теку, з якої люди зі списку переглядають і завантажують файли напряму, з комп’ютера на комп’ютер.",
+      "here": "Це йде від клієнта до клієнта повз сервер, тож працює й досі — потрібно лише, щоб обидві сторони бачили одна одну в мережі."
+    }
+  },
+  "sound_schemes": {
+    "links": [],
+    "now": true,
+    "en": {
+      "title": "Sound schemes",
+      "text": "The client plays a sound for each event and takes any WAV files you point it at. Ready-made sets were downloaded from ICQ.com.",
+      "here": "The client plays whatever WAV files you point it at; the download catalogue is gone."
+    },
+    "uk": {
+      "title": "Звукові схеми",
+      "text": "Клієнт озвучує події будь-якими файлами WAV, які ви йому вкажете. Готові набори звантажували з ICQ.com.",
+      "here": "Клієнт програє будь-які файли WAV, на які ви вкажете; каталогу для завантаження більше немає."
+    }
+  },
+  "plugin_center": {
+    "links": [],
+    "en": {
+      "title": "Add-ons",
+      "text": "A catalogue of plug-ins that extended the client — games, skins, extra panels.",
+      "here": "Plug-ins you already have keep working; the catalogue closed with ICQ.com."
+    },
+    "uk": {
+      "title": "Доповнення",
+      "text": "Каталог модулів, що розширювали клієнт: ігри, оформлення, додаткові панелі.",
+      "here": "Наявні модулі працюють; каталог закрився разом з ICQ.com."
+    }
+  },
+  "plugins": {
+    "alias_topic": "plugin_center"
+  },
+  "plugin": {
+    "alias_topic": "plugin_center"
+  },
+  "newsletter": {
+    "links": [],
+    "en": {
+      "title": "Newsletter",
+      "text": "A mailing list about new ICQ versions and features.",
+      "here": "Nothing here sends you mail unless you ask it to reset your password."
+    },
+    "uk": {
+      "title": "Розсилка",
+      "text": "Список розсилки про нові версії та можливості ICQ.",
+      "here": "Звідси вам не надішлють нічого, крім листа для відновлення пароля, якщо ви його попросите."
+    }
+  },
+  "websearch_help": {
+    "links": [
+      "/whitepages"
+    ],
+    "now": true,
+    "en": {
+      "title": "Web search",
+      "text": "The search box in the client window opens your query in a browser.",
+      "here": "The box now goes to a working search engine instead. To find a person, use the search by number."
+    },
+    "uk": {
+      "title": "Пошук в інтернеті",
+      "text": "Поле пошуку у вікні клієнта відкриває ваш запит у браузері.",
+      "here": "Тепер рядок веде до живого пошуковика. Щоб знайти людину, скористайтеся пошуком за номером."
+    }
+  },
+  "unregister": {
+    "links": [
+      "/account"
+    ],
+    "now": true,
+    "en": {
+      "title": "Deleting a number",
+      "text": "How to give up a number for good.",
+      "here": "You can do it yourself on this server — the account page changes your number or closes it."
+    },
+    "uk": {
+      "title": "Видалення номера",
+      "text": "Як назавжди відмовитися від номера.",
+      "here": "На цьому сервері ви можете зробити це самі — сторінка керування змінює номер або закриває запис."
+    }
+  },
+  "fail_register": {
+    "links": [
+      "/howto"
+    ],
+    "now": true,
+    "en": {
+      "title": "Registration failed",
+      "text": "What to do when a new number is not handed out.",
+      "here": "Numbers are handed out by this server, and the registration page will say plainly what went wrong."
+    },
+    "uk": {
+      "title": "Реєстрація не вдалася",
+      "text": "Що робити, коли новий номер не видається.",
+      "here": "Номери видає цей сервер, і сторінка реєстрації прямо скаже, що саме не так."
+    }
+  },
+  "icqmap": {
+    "links": [
+      "/today"
+    ],
+    "en": {
+      "title": "ICQ map",
+      "text": "A world map showing where people were connected from at that moment.",
+      "here": "Everyone here is in your own network, so there is nothing to put on a map. You can see who is online instead."
+    },
+    "uk": {
+      "title": "Мапа ICQ",
+      "text": "Мапа світу з того, звідки люди були підключені тієї миті.",
+      "here": "Тут усі у вашій власній мережі, тож і показувати на мапі нема чого. Натомість подивіться, хто в мережі."
+    }
+  },
+  "email_login": {
+    "links": [
+      "/profile",
+      "/howto"
+    ],
+    "now": true,
+    "en": {
+      "title": "Signing in with an e-mail",
+      "text": "You can attach an e-mail address to your number and type it on the login screen instead of the ICQ number — that is why the field is labelled \"ICQ#/Email\". Which account an address belongs to is decided by the server, not by the client.",
+      "use": [
+        "Open <b>your profile</b> below and sign in with your number and password.",
+        "Put an address into <b>Email in the profile</b> and save.",
+        "From then on the login window takes either the number or that address."
+      ],
+      "note": "One address belongs to one account: an address somebody else already uses is refused, and an address attached to nobody lets nobody in."
+    },
+    "uk": {
+      "title": "Вхід за електронною поштою",
+      "text": "До номера можна прив’язати адресу пошти й вводити її у вікні входу замість номера ICQ — тому поле й підписане «ICQ#/Email». Кому належить адреса, вирішує сервер, а не клієнт.",
+      "use": [
+        "Відкрийте <b>свій профіль</b> за посиланням нижче та увійдіть за номером і паролем.",
+        "Впишіть адресу в поле <b>Пошта в анкеті</b> й збережіть.",
+        "Відтоді у вікні входу можна вводити і номер, і цю адресу."
+      ],
+      "note": "Одна адреса — один обліковий запис: зайняту кимось адресу сервер не прийме, а не прив’язана ні до кого нікого не впускає."
+    }
+  },
+  "xtraz": {
+    "links": [
+      "/today",
+      "/whitepages"
+    ],
+    "en": {
+      "title": "Xtraz",
+      "text": "Xtraz was the layer on top of ICQ 6 that carried the picture gallery, greetings, mini-games and the animated cards a buddy could open right inside a conversation. It never ran over the messaging protocol: the client fetched everything by HTTP from the AOL servers, and those went away with ICQ.com.",
+      "here": "We do plan to bring this back on our own server - the gallery and the greetings first - but not soon: messages, profiles and the contact list come first. Until then the client reports \"a problem opening Xtra\", and nothing else is affected."
+    },
+    "uk": {
+      "title": "Xtraz",
+      "text": "Xtraz — надбудова над ICQ 6, яка давала галерею картинок, привітання, міні-ігри та анімовані листівки просто у вікні розмови. Вона ніколи не працювала через протокол обміну повідомленнями: клієнт брав усе по HTTP із серверів AOL, а ті зникли разом з ICQ.com.",
+      "here": "Ми обов'язково зробимо це на своєму сервері — спершу галерею та привітання, — але пізніше: спочатку повідомлення, анкети й список контактів. Доти клієнт пише «проблема з відкриттям Xtra», і більше ніщо від цього не страждає."
+    }
+  },
+  "icq6_help": {
+    "links": [
+      "/howto",
+      "/today",
+      "/whitepages"
+    ],
+    "en": {
+      "title": "ICQ 6 help",
+      "text": "Help pages, illustrated guides and the \"report a problem\" form of ICQ 6 lived at labs.icq.com and are gone with the rest of ICQ.com.",
+      "here": "A help section of our own is planned but not written yet. For now the \"How to start\" page covers the essentials: adding buddies, offline messages, files and the server settings."
+    },
+    "uk": {
+      "title": "Довідка ICQ 6",
+      "text": "Сторінки довідки, ілюстровані посібники та форма «повідомити про проблему» в ICQ 6 жили на labs.icq.com і зникли разом з рештою ICQ.com.",
+      "here": "Свій розділ довідки ми плануємо, але ще не написали. Поки що найпотрібніше зібрано на сторінці «Як почати»: додавання контактів, повідомлення в офлайні, файли та налаштування сервера."
+    }
+  },
+  "icq6_updates": {
+    "links": [
+      "/howto"
+    ],
+    "en": {
+      "title": "Updates and packages",
+      "text": "ICQ 6 asked update.icq.com for new versions, emoticon sets and configuration packages. That service is gone, and the client will never find an update there again.",
+      "here": "Serving packages from our own server is on the list, well behind the protocol work. Nothing breaks meanwhile: the client keeps running with the sets it was installed with."
+    },
+    "uk": {
+      "title": "Оновлення та набори",
+      "text": "ICQ 6 питав update.icq.com про нові версії, набори смайликів і пакети налаштувань. Ця служба зникла, і оновлення там клієнт уже не знайде.",
+      "here": "Роздавати пакети зі свого сервера ми плануємо, але значно пізніше за роботу над протоколом. Нічого при цьому не ламається: клієнт працює з тими наборами, з якими його встановили."
+    }
+  }
+}

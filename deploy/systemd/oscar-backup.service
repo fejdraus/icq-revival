@@ -1,0 +1,8 @@
+[Unit]
+Description=ICQ Revival - database backup
+After=open-oscar-server.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/oscar-backup.sh
+Environment="OSCAR_BACKUP_KEEP_DAYS=14"

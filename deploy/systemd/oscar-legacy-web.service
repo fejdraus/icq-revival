@@ -1,0 +1,29 @@
+[Unit]
+Description=ICQ Revival - pages replacing the dead ICQ.com services
+After=network-online.target open-oscar-server.service
+Wants=network-online.target
+PartOf=open-oscar-server.service
+
+[Service]
+Type=simple
+User=oscar
+Group=oscar
+WorkingDirectory=/opt/oscar-legacy-web
+Environment="PORT=8101"
+# Слушаем все адреса: за этой службой стоит nginx с TLS на 8102, а в клиенте
+# ссылки ведут на имя хоста, а не на 127.0.0.1.
+Environment="BIND=0.0.0.0"
+Environment="MGMT_API=http://127.0.0.1:8090"
+Environment="REGISTER_BASE=https://chat.example.ts.net:8444"
+ExecStart=/usr/bin/node /opt/oscar-legacy-web/server.js
+# Перечитать services.json и topics.json можно без перезапуска.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

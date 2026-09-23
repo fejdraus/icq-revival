@@ -1,0 +1,25 @@
+[Unit]
+Description=ICQ Revival - admin panel
+After=network-online.target open-oscar-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=oscar
+Group=oscar
+WorkingDirectory=/opt/oscar-admin
+Environment="PORT=8100"
+Environment="HOST=0.0.0.0"
+Environment="API_BASE=http://127.0.0.1:8090"
+Environment="ADMIN_USER=admin"
+EnvironmentFile=/etc/oscar-admin/secret.env
+ExecStart=/usr/bin/node /opt/oscar-admin/server.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

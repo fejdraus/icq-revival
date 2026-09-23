@@ -1,0 +1,27 @@
+[Unit]
+Description=ICQ Revival - IM server (OSCAR, TOC, Kerberos, legacy ICQ)
+After=network-online.target
+Wants=network-online.target
+# Страницы регистрации бесполезны без сервера, но и отставать от него не
+# должны: Upholds поднимает их следом, PartOf в их юните гасит вместе с ним.
+Upholds=oscar-register.service
+Upholds=oscar-legacy-web.service
+
+[Service]
+Type=simple
+User=oscar
+Group=oscar
+WorkingDirectory=/var/lib/open-oscar-server
+EnvironmentFile=/etc/open-oscar-server/settings.env
+Environment="ENABLE_WEBAPI=1"
+ExecStart=/opt/open-oscar-server/open_oscar_server
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/open-oscar-server
+
+[Install]
+WantedBy=multi-user.target

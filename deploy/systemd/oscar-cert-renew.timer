@@ -1,0 +1,10 @@
+[Unit]
+Description=ICQ Revival - weekly TLS certificate check
+
+[Timer]
+OnCalendar=Mon *-*-* 04:30:00
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

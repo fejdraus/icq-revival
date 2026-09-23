@@ -1,0 +1,306 @@
+{
+  "_comment": [
+    "Map of the dead ICQ web services. Rules are matched top to bottom and the",
+    "first hit wins, so the catch-all comes last.",
+    "",
+    "host: an exact name, '*.suffix', or '*' for any.",
+    "path: a case-insensitive regular expression over the path. Absent means any.",
+    "action: what to do (see below). target: where to, with {...} substitutions.",
+    "",
+    "Actions:",
+    "  drop        an immediate 404. For ads and feeds: what matters is not the",
+    "              body but that the client does not hang until the TCP timeout.",
+    "  blank       a transparent 1x1 GIF. For the banner strip, which expects an",
+    "              image and draws a broken-image icon for anything else.",
+    "  search      redirect a search query, {q} is the string from ?q=",
+    "  redirect    redirect to target",
+    "  today       the \"who is online\" panel",
+    "  whitepages  look a user up by number",
+    "  pager       web pager: the form and sending a message",
+    "  hostsfile   serve a ready-made hosts block for the client",
+    "  welcome     the welcome page shown after sign-in",
+    "  center      the owner's unified messaging center",
+    "  stub        a \"this service is gone\" page",
+    "",
+    "Substitutions in target: {registerBase}, {q}, {host}, {path}."
+  ],
+  "serverName": "ICQ Revival",
+  "registerBase": "https://chat.example.ts.net:8444",
+  "mgmtApi": "http://127.0.0.1:8090",
+  "_links": "How the pages link to each other. The default paths suit the \"own address\" mode; when the ICQ.com names are intercepted, replace them with http://wwp.icq.com/wwp/.",
+  "links": {
+    "pager": "/icq/wwp"
+  },
+  "routes": [
+    {
+      "path": "^/cb/Clients",
+      "action": "blank",
+      "note": "cb.icq.com: the banner strip in the contact list"
+    },
+    {
+      "path": "^/cb/icq6",
+      "action": "drop",
+      "note": "update.icq.com: update packages, machine-readable"
+    },
+    {
+      "path": "^/cb/",
+      "action": "drop",
+      "note": "cb.icq.com: content bundle descriptors the client parses itself"
+    },
+    {
+      "path": "^/xtraz2/oscar/index\\.xtra$",
+      "action": "drop",
+      "note": "the Xtraz page wrapper, unused while the list is a 404"
+    },
+    {
+      "path": "^/xtraz2/.*xtraz_list\\.dtd$",
+      "action": "xtrazdtd",
+      "note": "the DTD ICQ 6 fetches before parsing the Xtraz list"
+    },
+    {
+      "path": "^/xtraz2/global/.*xtrazlist\\.xml$",
+      "action": "xtrazlist",
+      "note": "the Xtraz list: answered with an empty list so the client drops every Xtraz button it had cached"
+    },
+    {
+      "path": "^/xtraz2/",
+      "action": "drop",
+      "note": "Xtraz lists and teaser images the client parses itself"
+    },
+    {
+      "path": "^/gallery/packages",
+      "action": "drop",
+      "note": "the Xtraz gallery package list, machine-readable"
+    },
+    {
+      "path": "^/dev/packages",
+      "action": "drop",
+      "note": "openxtraz.icq.com: the Xtraz add-on catalogue, machine-readable"
+    },
+    {
+      "path": "^/adxml/",
+      "action": "drop",
+      "note": "ADTECH ad slots"
+    },
+    {
+      "path": "^/icq/p$",
+      "action": "redirect",
+      "target": "/icq/password",
+      "note": "short paths for the links baked into Icq.exe: a string can only be replaced by one no longer than itself"
+    },
+    {
+      "path": "^/icq/u$",
+      "action": "redirect",
+      "target": "/icq/account"
+    },
+    {
+      "path": "^/icq/e$",
+      "action": "redirect",
+      "target": "/icq/stub/email_login.html"
+    },
+    {
+      "path": "^/icq/m$",
+      "action": "redirect",
+      "target": "/icq/stub/public_private_modes.html"
+    },
+    {
+      "path": "^/p$",
+      "action": "redirect",
+      "target": "/icq/password"
+    },
+    {
+      "path": "^/u$",
+      "action": "redirect",
+      "target": "/icq/account"
+    },
+    {
+      "path": "^/e$",
+      "action": "redirect",
+      "target": "/icq/stub/email_login.html"
+    },
+    {
+      "path": "^/m$",
+      "action": "redirect",
+      "target": "/icq/stub/public_private_modes.html"
+    },
+    {
+      "path": "^/icq/today",
+      "action": "today",
+      "note": "The service's own addresses. A client is pointed at them through its own config, so the Host header can be anything: the server address is chosen by whoever runs the client, not by the ICQ.com names."
+    },
+    {
+      "path": "^/icq/howto",
+      "action": "howto",
+      "note": "\"How to Start\" from the contact list: a short guide instead of a stub"
+    },
+    {
+      "path": "^/icq/avatar/upload",
+      "action": "avatarupload",
+      "note": "receives a picture from the picture page"
+    },
+    {
+      "path": "^/icq/avatar/file/",
+      "action": "avatarfile",
+      "note": "hands that picture to the client, which uploads it to the server"
+    },
+    {
+      "path": "^/icq/avatar",
+      "action": "avatarpage",
+      "note": "the page that sets the user's own picture, opened as the \"avatar\" Xtra"
+    },
+    {
+      "path": "^/icq/welcome",
+      "action": "welcome",
+      "note": "the \"ICQ Welcome\" window after sign-in: server state and what works"
+    },
+    {
+      "path": "^/icq/whitepages",
+      "action": "whitepages"
+    },
+    {
+      "path": "^/icq/center",
+      "action": "center",
+      "note": "the \"User's Unified Messaging Center\" button in the message window"
+    },
+    {
+      "path": "^/icq/wwp",
+      "action": "pager"
+    },
+    {
+      "path": "^/icq/search",
+      "action": "search",
+      "target": "https://www.google.com/search?q={q}"
+    },
+    {
+      "path": "^/icq/profile",
+      "action": "redirect",
+      "target": "{registerBase}/profile",
+      "note": "profile, password and e-mail address, all on one page"
+    },
+    {
+      "path": "^/icq/password",
+      "action": "redirect",
+      "target": "{registerBase}/recover"
+    },
+    {
+      "path": "^/icq/register",
+      "action": "redirect",
+      "target": "{registerBase}/"
+    },
+    {
+      "path": "^/icq/account",
+      "action": "redirect",
+      "target": "{registerBase}/account",
+      "note": "the client's \"delete number\" item, pointed at our management page"
+    },
+    {
+      "path": "^/icq/stub/(howto|make_friend)",
+      "action": "howto",
+      "note": "old addresses from clients that have not been retargeted yet lead to the same guide"
+    },
+    {
+      "path": "^/icq/stub",
+      "action": "stub"
+    },
+    {
+      "path": "^/icq/hosts",
+      "action": "hostsfile"
+    },
+    {
+      "host": "cb.icq.com",
+      "action": "drop",
+      "note": "content bundles: the payload of the ad banners"
+    },
+    {
+      "host": "news.icqit.com",
+      "action": "drop",
+      "note": "the news feed for the ticker line"
+    },
+    {
+      "host": "*.aol.com",
+      "action": "drop",
+      "note": "ads.web.aol.com and the rest of the AOL advertising"
+    },
+    {
+      "host": "google.icq.com",
+      "action": "search",
+      "target": "https://www.google.com/search?q={q}",
+      "note": "the search box in the client window, forwarded to a search engine that still exists"
+    },
+    {
+      "host": "wwp.icq.com",
+      "action": "pager",
+      "note": "World Wide Pager: message a user without a client"
+    },
+    {
+      "host": "web.icq.com",
+      "path": "^/today",
+      "action": "today",
+      "note": "a panel inside the client, receives ?icquin="
+    },
+    {
+      "host": "web.icq.com",
+      "path": "^/whitepages",
+      "action": "whitepages"
+    },
+    {
+      "path": "lost_password|forgot|password",
+      "action": "redirect",
+      "target": "{registerBase}/recover",
+      "note": "the stock \"forgot password\" item leads to our recovery page"
+    },
+    {
+      "path": "registration|register|signup|fail_register",
+      "action": "redirect",
+      "target": "{registerBase}/",
+      "note": "and to our registration page"
+    },
+    {
+      "path": "^/xtraz",
+      "action": "redirect",
+      "target": "/icq/stub/xtraz.html",
+      "note": "xtraz.icq.com: the picture gallery, greetings and mini-games"
+    },
+    {
+      "path": "^/compad",
+      "action": "redirect",
+      "target": "/icq/stub/icq6_help.html",
+      "note": "labs.icq.com: help, guides and the problem report form"
+    },
+    {
+      "path": "^/adserver",
+      "action": "blank",
+      "note": "the client's other ad requests"
+    },
+    {
+      "path": "^/download/icq6",
+      "action": "redirect",
+      "target": "/icq/stub/icq6_updates.html",
+      "note": "emoticon packs for ICQ 6"
+    },
+    {
+      "host": "*",
+      "action": "stub"
+    }
+  ],
+  "hostsFile": {
+    "note": "The names the client has to resolve to this service. The list is separate from routes: it also covers hosts served by the catch-all stub.",
+    "names": [
+      "cb.icq.com",
+      "cf.icq.com",
+      "cgi.icq.com",
+      "google.icq.com",
+      "mail.icqmail.com",
+      "members.icq.com",
+      "news.icqit.com",
+      "public.icq.com",
+      "search.icq.com",
+      "web.icq.com",
+      "www.icq.com",
+      "www.icqit.com",
+      "wwp.icq.com"
+    ]
+  },
+  "_oscarHost": "The server address for clients, shown in the \"how to start\" guide. Leave empty to drop that section.",
+  "oscarHost": "chat.example.ts.net"
+}

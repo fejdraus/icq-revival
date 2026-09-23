@@ -1,0 +1,1379 @@
+<xtrazList majorVer="1" minorVer="0" date="06-10-09">
+		<groups>
+			<group id="desktop_xtraz">
+				<xtraId id="icq_tv"/>
+				<xtraId id="game_center"/>
+				<xtraId id="atlas_icqtv"/>
+			</group>
+			<group id="xtraz_tabs">
+				<xtraId id="icq_sms" priority="50"/>
+				<xtraId id="bd_reminder" priority="48"/>
+				<xtraId id="comming_up" priority="45"/>				
+				<xtraId id="info_feed" priority="60"/>
+				<xtraId id="de_information_feed" priority="60"/>
+			</group>
+			<group id="xtraz_bar">
+				<xtraId id="game_center" priority="96"/>
+				<xtraId id="hpv" priority="95"/>
+				<xtraId id="icq_tv" priority="99"/>
+				<xtraId id="mobile_content" priority="75"/>
+				<xtraId id="rambler_audio" priority="73"/>
+				<xtraId id="rambler_vision" priority="74"/>
+				<xtraId id="p7de_topmodel" priority="95"/>
+				<xtraId id="s1de_horoscope" priority="94"/>
+				<xtraId id="p7de_mobileshop" priority="93"/>
+				<xtraId id="p7de_shirtstudio" priority="91"/>
+				<xtraId id="s1de_sudoku" />
+				<xtraId id="icq_tipp_mobile" priority="98"/>
+				 <xtraId id="avatar" priority="66"/>
+				<xtraId id="icq_sounds" priority="65"/>
+				<xtraId id="xicq_admirerx" priority="60"/>
+				<xtraId id="icqtv_russia" priority="96"/>	
+			</group>
+			<group id="user_menu">
+				<xtraId id="rps" priority="14"/>
+				<xtraId id="slide-a-lama" priority="15"/>
+				<xtraId id="zoopaloola" priority="12"/>
+				<xtraId id="warsheep" priority="10"/>
+				<xtraId id="pool" priority="20"/>
+				<xtraId id="backgammon" priority="16"/>
+				<xtraId id="checkers" priority="18"/>
+				<xtraId id="poker" priority="9"/>
+				<xtraId id="darts" priority="8"/>
+				<xtraId id="s1de_connect4" priority="60"/>
+				<xtraId id="geewa-slovni-fotbal"/>
+				<xtraId id="geewa-poker-texas-hold-em"/>
+				<xtraId id="geewa-mau-mau"/>
+				<xtraId id="geewa-gomoku"/>
+				<xtraId id="geewa-chess"/>
+				<xtraId id="geewa-checkers"/>
+				<xtraId id="geewa-battle-ships"/>
+			</group>
+			<group id="services">
+				<xtraId id="oscar_soon" priority="100"/>
+				<xtraId id="random_service"/>
+				<xtraId id="bigmir_notify"/>
+				<xtraId id="rambler_information_feed"/>
+				<xtraId id="info_feed_service"/>
+				<xtraId id="p7_ivw_service"/>
+				<xtraId id="zones_enable_service"/>
+			</group>
+			<group id="message_window">
+				<xtraId id="mini_game_center"/>
+				<xtraId id="zlango"/>		
+			</group>
+			<group id="mini_center">
+				<xtraId id="darts" priority="10"/>
+				<xtraId id="zoopaloola" priority="9"/>
+				<xtraId id="pool" priority="8"/>
+				<xtraId id="s1de_connect4" priority="7"/>
+				<xtraId id="slide-a-lama" priority="6"/>
+				<xtraId id="poker" priority="5"/>
+				<xtraId id="rps" priority="4"/>
+				<xtraId id="warsheep" priority="3"/>
+				<xtraId id="backgammon"/>
+				<xtraId id="checkers"/>	
+			</group>
+			<group id="game_center_multi">
+				<xtraId id="darts" priority="10"/>
+				<xtraId id="zoopaloola" priority="9"/>
+				<xtraId id="pool" priority="8"/>
+				<xtraId id="slide-a-lama" priority="7"/>
+				<xtraId id="poker" priority="6"/>
+				<xtraId id="rps" priority="5"/>
+				<xtraId id="warsheep" priority="4"/>
+				<xtraId id="backgammon"/>
+				<xtraId id="checkers"/>				
+				<xtraId id="geewa-slovni-fotbal"/>
+				<xtraId id="geewa-poker-texas-hold-em"/>
+				<xtraId id="geewa-mau-mau"/>
+				<xtraId id="geewa-gomoku"/>
+				<xtraId id="geewa-chess"/>
+				<xtraId id="geewa-checkers"/>
+				<xtraId id="geewa-battle-ships"/>
+			</group>
+			<group id="game_center_single">
+				<xtraId id="bob" priority="1"/>
+				<xtraId id="teddy" priority="2"/>
+				<xtraId id="teddy2" priority="3"/>
+				<xtraId id="word_puzzle" priority="4"/>
+				<xtraId id="funky_neighbours" priority="5"/>
+			</group>
+		</groups>
+		<xtraz>
+			<!-- Added by Open OSCAR: opens the "Xtraz later" page inside the client. -->
+			<xtra id="oscar_soon" version="1" type="dhtml" resizable="true"
+				width="560" height="420" name="Xtraz" desc="Xtraz"
+				url="__SELF__/icq/stub/xtraz.html?compact=1"/>
+			<xtra 
+				id="hpv" 
+				version="1" 
+				url="http://hpv.co.il/Minisite/icq/icq.html?asp=376&amp;src=609&amp;utm_source=icq&amp;,utm_medium=banner&amp;utm_campaign=468X60" 
+				name="I did it" 
+				desc="I did it" 
+				iconsUrl="http://c.icq.com/xtraz2/img/hpv/hpv.zip" 
+				resizable="false" 
+				width="800" 
+				height="600" 
+				type="dhtml"
+				includedCountries="972"
+				excludedPartnerIds="17,10,9,3,16,14,18,30,8,34"		
+				/> 
+			<xtra 
+				id="bd_reminder"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/bd_reminder/content/bd_reminder_1.box"	
+				iconsUrl="http://c.icq.com/xtraz2/img/bd_reminder/bd_reminder.zip"				
+				stringsUrl="http://c.icq.com/xtraz2/products/bd_reminder/lang/"
+				supportedLangs="en-us,de-de,he-il,ru-ru"
+				resizable="false"
+				width="140"
+				height="100"
+				type="boxely"
+				autoLoad="true"
+				preloadAssets="true"
+				integrityLevel="highest"			
+				includedCountries="972,7,42,380,49"
+			>
+				<assets>
+					<asset version="1">http://c.icq.com/xtraz2/products/bd_reminder/content/funcs.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/bd_reminder/content/freeSMSCountries.js</asset>
+					<asset location="theme">http://c.icq.com/xtraz2/products/bd_reminder/theme/bd_reminder.style.box</asset>
+					<asset compression="zip" location="theme">http://c.icq.com/xtraz2/products/bd_reminder/theme/images1.zip</asset>					
+				</assets>
+			</xtra>		
+			<xtra
+				id="zones_enable_service"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/service/zones_enable_service/index.box"
+				type="boxely"
+				preloadAssets="true"
+				enableScriptAccess="true"
+				includedPartnerIds="17"		
+				>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/service/zones_enable_service/zones_enable_service.js</asset>
+				</assets>
+		</xtra>
+		<xtra 
+				id="p7_ivw_service" 
+				version="1" 
+				url="http://c.icq.com/xtraz2/products/service/p7_ivw_service/index.box" 
+				type="boxely" 
+				autoLoad="true" 
+				preloadAssets="true"
+				includedPartnerIds="8"
+				>
+		 		<assets>
+					<asset version="1">http://c.icq.com/xtraz2/products/service/p7_ivw_service/p7_ivw_service.js</asset> 
+				</assets>
+		</xtra>
+			<xtra 
+				id="de_information_feed" 
+				version="1" 
+				url="http://icqapps.prosieben.de/xtraz/icq6/infofeed/index.php" 
+				name="Prosieben Infos" 
+				desc="Der Prosieben Infofeed." 
+				iconsUrl="http://c.icq.com/xtraz2/img/pro7/infofeed/infofeed.zip" 
+				resizable="false" 
+				width="120" 
+				height="90" 
+				type="dhtml"
+				includedCountries="49,43"
+				excludedPartnerIds="17,10,9,3,16,14,21,18,30,8,34"
+				autoLoad="true"		
+				/> 
+			<xtra
+				id="rambler_information_feed"
+				version="1"
+				url="http://xtraz.icq.rambler.ru/xtraz/boxleyifeed/index.box" 
+				type="boxely"
+				includedPartnerIds="3"
+			/> 
+			<xtra
+				id="info_feed_service"
+				version="3"
+				url="http://c.icq.com/xtraz2/products/service/info_feed_service/index_ga3.box"
+				type="boxely"
+				preloadAssets="true"
+				autoLoad="true"
+				includedCountries="972,7"
+			>
+				<assets>
+					<asset version="2">http://c.icq.com/xtraz2/products/service/info_feed_service/info_feed_service_ga3.js</asset>
+				</assets>
+			</xtra>
+		<xtra 
+				id="info_feed"
+				version="3"
+				url="http://c.icq.com/xtraz2/products/info_feed/content/index_ga3.box"
+				iconsUrl="http://c.icq.com/xtraz2/img/info_feed/info_feed.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/info_feed/lang/"
+				supportedLangs="en-us,he-il,ru-ru,zh-cn"
+				resizable="false"
+				width="137"
+				height="100"
+				type="boxely"
+				preloadAssets="true"
+				autoLoad="true"			
+				includedCountries="972,7"
+				excludedPartnerIds="32"
+			>
+				<assets>
+					<asset compression="zip" location="theme" version="2">http://c.icq.com/xtraz2/products/info_feed/theme/info_feed_theme_ga3.zip</asset>
+					<asset location="theme" version="1">http://c.icq.com/xtraz2/products/info_feed/theme/index.style_ga3.box</asset>
+					<asset compression="zip" version="3">http://c.icq.com/xtraz2/products/info_feed/content/info_feed_content3.zip</asset>
+					<asset version="5">http://c.icq.com/xtraz2/products/info_feed/content/feeds3.js</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="my_xtraz"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/my_xtraz/index_ga.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/my_xtraz/my_xtraz.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/my_xtraz/lang/"
+				supportedLangs="en-us,he-il,de-de,fr-fr,cs-cz,es-es,fr-fr,pt-br,it-it,tr-tr,ru-ua,sk-sk,es-es,pl-pl,ru-ru,hu-hu,ro-ro,pt-br,da-dk,et-ee,fi-fi,sv-se,bg-bg,ua-ua,zh-cn,nl-nl"
+				resizable="false"
+				width="780"
+				height="670"
+				integrityLevel="highest"
+				type="localDhtml"		
+			>
+				<assets>
+					<asset version="1">http://c.icq.com/xtraz2/products/my_xtraz/func_ga.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/my_xtraz/main_ga.html</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/my_xtraz/my_xtraz_assets_ga.zip</asset>
+				</assets>
+			</xtra>				
+		<xtra 
+			id="contact_list"
+			version="1"
+			url="http://c.icq.com/xtraz2/products/contact_list/html/index_ga.xtra"
+			iconsUrl="http://c.icq.com/xtraz2/img/contact_list/contact_list.zip"
+			stringsUrl="http://c.icq.com/xtraz2/products/contact_list/html/lang/"
+			supportedLangs="en-us,he-il,de-de,fr-fr,cs-cz,es-es,fr-fr,pt-br,it-it,tr-tr,ru-ua,sk-sk,es-es,pl-pl,ru-ru,hu-hu,ro-ro,pt-br,da-dk,et-ee,fi-fi,sv-se,bg-bg,ua-ua,zh-cn,nl-nl"
+			resizable="false"
+			width="225"
+			height="518"
+			type="localDhtml"
+			preloadAssets="true"
+			integrityLevel="highest"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/contact_list/html/skin_ga.css</asset>
+					<asset>http://c.icq.com/xtraz2/products/contact_list/html/my_skin_ga.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/contact_list/html/main_ga.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/contact_list/html/func_ga.js</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/contact_list/html/assets1_ga.zip</asset>
+				</assets>
+			</xtra>		
+			<xtra 
+				id="babylon_feed"
+				version="1"
+				name="Babylon"
+				desc="Babylon"
+				url="http://c.icq.com/xtraz2/products/babylon_feed/index3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/flower/flower.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/babylon_feed/lang/"
+				supportedLangs="en-us,de-de,he-il,fr-fr,pt-br,cs-cz,ru-ru,it-it,es-es,ru-ua,ua-ua,sk-sk,bg-bg,zh-cn"
+				resizable="false"
+				width="557"
+				minWidth="557"
+				height="351"
+				minHeight="351"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/babylon_feed/babylon1.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/babylon_feed/preloader01_b.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/babylon_feed/babylon.css</asset>
+					<asset>http://c.icq.com/xtraz2/products/babylon_feed/noWord.html</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/babylon_feed/babylon.zip</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="zlango"
+				version="2"
+				url="http://c.icq.com/xtraz2/products/zlango/content/zlango.box"
+				iconsUrl="http://c.icq.com/xtraz2/img/zlango/zlango1.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/zlango/lang/"
+				supportedLangs="en-us,de-de,he-il,ru-ru,cs-cz,bg-bg,tr-tr,ru-ua,ua-ua,sk-sk,it-it,es-es,sv-se,fr-fr"
+				resizable="false"
+				width="140"
+				height="100"
+				minWidth="140"
+				minHeight="100"
+				type="boxely"
+				autoCloseOnTyping="false"
+				preloadAssets="true"
+			>
+				<assets>
+					<asset compression="zip" version="3">http://c.icq.com/xtraz2/products/zlango/content/content.zip</asset>
+					<asset location="theme" compression="zip" version="3">http://c.icq.com/xtraz2/products/zlango/theme/images.zip</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="game_center"
+				version="6"
+				url="http://c.icq.com/xtraz2/products/game_center/index5.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/games_center/games_center.zip"
+				sceneUrl="http://c.icq.com/xtraz2/img/games_center/xtratranspdlg2.zip"
+				supportedLangs="en-us,de-de,he-il,cs-cz,ru-ru,bg-bg,ru-ua,it-it,es-es,pt-br,ua-ua,sk-sk,zh-cn,fr-fr"
+				stringsUrl="http://c.icq.com/xtraz2/products/game_center/lang/"
+				width="750"
+				resizable="false"
+				minWidth="750"
+				height="505"
+				minHeight="505"
+				preloadAssets="true"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/game_center/icqgc_construct01.swf</asset>
+					<asset version="2">http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset version="1">http://c.icq.com/xtraz2/products/game_center/main.js</asset>
+					<asset>http://c.icq.com/xtraz2/js/xtraz_connector_3.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_center/bg_games_banner_01.gif</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_center/bg_games_banner_02.gif</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="icq_sounds"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/icq_sounds/index2.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/sounds/sounds.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/icq_sounds/lang/"
+				supportedLangs="en-us,de-de,he-il,cs-cz,ru-ru,bg-bg,ru-ua,it-it,es-es,tr-tr,pt-br,ua-ua,sk-sk,zh-cn"
+				resizable="false"
+				width="560"
+				minWidth="560"
+				height="408"
+				minHeight="408"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/icq_sounds/main.css</asset>
+					<asset>http://c.icq.com/xtraz2/products/icq_sounds/index.css</asset>
+					<asset>http://c.icq.com/xtraz2/products/icq_sounds/main.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/icq_sounds/soundsXtra1.html</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/icq_sounds/icqsounds.zip</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="mini_game_center"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/mini_game_center/content/mini_game10.box"
+				iconsUrl="http://c.icq.com/xtraz2/img/games_center/games_center.zip"
+				resizable="false"
+				width="140"
+				height="100"
+				type="boxely"
+				integrityLevel="highest"
+				preloadAssets="true"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/mini_game_center/content/mini_game10.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/mini_game_center/content/connector.js</asset>
+					<asset location="theme">http://c.icq.com/xtraz2/products/mini_game_center/theme/mini_game10.style.box</asset>
+					<asset location="theme" compression="zip" version="1">http://c.icq.com/xtraz2/products/mini_game_center/theme/images.zip</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="icq_tv"
+				version="2"
+				url="http://c.icq.com/xtraz2/products/tv/tv2.html"
+				iconsUrl="http://c.icq.com/xtraz2/img/tv/tv.zip"
+				resizable="false"
+				width="780"
+				height="580"
+				type="dhtml"
+				includedCountries="972"
+				excludedPartnerIds="32,8,17,10,9,3,16,14,23"
+			>
+			</xtra>
+			<xtra 
+				id="mobile_content"
+			   version="2"
+			   url="http://icq-extra.plasticmedia.ru/"
+			   iconsUrl="http://c.icq.com/xtraz2/img/rambler/mobile/mobile.zip"
+			   name="JAVA-ИГРЫ"
+			   desc="Игры для мобильного телефона"
+			   resizable="false"
+			   width="800"
+			   height="600"                
+			   type="dhtml"   
+			   includedCountries="7"
+			/>
+			<xtra 
+				id="rambler_audio"
+				version="1"
+				url="http://audio.rambler.ru/export/radio_player_xtraz.html"
+				name="Rambler Aудио"
+				iconsUrl="http://c.icq.com/xtraz2/img/rambler/audio/audio.zip"
+				desc="Послушать радио"
+				width="525"
+				resizable="false"
+				minWidth="525"
+				height="209"
+				minHeight="209"
+				type="dhtml"
+				includedCountries="7"
+				excludedPartnerIds="32,8,17,18,10,9,16,14,21,30,23,26"
+			>
+			</xtra>
+			<xtra 
+				id="rambler_vision"
+				version="1"
+				url="http://vision.rambler.ru/newxtraz/"
+				name="Rambler Vision"
+				iconsUrl="http://c.icq.com/xtraz2/img/rambler/vision/vision.zip"
+				desc="Посмотреть видео"
+				width="732"
+				resizable="false"
+				minWidth="732"
+				height="434"
+				minHeight="434"
+				type="dhtml"
+				includedCountries="7"
+				excludedPartnerIds="32,8,17,18,10,9,16,14,21,30,23,26"
+			>
+		</xtra>
+			<xtra 
+				id="backgammon"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/backgammon/index_gc3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/backgammon/backgammon.zip"
+				resizable="false"
+				width="978"
+				height="664"
+				requiresInvitation="true"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="1">http://c.icq.com/xtraz2/products/backgammon/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/backgammon/backgammon_gc.zip</asset>
+				</assets>
+				<data><game position="1" type="reg" supportRandom="1" supportScoring="0"/>
+				</data>
+			</xtra>
+			<xtra 
+				id="poker"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/poker/index_gc3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/poker/poker.zip"
+				resizable="false"
+				width="978"
+				height="664"
+				requiresInvitation="true"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="2">http://c.icq.com/xtraz2/products/poker/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/poker/poker_gc_big.zip</asset>
+				</assets>
+				<data><game position="1" type="new" supportRandom="1" supportScoring="0"/>
+				</data>
+			</xtra>
+			<xtra 
+				id="darts"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/darts/index_gc3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/darts/darts.zip"
+				resizable="false"
+				width="978"
+				height="664"
+				requiresInvitation="true"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="2">http://c.icq.com/xtraz2/products/darts/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/darts/darts_gc_big.zip</asset>
+				</assets>
+				<data><game position="1" type="new" supportRandom="1" supportScoring="0"/>
+				</data>
+			</xtra>
+			<xtra 
+				id="checkers"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/checkers/index_gc3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/checkers/checkers.zip"
+				resizable="false"
+				width="978"
+				height="664"
+				requiresInvitation="true"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="2">http://c.icq.com/xtraz2/products/checkers/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/checkers/checkers_gc_big.zip</asset>
+				</assets>
+				<data><game position="1" type="reg" supportRandom="1" supportScoring="0"/>
+				</data>
+			</xtra>
+			<xtra 
+				id="pool"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/pool/index_gc3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/pool/pool.zip"
+				resizable="false"
+				width="978"
+				height="664"
+				requiresInvitation="true"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="2">http://c.icq.com/xtraz2/products/pool/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/pool/pool_gc_big.zip</asset>
+				</assets>
+				<data><game position="1" type="reg" supportRandom="1" supportScoring="0"/>
+				</data>
+			</xtra>
+			<xtra 
+				id="random_service"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/service/random/index.box"
+				type="boxely"
+				preloadAssets="true"
+			>
+				<assets>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/service/random/random_service5.zip</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="xicq_admirer_top5x"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/admirer/index5.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/admirer/admirer.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/admirer/xicq_admirer_top5x/lang/"
+				supportedLangs="en-us,cs-cz,de-de,he-il,it-it,ru-ua,ru-ru,sk-sk,es-es,tr-tr,ua-ua,bg-bg,pt-br,fr-fr,zh-cn"
+				width="580"
+				minWidth="580"
+				height="274"
+				minHeight="274"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/admirer/google_ad2.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/googleTabs.htc</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/top5.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/admirer.css</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="2">http://c.icq.com/xtraz2/products/admirer/instant_match4.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/admirer02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/admirer/admirer.zip</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="xicq_admirer_matchx"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/admirer/index5.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/admirer/admirer.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/admirer/xicq_admirer_matchx/lang/"
+				supportedLangs="en-us,cs-cz,de-de,he-il,it-it,ru-ua,ru-ru,sk-sk,es-es,tr-tr,ua-ua,bg-bg,pt-br,fr-fr,zh-cn"
+				width="460"
+				minWidth="460"
+				height="272"
+				minHeight="272"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/xml_utils.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/admirer02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/top5.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/countries.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/admirer.css</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset version="2">http://c.icq.com/xtraz2/products/admirer/secret_admirer.html</asset>
+					<asset version="2">http://c.icq.com/xtraz2/products/admirer/instant_match4.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/google_ad2.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/googleTabs.htc</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/admirer/admirer.zip</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="xicq_admirerx"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/admirer/index5.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/admirer/admirer.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/admirer/lang/"
+				supportedLangs="en-us,cs-cz,de-de,he-il,it-it,ru-ua,ru-ru,sk-sk,es-es,tr-tr,ua-ua,bg-bg,pt-br,fr-fr,zh-cn"
+				width="625"
+				minWidth="625"
+				height="495"
+				minHeight="495"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/admirer/admirer.css</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/admirer02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/top5.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/google_ad2.html</asset>
+					<asset version="2">http://c.icq.com/xtraz2/products/admirer/instant_match4.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/admirer/countries.js</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/admirer/admirer.zip</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="icq5_notification"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/icq5_notification/index.html"
+				iconsUrl="http://c.icq.com/xtraz2/img/flower/flower.zip"
+				width="0"
+				resizable="false"
+				minWidth="0"
+				height="0"
+				minHeight="0"
+				type="dhtml"
+			/>
+			<xtra 
+				id="coreg"
+				version="1"
+				url="http://www.icq.com/xtraz2/products/coreg/index.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/flower/flower.zip"
+				resizable="false"
+				width="540"
+				minWidth="540"
+				height="528"
+				minHeight="528"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/coreg/preload.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/coreg/preloader04.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/coreg/XtrazConnector_3.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/coreg/nudnik_main.js</asset>
+					<asset>http://c.icq.com/xtraz2/js/classlibrary/dom_utils.js</asset>
+					<asset>http://c.icq.com/xtraz2/js/classlibrary/xml_utils.js</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="icq_welcome"
+				version="1"
+				url="http://welcome.icq.com/zones/?lang_id=%LangId%&amp;partner_id=%PartnerId%&amp;cc=%DetectedCountryCode%"
+				iconsUrl="http://c.icq.com/xtraz2/img/welcome/welcome.zip"
+				integrityLevel="highest"
+				resizable="false"
+				width="758"
+				minWidth="681"
+				height="638"
+				minHeight="418"
+				type="dhtml"
+			/>
+			<xtra 
+				id="avatar"
+				version="2"
+				url="http://c.icq.com/xtraz2/products/avatar/avatars5.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/avatar/avatar.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/avatar/lang/"
+				supportedLangs="en-us,bg-bg,cs-cz,de-de,he-il,it-it,ru-ru,es-es,ru-ua,tr-tr,pt-br,ua-ua,sk-sk,fr-fr,zh-cn"
+				width="518"
+				resizable="false"
+				minWidth="518"
+				height="447"
+				minHeight="447"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/htc/image.htc</asset>
+					<asset>http://c.icq.com/xtraz2/js/utils.js</asset>
+					<asset>http://c.icq.com/xtraz2/css/skin1/avatar/gallery4.css</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connect.htm</asset>
+					<asset version="3">http://c.icq.com/xtraz2/products/avatar/avatars_galerry5.html</asset>
+					<asset compression="emo">http://c.icq.com/xtraz2/products/avatar/avatar_img3.emo</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="odd_cast_vhost"
+				version="1"
+				url="http://host-d.oddcast.com/php/application_UI/doorId=391/clientId=31/"
+				iconsUrl="http://c.icq.com/xtraz2/img/oddcast/oddcast.zip"
+				width="640"
+				resizable="false"
+				minWidth="640"
+				height="536"
+				minHeight="536"
+				type="dhtml"
+			/>
+			<xtra 
+				id="photo_cropper"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/photo/english/index3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/photo/photo.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/photo/lang/"
+				supportedLangs="en-us,de-de,he-il,cs-cz,ru-ru,bg-bg,es-es,it-it,ru-ua,pt-br,ua-ua,sk-sk,fr-fr,zh-cn"
+				width="300"
+				resizable="false"
+				minWidth="301"
+				height="284"
+				minHeight="284"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/photo/english/photo_editor3.html</asset>
+					<asset>http://c.icq.com/xtraz2/css/skin1/photo_editor/photo_editor2.css</asset>
+					<asset>http://c.icq.com/xtraz2/products/photo/english/scroling.swf</asset>
+					<asset>http://c.icq.com/xtraz2/htc/local_slider.htc</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connect_local.htm</asset>
+					<asset>http://c.icq.com/xtraz2/js/utils.js</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/photo/english/photo2.zip</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="p7_billing"
+				version="1"
+				url="http://system.icq.3s2w.net/index.php"
+				name="ProSieben/ICQ SMS"
+				desc="Credits kaufen und empfangene SMS einsehen"
+				iconsUrl="http://c.icq.com/xtraz2/img/pro7/p7_billing/p7_billing.zip"
+				width="616"
+				resizable="false"
+				minWidth="616"
+				height="450"
+				minHeight="450"
+				type="dhtml"
+			/>
+			<xtra 
+				id="pccw_pay_gmib"
+				version="1"
+				url="https://icq.netvigator.com/icq/sms/chi/netpassauth.jsp"
+				iconsUrl="http://c.icq.com/xtraz2/img/pccw/pccw_pay_gmib/pccw_pay_gmib.zip"
+				name="pccwBilling"
+				desc="pccwBilling"
+				width="653"
+				resizable="false"
+				minWidth="653"
+				height="532"
+				minHeight="532"
+				type="dhtml"
+			/>
+			<xtra 
+				id="sms_activation"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/sms_activation/index.html"
+				iconsUrl="http://c.icq.com/xtraz2/img/icq_sms/icq_sms.zip"
+				resizable="false"
+				width="495"
+				minWidth="495"
+				height="485"
+				minHeight="485"
+				type="dhtml"
+			/>
+			<xtra 
+				id="icq_sms"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/icq_sms/content/icq_sms.box"	
+				iconsUrl="http://c.icq.com/xtraz2/img/icq_sms/icq_sms.zip"				
+				stringsUrl="http://c.icq.com/xtraz2/products/icq_sms/lang/"
+				supportedLangs="en-us,de-de,he-il,cs-cz,ru-ru,bg-bg,es-es,it-it,ru-ua,tr-tr,ua-ua,sk-sk,fr-fr,zh-cn,nl-nl,pl-pl,pt-br,sv-se"
+				resizable="false"
+				width="140"
+				height="100"
+				type="boxely"
+				autoLoad="true"
+				preloadAssets="true"
+				integrityLevel="highest"
+				excludedCountries="359,375"
+				excludedPartnerIds="8,30,17,34"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/icq_sms/content/icq_sms.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/icq_sms/content/icq_quick_sms.box</asset>
+					<asset>http://c.icq.com/xtraz2/products/icq_sms/content/icq_quick_sms.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/icq_sms/content/icq_dialer10.box</asset>
+					<asset>http://c.icq.com/xtraz2/products/icq_sms/content/icq_dialer10.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/icq_sms/content/connector.js</asset>
+					<asset location="theme">http://c.icq.com/xtraz2/products/icq_sms/theme/icq_quick_sms.style.box</asset>
+					<asset location="theme">http://c.icq.com/xtraz2/products/icq_sms/theme/icq_dialer10.style.box</asset>
+					<asset compression="zip" location="theme">http://c.icq.com/xtraz2/products/icq_sms/theme/images.zip</asset>
+					<asset compression="zip" location="theme">http://c.icq.com/xtraz2/products/icq_sms/theme/sounds.zip</asset>
+				</assets>
+			</xtra>			
+			<xtra 
+				id="comming_up"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/comming_up/content/comming_up.box"
+				iconsUrl="http://c.icq.com/xtraz2/img/comming_up/comming_up.zip"
+				stringsUrl="http://c.icq.com/xtraz2/products/comming_up/lang/"
+				supportedLangs="en-us,de-de,he-il,cs-cz,ru-ru,bg-bg,es-es,it-it,ru-ua,tr-tr,ua-ua,sk-sk,fr-fr,zh-cn"
+				resizable="false"
+				width="140"
+				height="100"
+				type="boxely"
+				preloadAssets="true"
+				excludedCountries="972,7,49,43,42"
+				excludedPartnerIds="9,21,10,3,8,30,16"
+			>
+				<assets>
+					<asset location="theme">http://c.icq.com/xtraz2/products/comming_up/theme/comming_up.style.box</asset>
+				</assets>
+			</xtra>
+			<xtra 
+				id="zoopaloola"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/zoopaloola/index_gc3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/zoopaloola/zoopaloola.zip"
+				resizable="false"
+				width="780"
+				minWidth="780"
+				height="540"
+				minHeight="540"
+				requiresInvitation="true"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset>http://c.icq.com/xtraz2/products/zoopaloola/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby7.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/img/flower/16x16.gif</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/zoopaloola/zoopaloola_gc_1.zip</asset>
+				</assets>
+				<data><game position="1" type="new" supportRandom="1" supportScoring="0"/>
+				</data>
+			</xtra>
+			<xtra 
+				id="warsheep"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/warsheep/index_gc3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/warsheep/warsheep.zip"
+				resizable="false"
+				width="640"
+				minWidth="640"
+				height="480"
+				minHeight="480"
+				requiresInvitation="true"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset>http://c.icq.com/xtraz2/products/warsheep/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_warsheep.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby7.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset>http://c.icq.com/xtraz2/img/flower/16x16.gif</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/warsheep/warsheep_gc2.zip</asset>
+				</assets>
+				<data><game position="2" type="reg" supportRandom="1" supportScoring="0"/>
+				</data>
+			</xtra>
+			<xtra 
+				id="rps"
+				version="9"
+				url="http://c.icq.com/xtraz2/products/rps/index_gc3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/rps/rps.zip"
+				resizable="false"
+				width="640"
+				minWidth="640"
+				height="480"
+				minHeight="480"
+				requiresInvitation="true"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/rps/xtraz_config1.xml</asset>
+					<asset version="2" compression="zip">http://c.icq.com/xtraz2/products/rps/rps_gc4.zip</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby7.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/img/flower/16x16.gif</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+				</assets>
+				<data><game position="5" type="reg" supportRandom="1" supportScoring="0"/>
+				</data>
+			</xtra>
+			<xtra 
+				id="slide-a-lama"
+				version="1"
+				url="http://c.icq.com/xtraz2/products/slide-a-lama/index_gc3.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/slide-a-lama/slide-a-lama.zip"
+				resizable="false"
+				width="640"
+				minWidth="640"
+				height="480"
+				minHeight="480"
+				requiresInvitation="true"
+				type="localDhtml"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/products/slide-a-lama/xtraz_config1.xml</asset>
+					<asset version="2" compression="zip">http://c.icq.com/xtraz2/products/slide-a-lama/slide-a-lama_gc4.zip</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby7.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/img/flower/16x16.gif</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+				</assets>
+				<data><game position="3" type="reg" supportRandom="1" supportScoring="0"/>
+				</data>
+			</xtra>
+			<xtra 
+				id="bob"
+				version="5"
+				url="http://c.icq.com/xtraz2/products/bob/index1.html"
+				iconsUrl="http://c.icq.com/xtraz2/img/bob/bob.zip"
+				resizable="false"
+				width="561"
+				height="442"
+				type="dhtml"
+			/>
+			<xtra 
+				id="teddy"
+				version="5"
+				url="http://c.icq.com/xtraz2/products/teddy/index1.html"
+				iconsUrl="http://c.icq.com/xtraz2/img/teddy/teddy.zip"
+				resizable="false"
+				width="550"
+				height="390"
+				type="dhtml"	
+			/>
+			<xtra 
+				id="teddy2"
+				version="5"
+				url="http://c.icq.com/xtraz2/products/teddy2/index.html"
+				iconsUrl="http://c.icq.com/xtraz2/img/teddy2/teddy2.zip"
+				resizable="false"
+				width="550"
+				height="390"
+				type="dhtml"
+			/>
+			<xtra 
+				id="funky_neighbours"
+				version="5"
+				url="http://c.icq.com/xtraz2/products/funky_neighbours/index.html"
+				iconsUrl="http://c.icq.com/xtraz2/img/funky_neighbours/funky_neighbours.zip"
+				resizable="false"
+				width="550"
+				height="390"
+				type="dhtml"
+			/>
+			<xtra 
+				id="word_puzzle"
+				version="5"
+				url="http://c.icq.com/xtraz2/products/word_puzzle/index.html"
+				iconsUrl="http://c.icq.com/xtraz2/img/word_puzzle/word_puzzle.zip"
+				resizable="false"
+				width="550"
+				height="390"
+				type="dhtml"
+			/>
+			<xtra 
+				id="icq_tipp_mobile"
+				version="1"
+				url="http://cached.itip.co.il/vhosts/icq_new/plugin/frameset.html"
+				iconsUrl="http://c.icq.com/xtraz2/img/tippcom/tippcom_new.zip"
+				resizable="false"
+				width="630"
+				height="530"
+				type="dhtml"
+				requiresInvitation="false"
+				includedCountries="972"
+				excludedPartnerIds="8,17,10,9,3,16,21,14"
+			/>
+			<xtra 
+				id="icq_tipp_mobile_rcv"
+				version="1"
+				url="http://cached.itip.co.il/vhosts/icq_new/plugin/frameset.html"
+				iconsUrl="http://c.icq.com/xtraz2/img/tippcom/tippcom_new.zip"
+				resizable="false"
+				width="630"
+				minWidth="630"
+				height="530"
+				minHeight="420"
+				type="dhtml"
+				requiresInvitation="false"
+				includedCountries="972"
+				excludedPartnerIds="8,17,10,9,3,16,21,14"
+			/>
+      			<xtra 
+				id="s1de_horoscope"
+				version="1"
+				url="http://icqapps.sat1.de/xtraz/icq6/horoscope/"
+				name="Horoskope"
+				iconsUrl="http://c.icq.com/xtraz2/img/pro7/horoskope/horoskope.zip"
+				desc="Horoskope anzeigen"
+				resizable="false"
+				width="766"
+				minWidth="766"
+				height="566"
+				minHeight="566"
+				type="dhtml"
+				includedCountries="49,43"
+			    excludedPartnerIds="16,10,14,9,3,18,21"
+			>
+			</xtra>
+			<xtra 
+				id="s1de_sudoku"
+				version="1"
+				url="http://icqapps.sat1.de/xtraz/icq6/sudoku/"
+				name="Sudoku"
+				iconsUrl="http://c.icq.com/xtraz2/img/pro7/sudoku/sudoku.zip"
+				desc="Sudoku spielen"
+				resizable="false"
+				width="604"
+				minWidth="604"
+				height="518"
+				minHeight="518"
+				type="dhtml"
+			   includedCountries="49,43"
+			    excludedPartnerIds="16,10,14,9,3,18,21"
+			/>
+						<xtra 
+				id="p7de_mobileshop"
+				version="1"
+				url="http://icqapps.prosieben.de/xtraz/icq6/mobileshop/"
+				name="ProSieben Handy Downloads"
+				desc="Handy Downloads"
+				iconsUrl="http://c.icq.com/xtraz2/img/pro7/mobile_shop/mobile_shop.zip"
+				resizable="false"
+				width="766"
+				minWidth="600"
+				height="697"
+				minHeight="430"
+				type="dhtml"
+				includedCountries="49,43"
+			    excludedPartnerIds="16,10,14,9,3,18,21,30"
+			/>
+						<xtra 
+				id="p7de_shirtstudio"
+				version="1"
+				url="http://icqapps.prosieben.de/xtraz/icq6/shirtstudio/page/index.html"
+				name="Prosieben Shirtstudio"
+				desc="Entwirf dein persönliches Shirt mit wenigen Klicks."
+				iconsUrl="http://c.icq.com/xtraz2/img/pro7/shirtstudio/shirtstudio.zip"
+				resizable="false"
+				width="676"
+				minWidth="676"
+				height="715"
+				minHeight="715"
+				type="dhtml"
+				includedCountries="49,43"
+			    excludedPartnerIds="16,10,14,9,3,18,21,30"
+			/>
+			  <xtra
+			   id="p7de_topmodel"
+			   version="1"
+			   url="http://icq-topmodel.prosieben.de"
+			   name="ProSieben Topmodel"
+			   desc="Die Topmodel-Community"
+			   iconsUrl="http://c.icq.com/xtraz2/img/pro7/p7_topModel/p7_topModel.zip"
+			   resizable="false"
+			   width="780"
+			   minWidth="600"
+			   height="672"
+			   minHeight="430"
+			   type="dhtml"
+			   includedCountries="49,43"
+			   excludedPartnerIds="16,10,14,9,3,18,21"
+                       />
+	   	   <xtra 
+				id="bigmir_notify" 	
+				version="1"
+				url="http://xtraz.bigmir.net/notify/notify.box"
+				type="boxely" 
+                includedPartnerIds="10"				
+				preloadAssets="true"
+			>
+				<assets>
+					<asset>http://xtraz.bigmir.net/notify/boxley_connector.js</asset>
+				</assets> 
+			</xtra>
+			<xtra 
+				id="icqtv_russia" 	
+				version="1"
+				name="ICQ TV"
+				desc="ICQ TV"
+				url="http://www.icq-tv.ru"
+				iconsUrl="http://c.icq.com/xtraz2/img/tv/tv.zip"
+				resizable="false" 
+				width="780" 
+				height="580" 
+				type="dhtml"
+				includedCountries="7"
+				excludedPartnerIds="32"
+			>
+			</xtra>
+			<xtra 
+				id="s1de_connect4"
+				version="1"
+				url="http://icqapps.sat1.de/xtraz/icq6/connectfour/connectfour.php"
+				name="4 gewinnt"
+				desc="4 gewinnt"
+				iconsUrl="http://c.icq.com/xtraz2/img/pro7/connectfour/connectfour.zip"
+				resizable="false"
+			    width="719"
+				height="509"
+				type="dhtml"
+				requiresInvitation="true"
+				includedCountries="49,43"
+               excludedPartnerIds="16,10,14,9,3,18,21"
+			/>
+			<xtra 
+				id="geewa-slovni-fotbal"
+				name="Slovní fotbal"
+				desc="Slovní fotbal"
+				version="2"
+				url="http://c.icq.com/xtraz2/products/geewa_games/geewa-slovni-fotbal/index_gc2.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/geewa_games/geewa-slovni-fotbal/geewa-slovni-fotbal.zip"
+				resizable="false"
+				width="599"
+				height="504"
+				requiresInvitation="true"
+				type="localDhtml"
+				includedCountries="42"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="1">http://c.icq.com/xtraz2/products/geewa_games/geewa-slovni-fotbal/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/geewa_games/geewa-slovni-fotbal/geewa-slovni-fotbal_gc.zip</asset>
+				</assets>
+				<data><game position="1" type="reg" supportRandom="1" supportScoring="0"/></data>
+			</xtra>
+			<xtra 
+				id="geewa-poker-texas-hold-em"
+				version="2"
+				name="Poker Texas Hold'em"
+				desc="Poker Texas Hold'em"
+				url="http://c.icq.com/xtraz2/products/geewa_games/geewa-poker-texas-hold-em/index_gc2.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/geewa_games/geewa-poker-texas-hold-em/geewa-poker-texas-hold-em.zip"
+				resizable="false"
+				width="599"
+				height="504"
+				requiresInvitation="true"
+				type="localDhtml"
+				includedCountries="42"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="1">http://c.icq.com/xtraz2/products/geewa_games/geewa-poker-texas-hold-em/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/geewa_games/geewa-poker-texas-hold-em/geewa-poker-texas-hold-em_gc.zip</asset>
+				</assets>
+				<data><game position="1" type="reg" supportRandom="1" supportScoring="0"/></data>
+			</xtra>
+			<xtra 
+				id="geewa-mau-mau"
+				version="2"
+				name="Prší"
+				desc="Prší"
+				url="http://c.icq.com/xtraz2/products/geewa_games/geewa-mau-mau/index_gc2.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/geewa_games/geewa-mau-mau/geewa-mau-mau.zip"
+				resizable="false"
+				width="599"
+				height="504"
+				requiresInvitation="true"
+				type="localDhtml"
+				includedCountries="42"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="1">http://c.icq.com/xtraz2/products/geewa_games/geewa-mau-mau/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/geewa_games/geewa-mau-mau/geewa-mau-mau_gc.zip</asset>
+				</assets>
+				<data><game position="1" type="reg" supportRandom="1" supportScoring="0"/></data>
+			</xtra>
+			<xtra 
+				id="geewa-gomoku"
+				version="2"
+				name="Piškvorky"
+				desc="Piškvorky"
+				url="http://c.icq.com/xtraz2/products/geewa_games/geewa-gomoku/index_gc2.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/geewa_games/geewa-gomoku/geewa-gomoku.zip"
+				resizable="false"
+				width="599"
+				height="504"
+				requiresInvitation="true"
+				type="localDhtml"
+				includedCountries="42"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="1">http://c.icq.com/xtraz2/products/geewa_games/geewa-gomoku/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/geewa_games/geewa-gomoku/geewa-gomoku_gc.zip</asset>
+				</assets>
+				<data><game position="1" type="reg" supportRandom="1" supportScoring="0"/></data>
+			</xtra>
+			<xtra 
+				id="geewa-chess"
+				version="2"
+				name="Šachy"
+				desc="Šachy"
+				url="http://c.icq.com/xtraz2/products/geewa_games/geewa-chess/index_gc2.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/geewa_games/geewa-chess/geewa-chess.zip"
+				resizable="false"
+				width="599"
+				height="504"
+				requiresInvitation="true"
+				type="localDhtml"
+				includedCountries="42"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="1">http://c.icq.com/xtraz2/products/geewa_games/geewa-chess/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/geewa_games/geewa-chess/geewa-chess_gc.zip</asset>
+				</assets>
+				<data><game position="1" type="reg" supportRandom="1" supportScoring="0"/></data>
+			</xtra>
+			<xtra 
+				id="geewa-checkers"
+				version="2"
+				name="Dáma"
+				desc="Dáma"
+				url="http://c.icq.com/xtraz2/products/geewa_games/geewa-checkers/index_gc2.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/geewa_games/geewa-checkers/geewa-checkers.zip"
+				width="599"
+				height="504"
+				resizable="false"
+				requiresInvitation="true"
+				type="localDhtml"
+				includedCountries="42"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="1">http://c.icq.com/xtraz2/products/geewa_games/geewa-checkers/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/geewa_games/geewa-checkers/geewa-checkers_gc.zip</asset>
+				</assets>
+				<data><game position="1" type="reg" supportRandom="1" supportScoring="0"/></data>
+			</xtra>
+			<xtra 
+				id="geewa-battle-ships"
+				version="2"
+				name="Lodě"
+				desc="Lodě"
+				url="http://c.icq.com/xtraz2/products/geewa_games/geewa-battle-ships/index_gc2.xtra"
+				iconsUrl="http://c.icq.com/xtraz2/img/geewa_games/geewa-battle-ships/geewa-battle-ships.zip"
+				width="599"
+				height="504"
+				resizable="false"
+				requiresInvitation="true"
+				type="localDhtml"
+				includedCountries="42"
+			>
+				<assets>
+					<asset>http://c.icq.com/xtraz2/js/consts.js</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/preloader02.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/preloader/english/connectswf.htm</asset>
+					<asset version="1">http://c.icq.com/xtraz2/products/geewa_games/geewa-battle-ships/xtraz_config1.xml</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby_banner.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby9_oberon.html</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/lobby4.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudes.swf</asset>
+					<asset>http://c.icq.com/xtraz2/products/game_lobby/selectiondudesselected.swf</asset>
+					<asset compression="zip">http://c.icq.com/xtraz2/products/geewa_games/geewa-battle-ships/geewa-battle-ships_gc.zip</asset>
+				</assets>
+				<data><game position="1" type="reg" supportRandom="1" supportScoring="0"/></data>
+			</xtra>
+			<xtra 
+				id="s1de_connect4"
+				version="1"
+				url="http://icqapps.sat1.de/xtraz/icq6/connectfour/connectfour.php"
+				name="4 gewinnt"
+				desc="4 gewinnt"
+				iconsUrl="http://c.icq.com/xtraz2/img/pro7/connectfour/connectfour.zip"
+				resizable="false"
+			    width="719"
+				height="509"
+				type="dhtml"
+				requiresInvitation="true"
+				includedCountries="49"
+               excludedPartnerIds="16,10,14,9,3,18,21"
+			>
+			</xtra>
+		</xtraz>
+	</xtrazList>
