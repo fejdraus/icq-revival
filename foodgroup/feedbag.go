@@ -699,7 +699,7 @@ func (s *FeedbagService) PreAuthorizeBuddy(ctx context.Context, instance *state.
 		}, nil
 	}
 
-	if err := s.authorizeContact(ctx, instance.IdentScreenName(), state.NewIdentScreenName(inBody.ScreenName), inBody.Message); err != nil {
+	if err := s.authorizeContact(ctx, instance.IdentScreenName(), state.NewIdentScreenName(inBody.ScreenName), inBody.Message, false); err != nil {
 		return nil, fmt.Errorf("s.authorizeContact: %w", err)
 	}
 
@@ -730,7 +730,15 @@ func isASCII(s string) bool {
 	return true
 }
 
-func (s *FeedbagService) authorizeContact(ctx context.Context, granter state.IdentScreenName, requester state.IdentScreenName, message string) error {
+// authorizeContact records the authorization and tells the requester about it.
+//
+// answersRequest tells the two callers apart. Authorization granted in advance
+// (FeedbagPreAuthorizeBuddy) reaches the requester as FeedbagPreAuthorizedBuddy
+// because they never asked for it. An answer to an actual question
+// (FeedbagRespondAuthorizeToHost) must arrive as the paired
+// FeedbagRespondAuthorizeToClient: clients expect nothing else and do not count
+// the "in advance" notice as an answer.
+func (s *FeedbagService) authorizeContact(ctx context.Context, granter state.IdentScreenName, requester state.IdentScreenName, message string, answersRequest bool) error {
 	requesterSess := s.sessionRetriever.RetrieveSession(requester)
 
 	if err := s.contactPreAuthorizer.RecordPreAuth(ctx, granter, requester); err != nil {
@@ -760,6 +768,32 @@ func (s *FeedbagService) authorizeContact(ctx context.Context, granter state.Ide
 			return fmt.Errorf("relationshipFetcher.Relationship: %w", err)
 		}
 		if rel.BlocksYou {
+			return nil
+		}
+
+		if answersRequest {
+			// We get here when the requester has no item marked as pending: not
+			// every client sets that flag, and not in every case - when
+			// authorization was not required at all, the item was added as an
+			// ordinary one. The question was still asked and still needs an
+			// answer, or the requester keeps believing it is unauthorized.
+			s.messageRelayer.RelayToScreenName(ctx, requester, wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.Feedbag,
+					SubGroup:  wire.FeedbagRespondAuthorizeToClient,
+					Flags:     wire.SNACFlagsExtendedInfo,
+				},
+				Body: wire.SNAC_0x13_0x1B_FeedbagRespondAuthorizeToClient{
+					TLVLBlock: wire.TLVLBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.FeedbagTLVVersion, uint16(2)),
+						},
+					},
+					ScreenName: granter.String(),
+					Accepted:   1,
+					Reason:     message,
+				},
+			})
 			return nil
 		}
 		s.messageRelayer.RelayToScreenName(ctx, requester, wire.SNACMessage{
@@ -942,7 +976,7 @@ func (s *FeedbagService) RespondAuthorizeToHost(ctx context.Context, instance st
 			return err
 		}
 	case 1:
-		if err := s.authorizeContact(ctx, instance, state.NewIdentScreenName(inBody.ScreenName), inBody.Reason); err != nil {
+		if err := s.authorizeContact(ctx, instance, state.NewIdentScreenName(inBody.ScreenName), inBody.Reason, true); err != nil {
 			return fmt.Errorf("s.authorizeContact: %w", err)
 		}
 	default:

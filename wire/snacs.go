@@ -1521,6 +1521,10 @@ const (
 	BARTTypesLocation            uint16 = 0x0B
 	BARTTypesBuddyIconBig        uint16 = 0x0C
 	BARTTypesStatusTextTimestamp uint16 = 0x0D
+	// BARTTypesMood is the ICQ 6 mood. Unlike the other items it carries no
+	// hash but a string such as "0icqmood65": the client sends it inside the
+	// 0x1D tag and reads buddies' moods from there.
+	BARTTypesMood                uint16 = 0x0E
 	BARTTypesCurrentAvtrack      uint16 = 0x0F
 	BARTTypesDepartSound         uint16 = 0x60
 	BARTTypesImBackground        uint16 = 0x80
@@ -2096,6 +2100,9 @@ const (
 	ICQDBQueryMetaReqStat0ad7          uint16 = 0x0AD7
 	ICQDBQueryMetaReqDirectoryQuery    uint16 = 0x0FA0
 	ICQDBQueryMetaReqDirectoryUpdate   uint16 = 0x0FD2
+	// Random chat: join a group and ask for a partner.
+	ICQDBQueryMetaReqRandomSearch  uint16 = 0x074E
+	ICQDBQueryMetaReqSetRandomChat uint16 = 0x0758
 
 	ICQDBQueryMetaReplySetBasicInfo    uint16 = 0x0064
 	ICQDBQueryMetaReplySetWorkInfo     uint16 = 0x006E
@@ -2107,6 +2114,8 @@ const (
 	ICQDBQueryMetaReplySetPermissions  uint16 = 0x00A0
 	ICQDBQueryMetaReplySetICQPhone     uint16 = 0x031E
 	ICQDBQueryMetaReplySetFullInfo     uint16 = 0x0C3F
+	ICQDBQueryMetaReplyRandomFound     uint16 = 0x0366
+	ICQDBQueryMetaReplySetRandomChat   uint16 = 0x0370
 	ICQDBQueryMetaReplyBasicInfo       uint16 = 0x00C8
 	ICQDBQueryMetaReplyWorkInfo        uint16 = 0x00D2
 	ICQDBQueryMetaReplyMoreInfo        uint16 = 0x00DC
@@ -2456,6 +2465,35 @@ type ICQMetadataWithSubType struct {
 	} `oscar:"optional"`
 }
 
+// ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat joins a random chat group. For
+// a non-zero group the client appends its address and version; the server does
+// not need them, so only the group number is read.
+type ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat struct {
+	Group uint16
+}
+
+// ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch asks for a partner from the
+// given group.
+type ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch struct {
+	Group uint16
+}
+
+// ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound carries the partner that was
+// found. The addresses use the opposite byte order from the rest of the body,
+// so they are declared as arrays to keep the marshaller from swapping them.
+type ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound struct {
+	ICQMetadata
+	ReqSubType uint16
+	Success    uint8
+	UIN        uint32
+	Group      uint16
+	ExternalIP [4]byte
+	Port       uint32
+	InternalIP [4]byte
+	Mode       uint8
+	Version    uint16
+}
+
 type ICQMetadata struct {
 	UIN     uint32
 	ReqType uint16
@@ -2491,10 +2529,14 @@ type ICQUserSearchRecord struct {
 //
 
 const (
-	BUCPErr                      uint16 = 0x0001
-	BUCPLoginRequest             uint16 = 0x0002
-	BUCPLoginResponse            uint16 = 0x0003
-	BUCPRegisterRequest          uint16 = 0x0004
+	BUCPErr              uint16 = 0x0001
+	BUCPLoginRequest     uint16 = 0x0002
+	BUCPLoginResponse    uint16 = 0x0003
+	BUCPRegisterRequest  uint16 = 0x0004
+	BUCPRegisterResponse uint16 = 0x0005
+
+	// ICQTLVTagsRegistration holds the registration block for a new number.
+	ICQTLVTagsRegistration       uint16 = 0x0001
 	BUCPChallengeRequest         uint16 = 0x0006
 	BUCPChallengeResponse        uint16 = 0x0007
 	BUCPAsasnRequest             uint16 = 0x0008

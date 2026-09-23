@@ -429,4 +429,9 @@ type UserManager interface {
 
 	// SetWarnLevel updates the last warn update time and warning level for a user.
 	SetWarnLevel(ctx context.Context, user state.IdentScreenName, lastWarnUpdate time.Time, lastWarnLevel uint16) error
+
+	// EmailOwner returns the screen name the given email address is attached
+	// to. It returns an empty name when the address belongs to nobody, or to
+	// more than one account.
+	EmailOwner(ctx context.Context, email string) (state.DisplayScreenName, error)
 }

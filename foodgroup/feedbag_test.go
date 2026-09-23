@@ -3673,7 +3673,7 @@ func TestFeedbagService_RespondAuthorizeToHost(t *testing.T) {
 			},
 		},
 		{
-			name:        "requester online: requester is pre-authorized",
+			name:        "requester online: no pending record, answer still goes back",
 			granterSess: newTestInstance(state.DisplayScreenName(granter.String()), sessOptUIN(granter.UIN())),
 			requesterSess: func() *state.Session {
 				s := state.NewSession()
@@ -3709,12 +3709,18 @@ func TestFeedbagService_RespondAuthorizeToHost(t *testing.T) {
 							message: wire.SNACMessage{
 								Frame: wire.SNACFrame{
 									FoodGroup: wire.Feedbag,
-									SubGroup:  wire.FeedbagPreAuthorizedBuddy,
+									SubGroup:  wire.FeedbagRespondAuthorizeToClient,
+									Flags:     wire.SNACFlagsExtendedInfo,
 								},
-								Body: wire.SNAC_0x13_0x15_FeedbagPreAuthorizedBuddy{
+								Body: wire.SNAC_0x13_0x1B_FeedbagRespondAuthorizeToClient{
+									TLVLBlock: wire.TLVLBlock{
+										TLVList: wire.TLVList{
+											wire.NewTLVBE(wire.FeedbagTLVVersion, uint16(2)),
+										},
+									},
 									ScreenName: granter.String(),
-									Message:    "welcome",
-									Flags:      0,
+									Accepted:   1,
+									Reason:     "welcome",
 								},
 							},
 						},
@@ -4833,7 +4839,7 @@ func TestFeedbagService_ForwardICQAuthEvents(t *testing.T) {
 		wantErr error
 	}{
 		{
-			name: "auth OK - feedbag recipient receives PreAuthorizedBuddy SNAC",
+			name: "auth OK - feedbag recipient receives RespondAuthorizeToClient SNAC",
 			authMsg: wire.ICBMCh4Message{
 				MessageType: wire.ICBMMsgTypeAuthOK,
 			},
@@ -4871,11 +4877,17 @@ func TestFeedbagService_ForwardICQAuthEvents(t *testing.T) {
 							message: wire.SNACMessage{
 								Frame: wire.SNACFrame{
 									FoodGroup: wire.Feedbag,
-									SubGroup:  wire.FeedbagPreAuthorizedBuddy,
+									SubGroup:  wire.FeedbagRespondAuthorizeToClient,
+									Flags:     wire.SNACFlagsExtendedInfo,
 								},
-								Body: wire.SNAC_0x13_0x15_FeedbagPreAuthorizedBuddy{
+								Body: wire.SNAC_0x13_0x1B_FeedbagRespondAuthorizeToClient{
+									TLVLBlock: wire.TLVLBlock{
+										TLVList: wire.TLVList{
+											wire.NewTLVBE(wire.FeedbagTLVVersion, uint16(2)),
+										},
+									},
 									ScreenName: sender.DisplayScreenName().String(),
-									Flags:      0,
+									Accepted:   1,
 								},
 							},
 						},

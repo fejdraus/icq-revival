@@ -331,6 +331,7 @@ type buddyIconMetadataParams []struct {
 // UserManager methods
 type userManagerParams struct {
 	getUserParams
+	emailOwnerParams
 }
 
 // getUserParams is the list of parameters passed at the mock
@@ -339,6 +340,14 @@ type getUserParams []struct {
 	screenName state.IdentScreenName
 	result     *state.User
 	err        error
+}
+
+// emailOwnerParams is the list of parameters passed at the mock
+// UserManager.EmailOwner call site
+type emailOwnerParams []struct {
+	email  string
+	result state.DisplayScreenName
+	err    error
 }
 
 // sessionRegistryParams is a helper struct that contains mock parameters for

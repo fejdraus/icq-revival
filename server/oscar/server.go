@@ -509,6 +509,23 @@ func (s oscarServer) processBUCPAuth(ctx context.Context, flapc *wire.FlapClient
 					s.logger.Debug("failed BUCP challenge: user does not exist", "screen_name", screenName)
 					return nil // account does not exist
 				}
+
+			case fr.FoodGroup == wire.BUCP && fr.SubGroup == wire.BUCPRegisterRequest:
+				payload, err := io.ReadAll(buf)
+				if err != nil {
+					return err
+				}
+				outSNAC, err := s.authService.BUCPRegister(ctx, payload)
+				if err != nil {
+					s.logger.Error("ICQ registration failed", "err", err.Error())
+					return io.EOF
+				}
+				outSNAC.Frame.RequestID = fr.RequestID
+				if err := flapc.SendSNAC(outSNAC.Frame, outSNAC.Body); err != nil {
+					return err
+				}
+				// An empty channel 4 FLAP tells the client to close the connection.
+				return flapc.NewSignoff(wire.TLVRestBlock{})
 			case fr.FoodGroup == wire.BUCP && fr.SubGroup == wire.BUCPLoginRequest:
 				loginRequest := wire.SNAC_0x17_0x02_BUCPLoginRequest{}
 				if err := wire.UnmarshalBE(&loginRequest, buf); err != nil {

@@ -294,10 +294,15 @@ func (s OServiceService) SetUserInfoFields(ctx context.Context, instance *state.
 			return err
 		}
 		for _, id := range ids {
-			if id.Type == wire.BARTTypesStatusStr {
+			switch id.Type {
+			case wire.BARTTypesStatusStr:
 				instance.Session().SetStatus(id)
 				statusMsgChanged = true
-				break
+			case wire.BARTTypesMood:
+				// The ICQ 6 mood arrives as a sibling item under the same tag.
+				// Without it a buddy's mood icon never changes.
+				instance.Session().SetStatusMood(id)
+				statusMsgChanged = true
 			}
 		}
 	}

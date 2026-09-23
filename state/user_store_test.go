@@ -1525,6 +1525,11 @@ func TestSQLiteUserStore_SetBasicInfo(t *testing.T) {
 		Nickname:     "Johnny",
 		PublishEmail: true,
 		ZIPCode:      "12345",
+		// Place of birth: these three columns were missing from the statement,
+		// so a profile saved through the directory dialect lost them silently.
+		OriginallyFromCity:        "Birthtown",
+		OriginallyFromState:       "Birthstate",
+		OriginallyFromCountryCode: 61,
 	}
 
 	t.Run("Successful Update", func(t *testing.T) {
@@ -1548,6 +1553,9 @@ func TestSQLiteUserStore_SetBasicInfo(t *testing.T) {
 		assert.Equal(t, basicInfo.LastName, updatedUser.ICQInfo.Basic.LastName)
 		assert.Equal(t, basicInfo.Nickname, updatedUser.ICQInfo.Basic.Nickname)
 		assert.Equal(t, basicInfo.PublishEmail, updatedUser.ICQInfo.Basic.PublishEmail)
+		assert.Equal(t, basicInfo.OriginallyFromCity, updatedUser.ICQInfo.Basic.OriginallyFromCity)
+		assert.Equal(t, basicInfo.OriginallyFromState, updatedUser.ICQInfo.Basic.OriginallyFromState)
+		assert.Equal(t, basicInfo.OriginallyFromCountryCode, updatedUser.ICQInfo.Basic.OriginallyFromCountryCode)
 		assert.Equal(t, basicInfo.ZIPCode, updatedUser.ICQInfo.Basic.ZIPCode)
 	})
 
@@ -4318,4 +4326,108 @@ func TestSQLiteUserStore_RecordPreAuth_unknownUser(t *testing.T) {
 		owner.String(), unknownRequester.String()).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
+}
+
+func TestSQLiteUserStore_EmailOwner(t *testing.T) {
+	defer func() {
+		assert.NoError(t, os.Remove(testFile))
+	}()
+
+	f, err := NewSQLiteUserStore(testFile)
+	assert.NoError(t, err)
+
+	ctx := context.Background()
+
+	// An address can sit in any of three places, and each of them signs its
+	// owner in: the ICQ profile, the AIM account, and the table the recovery
+	// service mirrors here.
+	icq := User{IdentScreenName: NewIdentScreenName("100001"), DisplayScreenName: "100001", IsICQ: true}
+	assert.NoError(t, f.InsertUser(ctx, icq))
+	assert.NoError(t, f.SetBasicInfo(ctx, icq.IdentScreenName, ICQBasicInfo{EmailAddress: "profile@example.com"}))
+
+	aim := User{IdentScreenName: NewIdentScreenName("aimuser"), DisplayScreenName: "aimuser"}
+	assert.NoError(t, f.InsertUser(ctx, aim))
+	assert.NoError(t, f.UpdateEmailAddress(ctx, aim.IdentScreenName, &mail.Address{Address: "aim@example.com"}))
+
+	mirrored := User{IdentScreenName: NewIdentScreenName("100002"), DisplayScreenName: "100002", IsICQ: true}
+	assert.NoError(t, f.InsertUser(ctx, mirrored))
+	_, err = f.db.Exec(
+		`INSERT INTO loginEmail (identScreenName, email, boundAt) VALUES (?, ?, ?)`,
+		"100002", "recovery@example.com", time.Now().Unix())
+	assert.NoError(t, err)
+
+	owners := []struct {
+		name  string
+		email string
+		want  DisplayScreenName
+	}{
+		{
+			name:  "the address in the ICQ profile identifies its account",
+			email: "profile@example.com",
+			want:  "100001",
+		},
+		{
+			name:  "the address of an AIM account identifies it too",
+			email: "aim@example.com",
+			want:  "aimuser",
+		},
+		{
+			name:  "so does the one the recovery service mirrored",
+			email: "recovery@example.com",
+			want:  "100002",
+		},
+		{
+			name:  "case and spacing around the address do not matter",
+			email: "  Profile@Example.COM ",
+			want:  "100001",
+		},
+		{
+			name:  "an address nobody uses identifies nobody",
+			email: "stranger@example.com",
+			want:  "",
+		},
+		{
+			name:  "an empty address identifies nobody",
+			email: "",
+			want:  "",
+		},
+	}
+
+	for _, tt := range owners {
+		t.Run(tt.name, func(t *testing.T) {
+			have, err := f.EmailOwner(ctx, tt.email)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, have)
+		})
+	}
+
+	t.Run("an address another account holds cannot be saved in a profile", func(t *testing.T) {
+		err := f.SetBasicInfo(ctx, mirrored.IdentScreenName, ICQBasicInfo{EmailAddress: "profile@example.com"})
+		assert.ErrorIs(t, err, ErrEmailTaken)
+	})
+
+	t.Run("nor can one another account only uses for recovery", func(t *testing.T) {
+		err := f.SetBasicInfo(ctx, icq.IdentScreenName, ICQBasicInfo{EmailAddress: "recovery@example.com"})
+		assert.ErrorIs(t, err, ErrEmailTaken)
+	})
+
+	t.Run("an AIM account cannot take it either", func(t *testing.T) {
+		err := f.UpdateEmailAddress(ctx, aim.IdentScreenName, &mail.Address{Address: "profile@example.com"})
+		assert.ErrorIs(t, err, ErrEmailTaken)
+	})
+
+	t.Run("keeping your own address is not taking it from anybody", func(t *testing.T) {
+		assert.NoError(t, f.SetBasicInfo(ctx, icq.IdentScreenName, ICQBasicInfo{EmailAddress: "profile@example.com"}))
+	})
+
+	t.Run("no address at all is always allowed", func(t *testing.T) {
+		assert.NoError(t, f.SetBasicInfo(ctx, mirrored.IdentScreenName, ICQBasicInfo{}))
+	})
+
+	t.Run("deleting an account frees the address it was given", func(t *testing.T) {
+		assert.NoError(t, f.DeleteUser(ctx, mirrored.IdentScreenName))
+		have, err := f.EmailOwner(ctx, "recovery@example.com")
+		assert.NoError(t, err)
+		assert.Equal(t, DisplayScreenName(""), have)
+	})
 }

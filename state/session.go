@@ -108,6 +108,9 @@ type Session struct {
 	closed  bool
 	nowFn   func() time.Time
 	status  wire.BARTID
+	// statusMood is the ICQ 6 mood. It lives next to the status text and
+	// travels in and out as an item of the same 0x1D tag.
+	statusMood wire.BARTID
 }
 
 // NewSession creates a new Session for a user.
@@ -375,6 +378,14 @@ func (s *Session) Status() (wire.BARTID, bool) {
 	defer s.mutex.RUnlock()
 	status := s.status
 	return status, status.Type == wire.BARTTypesStatusStr
+}
+
+// StatusMood returns the ICQ 6 mood item, if the account has one set.
+func (s *Session) StatusMood() (wire.BARTID, bool) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	mood := s.statusMood
+	return mood, mood.Type == wire.BARTTypesMood && len(mood.Hash) > 0
 }
 
 // Idle returns true if all instances are idle.
@@ -832,6 +843,13 @@ func (s *Session) SetStatus(status wire.BARTID) {
 	s.status = status
 }
 
+// SetStatusMood sets the ICQ 6 mood item.
+func (s *Session) SetStatusMood(mood wire.BARTID) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.statusMood = mood
+}
+
 // SetChatRoomCookie sets the chat room cookie.
 func (s *Session) SetChatRoomCookie(cookie string) {
 	s.mutex.Lock()
@@ -954,6 +972,9 @@ func (s *Session) userInfo() wire.TLVList {
 	}
 	if status, hasStatus := s.Status(); hasStatus {
 		bartIDs = append(bartIDs, status)
+	}
+	if mood, hasMood := s.StatusMood(); hasMood {
+		bartIDs = append(bartIDs, mood)
 	}
 
 	if len(bartIDs) > 0 {

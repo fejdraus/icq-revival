@@ -349,14 +349,15 @@ type icqBasicInfoHandle struct {
 }
 
 type icqMoreInfoHandle struct {
-	Gender       uint16 `json:"gender"`
-	HomePageAddr string `json:"homepage"`
-	BirthYear    uint16 `json:"birth_year"`
-	BirthMonth   uint8  `json:"birth_month"`
-	BirthDay     uint8  `json:"birth_day"`
-	Lang1        uint8  `json:"lang1"`
-	Lang2        uint8  `json:"lang2"`
-	Lang3        uint8  `json:"lang3"`
+	Gender        uint16 `json:"gender"`
+	HomePageAddr  string `json:"homepage"`
+	BirthYear     uint16 `json:"birth_year"`
+	BirthMonth    uint8  `json:"birth_month"`
+	BirthDay      uint8  `json:"birth_day"`
+	Lang1         uint8  `json:"lang1"`
+	Lang2         uint8  `json:"lang2"`
+	Lang3         uint8  `json:"lang3"`
+	MaritalStatus uint8  `json:"marital_status"`
 }
 
 type icqWorkInfoHandle struct {

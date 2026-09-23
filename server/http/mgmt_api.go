@@ -1087,14 +1087,15 @@ func getICQProfileHandler(w http.ResponseWriter, r *http.Request, mgr ICQProfile
 			OriginCountryCode: user.ICQInfo.Basic.OriginallyFromCountryCode,
 		},
 		MoreInfo: icqMoreInfoHandle{
-			Gender:       user.ICQInfo.More.Gender,
-			HomePageAddr: user.ICQInfo.More.HomePageAddr,
-			BirthYear:    user.ICQInfo.More.BirthYear,
-			BirthMonth:   user.ICQInfo.More.BirthMonth,
-			BirthDay:     user.ICQInfo.More.BirthDay,
-			Lang1:        user.ICQInfo.More.Lang1,
-			Lang2:        user.ICQInfo.More.Lang2,
-			Lang3:        user.ICQInfo.More.Lang3,
+			Gender:        user.ICQInfo.More.Gender,
+			HomePageAddr:  user.ICQInfo.More.HomePageAddr,
+			BirthYear:     user.ICQInfo.More.BirthYear,
+			BirthMonth:    user.ICQInfo.More.BirthMonth,
+			BirthDay:      user.ICQInfo.More.BirthDay,
+			Lang1:         user.ICQInfo.More.Lang1,
+			Lang2:         user.ICQInfo.More.Lang2,
+			Lang3:         user.ICQInfo.More.Lang3,
+			MaritalStatus: user.ICQInfo.More.MaritalStatus,
 		},
 		WorkInfo: icqWorkInfoHandle{
 			Company:        user.ICQInfo.Work.Company,
@@ -1284,20 +1285,27 @@ func putICQProfileHandler(w http.ResponseWriter, r *http.Request, mgr ICQProfile
 		GMTOffset:    input.BasicInfo.GMTOffset,
 		PublishEmail: input.BasicInfo.PublishEmail,
 	}); err != nil {
+		// One address signs in one account, so an address somebody else holds
+		// is the caller's mistake, not a server fault.
+		if errors.Is(err, state.ErrEmailTaken) {
+			errorMsg(w, "email address belongs to another account", http.StatusConflict)
+			return
+		}
 		logger.Error("error setting basic info", "err", err.Error())
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	if err := mgr.SetMoreInfo(r.Context(), sn, state.ICQMoreInfo{
-		Gender:       input.MoreInfo.Gender,
-		HomePageAddr: input.MoreInfo.HomePageAddr,
-		BirthYear:    input.MoreInfo.BirthYear,
-		BirthMonth:   input.MoreInfo.BirthMonth,
-		BirthDay:     input.MoreInfo.BirthDay,
-		Lang1:        input.MoreInfo.Lang1,
-		Lang2:        input.MoreInfo.Lang2,
-		Lang3:        input.MoreInfo.Lang3,
+		Gender:        input.MoreInfo.Gender,
+		HomePageAddr:  input.MoreInfo.HomePageAddr,
+		BirthYear:     input.MoreInfo.BirthYear,
+		BirthMonth:    input.MoreInfo.BirthMonth,
+		BirthDay:      input.MoreInfo.BirthDay,
+		Lang1:         input.MoreInfo.Lang1,
+		Lang2:         input.MoreInfo.Lang2,
+		Lang3:         input.MoreInfo.Lang3,
+		MaritalStatus: input.MoreInfo.MaritalStatus,
 	}); err != nil {
 		logger.Error("error setting more info", "err", err.Error())
 		http.Error(w, "internal server error", http.StatusInternalServerError)

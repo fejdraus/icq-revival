@@ -549,6 +549,23 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, endpointCfg co
 		"password_hash_len", len(props.passwordHash),
 		"roasted_pass_len", len(props.roastedPass))
 
+	// The login field of the old clients is labelled "ICQ#/Email" because the
+	// real server took an email address in place of the number. Swap the
+	// address for the number it belongs to and carry on as usual; an address
+	// attached to no account simply finds no user and fails below.
+	byEmail := strings.Contains(string(props.screenName), "@")
+	if byEmail {
+		owner, err := s.userManager.EmailOwner(ctx, string(props.screenName))
+		if err != nil {
+			s.logger.Error("login: email lookup failed", "screen_name", props.screenName, "err", err.Error())
+			return wire.TLVRestBlock{}, err
+		}
+		if owner != "" {
+			s.logger.Debug("login: signing in by email", "screen_name", owner)
+			props.screenName = owner
+		}
+	}
+
 	user, err := s.userManager.User(ctx, props.screenName.IdentScreenName())
 	if err != nil {
 		s.logger.Error("login: user lookup failed", "screen_name", props.screenName, "err", err.Error())
@@ -564,8 +581,10 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, endpointCfg co
 			return s.createUser(ctx, props, endpointCfg)
 		}
 		// auth enabled, return separate login errors for ICQ and AIM
+		// Only the ICQ login window offers an email address, so an address that
+		// resolved to nobody gets the ICQ error too.
 		loginErr := wire.LoginErrInvalidUsernameOrPassword
-		if props.screenName.IsUIN() {
+		if props.screenName.IsUIN() || byEmail {
 			loginErr = wire.LoginErrICQUserErr
 		}
 		s.logger.Debug("login: returning user not found error",
@@ -641,6 +660,123 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, endpointCfg co
 
 	s.logger.Debug("login: login successful", "screen_name", props.screenName)
 	return s.loginSuccessResponse(ctx, props, endpointCfg)
+}
+
+// Offsets inside the ICQ registration block (TLV 0x0001 of SNAC(0x17,0x04)).
+// The whole block is little-endian, unlike the SNACs around it.
+const (
+	icqRegCookieOffset   = 16
+	icqRegPasswordOffset = 40
+	icqRegMinLen         = icqRegPasswordOffset + 2
+)
+
+// The range numbers are handed out from. It starts at 100000, the way the real
+// ICQ servers did and the way our own registration page picks a number.
+const (
+	icqUINFirst = 100000
+	icqUINLast  = 2147483646
+)
+
+// BUCPRegister hands out a new ICQ number and creates an account for it.
+//
+// The client sends SNAC(0x17,0x04) with the chosen password and a random
+// cookie; the server answers SNAC(0x17,0x05) with the assigned number. The
+// block follows the ICQ v8 format described at
+// https://kingant.net/oscar/?family=0x0017&subtype=0x0005
+func (s AuthService) BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wire.SNACMessage, error) {
+	block := wire.TLVRestBlock{}
+	if err := wire.UnmarshalBE(&block, bytes.NewReader(snacPayloadIn)); err != nil {
+		return wire.SNACMessage{}, fmt.Errorf("parsing registration request: %w", err)
+	}
+
+	reg, ok := block.Bytes(wire.ICQTLVTagsRegistration)
+	if !ok || len(reg) < icqRegMinLen {
+		return wire.SNACMessage{}, errors.New("registration request carries no data block")
+	}
+
+	cookie := binary.LittleEndian.Uint32(reg[icqRegCookieOffset:])
+
+	passLen := int(binary.LittleEndian.Uint16(reg[icqRegPasswordOffset:]))
+	from := icqRegPasswordOffset + 2
+	if passLen == 0 || from+passLen > len(reg) {
+		return wire.SNACMessage{}, errors.New("registration request carries no password")
+	}
+	// The client sends the password with a trailing NUL counted in the length.
+	password := strings.TrimRight(string(reg[from:from+passLen]), "\x00")
+
+	uin, err := s.nextFreeUIN(ctx)
+	if err != nil {
+		return wire.SNACMessage{}, err
+	}
+
+	screenName := state.DisplayScreenName(strconv.Itoa(uin))
+	if err := s.createAccount(ctx, screenName, password); err != nil {
+		switch {
+		case errors.Is(err, state.ErrPasswordInvalid):
+			// The client checks the 6-8 character length itself; guard anyway.
+			s.logger.InfoContext(ctx, "registration rejected: bad password", "uin", uin)
+			return wire.SNACMessage{}, err
+		default:
+			return wire.SNACMessage{}, fmt.Errorf("creating account %d: %w", uin, err)
+		}
+	}
+
+	s.logger.InfoContext(ctx, "registered new ICQ number", "uin", uin)
+
+	return wire.SNACMessage{
+		Frame: wire.SNACFrame{
+			FoodGroup: wire.BUCP,
+			SubGroup:  wire.BUCPRegisterResponse,
+		},
+		Body: wire.TLVRestBlock{
+			TLVList: wire.TLVList{
+				wire.NewTLVBE(wire.ICQTLVTagsRegistration, icqRegistrationReply(uint32(uin), cookie)),
+			},
+		},
+	}, nil
+}
+
+// nextFreeUIN picks the first free number starting at 100000.
+func (s AuthService) nextFreeUIN(ctx context.Context) (int, error) {
+	for uin := icqUINFirst; uin <= icqUINLast; uin++ {
+		u, err := s.userManager.User(ctx, state.NewIdentScreenName(strconv.Itoa(uin)))
+		if err != nil {
+			return 0, fmt.Errorf("looking for a free number: %w", err)
+		}
+		if u == nil {
+			return uin, nil
+		}
+	}
+	return 0, errors.New("no free numbers left")
+}
+
+// icqRegistrationReply builds the body of the registration reply. Every field
+// is little-endian; the constants come from the protocol description.
+func icqRegistrationReply(uin uint32, cookie uint32) []byte {
+	buf := make([]byte, 0, 52)
+	put16 := func(v uint16) { buf = binary.LittleEndian.AppendUint16(buf, v) }
+	put32 := func(v uint32) { buf = binary.LittleEndian.AppendUint32(buf, v) }
+
+	put16(0x0003) // block version
+	put32(0)
+	put16(0x002d) // length of the rest, a constant from the protocol description
+	put16(0x0003)
+	put16(0x0000)
+	put16(0x58ff)
+	put16(0x3dd0)
+	put16(0xbaa7)
+	put16(0x0000)
+	put16(0x0004)
+	put32(cookie) // cookie from the request; the client matches it with its own
+	put32(0)
+	put32(0)
+	put32(0)
+	put32(0)
+	put32(uin) // the number handed out
+	put32(cookie)
+	put16(0x0000)
+
+	return buf
 }
 
 func (s AuthService) createUser(ctx context.Context, props loginProperties, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {

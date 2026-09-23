@@ -197,6 +197,84 @@ paths:
         '404':
           description: User not found, or user has no buddy icon
 
+  /user/{screenname}/icq:
+    get:
+      summary: Get the ICQ profile of a user.
+      description: |
+        Retrieve every section of an ICQ user's profile: basic details, more
+        details, work, notes, interests, affiliations and privacy flags.
+
+        ICQ accounts only. AIM accounts keep their details elsewhere and are
+        rejected with 400.
+      parameters:
+        - in: path
+          name: screenname
+          schema:
+            type: string
+          description: ICQ UIN.
+          required: true
+      responses:
+        '200':
+          description: Successful response containing the profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ICQProfile'
+        '400':
+          description: The account is an AIM account, not an ICQ one.
+        '404':
+          description: User not found.
+    put:
+      summary: Replace the ICQ profile of a user.
+      description: |
+        Write every section at once: the request body is the whole profile, and
+        a field left out is stored empty. Read the profile first and send it
+        back changed.
+
+        The email address in `basic_info.email` signs its owner in, so it
+        cannot belong to another account: an address already used elsewhere is
+        refused with 409. Empty is always allowed - the address is optional.
+
+        `basic_info.origin_city`, `origin_state` and `origin_country_code` are
+        returned by GET but not stored by PUT: the underlying store does not
+        update those columns.
+      parameters:
+        - in: path
+          name: screenname
+          schema:
+            type: string
+          description: ICQ UIN.
+          required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ICQProfile'
+      responses:
+        '200':
+          description: Profile updated; the response contains the stored profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ICQProfile'
+        '400':
+          description: |
+            Malformed body, a field longer than allowed, a gender outside 0-2,
+            or the account is an AIM account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '404':
+          description: User not found.
+        '409':
+          description: The email address belongs to another account.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+
   /session:
     get:
       summary: Get active sessions
@@ -1364,6 +1442,231 @@ components:
           description: Response message describing the result or error.
       required:
         - message
+
+    ICQProfile:
+      type: object
+      description: |
+        An ICQ user's profile. Codes for country, language, occupation,
+        interests and affiliations are the ones the classic client shipped in
+        its own data files; 0 means "not chosen".
+      properties:
+        uin:
+          type: integer
+          description: The user's ICQ number. Ignored on write.
+        basic_info:
+          $ref: '#/components/schemas/ICQBasicInfo'
+        more_info:
+          $ref: '#/components/schemas/ICQMoreInfo'
+        work_info:
+          $ref: '#/components/schemas/ICQWorkInfo'
+        notes:
+          type: string
+          maxLength: 450
+          description: Free text the user wrote about themselves.
+        interests:
+          $ref: '#/components/schemas/ICQInterests'
+        affiliations:
+          $ref: '#/components/schemas/ICQAffiliations'
+        permissions:
+          $ref: '#/components/schemas/ICQPermissions'
+
+    ICQBasicInfo:
+      type: object
+      properties:
+        nickname:
+          type: string
+          maxLength: 20
+        first_name:
+          type: string
+          maxLength: 64
+        last_name:
+          type: string
+          maxLength: 64
+        email:
+          type: string
+          maxLength: 64
+          description: |
+            Also signs the owner in: a client may type it instead of the number
+            in its "ICQ#/Email" field. One address belongs to one account.
+        city:
+          type: string
+          maxLength: 64
+        state:
+          type: string
+          maxLength: 64
+        phone:
+          type: string
+          maxLength: 30
+        fax:
+          type: string
+          maxLength: 30
+        address:
+          type: string
+          maxLength: 64
+        cell_phone:
+          type: string
+          maxLength: 30
+        zip:
+          type: string
+          maxLength: 12
+        country_code:
+          type: integer
+          description: ICQ country code; 0 when not chosen.
+        gmt_offset:
+          type: integer
+          description: Time zone as the client stores it.
+        publish_email:
+          type: boolean
+          description: Whether others may see the address in the user's details.
+        origin_city:
+          type: string
+          maxLength: 64
+          description: Read-only; PUT does not store it.
+        origin_state:
+          type: string
+          maxLength: 64
+          description: Read-only; PUT does not store it.
+        origin_country_code:
+          type: integer
+          description: Read-only; PUT does not store it.
+
+    ICQMoreInfo:
+      type: object
+      properties:
+        gender:
+          type: integer
+          enum: [ 0, 1, 2 ]
+          description: 0 unspecified, 1 female, 2 male.
+        homepage:
+          type: string
+          maxLength: 127
+        birth_year:
+          type: integer
+        birth_month:
+          type: integer
+        birth_day:
+          type: integer
+        lang1:
+          type: integer
+          description: ICQ language code; 0 when not chosen.
+        lang2:
+          type: integer
+        lang3:
+          type: integer
+
+    ICQWorkInfo:
+      type: object
+      properties:
+        company:
+          type: string
+          maxLength: 64
+        department:
+          type: string
+          maxLength: 64
+        position:
+          type: string
+          maxLength: 64
+        occupation_code:
+          type: integer
+          description: ICQ occupation code; 0 when not chosen.
+        address:
+          type: string
+          maxLength: 64
+        city:
+          type: string
+          maxLength: 64
+        state:
+          type: string
+          maxLength: 64
+        zip:
+          type: string
+          maxLength: 12
+        country_code:
+          type: integer
+        phone:
+          type: string
+          maxLength: 30
+        fax:
+          type: string
+          maxLength: 30
+        web_page:
+          type: string
+          maxLength: 127
+
+    ICQInterests:
+      type: object
+      description: Up to four interests, each a category code plus the user's own words.
+      properties:
+        code1:
+          type: integer
+        keyword1:
+          type: string
+          maxLength: 64
+        code2:
+          type: integer
+        keyword2:
+          type: string
+          maxLength: 64
+        code3:
+          type: integer
+        keyword3:
+          type: string
+          maxLength: 64
+        code4:
+          type: integer
+        keyword4:
+          type: string
+          maxLength: 64
+
+    ICQAffiliations:
+      type: object
+      description: |
+        Up to three past backgrounds (school, university, past workplace) and up
+        to three current organisations, each a code plus the user's own words.
+      properties:
+        past_code1:
+          type: integer
+        past_keyword1:
+          type: string
+          maxLength: 64
+        past_code2:
+          type: integer
+        past_keyword2:
+          type: string
+          maxLength: 64
+        past_code3:
+          type: integer
+        past_keyword3:
+          type: string
+          maxLength: 64
+        current_code1:
+          type: integer
+        current_keyword1:
+          type: string
+          maxLength: 64
+        current_code2:
+          type: integer
+        current_keyword2:
+          type: string
+          maxLength: 64
+        current_code3:
+          type: integer
+        current_keyword3:
+          type: string
+          maxLength: 64
+
+    ICQPermissions:
+      type: object
+      properties:
+        auth_required:
+          type: boolean
+          description: Others must ask before adding this user to their list.
+        web_aware:
+          type: boolean
+          description: The user's status may be seen outside the client.
+        allow_spam:
+          type: boolean
+          description: The user accepts mailings from the server.
 
     BARTType:
       type: integer

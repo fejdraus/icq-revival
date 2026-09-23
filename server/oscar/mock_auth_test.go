@@ -51,6 +51,32 @@ func (_m *mockAuthService) EXPECT() *mockAuthService_Expecter {
 	return &mockAuthService_Expecter{mock: &_m.Mock}
 }
 
+// BUCPRegister provides a mock function for the type mockAuthService
+func (_mock *mockAuthService) BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wire.SNACMessage, error) {
+	ret := _mock.Called(ctx, snacPayloadIn)
+
+	if len(ret) == 0 {
+		panic("no return value specified for BUCPRegister")
+	}
+
+	var r0 wire.SNACMessage
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []byte) (wire.SNACMessage, error)); ok {
+		return returnFunc(ctx, snacPayloadIn)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, []byte) wire.SNACMessage); ok {
+		r0 = returnFunc(ctx, snacPayloadIn)
+	} else {
+		r0 = ret.Get(0).(wire.SNACMessage)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, []byte) error); ok {
+		r1 = returnFunc(ctx, snacPayloadIn)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
 // BUCPChallenge provides a mock function for the type mockAuthService
 func (_mock *mockAuthService) BUCPChallenge(ctx context.Context, inBody wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error) {
 	ret := _mock.Called(ctx, inBody, newUUID)

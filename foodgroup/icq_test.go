@@ -3346,6 +3346,51 @@ func TestICQService_SetICQInfo(t *testing.T) {
 			},
 			wantErr: state.ErrNoUser,
 		},
+		{
+			// QIP 2012 puts empty fields into the save too, and lays an empty
+			// value out its own way: the e-mail tag arrives without the
+			// mandatory publish flag. Parsing used to return an error there, and
+			// a handler error drops the connection - the client signed in again
+			// and saw the old profile, as if the save had wiped it. An
+			// unreadable field must be skipped and the rest still saved.
+			name:     "unreadable field is skipped, the rest is saved",
+			seq:      1,
+			instance: newTestInstance("100003", sessOptUIN(100003)),
+			req: wire.ICQ_0x07D0_0x0C3A_DBQueryMetaReqSetFullInfo{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						sstring(wire.ICQTLVTagsFirstName, "Jane"),
+						wire.NewTLVLE(wire.ICQTLVTagsEmail, []byte{}),
+					},
+				},
+			},
+			mockParams: mockParams{
+				icqUserFinderParams: icqUserFinderParams{
+					findByUINParams: findByUINParams{
+						{
+							UIN:    100003,
+							result: existingUser,
+						},
+					},
+				},
+				icqUserUpdaterParams: icqUserUpdaterParams{
+					setFullInfoParams: setFullInfoParams{
+						{
+							name: state.NewIdentScreenName("100003"),
+							info: setFullInfoMergedFirstName,
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNameParams: relayToScreenNameParams{
+						{
+							screenName: state.NewIdentScreenName("100003"),
+							message:    expectedReply,
+						},
+					},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

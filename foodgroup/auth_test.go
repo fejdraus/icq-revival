@@ -27,6 +27,14 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 	}
 	assert.NoError(t, user.HashPassword("the_password"))
 
+	icqUser := state.User{
+		IdentScreenName:   state.NewIdentScreenName("100003"),
+		DisplayScreenName: "100003",
+		AuthKey:           "auth_key",
+		IsICQ:             true,
+	}
+	assert.NoError(t, icqUser.HashPassword("icqpass1"))
+
 	cases := []struct {
 		// name is the unit test name
 		name string
@@ -936,6 +944,109 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:        "ICQ account signs in with the email address attached to it",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
+			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.LoginTLVTagsScreenName, "me@example.com"),
+						wire.NewTLVBE(wire.LoginTLVTagsPasswordHash, icqUser.StrongMD5Pass),
+					},
+				},
+			},
+			mockParams: mockParams{
+				userManagerParams: userManagerParams{
+					emailOwnerParams: emailOwnerParams{
+						{
+							email:  "me@example.com",
+							result: icqUser.DisplayScreenName,
+						},
+					},
+					getUserParams: getUserParams{
+						{
+							screenName: icqUser.IdentScreenName,
+							result:     &icqUser,
+						},
+					},
+				},
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							ttlIn: state.DefaultCookieTTL,
+							dataIn: func() []byte {
+								loginCookie := state.ServerCookie{
+									TokenTTL:   uint32((state.DefaultCookieTTL).Seconds()),
+									ScreenName: icqUser.DisplayScreenName,
+								}
+								buf := &bytes.Buffer{}
+								assert.NoError(t, wire.MarshalBE(loginCookie, buf))
+								return buf.Bytes()
+							}(),
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.BUCP,
+					SubGroup:  wire.BUCPLoginResponse,
+				},
+				Body: wire.SNAC_0x17_0x03_BUCPLoginResponse{
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.LoginTLVTagsScreenName, icqUser.DisplayScreenName),
+							wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, "127.0.0.1:5190"),
+							wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, []byte("the-cookie")),
+							wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
+						},
+					},
+				},
+			},
+		},
+		{
+			name:        "email address attached to no account is refused",
+			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
+			inputSNAC: wire.SNAC_0x17_0x02_BUCPLoginRequest{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.LoginTLVTagsScreenName, "nobody@example.com"),
+						wire.NewTLVBE(wire.LoginTLVTagsPasswordHash, icqUser.StrongMD5Pass),
+					},
+				},
+			},
+			mockParams: mockParams{
+				userManagerParams: userManagerParams{
+					emailOwnerParams: emailOwnerParams{
+						{
+							email:  "nobody@example.com",
+							result: "",
+						},
+					},
+					getUserParams: getUserParams{
+						{
+							screenName: state.NewIdentScreenName("nobody@example.com"),
+							result:     nil,
+						},
+					},
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.BUCP,
+					SubGroup:  wire.BUCPLoginResponse,
+				},
+				Body: wire.SNAC_0x17_0x03_BUCPLoginResponse{
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.LoginTLVTagsScreenName, "nobody@example.com"),
+							wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrICQUserErr),
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -944,6 +1055,11 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 			for _, params := range tc.mockParams.userManagerParams.getUserParams {
 				userManager.EXPECT().
 					User(matchContext(), params.screenName).
+					Return(params.result, params.err)
+			}
+			for _, params := range tc.mockParams.userManagerParams.emailOwnerParams {
+				userManager.EXPECT().
+					EmailOwner(matchContext(), params.email).
 					Return(params.result, params.err)
 			}
 			cookieBaker := newMockCookieBaker(t)

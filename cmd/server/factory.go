@@ -116,6 +116,8 @@ func MakeCommonDeps() (Container, error) {
 		c.inMemorySessionManager,
 		c.sqLiteUserStore,
 	)
+	// Random chat picks a partner among the live sessions.
+	c.icqService.BridgeSessionLister(c.inMemorySessionManager)
 
 	c.feedbagSvc.BridgeICBMService(c.icbmSvc)
 	c.icbmSvc.BridgeFeedbagService(c.feedbagSvc)

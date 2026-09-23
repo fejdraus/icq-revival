@@ -366,6 +366,9 @@ type ICQMoreInfo struct {
 	Lang2 uint8
 	// Lang3 is the code for the user's tertiary language.
 	Lang3 uint8
+	// MaritalStatus is the code for the user's marital status; zero means
+	// unspecified.
+	MaritalStatus uint8
 }
 
 // ICQWorkInfo contains information about the user's professional life,

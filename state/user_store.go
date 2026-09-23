@@ -36,8 +36,11 @@ var (
 	ErrKeywordInUse            = errors.New("can't delete keyword that is associated with a user")
 	ErrKeywordNotFound         = errors.New("keyword not found")
 	ErrOfflineInboxFull        = errors.New("offline inbox full")
-	errTooManyCategories       = errors.New("there are too many keyword categories")
-	errTooManyKeywords         = errors.New("there are too many keywords")
+	// ErrEmailTaken indicates the email address already belongs to another
+	// account. One address signs in one account, so it cannot be shared.
+	ErrEmailTaken        = errors.New("email address belongs to another account")
+	errTooManyCategories = errors.New("there are too many keyword categories")
+	errTooManyKeywords   = errors.New("there are too many keywords")
 
 	// ErrICQSearchEmptyCriteria indicates the caller did not provide any search
 	// constraints. This prevents accidental full-table scans.
@@ -160,6 +163,99 @@ func (f SQLiteUserStore) FindByICQEmail(ctx context.Context, email string) (User
 	}
 
 	return users[0], nil
+}
+
+// EmailOwner returns the account the given email address is attached to, or an
+// empty name when no account claims it. An address claimed by more than one
+// account also returns an empty name: it identifies nobody, and must neither
+// sign anyone in nor be accepted as a new address.
+//
+// Three places hold an address: the ICQ profile, the AIM account, and the
+// table the password-recovery service mirrors here. All three let their owner
+// sign in by the address, so all three are searched — and a new address is
+// rejected when any of them already holds it for somebody else.
+func (f SQLiteUserStore) EmailOwner(ctx context.Context, email string) (DisplayScreenName, error) {
+	q := `
+		SELECT DISTINCT identScreenName FROM (
+			SELECT identScreenName, LOWER(TRIM(icq_basicInfo_emailAddress)) AS addr FROM users
+			UNION
+			SELECT identScreenName, LOWER(TRIM(emailAddress)) FROM users
+			UNION
+			SELECT identScreenName, email FROM loginEmail
+		)
+		WHERE addr = ?
+		LIMIT 2
+	`
+
+	addr := strings.ToLower(strings.TrimSpace(email))
+	if addr == "" {
+		return "", nil
+	}
+
+	rows, err := f.db.QueryContext(ctx, q, addr)
+	if err != nil {
+		return "", fmt.Errorf("QueryContext: %w", err)
+	}
+	defer rows.Close()
+
+	var found []DisplayScreenName
+	for rows.Next() {
+		var sn string
+		if err := rows.Scan(&sn); err != nil {
+			return "", fmt.Errorf("Scan: %w", err)
+		}
+		found = append(found, DisplayScreenName(sn))
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("rows.Err: %w", err)
+	}
+
+	if len(found) != 1 {
+		return "", nil
+	}
+	return found[0], nil
+}
+
+// userExists reports ErrNoUser when there is no such account.
+func (f SQLiteUserStore) userExists(ctx context.Context, name IdentScreenName) error {
+	var n int
+	q := `SELECT COUNT(*) FROM users WHERE identScreenName = ?`
+	if err := f.db.QueryRowContext(ctx, q, name.String()).Scan(&n); err != nil {
+		return fmt.Errorf("QueryRowContext: %w", err)
+	}
+	if n == 0 {
+		return ErrNoUser
+	}
+	return nil
+}
+
+// emailFree returns ErrEmailTaken when any other account already holds the
+// address. An empty address is always free — the address stays optional.
+func (f SQLiteUserStore) emailFree(ctx context.Context, name IdentScreenName, email string) error {
+	addr := strings.ToLower(strings.TrimSpace(email))
+	if addr == "" {
+		return nil
+	}
+
+	q := `
+		SELECT COUNT(*) FROM (
+			SELECT identScreenName, LOWER(TRIM(icq_basicInfo_emailAddress)) AS addr FROM users
+			UNION
+			SELECT identScreenName, LOWER(TRIM(emailAddress)) FROM users
+			UNION
+			SELECT identScreenName, email FROM loginEmail
+		)
+		WHERE addr = ? AND identScreenName <> ?
+	`
+
+	var n int
+	if err := f.db.QueryRowContext(ctx, q, addr, name.String()).Scan(&n); err != nil {
+		return fmt.Errorf("QueryRowContext: %w", err)
+	}
+	if n > 0 {
+		return ErrEmailTaken
+	}
+	return nil
 }
 
 func (f SQLiteUserStore) FindByAIMEmail(ctx context.Context, email string) (User, error) {
@@ -682,6 +778,7 @@ func (f SQLiteUserStore) queryUsers(ctx context.Context, whereClause string, que
 			icq_moreInfo_lang1,
 			icq_moreInfo_lang2,
 			icq_moreInfo_lang3,
+			icq_moreInfo_maritalStatus,
 			icq_notes,
 			icq_permissions_authRequired,
 			icq_permissions_webAware,
@@ -787,6 +884,7 @@ func (f SQLiteUserStore) queryUsers(ctx context.Context, whereClause string, que
 			&u.ICQInfo.More.Lang1,
 			&u.ICQInfo.More.Lang2,
 			&u.ICQInfo.More.Lang3,
+			&u.ICQInfo.More.MaritalStatus,
 			&u.ICQInfo.Notes.Notes,
 			&u.ICQInfo.Permissions.AuthRequired,
 			&u.ICQInfo.Permissions.WebAware,
@@ -884,6 +982,12 @@ func (f SQLiteUserStore) DeleteUser(ctx context.Context, screenName IdentScreenN
 	}
 	if rowsAffected == 0 {
 		return ErrNoUser
+	}
+
+	// Numbers get handed out again, so a confirmed address left behind would
+	// eventually sign its old owner into somebody else's account.
+	if _, err := f.db.ExecContext(ctx, `DELETE FROM loginEmail WHERE identScreenName = ?`, screenName.String()); err != nil {
+		return fmt.Errorf("clear login email: %w", err)
 	}
 
 	return nil
@@ -1577,6 +1681,12 @@ func (f SQLiteUserStore) UpdateDisplayScreenName(ctx context.Context, displayScr
 }
 
 func (f SQLiteUserStore) UpdateEmailAddress(ctx context.Context, screenName IdentScreenName, emailAddress *mail.Address) error {
+	// The AIM address signs its owner in just like the ICQ one, so it cannot
+	// be somebody else's either.
+	if err := f.emailFree(ctx, screenName, emailAddress.Address); err != nil {
+		return err
+	}
+
 	q := `
 		UPDATE users
 		SET emailAddress = ?
@@ -1790,7 +1900,8 @@ func (f SQLiteUserStore) SetMoreInfo(ctx context.Context, name IdentScreenName, 
 			icq_moreInfo_homePageAddr = ?,
 			icq_moreInfo_lang1 = ?,
 			icq_moreInfo_lang2 = ?,
-			icq_moreInfo_lang3 = ?
+			icq_moreInfo_lang3 = ?,
+			icq_moreInfo_maritalStatus = ?
 		WHERE identScreenName = ?
 	`
 	res, err := f.db.ExecContext(ctx,
@@ -1803,6 +1914,7 @@ func (f SQLiteUserStore) SetMoreInfo(ctx context.Context, name IdentScreenName, 
 		data.Lang1,
 		data.Lang2,
 		data.Lang3,
+		data.MaritalStatus,
 		name.String(),
 	)
 	if err != nil {
@@ -1927,6 +2039,18 @@ func (f SQLiteUserStore) SetAffiliations(ctx context.Context, name IdentScreenNa
 }
 
 func (f SQLiteUserStore) SetBasicInfo(ctx context.Context, name IdentScreenName, data ICQBasicInfo) error {
+	// The address in the profile signs its owner in, so it cannot be somebody
+	// else's. A missing account is reported as such, not as a taken address,
+	// so its own answer comes first.
+	if data.EmailAddress != "" {
+		if err := f.userExists(ctx, name); err != nil {
+			return err
+		}
+		if err := f.emailFree(ctx, name, data.EmailAddress); err != nil {
+			return err
+		}
+	}
+
 	q := `
 		UPDATE users SET 
 			icq_basicInfo_cellPhone = ?,
@@ -1942,7 +2066,10 @@ func (f SQLiteUserStore) SetBasicInfo(ctx context.Context, name IdentScreenName,
 			icq_basicInfo_lastName = ?,
 			icq_basicInfo_nickName = ?,
 			icq_basicInfo_publishEmail = ?,
-			icq_basicInfo_zipCode = ?
+			icq_basicInfo_zipCode = ?,
+			icq_basicInfo_originCity = ?,
+			icq_basicInfo_originState = ?,
+			icq_basicInfo_originCountryCode = ?
 		WHERE identScreenName = ?
 	`
 	res, err := f.db.ExecContext(ctx,
@@ -1961,6 +2088,9 @@ func (f SQLiteUserStore) SetBasicInfo(ctx context.Context, name IdentScreenName,
 		data.Nickname,
 		data.PublishEmail,
 		data.ZIPCode,
+		data.OriginallyFromCity,
+		data.OriginallyFromState,
+		data.OriginallyFromCountryCode,
 		name.String(),
 	)
 	if err != nil {
@@ -2008,6 +2138,7 @@ func (f SQLiteUserStore) SetICQInfo(ctx context.Context, name IdentScreenName, i
 			icq_moreInfo_lang1 = ?,
 			icq_moreInfo_lang2 = ?,
 			icq_moreInfo_lang3 = ?,
+			icq_moreInfo_maritalStatus = ?,
 			icq_workInfo_company = ?,
 			icq_workInfo_department = ?,
 			icq_workInfo_occupationCode = ?,
@@ -2075,6 +2206,7 @@ func (f SQLiteUserStore) SetICQInfo(ctx context.Context, name IdentScreenName, i
 		info.More.Lang1,
 		info.More.Lang2,
 		info.More.Lang3,
+		info.More.MaritalStatus,
 		info.Work.Company,
 		info.Work.Department,
 		info.Work.OccupationCode,

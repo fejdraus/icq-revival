@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mk6i/open-oscar-server/state"
@@ -33,6 +35,7 @@ func NewICQService(
 		sessionRetriever:      sessionRetriever,
 		offlineMessageManager: offlineMessageManager,
 		timeNow:               time.Now,
+		randomChatGroups:      make(map[state.IdentScreenName]uint16),
 		forwardICQAuthEvents: func(ctx context.Context, sender state.IdentScreenName, recipient state.IdentScreenName, authMsg wire.ICBMCh4Message) error {
 			return fmt.Errorf("no ICBMService available")
 		},
@@ -49,6 +52,10 @@ type ICQService struct {
 	timeNow               func() time.Time
 	offlineMessageManager OfflineMessageManager
 	forwardICQAuthEvents  func(ctx context.Context, sender state.IdentScreenName, recipient state.IdentScreenName, authMsg wire.ICBMCh4Message) error
+	// Random chat: who is in which group. Kept in memory, see patch-randomchat.py.
+	sessionLister    ICQSessionLister
+	randomChatMu     sync.Mutex
+	randomChatGroups map[state.IdentScreenName]uint16
 }
 
 // BridgeFeedbagService enables the ICBMService to forward legacy ICQ events to
@@ -548,6 +555,14 @@ func (s *ICQService) SetBasicInfo(ctx context.Context, instance *state.SessionIn
 	}
 
 	if err := s.userUpdater.SetBasicInfo(ctx, instance.IdentScreenName(), u); err != nil {
+		// One address signs in one account. Refusing the whole save is the
+		// only answer the protocol has here — there is no per-field error.
+		if errors.Is(err, state.ErrEmailTaken) {
+			s.logger.Debug("refused profile save: email belongs to another account",
+				"screen_name", instance.IdentScreenName())
+			return s.reqAckStatus(ctx, instance, seq, wire.ICQDBQueryMetaReplySetBasicInfo,
+				inFrame.RequestID, wire.ICQStatusCodeFail)
+		}
 		return err
 	}
 
@@ -568,6 +583,23 @@ func (s *ICQService) SetEmails(ctx context.Context, instance *state.SessionInsta
 // multi-valued group (languages, interests, affiliations) any unspecified
 // slots are reset when at least one TLV in that group is present, matching
 // the way ICQLite tabs replace their entire group on save.
+// readICQField parses the nested value of a profile tag.
+//
+// When saving a profile, clients send fields one after another, empty ones
+// included, and each lays an empty value out its own way. A field that could
+// not be parsed used to return an error, and a handler error drops the
+// connection: the client signed in again and saw the old profile, as if the
+// save had wiped it. Losing the whole save over one unreadable field is not
+// worth it, so the field is skipped and the rest are parsed.
+func (s *ICQService) readICQField(ctx context.Context, tag uint16, value []byte, v any) bool {
+	if err := wire.UnmarshalLE(v, bytes.NewReader(value)); err != nil {
+		s.logger.DebugContext(ctx, "skipping unreadable profile field",
+			"tag", fmt.Sprintf("%#04x", tag), "len", len(value), "err", err.Error())
+		return false
+	}
+	return true
+}
+
 func (s *ICQService) SetICQInfo(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0C3A_DBQueryMetaReqSetFullInfo, seq uint16) error {
 	user, err := s.userFinder.FindByUIN(ctx, instance.UIN())
 	if err != nil {
@@ -590,17 +622,21 @@ func (s *ICQService) SetICQInfo(ctx context.Context, instance *state.SessionInst
 		case wire.ICQTLVTagsNickname:
 			user.ICQInfo.Basic.Nickname = tlv.ICQString()
 		case wire.ICQTLVTagsEmail:
+			// Clients do not always include the publish flag: with an empty
+			// address QIP 2012 cuts the value off right after the string. Parse in
+			// two steps so the address is saved without it as well.
 			var n struct {
-				Email   string `oscar:"len_prefix=uint16,nullterm"`
-				Publish uint8
+				Email string `oscar:"len_prefix=uint16,nullterm"`
 			}
-			if err := wire.UnmarshalLE(&n, bytes.NewReader(tlv.Value)); err != nil {
-				return fmt.Errorf("wire.UnmarshalLE: %w", err)
+			if !s.readICQField(ctx, tlv.Tag, tlv.Value, &n) {
+				break
 			}
 			user.ICQInfo.Basic.EmailAddress = n.Email
-			// publish=0 means "publish my email", matching the
-			// existing ICQUserFlagPublishEmailYes (0) convention.
-			user.ICQInfo.Basic.PublishEmail = n.Publish == wire.ICQUserFlagPublishEmailYes
+			if publishAt := 2 + len(n.Email) + 1; publishAt < len(tlv.Value) {
+				// publish=0 means "show my e-mail", the same convention as
+				// ICQUserFlagPublishEmailYes.
+				user.ICQInfo.Basic.PublishEmail = tlv.Value[publishAt] == wire.ICQUserFlagPublishEmailYes
+			}
 		case wire.ICQTLVTagsHomeCityName:
 			user.ICQInfo.Basic.City = tlv.ICQString()
 		case wire.ICQTLVTagsHomeStateAbbr:
@@ -637,8 +673,8 @@ func (s *ICQService) SetICQInfo(ctx context.Context, instance *state.SessionInst
 				Month uint16
 				Day   uint16
 			}
-			if err := wire.UnmarshalLE(&n, bytes.NewReader(tlv.Value)); err != nil {
-				return fmt.Errorf("wire.UnmarshalLE: %w", err)
+			if !s.readICQField(ctx, tlv.Tag, tlv.Value, &n) {
+				break
 			}
 			user.ICQInfo.More.BirthYear = n.Year
 			user.ICQInfo.More.BirthMonth = uint8(n.Month)
@@ -700,8 +736,8 @@ func (s *ICQService) SetICQInfo(ctx context.Context, instance *state.SessionInst
 				Index       uint16
 				Description string `oscar:"len_prefix=uint16,nullterm"`
 			}
-			if err := wire.UnmarshalLE(&n, bytes.NewReader(tlv.Value)); err != nil {
-				return fmt.Errorf("wire.UnmarshalLE: %w", err)
+			if !s.readICQField(ctx, tlv.Tag, tlv.Value, &n) {
+				break
 			}
 			user.ICQInfo.HomepageCategory.Index = n.Index
 			user.ICQInfo.HomepageCategory.Description = n.Description
@@ -738,8 +774,8 @@ func (s *ICQService) SetICQInfo(ctx context.Context, instance *state.SessionInst
 				Code    uint16
 				Keyword string `oscar:"len_prefix=uint16,nullterm"`
 			}
-			if err := wire.UnmarshalLE(&n, bytes.NewReader(raw)); err != nil {
-				return fmt.Errorf("wire.UnmarshalLE: %w", err)
+			if !s.readICQField(ctx, 0, raw, &n) {
+				continue
 			}
 			switch i {
 			case 0:
@@ -763,8 +799,8 @@ func (s *ICQService) SetICQInfo(ctx context.Context, instance *state.SessionInst
 				Code    uint16
 				Keyword string `oscar:"len_prefix=uint16,nullterm"`
 			}
-			if err := wire.UnmarshalLE(&n, bytes.NewReader(raw)); err != nil {
-				return fmt.Errorf("wire.UnmarshalLE: %w", err)
+			if !s.readICQField(ctx, 0, raw, &n) {
+				continue
 			}
 			switch i {
 			case 0:
@@ -786,8 +822,8 @@ func (s *ICQService) SetICQInfo(ctx context.Context, instance *state.SessionInst
 				Code    uint16
 				Keyword string `oscar:"len_prefix=uint16,nullterm"`
 			}
-			if err := wire.UnmarshalLE(&n, bytes.NewReader(raw)); err != nil {
-				return fmt.Errorf("wire.UnmarshalLE: %w", err)
+			if !s.readICQField(ctx, 0, raw, &n) {
+				continue
 			}
 			switch i {
 			case 0:
@@ -800,7 +836,7 @@ func (s *ICQService) SetICQInfo(ctx context.Context, instance *state.SessionInst
 		}
 	}
 
-	name := instance.IdentScreenName()
+name := instance.IdentScreenName()
 	if err := s.userUpdater.SetICQInfo(ctx, name, user.ICQInfo); err != nil {
 		return err
 	}
@@ -1304,7 +1340,138 @@ func (s *ICQService) reportNoSearchResults(ctx context.Context, instance *state.
 	}, requestID, 0)
 }
 
+// ------------------------------------------------------------------ random chat
+
+// ICQSessionLister returns every live session. Only random chat needs it: a
+// partner is picked among the users who are online right now.
+type ICQSessionLister interface {
+	AllSessions() []*state.Session
+}
+
+// BridgeSessionLister enables random chat. Without it the requests are still
+// served, but a partner is never found.
+func (s *ICQService) BridgeSessionLister(lister ICQSessionLister) {
+	s.sessionLister = lister
+}
+
+// SetRandomChatGroup records the group the user is willing to chat in. Zero
+// means they are not taking part.
+func (s *ICQService) SetRandomChatGroup(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat, seq uint16) error {
+	s.randomChatMu.Lock()
+	if inBody.Group == 0 {
+		delete(s.randomChatGroups, instance.IdentScreenName())
+	} else {
+		s.randomChatGroups[instance.IdentScreenName()] = inBody.Group
+	}
+	s.randomChatMu.Unlock()
+
+	s.logger.DebugContext(ctx, "random chat group set", "uin", instance.UIN(), "group", inBody.Group)
+
+	return s.reqAck(ctx, instance, seq, wire.ICQDBQueryMetaReplySetRandomChat, inFrame.RequestID)
+}
+
+// RandomChatSearch picks a partner from the same group among the users who are
+// online. The caller is never offered to themselves.
+func (s *ICQService) RandomChatSearch(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch, seq uint16) error {
+	match := s.pickRandomChatPartner(instance.IdentScreenName(), inBody.Group)
+	if match == nil {
+		s.logger.DebugContext(ctx, "no random chat partner", "uin", instance.UIN(), "group", inBody.Group)
+		return s.reply(ctx, instance, wire.ICQMessageReplyEnvelope{
+			Message: wire.ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound{
+				ICQMetadata: wire.ICQMetadata{
+					UIN:     instance.UIN(),
+					ReqType: wire.ICQDBQueryMetaReply,
+					Seq:     seq,
+				},
+				ReqSubType: wire.ICQDBQueryMetaReplyRandomFound,
+				Success:    wire.ICQStatusCodeFail,
+			},
+		}, inFrame.RequestID, 0)
+	}
+
+	resp := wire.ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound{
+		ICQMetadata: wire.ICQMetadata{
+			UIN:     instance.UIN(),
+			ReqType: wire.ICQDBQueryMetaReply,
+			Seq:     seq,
+		},
+		ReqSubType: wire.ICQDBQueryMetaReplyRandomFound,
+		Success:    wire.ICQStatusCodeOK,
+		UIN:        match.UIN(),
+		Group:      inBody.Group,
+		// The conversation goes through the server; no peer-to-peer link is set up.
+		Mode:    0x04,
+		Version: 0x000A,
+	}
+	if addr := randomChatAddr(match); addr != nil {
+		resp.ExternalIP = *addr
+		resp.InternalIP = *addr
+	}
+
+	s.logger.DebugContext(ctx, "random chat partner found",
+		"uin", instance.UIN(), "partner", match.UIN(), "group", inBody.Group)
+
+	return s.reply(ctx, instance, wire.ICQMessageReplyEnvelope{Message: resp}, inFrame.RequestID, 0)
+}
+
+// pickRandomChatPartner returns a random live session from the same group.
+func (s *ICQService) pickRandomChatPartner(me state.IdentScreenName, group uint16) *state.Session {
+	if s.sessionLister == nil || group == 0 {
+		return nil
+	}
+
+	s.randomChatMu.Lock()
+	wanted := make(map[state.IdentScreenName]struct{}, len(s.randomChatGroups))
+	for name, g := range s.randomChatGroups {
+		if g == group && name != me {
+			wanted[name] = struct{}{}
+		}
+	}
+	s.randomChatMu.Unlock()
+
+	if len(wanted) == 0 {
+		return nil
+	}
+
+	var candidates []*state.Session
+	for _, sess := range s.sessionLister.AllSessions() {
+		if _, ok := wanted[sess.IdentScreenName()]; !ok {
+			continue
+		}
+		if !sess.HasLiveInstances() {
+			continue
+		}
+		candidates = append(candidates, sess)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	return candidates[rand.IntN(len(candidates))]
+}
+
+// randomChatAddr is the partner's address in the form the client expects: four
+// bytes in the opposite order from the rest of the reply body.
+func randomChatAddr(sess *state.Session) *[4]byte {
+	for _, inst := range sess.Instances() {
+		ap := inst.RemoteAddr()
+		if ap == nil {
+			continue
+		}
+		ip := ap.Addr()
+		if !ip.Is4() {
+			continue
+		}
+		b := ip.As4()
+		return &b
+	}
+	return nil
+}
+
 func (s *ICQService) reqAck(ctx context.Context, instance *state.SessionInstance, seq uint16, subType uint16, requestID uint32) error {
+	return s.reqAckStatus(ctx, instance, seq, subType, requestID, wire.ICQStatusCodeOK)
+}
+
+func (s *ICQService) reqAckStatus(ctx context.Context, instance *state.SessionInstance, seq uint16, subType uint16, requestID uint32, status uint8) error {
 	msg := wire.ICQMessageReplyEnvelope{
 		Message: wire.ICQ_0x07DA_0x00DC_DBQueryMetaReplyMoreInfo{
 			ICQMetadata: wire.ICQMetadata{
@@ -1313,7 +1480,7 @@ func (s *ICQService) reqAck(ctx context.Context, instance *state.SessionInstance
 				Seq:     seq,
 			},
 			ReqSubType: subType,
-			Success:    wire.ICQStatusCodeOK,
+			Success:    status,
 		},
 	}
 

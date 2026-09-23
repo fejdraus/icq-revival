@@ -227,6 +227,13 @@ func (s AdminService) InfoChangeRequest(ctx context.Context, instance *state.Ses
 
 		}
 		if err := s.accountManager.UpdateEmailAddress(ctx, instance.IdentScreenName(), e); err != nil {
+			// One address signs in one account, so an address somebody else
+			// already holds is refused like any other invalid one.
+			if errors.Is(err, state.ErrEmailTaken) {
+				tlvList.Append(wire.NewTLVBE(wire.AdminTLVErrorCode, wire.AdminInfoErrorInvalidEmail))
+				tlvList.Append(wire.NewTLVBE(wire.AdminTLVUrl, ""))
+				return getAdminChangeReply(tlvList), nil
+			}
 			return wire.SNACMessage{}, err
 		}
 		tlvList.Append(wire.NewTLVBE(wire.AdminTLVEmailAddress, e.Address))

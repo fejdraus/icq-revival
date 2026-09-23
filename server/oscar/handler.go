@@ -549,12 +549,40 @@ func (rt Handler) ICQDBQuery(ctx context.Context, instance *state.SessionInstanc
 				return nil
 			}
 			return rt.FullUserInfo(ctx, instance, inFrame, userInfo, icqMD.Seq)
+		case wire.ICQDBQueryMetaReqDirectoryQuery:
+			req, err := wire.UnmarshalICQDirectoryRequest(buf)
+			if err != nil {
+				return err
+			}
+			return rt.DirectoryQuery(ctx, instance, inFrame, req, icqMD.Seq)
+		case wire.ICQDBQueryMetaReqDirectoryUpdate:
+			req, err := wire.UnmarshalICQDirectoryRequest(buf)
+			if err != nil {
+				return err
+			}
+			return rt.DirectoryUpdate(ctx, instance, inFrame, req, icqMD.Seq)
 		case wire.ICQDBQueryMetaReqXMLReq:
 			req := wire.ICQ_0x07D0_0x0898_DBQueryMetaReqXMLReq{}
 			if err := wire.UnmarshalLE(&req, buf); err != nil {
 				return err
 			}
 			if err := rt.XMLReqData(ctx, instance, inFrame, req, icqMD.Seq); err != nil {
+				return err
+			}
+		case wire.ICQDBQueryMetaReqSetRandomChat:
+			req := wire.ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat{}
+			if err := wire.UnmarshalLE(&req, buf); err != nil {
+				return err
+			}
+			if err := rt.SetRandomChatGroup(ctx, instance, inFrame, req, icqMD.Seq); err != nil {
+				return err
+			}
+		case wire.ICQDBQueryMetaReqRandomSearch:
+			req := wire.ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch{}
+			if err := wire.UnmarshalLE(&req, buf); err != nil {
+				return err
+			}
+			if err := rt.RandomChatSearch(ctx, instance, inFrame, req, icqMD.Seq); err != nil {
 				return err
 			}
 		case wire.ICQDBQueryMetaReqSetPermissions:

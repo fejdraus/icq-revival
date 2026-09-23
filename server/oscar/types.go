@@ -49,6 +49,7 @@ type RateLimitUpdater interface {
 type AuthService interface {
 	BUCPChallenge(ctx context.Context, inBody wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error)
 	BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
+	BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wire.SNACMessage, error)
 	CrackCookie(authCookie []byte) (state.ServerCookie, time.Time, error)
 	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
 	KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
@@ -117,6 +118,8 @@ type ICBMService interface {
 
 type ICQService interface {
 	DeleteMsgReq(ctx context.Context, instance *state.SessionInstance, seq uint16) error
+	DirectoryQuery(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, req wire.ICQDirectoryRequest, seq uint16) error
+	DirectoryUpdate(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, req wire.ICQDirectoryRequest, seq uint16) error
 	FindByICQName(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0515_DBQueryMetaReqSearchByDetails, seq uint16) error
 	FindByICQEmail(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0529_DBQueryMetaReqSearchByEmail, seq uint16) error
 	FindByEmail3(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0573_DBQueryMetaReqSearchByEmail3, seq uint16) error
@@ -133,6 +136,8 @@ type ICQService interface {
 	SetInterests(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0410_DBQueryMetaReqSetInterests, seq uint16) error
 	SetMoreInfo(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x03FD_DBQueryMetaReqSetMoreInfo, seq uint16) error
 	SetPermissions(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0424_DBQueryMetaReqSetPermissions, seq uint16) error
+	SetRandomChatGroup(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat, seq uint16) error
+	RandomChatSearch(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch, seq uint16) error
 	SetICQPhone(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0654_DBQueryMetaReqSetICQPhone, seq uint16) error
 	SetUserNotes(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0406_DBQueryMetaReqSetNotes, seq uint16) error
 	SetWorkInfo(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x03F3_DBQueryMetaReqSetWorkInfo, seq uint16) error
