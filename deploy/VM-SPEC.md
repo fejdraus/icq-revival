@@ -158,11 +158,10 @@ make moving and rebuilding the machine a single command.
 
 ## 8. Where the code is
 
-**Important: most of this work is not on GitHub yet.** The repository's
-`origin` is the upstream project (`github.com/mk6i/open-oscar-server`); our
-changes - the server fixes, `deploy/`, `tools/`, the migrations, `NOTES.md` -
-exist only in the local working copy. They have to be pushed to a fork or a
-branch before anyone else can read them.
+The code is in the private repository **`github.com/fejdraus/icq-revival`**
+(ask the owner for read access), branch `main`. The upstream project it is
+built on is `github.com/mk6i/open-oscar-server`, kept as the `upstream`
+remote; everything under `deploy/`, `tools/`, `patches/` and `NOTES.md` is ours.
 
 | Path | What |
 |---|---|
