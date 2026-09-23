@@ -1,199 +1,132 @@
-# Open OSCAR Server
+# ICQ Revival
 
-<div align="center">
+**ICQ Revival** is a private instant messaging server for the ICQ and AIM
+clients people remember - from ICQ 99 to ICQ 6.5, QIP and Miranda - where
+clients of different generations sign in to the same server and talk to each
+other.
 
-<a href="">[![codecov](https://codecov.io/gh/mk6i/open-oscar-server/graph/badge.svg?token=MATKPP77JT)](https://codecov.io/gh/mk6i/open-oscar-server)</a>
-<a href="">[![Discord](https://img.shields.io/discord/1238648671348719626?logo=discord&logoColor=white)](https://discord.gg/2Xy4nF3Uh9)</a>
+It is built on [Open OSCAR Server](https://github.com/mk6i/open-oscar-server),
+an open-source OSCAR/TOC server written in Go, and adds what it takes for real
+old clients to feel at home: both dialects of the ICQ profile protocol, the web
+services the clients still try to reach on ICQ.com, patches for the clients
+themselves, and a deployment that runs as a set of containers.
 
-</div>
+| Disclaimer |
+|---|
+| This project is an independent, non-commercial initiative. It is not affiliated with, endorsed by or associated with AOL, Yahoo!, ICQ, Mail.ru or VK. |
 
-**Open OSCAR Server** is an open-source instant messaging server compatible with classic AIM and ICQ clients written in golang.
+## Clients
 
-<p align="center">
-<img width="816" alt="image" src="https://github.com/user-attachments/assets/4d76b06f-fd0c-4f0a-9e9f-d9516653cfb4" /><br/>
-<i>Above: <a href="https://www.pidgin.im/">Pidgin</a> IM connected to Open OSCAR Server</i>
-</p>
+| Client | Status |
+|---|---|
+| ICQ Pro 2003b | Works fully, including getting a new number from the client and search |
+| QIP 2005 (build 8092) | Works fully |
+| QIP 2012 | Profiles, search and saving your own profile |
+| ICQ 6.5 | Profiles, search, messages, setting your picture; the patch below cleans up the interface |
+| Miranda NG | Works, with the ICQ plugin brought back to the current Miranda API (see below) |
+| AIM 7.5 | Signs in over TLS through Kerberos |
+| ICQ 95-99 | Supported by the server over the legacy UDP protocol (v2-v5); not yet tried with real clients here |
+| Everything Open OSCAR Server supports | AIM 1.x-7.x, ICQ 98-5, Pidgin, TOC clients - see [its documentation](https://github.com/mk6i/open-oscar-server#readme) |
 
-| Disclaimer                                                                                                                                                                                                                           |
-|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| This project is an independent, open-source initiative and is not affiliated with, endorsed by, or associated with AOL or Yahoo! Inc. This project is entirely non-commercial and does not generate any revenue or accept donations. |
+ICQ 7 and later do not work: they reached the stage of signing in and stopped
+at a challenge the server does not answer yet. R&Q after 2019 dropped OSCAR
+altogether.
 
-The following features are supported:
+## What ICQ Revival adds
 
-**AIM**
+**On the server**
 
-- [x] Windows AIM Clients: [v1.x-v5.x](./docs/CLIENT.md), [v6.x-v7.x](docs/AIM_6_7.md)
-- [x] Away Messages
-- [x] Buddy Icons (v4.x, v5.x)
-- [x] Buddy List
-- [x] Chat Rooms
-- [x] Public & Private Chat Exchanges
-- [x] Instant Messaging
-- [x] User Profiles
-- [x] Privacy (allow or block specific users)
-- [x] Warning
-- [x] User Directory Search
-- [x] TOC1 Protocol Clients: Quick Buddy, gaim, [TiK](./docs/CLIENT_TIK.md)
-- [x] TOC2 Protocol Clients: [vAIM](https://www.onlyup.net/vaim/index.html), Miranda ~v0.4.0.3, iEM 1.0.1
-- [x] File Sharing
-    - LAN Only: Direct Connect, Get File
-    - Lan/Internet: [Send File](./docs/RENDEZVOUS.md)
+- [x] Both ICQ profile dialects. ICQ 99-2003 ask for a profile one way, ICQ 6
+      and everything modelled on it (QIP 2012, Miranda's MDir) another way; the
+      client chooses, so the server understands both, and a profile saved in one
+      reads correctly in the other.
+- [x] Profile and directory search for ICQ 6.5, QIP 2012 and Miranda NG, in
+      the reply layout each of them expects.
+- [x] Extended profiles: marital status, origin city, verified and login
+      e-mail, and tolerant parsing of what older clients send.
+- [x] Signing in with an e-mail address instead of a number, as the "ICQ#/Email"
+      field of the old login windows promises.
+- [x] A new number from inside the client - "Get an ICQ Number" in ICQ 2003b.
+- [x] Random chat: joining an interest group and being matched with someone.
+- [x] Authorization answers that reach the person who asked, whichever client
+      they use.
 
-**ICQ**
+**Around the server** (`deploy/`)
 
-- [x] Windows ICQ Clients: [98x, 99x, 2000x, 2001x, 2002x, 2003x, 4, 5](./docs/CLIENT_ICQ.md)
-- [x] Instant Messaging
-- [x] Profiles
-- [x] User Search
-- [x] Presence Statuses
-- [x] Offline Messaging
+- [x] Registration site: pick a number, set a password, attach an e-mail for
+      recovery, change your number or close the account. English, Ukrainian
+      and Russian, in the look of the Windows 98 era.
+- [x] Admin panel: users, passwords, blocking, sessions.
+- [x] Replacements for the ICQ.com pages the clients still open - the welcome
+      window, "who is online", white pages, the web pager, help - and the page
+      ICQ 6.5 uses to set your picture, with the image scaled to what the
+      client can show.
+- [x] A TLS front that still speaks SSLv3 and TLS 1.0 for the clients of the
+      2000s, next to a modern certificate for everyone else.
+- [x] Daily database backups.
 
-## 🏁 How to Run
+**On the client side** (`tools/`)
 
-Get up and running with Open OSCAR Server using one of these handy server quickstart guides:
+- [x] `IcqPatch.exe` for ICQ Pro 2003b: removes the banners and the Google bar,
+      points the menu items that opened ICQ.com at your server.
+- [x] `Icq6Patch.exe` for ICQ 6.5: removes the Xtraz, advertising, tZers, SMS
+      and phone parts that have nothing behind them any more, and points the
+      pages the client opens at your server.
+- [x] The ICQ protocol plugin for Miranda NG, which Miranda removed, ported to
+      the current API.
 
-* [Linux (x86_64)](./docs/LINUX.md)
-* [macOS (Intel and Apple Silicon)](./docs/MACOS.md)
-* [Windows 10/11 (x86_64)](./docs/WINDOWS.md)
+Each patch backs up what it changes and restores it on request.
+[tools/README.md](./tools/README.md) lists them by client.
 
-Don't have AIM installed yet? Check out the [AIM Client Setup Guide](./docs/CLIENT.md).
+## Running it
 
-...how about ICQ? Check out the [ICQ Client Setup Guide](./docs/CLIENT_ICQ.md).
+In containers, on any Linux machine with a public IPv4 address and a DNS name:
 
-## 🛠️ Development
-
-This project is under active development. Contributions are welcome!
-
-Follow [this guide](./docs/BUILD.md) to learn how to compile and run Open OSCAR Server.
-
-## 🌍 Community
-
-Check out the Open OSCAR Server [Discord server](https://discord.gg/zjFGGTa8mu) to get help or find out how to get
-involved.
-
-### Tooling Provided By
-
-[![JetBrains logo.](https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg)](https://jb.gg/OpenSource)
-
-## 👤 Management API
-
-The Management API provides functionality for administering the server (see [OpenAPI spec](./api.yml)). The following
-shows you how to run these commands via the command line.
-
-### Windows PowerShell
-
-> Run these commands from **PowerShell**, *not* **Command Prompt**.
-
-#### List Users
-
-```powershell
-Invoke-WebRequest -Uri http://localhost:8080/user -Method Get
+```
+cd deploy
+cp .env.example .env                              # set PUBLIC_HOST and ACME_EMAIL
+cp secrets/admin.env.example secrets/admin.env    # set the admin password
+docker compose --profile certs run --rm cert-gen
+docker compose --profile certs run --rm certbot
+docker compose up -d --build
 ```
 
-#### Create Users
+[deploy/docker/README.md](./deploy/docker/README.md) explains each step,
+renewal and backups. [deploy/VM-SPEC.md](./deploy/VM-SPEC.md) covers sizing,
+ports and the reasons behind them - it is written so that a person or an AI
+can provision the machine from it. The systemd units in `deploy/systemd/`
+are the alternative to containers.
 
-```powershell
-Invoke-WebRequest -Uri http://localhost:8080/user `
-  -Body '{"screen_name":"MyScreenName", "password":"thepassword"}' `
-  -Method Post `
-  -ContentType "application/json"
+Then point the clients at the server: the sign-in server is set in each
+client's own connection settings, and the patches above take care of the rest.
+
+## Documentation
+
+| Where | What |
+|---|---|
+| [NOTES.md](./NOTES.md) | What each client needs from the server, and how it was found out |
+| [deploy/VM-SPEC.md](./deploy/VM-SPEC.md) | Machine, network, TLS and data requirements |
+| [deploy/docker/README.md](./deploy/docker/README.md) | Running and maintaining the containers |
+| [tools/README.md](./tools/README.md) | Client patches and helpers, by client |
+| [api.yml](./api.yml) | Management API |
+| [docs/](./docs) | Open OSCAR Server's own guides: building, clients, platforms |
+
+## Development
+
+Build with `go build -o open_oscar_server ./cmd/server`, test with
+`go test ./...`. [docs/BUILD.md](./docs/BUILD.md) has the details.
+
+The Go module path stays `github.com/mk6i/open-oscar-server`, so changes from
+the upstream project merge without touching every import. The upstream
+repository is the `upstream` remote:
+
+```
+git fetch upstream
+git merge upstream/main
 ```
 
-#### Delete Users
+## License
 
-```powershell
-Invoke-WebRequest -Uri http://localhost:8080/user `
-  -Body '{"screen_name": "user123"}' `
-  -Method Delete `
-  -ContentType "application/json"
-```
-
-#### Change Password
-
-```powershell
-Invoke-WebRequest -Uri http://localhost:8080/user/password `
-  -Body '{"screen_name":"MyScreenName", "password":"thenewpassword"}' `
-  -Method Put `
-  -ContentType "application/json"
-```
-
-#### List Active Sessions
-
-This request lists sessions for all logged in users.
-
-```powershell
-Invoke-WebRequest -Uri http://localhost:8080/session -Method Get
-```
-
-#### Create Public Chat Room
-
-```powershell
-Invoke-WebRequest -Uri http://localhost:8080/chat/room/public `
-  -Body '{"name":"Office Hijinks"}' `
-  -Method Post `
-  -ContentType "application/json"
-```
-
-#### List Public Chat Rooms
-
-```powershell
-Invoke-WebRequest -Uri http://localhost:8080/chat/room/public -Method Get
-```
-
-### macOS / Linux / FreeBSD
-
-#### List Users
-
-```shell
-curl http://localhost:8080/user
-```
-
-#### Create Users
-
-##### AIM
-
-```shell
-curl -d'{"screen_name":"MyScreenName", "password":"thepassword"}' http://localhost:8080/user
-```
-
-##### ICQ
-
-```shell
-curl -d'{"screen_name":"100003", "password":"thepassw"}' http://localhost:8080/user
-```
-
-#### Delete Users
-
-```shell
-curl -X DELETE -d '{"screen_name": "user123"}' http://localhost:8080/user
-```
-
-#### Change Password
-
-```shell
-curl -X PUT -d'{"screen_name":"MyScreenName", "password":"thenewpassword"}' http://localhost:8080/user/password
-```
-
-#### List Active Sessions
-
-This request lists sessions for all logged in users.
-
-```shell
-curl http://localhost:8080/session
-```
-
-#### Create Public Chat Room
-
-```shell
-curl -d'{"name":"Office Hijinks"}' http://localhost:8080/chat/room/public
-```
-
-#### List Public Chat Rooms
-
-```shell
-curl http://localhost:8080/chat/room/public
-```
-
-## 📄 License
-
-Open OSCAR Server is licensed under the [MIT license](./LICENSE).
+MIT, as Open OSCAR Server - see [LICENSE](./LICENSE). Open OSCAR Server is
+copyright (c) 2024 mk6i; the additions of ICQ Revival are published under the
+same terms.
