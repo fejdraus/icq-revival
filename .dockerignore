@@ -1,0 +1,14 @@
+# The images need the Go sources and deploy/; the client tools, their
+# binaries, notes and anything local to a machine stay out of the context.
+.git
+tools/
+patches/
+**/__pycache__
+*.sqlite
+deploy/.env
+deploy/secrets/
+deploy/certs/
+deploy/backups/
+certs/
+clients/
+dist/

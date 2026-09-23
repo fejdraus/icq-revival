@@ -96,13 +96,16 @@ both move to nginx with a Let's Encrypt certificate.
 - Its configuration is `deploy/nginx/nginx.conf` - identical to the one running
   now. `ssl_protocols SSLv3 TLSv1 TLSv1.1 TLSv1.2; ssl_ciphers ALL:!aNULL` on
   the client-facing ports, TLS 1.2 only on 8102.
-- Certificate: Let's Encrypt for the DNS name (certbot or acme.sh; HTTP-01 on
-  port 80 or DNS-01). Mounted into the container at `/etc/nginx/certs`
-  (`ts-cert.pem`, `ts-key.pem` - the names the configuration expects), plus a
-  `dhparam.pem`. Renewal copies the files and reloads nginx; see
-  `deploy/scripts/oscar-cert-renew.sh` for the current version of that.
-- AIM 6 checks the certificate against its own NSS store; `docker-compose.yaml`
-  has `cert-gen` and `nss-gen` helpers for a private CA if that route is taken.
+- Two certificates, for two kinds of client:
+  - `server.pem` - RSA, signed by a private authority of our own, on the ports
+    AIM uses (1443, 8443, 3143). AIM trusts only what is in its own NSS store,
+    and its 2011 library cannot read the ECDSA certificates Let's Encrypt
+    issues today. `deploy/docker/make-private-ca.sh` makes it, with the
+    authority as `ca.crt` and as an NSS database for AIM users.
+  - `ts-cert.pem` / `ts-key.pem` - Let's Encrypt, for the DNS name, on 5193,
+    8102 and the registration pages: Miranda NG and browsers check it the
+    ordinary way. The compose file gets and renews it with certbot.
+- The DH parameters are generated into the nginx image when it is built.
 
 ## 5. Data and backups
 
@@ -136,25 +139,30 @@ off-host (object storage, another server) on the same schedule.
 
 ## 7. Recommended layout: containers
 
-Containers are the better fit, and half of it already exists upstream:
+Ready: `deploy/docker-compose.yaml`, with the steps in `deploy/docker/README.md`.
 
-| Image | Source | Status |
+| Service | Image | Notes |
 |---|---|---|
-| server | `Dockerfile` (Go 1.26 build, Alpine runtime) | exists |
-| nginx | `Dockerfile.nginx` | exists, running now |
-| cert helpers | `Dockerfile.certgen` | exists |
-| `oscar-register`, `oscar-admin`, `oscar-legacy-web` | - | **to be written**: `node:24-slim`; legacy-web also needs `python3` and `python3-pil`. Node 22.5+ is required for `node:sqlite` |
-| backup | - | to be written, or kept as a host cron/timer |
+| `server` | `Dockerfile` (Go 1.26 build, Alpine runtime) | runs as uid 1000; advertised address from `PUBLIC_HOST` |
+| `register`, `admin`, `legacy-web`, `backup` | `deploy/docker/services.Dockerfile`, one target each | `node:24-slim`, no npm dependencies; legacy-web adds `python3-pil` |
+| `nginx` | `Dockerfile.nginx` | the TLS front; `deploy/nginx/conf.d/register.conf` adds HTTPS on 443 for the registration pages |
+| `cert-gen`, `certbot` | `Dockerfile.certgen`, `certbot/certbot` | on demand, profile `certs` |
 
-`docker-compose.yaml` in the repository covers the server and nginx for local
-use and needs extending with the Node services, volumes for `/var/lib/...`,
-the secrets as env files, `restart: unless-stopped`, and explicit port
-mappings including `4000/udp` (or `network_mode: host`, which is what the nginx
-container uses today).
+Every service uses the host network, as nginx does on the current host: a
+dozen ports, one of them UDP, a server that hands out its own public address,
+and nginx reaching the services as `127.0.0.1`. Settings go in `deploy/.env`
+(`PUBLIC_HOST`, `ACME_EMAIL`), secrets in `deploy/secrets/`, the database and
+recovery tokens in named volumes, backups in `deploy/backups/` on the host.
+
+Checked on the current host with a copy of the live database: all images
+build; the server starts as uid 1000 and serves the existing accounts; the
+pages answer, including the picture upload through Python; registration opens
+the shared database; the admin panel asks for its password; a backup is
+written; the private authority and its NSS database are made; nginx accepts
+its configuration with and without `conf.d`.
 
 The alternative is what runs now: the binary and the Node services as systemd
-units (`deploy/systemd/`), nginx in a container. Either way works; containers
-make moving and rebuilding the machine a single command.
+units (`deploy/systemd/`), nginx in a container.
 
 ## 8. Where the code is
 

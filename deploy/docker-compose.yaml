@@ -1,0 +1,213 @@
+# ICQ Revival - the whole server in containers.
+#
+#   cp .env.example .env                  # then set PUBLIC_HOST and ACME_EMAIL
+#   cp secrets/admin.env.example secrets/admin.env
+#   cp config/mail.env.example secrets/mail.env   # optional: password mail
+#   docker compose --profile certs run --rm cert-gen
+#   docker compose --profile certs run --rm certbot
+#   docker compose up -d --build
+#
+# See docker/README.md for what each step does and how renewal works.
+#
+# Every service uses the host's network. The clients reach a dozen ports, one
+# of them UDP, the server hands out its own public address after sign-in, and
+# nginx reaches the services as 127.0.0.1 - all of which is simplest, and the
+# same as on a systemd host, without a bridge in between. It needs Linux.
+#
+# The repository root's docker-compose.yaml is the upstream project's local
+# setup and is left as it is.
+
+name: icq-revival
+
+x-service: &service
+  network_mode: host
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+x-node: &node
+  <<: *service
+  build: &node-build
+    context: ..
+    dockerfile: deploy/docker/services.Dockerfile
+
+services:
+
+  # Named volumes are created owned by root, and nothing below runs as root.
+  volumes-init:
+    image: busybox:1.36
+    command: chown -R 1000:1000 /data /register /backups
+    volumes:
+      - oscar-data:/data
+      - register-data:/register
+      - ./backups:/backups
+    restart: "no"
+
+  # The IM server: OSCAR 5190, TOC 9898, Kerberos 1088, web API 8082, legacy
+  # ICQ UDP 4000; the management API stays on 127.0.0.1:8090 and must never be
+  # reachable from outside - it has no authentication.
+  server:
+    <<: *service
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: icq-revival/server
+    user: "1000:1000"
+    working_dir: /var/lib/open-oscar-server
+    env_file: ./config/settings.env
+    environment:
+      DB_PATH: /var/lib/open-oscar-server/oscar.sqlite
+      # What the server tells clients to connect to after sign-in.
+      OSCAR_ADVERTISED_LISTENERS_PLAIN: LAN://${PUBLIC_HOST:?set PUBLIC_HOST in .env}:5190
+      OSCAR_ADVERTISED_LISTENERS_SSL: LAN://${PUBLIC_HOST}:3143
+      ENABLE_WEBAPI: "1"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - oscar-data:/var/lib/open-oscar-server
+    depends_on:
+      volumes-init:
+        condition: service_completed_successfully
+
+  register:
+    <<: *node
+    build:
+      <<: *node-build
+      target: register
+    image: icq-revival/register
+    env_file:
+      - path: ./secrets/mail.env
+        required: false
+    environment:
+      PORT: "8099"
+      HOST: 127.0.0.1          # published through nginx on 443 only
+      API_BASE: http://127.0.0.1:8090
+      OSCAR_HOST: ${PUBLIC_HOST}
+      OSCAR_PORT: "5190"
+      OSCAR_PORT_SSL: "5193"
+      # Also opened directly, not only through the API: same file, same host.
+      DB_PATH: /var/lib/open-oscar-server/oscar.sqlite
+      RECOVERY_DB: /var/lib/oscar-register/recovery.sqlite
+      PUBLIC_BASE_URL: https://${PUBLIC_HOST}
+    volumes:
+      - oscar-data:/var/lib/open-oscar-server
+      - register-data:/var/lib/oscar-register
+    depends_on:
+      - server
+
+  # Bound to 127.0.0.1: reach it over an SSH tunnel or a VPN,
+  #   ssh -L 8100:127.0.0.1:8100 <host>   then http://127.0.0.1:8100
+  admin:
+    <<: *node
+    build:
+      <<: *node-build
+      target: admin
+    image: icq-revival/admin
+    env_file: ./secrets/admin.env      # ADMIN_PASSWORD
+    environment:
+      PORT: "8100"
+      HOST: 127.0.0.1
+      API_BASE: http://127.0.0.1:8090
+      ADMIN_USER: ${ADMIN_USER:-admin}
+    depends_on:
+      - server
+
+  # Open on 8101 as plain HTTP on purpose: ICQ 6.5 speaks nothing else to
+  # these pages. nginx serves the same pages over HTTPS on 8102.
+  legacy-web:
+    <<: *node
+    build:
+      <<: *node-build
+      target: legacy-web
+    image: icq-revival/legacy-web
+    environment:
+      PORT: "8101"
+      BIND: 0.0.0.0
+      MGMT_API: http://127.0.0.1:8090
+      REGISTER_BASE: https://${PUBLIC_HOST}
+      OSCAR_HOST: ${PUBLIC_HOST}
+    depends_on:
+      - server
+
+  backup:
+    <<: *node
+    build:
+      <<: *node-build
+      target: backup
+    image: icq-revival/backup
+    environment:
+      OSCAR_BACKUP_DB: /var/lib/open-oscar-server/oscar.sqlite
+      OSCAR_BACKUP_DEST: /backups
+      OSCAR_BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - oscar-data:/var/lib/open-oscar-server
+      # On the host, so they are easy to copy off the machine.
+      - ./backups:/backups
+    depends_on:
+      - server
+
+  # TLS in front of everything, with the obsolete protocols old clients speak:
+  # nginx 1.28 linked against OpenSSL 1.0.2u. Do not replace it with a modern
+  # proxy. Ports 443, 1443, 3143, 5193, 8102, 8443.
+  nginx:
+    <<: *service
+    build:
+      context: ..
+      dockerfile: Dockerfile.nginx
+    image: ras-nginx:1.28.0-openssl-1.0.2u
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - server
+      - register
+      - legacy-web
+
+  # --- certificates, run on demand: docker compose --profile certs run ... ---
+
+  # The private authority and server.pem for AIM (see docker/make-private-ca.sh).
+  cert-gen:
+    profiles: [certs]
+    build:
+      context: ..
+      dockerfile: Dockerfile.certgen
+    image: ras-certgen
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST}
+    volumes:
+      - ./certs:/certs
+      - ./docker/make-private-ca.sh:/make-private-ca.sh:ro
+    command: ["bash", "/make-private-ca.sh"]
+
+  # The public certificate from Let's Encrypt, for Miranda, browsers and the
+  # registration pages. Needs port 80 free while it runs. The deploy hook
+  # copies the result under the names nginx.conf expects; it is remembered, so
+  # "docker compose --profile certs run --rm certbot renew" reuses it.
+  certbot:
+    profiles: [certs]
+    image: certbot/certbot:latest
+    network_mode: host
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - ./certs:/certs
+    command:
+      - certonly
+      - --standalone
+      - --non-interactive
+      - --agree-tos
+      - --email
+      # Compose reads the whole file on every command, so an unset address can
+      # only fail here, in certbot, not while parsing.
+      - ${ACME_EMAIL:-}
+      - -d
+      - ${PUBLIC_HOST}
+      - --deploy-hook
+      - cp "$$RENEWED_LINEAGE/fullchain.pem" /certs/ts-cert.pem && cp "$$RENEWED_LINEAGE/privkey.pem" /certs/ts-key.pem
+
+volumes:
+  oscar-data:
+  register-data:
+  letsencrypt:

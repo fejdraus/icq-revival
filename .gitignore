@@ -10,3 +10,10 @@ clients/
 
 # Python bytecode from the client tools
 __pycache__/
+
+# Container deployment: settings, secrets, certificates and backups stay on
+# the machine they belong to
+deploy/.env
+deploy/secrets/*.env
+deploy/certs/
+deploy/backups/
