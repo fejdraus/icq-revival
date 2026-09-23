@@ -258,8 +258,11 @@ function Get-EditState($edit) {
         }
         'dropline' { if ($text.Contains($edit.Key)) { return 'original' } else { return 'patched' } }
         'replace' {
-            if ($text.Contains($edit.New)) { return 'patched' }
+            # The original first: where the change only trims the end of a
+            # line, the new text is a prefix of the old one and is found inside
+            # the untouched file too.
             if ($text.Contains($edit.Key)) { return 'original' }
+            if ($text.Contains($edit.New)) { return 'patched' }
             return 'unknown'
         }
     }
