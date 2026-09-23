@@ -41,7 +41,7 @@ jobs:
         # Under -race on the hosted runners the state package alone takes close
         # to the default 10-minute limit (upstream runs it in about 10m45s for
         # the whole job), and the extra migrations here tip it over.
-        run: go test -v -race -timeout 20m -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -v -race -timeout 30m -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
