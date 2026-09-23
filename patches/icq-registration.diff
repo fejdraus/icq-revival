@@ -1,0 +1,184 @@
+diff --git a/foodgroup/auth.go b/foodgroup/auth.go
+index 06087c4..ae77588 100644
+--- a/foodgroup/auth.go
++++ b/foodgroup/auth.go
+@@ -643,6 +643,124 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, endpointCfg co
+ 	return s.loginSuccessResponse(ctx, props, endpointCfg)
+ }
+ 
++
++// Смещения внутри блока ICQ-регистрации (TLV 0x0001 запроса SNAC(0x17,0x04)).
++// Весь блок записан в обратном порядке байт, в отличие от самих SNAC.
++const (
++	icqRegCookieOffset   = 16
++	icqRegPasswordOffset = 40
++	icqRegMinLen         = icqRegPasswordOffset + 2
++)
++
++// Диапазон, из которого выдаются номера. Начинаем со 100000 — так же, как это
++// делали настоящие серверы ICQ, и как подбирает номер наша страница
++// регистрации.
++const (
++	icqUINFirst = 100000
++	icqUINLast  = 2147483646
++)
++
++// BUCPRegister выдаёт новый номер ICQ и заводит под него учётную запись.
++//
++// Клиент шлёт SNAC(0x17,0x04) с выбранным паролем и случайным cookie, сервер
++// отвечает SNAC(0x17,0x05) с присвоенным номером. Формат блока — ICQ v8,
++// описание: https://kingant.net/oscar/?family=0x0017&subtype=0x0005
++func (s AuthService) BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wire.SNACMessage, error) {
++	block := wire.TLVRestBlock{}
++	if err := wire.UnmarshalBE(&block, bytes.NewReader(snacPayloadIn)); err != nil {
++		return wire.SNACMessage{}, fmt.Errorf("разбор запроса регистрации: %w", err)
++	}
++
++	reg, ok := block.Bytes(wire.ICQTLVTagsRegistration)
++	if !ok || len(reg) < icqRegMinLen {
++		return wire.SNACMessage{}, errors.New("в запросе регистрации нет блока с данными")
++	}
++
++	cookie := binary.LittleEndian.Uint32(reg[icqRegCookieOffset:])
++
++	passLen := int(binary.LittleEndian.Uint16(reg[icqRegPasswordOffset:]))
++	from := icqRegPasswordOffset + 2
++	if passLen == 0 || from+passLen > len(reg) {
++		return wire.SNACMessage{}, errors.New("в запросе регистрации нет пароля")
++	}
++	// Клиент передаёт пароль со завершающим нулём, он в длину включён.
++	password := strings.TrimRight(string(reg[from:from+passLen]), "\x00")
++
++	uin, err := s.nextFreeUIN(ctx)
++	if err != nil {
++		return wire.SNACMessage{}, err
++	}
++
++	screenName := state.DisplayScreenName(strconv.Itoa(uin))
++	if err := s.createAccount(ctx, screenName, password); err != nil {
++		switch {
++		case errors.Is(err, state.ErrPasswordInvalid):
++			// Клиент сам проверяет длину 6–8 символов, но подстрахуемся.
++			s.logger.InfoContext(ctx, "registration rejected: bad password", "uin", uin)
++			return wire.SNACMessage{}, err
++		default:
++			return wire.SNACMessage{}, fmt.Errorf("создание учётной записи %d: %w", uin, err)
++		}
++	}
++
++	s.logger.InfoContext(ctx, "registered new ICQ number", "uin", uin)
++
++	return wire.SNACMessage{
++		Frame: wire.SNACFrame{
++			FoodGroup: wire.BUCP,
++			SubGroup:  wire.BUCPRegisterResponse,
++		},
++		Body: wire.TLVRestBlock{
++			TLVList: wire.TLVList{
++				wire.NewTLVBE(wire.ICQTLVTagsRegistration, icqRegistrationReply(uint32(uin), cookie)),
++			},
++		},
++	}, nil
++}
++
++// nextFreeUIN подбирает первый свободный номер, начиная со 100000.
++func (s AuthService) nextFreeUIN(ctx context.Context) (int, error) {
++	for uin := icqUINFirst; uin <= icqUINLast; uin++ {
++		u, err := s.userManager.User(ctx, state.NewIdentScreenName(strconv.Itoa(uin)))
++		if err != nil {
++			return 0, fmt.Errorf("поиск свободного номера: %w", err)
++		}
++		if u == nil {
++			return uin, nil
++		}
++	}
++	return 0, errors.New("свободных номеров не осталось")
++}
++
++// icqRegistrationReply собирает тело ответа о регистрации. Все поля — в
++// обратном порядке байт; постоянные значения взяты из описания протокола.
++func icqRegistrationReply(uin uint32, cookie uint32) []byte {
++	buf := make([]byte, 0, 52)
++	put16 := func(v uint16) { buf = binary.LittleEndian.AppendUint16(buf, v) }
++	put32 := func(v uint32) { buf = binary.LittleEndian.AppendUint32(buf, v) }
++
++	put16(0x0003) // версия блока
++	put32(0)
++	put16(0x002d) // длина остатка, значение из описания протокола
++	put16(0x0003)
++	put16(0x0000)
++	put16(0x58ff)
++	put16(0x3dd0)
++	put16(0xbaa7)
++	put16(0x0000)
++	put16(0x0004)
++	put32(cookie) // cookie из запроса, клиент сверяет его с отправленным
++	put32(0)
++	put32(0)
++	put32(0)
++	put32(0)
++	put32(uin) // выданный номер
++	put32(cookie)
++	put16(0x0000)
++
++	return buf
++}
++
+ func (s AuthService) createUser(ctx context.Context, props loginProperties, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
+ 	err := s.createAccount(ctx, props.screenName, "welcome1")
+ 	if err != nil {
+diff --git a/server/oscar/server.go b/server/oscar/server.go
+index 1cfcb03..d64835d 100644
+--- a/server/oscar/server.go
++++ b/server/oscar/server.go
+@@ -509,6 +509,23 @@ func (s oscarServer) processBUCPAuth(ctx context.Context, flapc *wire.FlapClient
+ 					s.logger.Debug("failed BUCP challenge: user does not exist", "screen_name", screenName)
+ 					return nil // account does not exist
+ 				}
++
++			case fr.FoodGroup == wire.BUCP && fr.SubGroup == wire.BUCPRegisterRequest:
++				payload, err := io.ReadAll(buf)
++				if err != nil {
++					return err
++				}
++				outSNAC, err := s.authService.BUCPRegister(ctx, payload)
++				if err != nil {
++					s.logger.Error("ICQ registration failed", "err", err.Error())
++					return io.EOF
++				}
++				outSNAC.Frame.RequestID = fr.RequestID
++				if err := flapc.SendSNAC(outSNAC.Frame, outSNAC.Body); err != nil {
++					return err
++				}
++				// Пустой FLAP канала 4 — сигнал клиенту закрыть соединение.
++				return flapc.NewSignoff(wire.TLVRestBlock{})
+ 			case fr.FoodGroup == wire.BUCP && fr.SubGroup == wire.BUCPLoginRequest:
+ 				loginRequest := wire.SNAC_0x17_0x02_BUCPLoginRequest{}
+ 				if err := wire.UnmarshalBE(&loginRequest, buf); err != nil {
+diff --git a/server/oscar/types.go b/server/oscar/types.go
+index b150ccd..503a6ed 100644
+--- a/server/oscar/types.go
++++ b/server/oscar/types.go
+@@ -49,6 +49,7 @@ type RateLimitUpdater interface {
+ type AuthService interface {
+ 	BUCPChallenge(ctx context.Context, inBody wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error)
+ 	BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
++	BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wire.SNACMessage, error)
+ 	CrackCookie(authCookie []byte) (state.ServerCookie, time.Time, error)
+ 	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
+ 	KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
+diff --git a/wire/snacs.go b/wire/snacs.go
+index 933e734..d39f220 100644
+--- a/wire/snacs.go
++++ b/wire/snacs.go
+@@ -2495,6 +2495,10 @@ const (
+ 	BUCPLoginRequest             uint16 = 0x0002
+ 	BUCPLoginResponse            uint16 = 0x0003
+ 	BUCPRegisterRequest          uint16 = 0x0004
++	BUCPRegisterResponse         uint16 = 0x0005
++
++	// ICQTLVTagsRegistration — TLV с блоком регистрации нового номера.
++	ICQTLVTagsRegistration uint16 = 0x0001
+ 	BUCPChallengeRequest         uint16 = 0x0006
+ 	BUCPChallengeResponse        uint16 = 0x0007
+ 	BUCPAsasnRequest             uint16 = 0x0008

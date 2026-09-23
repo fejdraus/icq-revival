@@ -1,0 +1,389 @@
+diff --git a/cmd/server/factory.go b/cmd/server/factory.go
+index fe1d997..f13257c 100644
+--- a/cmd/server/factory.go
++++ b/cmd/server/factory.go
+@@ -116,6 +116,8 @@ func MakeCommonDeps() (Container, error) {
+ 		c.inMemorySessionManager,
+ 		c.sqLiteUserStore,
+ 	)
++	// Случайный чат подбирает собеседника среди живых сессий.
++	c.icqService.BridgeSessionLister(c.inMemorySessionManager)
+ 
+ 	c.feedbagSvc.BridgeICBMService(c.icbmSvc)
+ 	c.icbmSvc.BridgeFeedbagService(c.feedbagSvc)
+diff --git a/foodgroup/icq.go b/foodgroup/icq.go
+index 9dd4fbb..020e2a0 100644
+--- a/foodgroup/icq.go
++++ b/foodgroup/icq.go
+@@ -6,8 +6,10 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"log/slog"
++	"math/rand/v2"
+ 	"strconv"
+ 	"strings"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/mk6i/open-oscar-server/state"
+@@ -33,6 +35,7 @@ func NewICQService(
+ 		sessionRetriever:      sessionRetriever,
+ 		offlineMessageManager: offlineMessageManager,
+ 		timeNow:               time.Now,
++		randomChatGroups:      make(map[state.IdentScreenName]uint16),
+ 		forwardICQAuthEvents: func(ctx context.Context, sender state.IdentScreenName, recipient state.IdentScreenName, authMsg wire.ICBMCh4Message) error {
+ 			return fmt.Errorf("no ICBMService available")
+ 		},
+@@ -49,6 +52,10 @@ type ICQService struct {
+ 	timeNow               func() time.Time
+ 	offlineMessageManager OfflineMessageManager
+ 	forwardICQAuthEvents  func(ctx context.Context, sender state.IdentScreenName, recipient state.IdentScreenName, authMsg wire.ICBMCh4Message) error
++	// Случайный чат: кто в какой группе. Живёт в памяти, см. patch-randomchat.py.
++	sessionLister    ICQSessionLister
++	randomChatMu     sync.Mutex
++	randomChatGroups map[state.IdentScreenName]uint16
+ }
+ 
+ // BridgeFeedbagService enables the ICBMService to forward legacy ICQ events to
+@@ -1304,6 +1311,133 @@ func (s *ICQService) reportNoSearchResults(ctx context.Context, instance *state.
+ 	}, requestID, 0)
+ }
+ 
++// --------------------------------------------------------------- случайный чат
++
++// ICQSessionLister отдаёт все живые сессии. Нужен только случайному чату:
++// собеседник ищется среди тех, кто сейчас в сети.
++type ICQSessionLister interface {
++	AllSessions() []*state.Session
++}
++
++// BridgeSessionLister включает случайный чат. Без него запросы обслуживаются,
++// но собеседник не находится никогда.
++func (s *ICQService) BridgeSessionLister(lister ICQSessionLister) {
++	s.sessionLister = lister
++}
++
++// SetRandomChatGroup запоминает, в какой группе пользователь готов общаться.
++// Ноль означает «не участвую».
++func (s *ICQService) SetRandomChatGroup(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat, seq uint16) error {
++	s.randomChatMu.Lock()
++	if inBody.Group == 0 {
++		delete(s.randomChatGroups, instance.IdentScreenName())
++	} else {
++		s.randomChatGroups[instance.IdentScreenName()] = inBody.Group
++	}
++	s.randomChatMu.Unlock()
++
++	s.logger.DebugContext(ctx, "random chat group set", "uin", instance.UIN(), "group", inBody.Group)
++
++	return s.reqAck(ctx, instance, seq, wire.ICQDBQueryMetaReplySetRandomChat, inFrame.RequestID)
++}
++
++// RandomChatSearch подбирает собеседника из той же группы среди тех, кто
++// сейчас в сети. Себя не предлагаем.
++func (s *ICQService) RandomChatSearch(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch, seq uint16) error {
++	match := s.pickRandomChatPartner(instance.IdentScreenName(), inBody.Group)
++	if match == nil {
++		s.logger.DebugContext(ctx, "no random chat partner", "uin", instance.UIN(), "group", inBody.Group)
++		return s.reply(ctx, instance, wire.ICQMessageReplyEnvelope{
++			Message: wire.ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound{
++				ICQMetadata: wire.ICQMetadata{
++					UIN:     instance.UIN(),
++					ReqType: wire.ICQDBQueryMetaReply,
++					Seq:     seq,
++				},
++				ReqSubType: wire.ICQDBQueryMetaReplyRandomFound,
++				Success:    wire.ICQStatusCodeFail,
++			},
++		}, inFrame.RequestID, 0)
++	}
++
++	resp := wire.ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound{
++		ICQMetadata: wire.ICQMetadata{
++			UIN:     instance.UIN(),
++			ReqType: wire.ICQDBQueryMetaReply,
++			Seq:     seq,
++		},
++		ReqSubType: wire.ICQDBQueryMetaReplyRandomFound,
++		Success:    wire.ICQStatusCodeOK,
++		UIN:        match.UIN(),
++		Group:      inBody.Group,
++		// Соединение идёт через сервер: прямое между клиентами мы не сводим.
++		Mode:    0x04,
++		Version: 0x000A,
++	}
++	if addr := randomChatAddr(match); addr != nil {
++		resp.ExternalIP = *addr
++		resp.InternalIP = *addr
++	}
++
++	s.logger.DebugContext(ctx, "random chat partner found",
++		"uin", instance.UIN(), "partner", match.UIN(), "group", inBody.Group)
++
++	return s.reply(ctx, instance, wire.ICQMessageReplyEnvelope{Message: resp}, inFrame.RequestID, 0)
++}
++
++// pickRandomChatPartner возвращает случайную живую сессию из той же группы.
++func (s *ICQService) pickRandomChatPartner(me state.IdentScreenName, group uint16) *state.Session {
++	if s.sessionLister == nil || group == 0 {
++		return nil
++	}
++
++	s.randomChatMu.Lock()
++	wanted := make(map[state.IdentScreenName]struct{}, len(s.randomChatGroups))
++	for name, g := range s.randomChatGroups {
++		if g == group && name != me {
++			wanted[name] = struct{}{}
++		}
++	}
++	s.randomChatMu.Unlock()
++
++	if len(wanted) == 0 {
++		return nil
++	}
++
++	var candidates []*state.Session
++	for _, sess := range s.sessionLister.AllSessions() {
++		if _, ok := wanted[sess.IdentScreenName()]; !ok {
++			continue
++		}
++		if !sess.HasLiveInstances() {
++			continue
++		}
++		candidates = append(candidates, sess)
++	}
++	if len(candidates) == 0 {
++		return nil
++	}
++	return candidates[rand.IntN(len(candidates))]
++}
++
++// randomChatAddr — адрес собеседника в том виде, в каком его ждёт клиент:
++// четыре байта в обратном порядке относительно остального тела ответа.
++func randomChatAddr(sess *state.Session) *[4]byte {
++	for _, inst := range sess.Instances() {
++		ap := inst.RemoteAddr()
++		if ap == nil {
++			continue
++		}
++		ip := ap.Addr()
++		if !ip.Is4() {
++			continue
++		}
++		b := ip.As4()
++		return &b
++	}
++	return nil
++}
++
+ func (s *ICQService) reqAck(ctx context.Context, instance *state.SessionInstance, seq uint16, subType uint16, requestID uint32) error {
+ 	msg := wire.ICQMessageReplyEnvelope{
+ 		Message: wire.ICQ_0x07DA_0x00DC_DBQueryMetaReplyMoreInfo{
+diff --git a/server/oscar/handler.go b/server/oscar/handler.go
+index 27c9e02..0b94f70 100644
+--- a/server/oscar/handler.go
++++ b/server/oscar/handler.go
+@@ -557,6 +557,22 @@ func (rt Handler) ICQDBQuery(ctx context.Context, instance *state.SessionInstanc
+ 			if err := rt.XMLReqData(ctx, instance, inFrame, req, icqMD.Seq); err != nil {
+ 				return err
+ 			}
++		case wire.ICQDBQueryMetaReqSetRandomChat:
++			req := wire.ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat{}
++			if err := wire.UnmarshalLE(&req, buf); err != nil {
++				return err
++			}
++			if err := rt.SetRandomChatGroup(ctx, instance, inFrame, req, icqMD.Seq); err != nil {
++				return err
++			}
++		case wire.ICQDBQueryMetaReqRandomSearch:
++			req := wire.ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch{}
++			if err := wire.UnmarshalLE(&req, buf); err != nil {
++				return err
++			}
++			if err := rt.RandomChatSearch(ctx, instance, inFrame, req, icqMD.Seq); err != nil {
++				return err
++			}
+ 		case wire.ICQDBQueryMetaReqSetPermissions:
+ 			req := wire.ICQ_0x07D0_0x0424_DBQueryMetaReqSetPermissions{}
+ 			if err := wire.UnmarshalLE(&req, buf); err != nil {
+diff --git a/server/oscar/mock_auth_test.go b/server/oscar/mock_auth_test.go
+index 90b6a48..a2ec044 100644
+--- a/server/oscar/mock_auth_test.go
++++ b/server/oscar/mock_auth_test.go
+@@ -51,6 +51,32 @@ func (_m *mockAuthService) EXPECT() *mockAuthService_Expecter {
+ 	return &mockAuthService_Expecter{mock: &_m.Mock}
+ }
+ 
++// BUCPRegister provides a mock function for the type mockAuthService
++func (_mock *mockAuthService) BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wire.SNACMessage, error) {
++	ret := _mock.Called(ctx, snacPayloadIn)
++
++	if len(ret) == 0 {
++		panic("no return value specified for BUCPRegister")
++	}
++
++	var r0 wire.SNACMessage
++	var r1 error
++	if returnFunc, ok := ret.Get(0).(func(context.Context, []byte) (wire.SNACMessage, error)); ok {
++		return returnFunc(ctx, snacPayloadIn)
++	}
++	if returnFunc, ok := ret.Get(0).(func(context.Context, []byte) wire.SNACMessage); ok {
++		r0 = returnFunc(ctx, snacPayloadIn)
++	} else {
++		r0 = ret.Get(0).(wire.SNACMessage)
++	}
++	if returnFunc, ok := ret.Get(1).(func(context.Context, []byte) error); ok {
++		r1 = returnFunc(ctx, snacPayloadIn)
++	} else {
++		r1 = ret.Error(1)
++	}
++	return r0, r1
++}
++
+ // BUCPChallenge provides a mock function for the type mockAuthService
+ func (_mock *mockAuthService) BUCPChallenge(ctx context.Context, inBody wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error) {
+ 	ret := _mock.Called(ctx, inBody, newUUID)
+diff --git a/server/oscar/mock_icq_service_test.go b/server/oscar/mock_icq_service_test.go
+index c603052..44e2525 100644
+--- a/server/oscar/mock_icq_service_test.go
++++ b/server/oscar/mock_icq_service_test.go
+@@ -1305,6 +1305,40 @@ func (_c *mockICQService_SetMoreInfo_Call) RunAndReturn(run func(ctx context.Con
+ 	return _c
+ }
+ 
++// SetRandomChatGroup provides a mock function for the type mockICQService
++func (_mock *mockICQService) SetRandomChatGroup(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat, seq uint16) error {
++	ret := _mock.Called(ctx, instance, inFrame, inBody, seq)
++
++	if len(ret) == 0 {
++		panic("no return value specified for SetRandomChatGroup")
++	}
++
++	var r0 error
++	if returnFunc, ok := ret.Get(0).(func(context.Context, *state.SessionInstance, wire.SNACFrame, wire.ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat, uint16) error); ok {
++		r0 = returnFunc(ctx, instance, inFrame, inBody, seq)
++	} else {
++		r0 = ret.Error(0)
++	}
++	return r0
++}
++
++// RandomChatSearch provides a mock function for the type mockICQService
++func (_mock *mockICQService) RandomChatSearch(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch, seq uint16) error {
++	ret := _mock.Called(ctx, instance, inFrame, inBody, seq)
++
++	if len(ret) == 0 {
++		panic("no return value specified for RandomChatSearch")
++	}
++
++	var r0 error
++	if returnFunc, ok := ret.Get(0).(func(context.Context, *state.SessionInstance, wire.SNACFrame, wire.ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch, uint16) error); ok {
++		r0 = returnFunc(ctx, instance, inFrame, inBody, seq)
++	} else {
++		r0 = ret.Error(0)
++	}
++	return r0
++}
++
+ // SetPermissions provides a mock function for the type mockICQService
+ func (_mock *mockICQService) SetPermissions(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0424_DBQueryMetaReqSetPermissions, seq uint16) error {
+ 	ret := _mock.Called(ctx, instance, inFrame, inBody, seq)
+diff --git a/server/oscar/types.go b/server/oscar/types.go
+index b150ccd..f1f7796 100644
+--- a/server/oscar/types.go
++++ b/server/oscar/types.go
+@@ -49,6 +49,7 @@ type RateLimitUpdater interface {
+ type AuthService interface {
+ 	BUCPChallenge(ctx context.Context, inBody wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error)
+ 	BUCPLogin(ctx context.Context, inBody wire.SNAC_0x17_0x02_BUCPLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
++	BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wire.SNACMessage, error)
+ 	CrackCookie(authCookie []byte) (state.ServerCookie, time.Time, error)
+ 	FLAPLogin(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
+ 	KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
+@@ -133,6 +134,8 @@ type ICQService interface {
+ 	SetInterests(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0410_DBQueryMetaReqSetInterests, seq uint16) error
+ 	SetMoreInfo(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x03FD_DBQueryMetaReqSetMoreInfo, seq uint16) error
+ 	SetPermissions(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0424_DBQueryMetaReqSetPermissions, seq uint16) error
++	SetRandomChatGroup(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat, seq uint16) error
++	RandomChatSearch(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch, seq uint16) error
+ 	SetICQPhone(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0654_DBQueryMetaReqSetICQPhone, seq uint16) error
+ 	SetUserNotes(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0406_DBQueryMetaReqSetNotes, seq uint16) error
+ 	SetWorkInfo(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x03F3_DBQueryMetaReqSetWorkInfo, seq uint16) error
+diff --git a/wire/snacs.go b/wire/snacs.go
+index 933e734..70fc50f 100644
+--- a/wire/snacs.go
++++ b/wire/snacs.go
+@@ -2096,6 +2096,9 @@ const (
+ 	ICQDBQueryMetaReqStat0ad7          uint16 = 0x0AD7
+ 	ICQDBQueryMetaReqDirectoryQuery    uint16 = 0x0FA0
+ 	ICQDBQueryMetaReqDirectoryUpdate   uint16 = 0x0FD2
++	// Случайный чат: записаться в группу и попросить собеседника.
++	ICQDBQueryMetaReqRandomSearch  uint16 = 0x074E
++	ICQDBQueryMetaReqSetRandomChat uint16 = 0x0758
+ 
+ 	ICQDBQueryMetaReplySetBasicInfo    uint16 = 0x0064
+ 	ICQDBQueryMetaReplySetWorkInfo     uint16 = 0x006E
+@@ -2107,6 +2110,8 @@ const (
+ 	ICQDBQueryMetaReplySetPermissions  uint16 = 0x00A0
+ 	ICQDBQueryMetaReplySetICQPhone     uint16 = 0x031E
+ 	ICQDBQueryMetaReplySetFullInfo     uint16 = 0x0C3F
++	ICQDBQueryMetaReplyRandomFound     uint16 = 0x0366
++	ICQDBQueryMetaReplySetRandomChat   uint16 = 0x0370
+ 	ICQDBQueryMetaReplyBasicInfo       uint16 = 0x00C8
+ 	ICQDBQueryMetaReplyWorkInfo        uint16 = 0x00D2
+ 	ICQDBQueryMetaReplyMoreInfo        uint16 = 0x00DC
+@@ -2456,6 +2461,35 @@ type ICQMetadataWithSubType struct {
+ 	} `oscar:"optional"`
+ }
+ 
++// ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat — клиент записывается в группу
++// случайного чата. При ненулевой группе клиент дописывает свой адрес и версию;
++// нам они не нужны, поэтому читаем только номер группы.
++type ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat struct {
++	Group uint16
++}
++
++// ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch — клиент просит подобрать
++// собеседника из указанной группы.
++type ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch struct {
++	Group uint16
++}
++
++// ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound — найденный собеседник.
++// Адреса лежат в обратном порядке байт относительно остального тела, поэтому
++// они объявлены массивами: так их не развернёт кодировщик.
++type ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound struct {
++	ICQMetadata
++	ReqSubType uint16
++	Success    uint8
++	UIN        uint32
++	Group      uint16
++	ExternalIP [4]byte
++	Port       uint32
++	InternalIP [4]byte
++	Mode       uint8
++	Version    uint16
++}
++
+ type ICQMetadata struct {
+ 	UIN     uint32
+ 	ReqType uint16
+@@ -2491,10 +2525,14 @@ type ICQUserSearchRecord struct {
+ //
+ 
+ const (
+-	BUCPErr                      uint16 = 0x0001
+-	BUCPLoginRequest             uint16 = 0x0002
+-	BUCPLoginResponse            uint16 = 0x0003
+-	BUCPRegisterRequest          uint16 = 0x0004
++	BUCPErr              uint16 = 0x0001
++	BUCPLoginRequest     uint16 = 0x0002
++	BUCPLoginResponse    uint16 = 0x0003
++	BUCPRegisterRequest  uint16 = 0x0004
++	BUCPRegisterResponse uint16 = 0x0005
++
++	// ICQTLVTagsRegistration — TLV с блоком регистрации нового номера.
++	ICQTLVTagsRegistration       uint16 = 0x0001
+ 	BUCPChallengeRequest         uint16 = 0x0006
+ 	BUCPChallengeResponse        uint16 = 0x0007
+ 	BUCPAsasnRequest             uint16 = 0x0008
