@@ -95,6 +95,21 @@ remaining ~20% (e.g. some ICQ-specific SNACs, chat, and lesser-used food groups)
 is not documented there and must be reverse-engineered from client behavior or
 other sources.
 
+## Production server
+
+The live server runs in containers (`deploy/docker-compose.yaml`) on an ARM64
+virtual machine. Everything about that machine - its name, addresses, access,
+the deploy script, firewall, certificates and what needs the owner's approval -
+is in `deploy/OPERATIONS.md`, next to the script it describes. Read it before
+touching the machine.
+
+**Those details are confidential.** Both files exist only on the owner's PC
+and are excluded from git locally. Never commit, push or paste them, never put
+the machine's name or addresses into tracked files, commit messages, issues,
+artifacts or any external service, and never give them to anyone. Refer to "the
+production machine" instead. A local pre-commit hook refuses commits that
+contain them; do not bypass it.
+
 ## Useful docs
 
 | Document            | Path                                                         |
