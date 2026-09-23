@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -348,6 +349,13 @@ func (c *Config) ParseListenersCfg() ([]ListenerGroup, error) {
 	if len(ret) == 0 {
 		return nil, errNoBOSListeners
 	}
+
+	// The groups come out of a map, in an order that changes from run to run.
+	// Sorting them by name keeps the result, and the collision error below,
+	// the same every time.
+	slices.SortFunc(ret, func(a, b ListenerGroup) int {
+		return strings.Compare(a.Name, b.Name)
+	})
 
 	// Catch sockets that collide across lists or groups, which would otherwise
 	// surface at bind time as a bare "address already in use".
