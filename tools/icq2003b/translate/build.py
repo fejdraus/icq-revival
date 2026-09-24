@@ -79,6 +79,11 @@ def main():
                     missing.add(t)
                     u = t
                 new.append(u)
+            if rtype == icqres.RT_DIALOG:
+                for i in range(1, len(new)):
+                    o = doc.get('overrides', {}).get(f'{name} dialog {rname} control {i - 1}')
+                    if o is not None and old[i]:
+                        new[i] = o
             is_send_by = (name == SEND_BY['file'] and rtype == icqres.RT_STRING
                           and (rname - 1) * 16 <= SEND_BY['string'] < rname * 16)
             if is_send_by:

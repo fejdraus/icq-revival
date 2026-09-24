@@ -1,5 +1,5 @@
 {
- "about": "Ukrainian interface of ICQ Pro 2003b. Key: the English text as the client has it; value: the Ukrainian one, the same text to keep it, null while not translated yet. Keep %s, %d, %1, \\n, \\t and the & of access keys. \"datafiles\": text files of the client (DataFiles), written whole with the names in them translated - only the fields after a tab that match a key.",
+ "about": "Ukrainian interface of ICQ Pro 2003b. Key: the English text as the client has it; value: the Ukrainian one, the same text to keep it, null while not translated yet. Keep %s, %d, %1, \\n, \\t and the & of access keys. \"datafiles\": text files of the client (DataFiles), written whole with the names in them translated - only the fields after a tab that match a key. \"overrides\": the text of one control of one dialog (\"<file> dialog <id> control <n>\"), where the common translation is too long for that place alone.",
  "texts": {
   "Arabic (ANSI)": "Арабська (ANSI)",
   "Baltic (ANSI)": "Балтійська (ANSI)",
@@ -1074,7 +1074,7 @@
   "Map": "Мапа",
   "Country:": "Країна:",
   "Home Address": "Домашня адреса",
-  "I'm Originally From": "Я родом з",
+  "I'm Originally From": "Я народився в",
   "GMT Offset:": "Зсув від GMT:",
   "Your Time:": "Ваш час:",
   "Override user GMT settings": "Змінити GMT користувача",
@@ -1623,7 +1623,7 @@
   "Find my friends and add them to my ICQ - searches the \naddress books on your computer.": "Знайти моїх друзів і додати їх до ICQ — пошук в \nадресних книгах на комп'ютері.",
   "Enter your birth date so that ICQ users that have you on their Contact List will be notified of your birthday and know when to send you birthday wishes!": "Введіть дату народження, щоб користувачі ICQ, у чиїх списках контактів ви є, дізналися про ваш день народження й вчасно привітали вас!",
   "I currently live in:": "Зараз я живу в:",
-  "I am Originally From:": "Я родом з:",
+  "I am Originally From:": "Я народився в:",
   "What languages do you speak? Select up to three from the pull down menus below.": "Якими мовами ви розмовляєте? Виберіть до трьох у списках нижче.",
   "Remember, these details will make it easier for your friends around the world to find you on ICQ and communicate with you.": "Пам'ятайте: ці дані допоможуть друзям з усього світу знайти вас в ICQ і спілкуватися з вами.",
   " Personal Details ": " Особисті дані ",
@@ -3991,5 +3991,8 @@
    "Seeking Women": "Шукаю жінку",
    "Seeking Men": "Шукаю чоловіка"
   }
+ },
+ "overrides": {
+  "ICQIfDg.dll dialog 8507 control 18": "Обл.:"
  }
 }
