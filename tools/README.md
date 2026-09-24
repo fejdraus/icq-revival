@@ -6,6 +6,7 @@ and can put everything back.
 | Folder | Client | What it is |
 |---|---|---|
 | `icq2003b/patch/` | ICQ Pro 2003b | **The patch to hand out.** `ICQ-2003b-Patch.exe` - removes the banners and the Google bar, points the ICQ.com menu items at our server. `ICQ-2003b-Patch.ps1` is its source. |
+| `icq2003b/translate/` | ICQ Pro 2003b | The Ukrainian interface: `uk-UA.json` holds every text of the client's menus, dialogs and string tables with its translation; `extract.py` brings it up to date from the client, `build.py` turns it into `patch/ICQ-2003b-uk-UA.txt`, which the patch carries and writes into the client when "Ukrainian interface" is ticked. |
 | `icq2003b/retarget/` | ICQ Pro 2003b | Moves the client's ICQ.com links to our server from `icq-services.json`, from the command line. |
 | `icq2003b/analysis/` | ICQ Pro 2003b | Disassembly and cross-reference helpers used to find the code patches, plus a map of the skin file. |
 | `icq2003b/codes/` | ICQ Pro 2003b | Extracts the profile code lists (countries, interests, ...) from the client's `DataFiles` into `deploy/oscar-register/icq-codes.json`. |

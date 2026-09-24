@@ -521,6 +521,17 @@ function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state, [string]$ke
 function Complete-PatchList($ui) {
     $ui.Locked = @($ui.Rows | Where-Object { $_.Counts -and $_.Mark -eq 'done' }).Count -gt 0
     $ui.All.Enabled = -not $ui.Locked
+    # A locked client holds what it was applied with, and whatever is in place
+    # is part of that - also a job that is off until chosen.
+    if ($ui.Locked) {
+        for ($i = 0; $i -lt $ui.List.Items.Count; $i++) {
+            $item = $ui.List.Items[$i]
+            if ($ui.Rows[$i].Mark -eq 'done' -and -not $item.Checked) {
+                $item.Checked = $true
+                [void]$ui.Unchecked.Remove($item.Name)
+            }
+        }
+    }
     $ui.List.EndUpdate()
     $ui.Filling = $false
     Update-PatchSummary $ui
@@ -584,20 +595,25 @@ function Update-PatchSummary($ui) {
     }
 }
 
-# The cleared rows are remembered between runs, under the patch's own key.
-function Read-PatchUnchecked($ui, [string]$settingsKey) {
+# The cleared rows are remembered between runs, under the patch's own key,
+# with every row the window showed then. A job that is off until chosen
+# ($defaultOff) starts cleared the first time it is seen.
+function Read-PatchUnchecked($ui, [string]$settingsKey, [string[]]$defaultOff) {
+    $known = @()
     try {
-        foreach ($k in @((Get-ItemProperty -LiteralPath $settingsKey -ErrorAction Stop).Unchecked)) {
-            if ($k) { [void]$ui.Unchecked.Add($k) }
-        }
+        $props = Get-ItemProperty -LiteralPath $settingsKey -ErrorAction Stop
+        foreach ($k in @($props.Unchecked)) { if ($k) { [void]$ui.Unchecked.Add($k) } }
+        $known = @($props.Known)
     } catch { }
+    foreach ($k in $defaultOff) { if ($known -notcontains $k) { [void]$ui.Unchecked.Add($k) } }
 }
 
 function Save-PatchUnchecked($ui, [string]$settingsKey) {
     try {
         if (-not (Test-Path $settingsKey)) { New-Item -Path $settingsKey -Force | Out-Null }
-        $values = [string[]]@($ui.Unchecked)
-        New-ItemProperty -LiteralPath $settingsKey -Name Unchecked -PropertyType MultiString -Value $values -Force | Out-Null
+        New-ItemProperty -LiteralPath $settingsKey -Name Unchecked -PropertyType MultiString -Value ([string[]]@($ui.Unchecked)) -Force | Out-Null
+        $known = [string[]]@($ui.List.Items | ForEach-Object { $_.Name })
+        New-ItemProperty -LiteralPath $settingsKey -Name Known -PropertyType MultiString -Value $known -Force | Out-Null
     } catch { }
 }
 

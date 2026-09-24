@@ -18,8 +18,8 @@
 # again, from the backup of the file.
 #
 # Without arguments the window opens. For a scripted run:
-#   ICQ-2003b-Patch.ps1 -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>]
-#   ICQ-2003b-Patch.ps1 -Restore [-Root <folder>]
+#   ICQ-2003b-Patch.ps1 -Apply   [-Root <folder>] [-Server <domain>] [-Skip <jobs>] [-Include ukrainian] [-NoRegistry]
+#   ICQ-2003b-Patch.ps1 -Restore [-Root <folder>] [-NoRegistry]
 #
 # The window is the one all client patches share, ../../common/PatchWindow.ps1.
 # Built into ICQ-2003b-Patch.exe, with its icon, by ../../common/Build-Patches.ps1.
@@ -29,9 +29,13 @@ param(
     [switch]$Restore,
     [string]$Root,
     [string]$Server,
-    # Changes to leave out - or take out, if in place - by the names the
-    # window lists them under (the link file's path, sign-in for that row).
-    [string[]]$Skip
+    # Jobs to leave out - or take out, if in place - by their keys in $Jobs.
+    [string[]]$Skip,
+    # Jobs that are off unless asked for, such as ukrainian.
+    [string[]]$Include,
+    # Leaves the registry alone - the sign-in server lives there, for the
+    # whole machine, not in the folder. For runs on a copy of the client.
+    [switch]$NoRegistry
 )
 
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -131,9 +135,11 @@ $Patches = @(
     [pscustomobject]@{
         # Second layer: the words. There is no control behind them - a walk of
         # the open window shows none - the skin paints them from this string,
-        # so only the string itself can be changed. Same length, spaces: the
-        # table keeps lengths separately and nothing may shift.
+        # string 8727 of Icq.exe, so only the string itself can be changed. It
+        # is written as a resource, blank, in English or in Ukrainian - see
+        # "the binaries" below; the offset is where it sits in the original.
         File = 'Icq.exe'; Offset = 0x1C489C
+        Resource = 'sendBy'
         From = [Text.Encoding]::Unicode.GetBytes('Send By:')
         To   = [Text.Encoding]::Unicode.GetBytes('        ')
         Size = 1880639
@@ -461,10 +467,131 @@ function Find-IcqRoot {
 
 $script:IcqRoot = Find-IcqRoot
 
-# --- состояние правок кода ---------------------------------------------------
+# --- the binaries -------------------------------------------------------------
+#
+# Every program file the patch changes is built again on each Apply, from its
+# original - the backup, or the file itself while it has none - with the
+# wanted changes in this order: code bytes, the links inside Icq.exe, then
+# resources: the Ukrainian interface and the blanked "Send By:". Taking a
+# change out is leaving it out of the build, and the result is exact.
+#
+# Resources are written by Windows itself (UpdateResource). It rebuilds the
+# resource section and nothing before it - code and data stay where they are,
+# so the offsets of the code patches hold in a translated file as well.
 
-# Сумма считается средствами .NET, а не Get-FileHash: этого командлета нет
-# в старых сборках PowerShell, а патч должен работать и там.
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class IcqRes {
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr LoadLibraryEx(string file, IntPtr reserved, uint flags);
+    [DllImport("kernel32.dll")] static extern bool FreeLibrary(IntPtr module);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "FindResourceExW")]
+    static extern IntPtr FindResourceEx(IntPtr module, IntPtr type, IntPtr name, ushort lang);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "FindResourceExW")]
+    static extern IntPtr FindResourceExNamed(IntPtr module, IntPtr type, string name, ushort lang);
+    [DllImport("kernel32.dll")] static extern IntPtr LoadResource(IntPtr module, IntPtr res);
+    [DllImport("kernel32.dll")] static extern IntPtr LockResource(IntPtr data);
+    [DllImport("kernel32.dll")] static extern uint SizeofResource(IntPtr module, IntPtr res);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern IntPtr BeginUpdateResource(string file, bool deleteExisting);
+    [DllImport("kernel32.dll", SetLastError = true, EntryPoint = "UpdateResourceW")]
+    static extern bool UpdateResource(IntPtr update, IntPtr type, IntPtr name, ushort lang, byte[] data, uint size);
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "UpdateResourceW")]
+    static extern bool UpdateResourceNamed(IntPtr update, IntPtr type, string name, ushort lang, byte[] data, uint size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool EndUpdateResource(IntPtr update, bool discard);
+
+    // Names: "#123" for a number, anything else for a name.
+    static bool IsId(string name, out int id) {
+        id = 0;
+        return name.StartsWith("#") && int.TryParse(name.Substring(1), out id);
+    }
+
+    // The data of each resource, null where the file has none.
+    public static byte[][] Read(string file, int[] types, string[] names, int[] langs) {
+        var result = new byte[types.Length][];
+        IntPtr module = LoadLibraryEx(file, IntPtr.Zero, 0x22);  // as data file, as image resource
+        if (module == IntPtr.Zero) return result;
+        try {
+            for (int i = 0; i < types.Length; i++) {
+                int id;
+                IntPtr res = IsId(names[i], out id)
+                    ? FindResourceEx(module, (IntPtr)types[i], (IntPtr)id, (ushort)langs[i])
+                    : FindResourceExNamed(module, (IntPtr)types[i], names[i], (ushort)langs[i]);
+                if (res == IntPtr.Zero) continue;
+                uint size = SizeofResource(module, res);
+                IntPtr p = LockResource(LoadResource(module, res));
+                var data = new byte[size];
+                Marshal.Copy(p, data, 0, (int)size);
+                result[i] = data;
+            }
+        } finally { FreeLibrary(module); }
+        return result;
+    }
+
+    public static bool Same(byte[] a, byte[] b) {
+        if (a == null || b == null || a.Length != b.Length) return false;
+        for (int i = 0; i < a.Length; i++) if (a[i] != b[i]) return false;
+        return true;
+    }
+
+    public static void Write(string file, int[] types, string[] names, int[] langs, byte[][] data) {
+        IntPtr update = BeginUpdateResource(file, false);
+        if (update == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
+        for (int i = 0; i < types.Length; i++) {
+            int id;
+            bool ok = IsId(names[i], out id)
+                ? UpdateResource(update, (IntPtr)types[i], (IntPtr)id, (ushort)langs[i], data[i], (uint)data[i].Length)
+                : UpdateResourceNamed(update, (IntPtr)types[i], names[i], (ushort)langs[i], data[i], (uint)data[i].Length);
+            if (!ok) {
+                var e = new System.ComponentModel.Win32Exception();
+                EndUpdateResource(update, true);
+                throw e;
+            }
+        }
+        if (!EndUpdateResource(update, false)) throw new System.ComponentModel.Win32Exception();
+    }
+}
+'@
+
+# The translated resources, built by ../translate/build.py: gzip, base64.
+#_if PSScript
+$UkPacked = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'ICQ-2003b-uk-UA.txt'))
+#_else
+#_include_as_value UkPacked "$PSScriptRoot/ICQ-2003b-uk-UA.txt"
+#_endif
+
+function Get-Translation {
+    if (-not $script:Translation) {
+        $ms = New-Object IO.MemoryStream(, [Convert]::FromBase64String($UkPacked))
+        $gz = New-Object IO.Compression.GZipStream($ms, [IO.Compression.CompressionMode]::Decompress)
+        $reader = New-Object IO.StreamReader($gz, [Text.Encoding]::UTF8)
+        $t = $reader.ReadToEnd() | ConvertFrom-Json
+        $reader.Close()
+        # Decoded once: the data of every resource, and a key for each.
+        foreach ($f in $t.files.PSObject.Properties) {
+            foreach ($it in $f.Value.items) {
+                $it | Add-Member Key ('{0}|{1}|{2}' -f $it.t, (Get-ResName $it.n), $it.l)
+                $it | Add-Member Bytes ([Convert]::FromBase64String($it.d))
+            }
+        }
+        $sb = $t.sendBy
+        $sb | Add-Member Key ('{0}|{1}|{2}' -f $sb.t, (Get-ResName $sb.n), $sb.l)
+        # Not En / Uk: names are not case sensitive, and those are the base64 texts.
+        $sb | Add-Member BlankEn ([Convert]::FromBase64String($sb.en))
+        $sb | Add-Member BlankUk ([Convert]::FromBase64String($sb.uk))
+        $script:Translation = $t
+    }
+    return $script:Translation
+}
+
+function Get-ResName($n) { if ($n -is [string]) { return $n } else { return "#$n" } }
+
+function Get-TranslationFiles { return @((Get-Translation).files.PSObject.Properties | ForEach-Object { $_.Name }) }
+
+# Sum through .NET rather than Get-FileHash: old PowerShell lacks the cmdlet.
 function Get-Sha256([string]$path) {
     $sha = [Security.Cryptography.SHA256]::Create()
     $fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
@@ -472,20 +599,49 @@ function Get-Sha256([string]$path) {
     return ([BitConverter]::ToString($bytes) -replace '-', '')
 }
 
+function Get-BytesSha([byte[]]$bytes) {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($bytes)) -replace '-', '').ToLowerInvariant() } finally { $sha.Dispose() }
+}
+
+function Test-SameBytes([byte[]]$a, [byte[]]$b) { return [IcqRes]::Same($a, $b) }
+
+# The original of a program file: its backup, or the file while it has none.
+function Get-OriginalPath([string]$path) {
+    $backup = $path + $BinSuffix
+    if (Test-Path -LiteralPath $backup) { return $backup }
+    return $path
+}
+
+# Reads resources of a file by their keys "type|name|lang".
+function Read-Resources([string]$path, [string[]]$keys) {
+    $parts = @($keys | ForEach-Object { , ($_ -split '\|') })
+    # The comma keeps the array of arrays whole: returned bare, PowerShell
+    # would unroll it, and one resource would come back as its bytes.
+    return , [IcqRes]::Read($path, [int[]]@($parts | ForEach-Object { [int]$_[0] }),
+        [string[]]@($parts | ForEach-Object { $_[1] }), [int[]]@($parts | ForEach-Object { [int]$_[2] }))
+}
+
+# The "Send By:" words: blank in either language, or as they came.
+function Get-SendByState([string]$path) {
+    $sb = (Get-Translation).sendBy
+    $cur = (Read-Resources $path @($sb.Key))[0]
+    if ((Test-SameBytes $cur $sb.BlankEn) -or (Test-SameBytes $cur $sb.BlankUk)) { return 'patched' }
+    if ($cur -and (Get-BytesSha $cur) -eq $sb.from) { return 'original' }
+    $tr = @((Get-Translation).files.($sb.file).items | Where-Object { $_.Key -eq $sb.Key })
+    if ($tr.Count -and (Test-SameBytes $cur $tr[0].Bytes)) { return 'original' }
+    return 'unknown'
+}
+
 function Get-State($patch) {
     if (-not $script:IcqRoot) { return 'no folder' }
     $path = Join-Path $script:IcqRoot $patch.File
     if (-not (Test-Path -LiteralPath $path)) { return 'missing' }
-
-    # Сверка по контрольной сумме: смещения верны только для этой сборки, на
-    # другой по тем же адресам лежит чужой код. Если сумма не сошлась, файл
-    # мог быть изменён нами же — заменой зашитых адресов, — поэтому запасной
-    # признак версии это размер плюс ожидаемые байты по смещению.
-    $hash = Get-Sha256 $path
-    if ($hash -eq $patch.Sha256To)   { return 'patched' }
-    if ($hash -ne $patch.Sha256From) {
-        if ((Get-Item -LiteralPath $path).Length -ne $patch.Size) { return 'other version' }
-    }
+    # The offsets are right for build 3916 only: the original is recognised by
+    # its size, and the change by its bytes - which a translated file keeps in
+    # place.
+    if ((Get-Item -LiteralPath (Get-OriginalPath $path)).Length -ne $patch.Size) { return 'other version' }
+    if ($patch.Resource) { return Get-SendByState $path }
     $fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
     try {
         $len = [Math]::Max($patch.From.Length, $patch.To.Length)
@@ -493,13 +649,36 @@ function Get-State($patch) {
         $null = $fs.Seek($patch.Offset, 'Begin')
         $null = $fs.Read($buf, 0, $len)
     } finally { $fs.Close() }
-
     $same = { param($expect)
         for ($i = 0; $i -lt $expect.Length; $i++) { if ($buf[$i] -ne $expect[$i]) { return $false } }
         return $true
     }
     if (& $same $patch.To)   { return 'patched' }
     if (& $same $patch.From) { return 'original' }
+    return 'unknown'
+}
+
+# Whether a file speaks Ukrainian: all its resources translated, none, or a mix.
+function Get-TranslationState([string]$rel) {
+    if (-not $script:IcqRoot) { return 'no folder' }
+    $path = Join-Path $script:IcqRoot $rel
+    if (-not (Test-Path -LiteralPath $path)) { return 'missing' }
+    $entry = (Get-Translation).files.$rel
+    if ((Get-Item -LiteralPath (Get-OriginalPath $path)).Length -ne $entry.size) { return 'other version' }
+    $sb = (Get-Translation).sendBy
+    $cur = Read-Resources $path @($entry.items | ForEach-Object { $_.Key })
+    $done = 0; $orig = 0
+    for ($i = 0; $i -lt $entry.items.Count; $i++) {
+        $it = $entry.items[$i]
+        $c = $cur[$i]
+        $blankUk = $rel -eq $sb.file -and $it.Key -eq $sb.Key -and (Test-SameBytes $c $sb.BlankUk)
+        $blankEn = $rel -eq $sb.file -and $it.Key -eq $sb.Key -and (Test-SameBytes $c $sb.BlankEn)
+        if ((Test-SameBytes $c $it.Bytes) -or $blankUk) { $done++ }
+        elseif ($blankEn -or ($c -and (Get-BytesSha $c) -eq $it.from)) { $orig++ }
+    }
+    if ($done -eq $entry.items.Count) { return 'patched' }
+    if ($orig -eq $entry.items.Count) { return 'original' }
+    if ($done -gt 0) { return 'partly' }
     return 'unknown'
 }
 
@@ -580,8 +759,7 @@ function Get-LinkState($rel) {
     return @{ State = $state; Info = "$($urls.Count) links, $dead dead" }
 }
 
-# --- применение --------------------------------------------------------------
-
+# --- applying -----------------------------------------------------------------
 
 function Get-StringAt([string]$path, [int]$offset, [int]$len) {
     $fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
@@ -606,49 +784,76 @@ function Get-StringState($sp) {
     return 'other version'
 }
 
-# Backs a binary up once, before its first change.
+# Backs a program file up once, before its first change: while it has no
+# backup, the file is still the original.
 function Backup-Bin([string]$path) {
     $backup = $path + $BinSuffix
     if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $path -Destination $backup }
 }
 
-# Puts back the original bytes of one place in a binary, from its backup.
-function Restore-Bytes([string]$path, [int]$offset, [int]$len) {
-    $backup = $path + $BinSuffix
-    if (-not (Test-Path -LiteralPath $backup)) { return $false }
-    $orig = [IO.File]::ReadAllBytes($backup)
-    $bytes = [IO.File]::ReadAllBytes($path)
-    if ($orig.Length -ne $bytes.Length) { return $false }
-    [Array]::Copy($orig, $offset, $bytes, $offset, $len)
-    [IO.File]::WriteAllBytes($path, $bytes)
-    return $true
+# Every program file the patch may change.
+function Get-BinaryFiles {
+    return @(@($Patches | ForEach-Object { $_.File }) + @($StringPatches | ForEach-Object { $_.File }) +
+        @(Get-TranslationFiles) | Select-Object -Unique)
 }
 
-# Returns the addresses that did not fit into the original string.
-function Set-StringPatches([string]$base, $skip) {
-    $tooLong = @()
-    foreach ($sp in $StringPatches) {
+# Builds one program file from its original with the wanted changes, and
+# writes it if it came out different. The links that did not fit are added to
+# $tooLong.
+function Build-Binary([string]$rel, [string]$domain, $skip, $tooLong) {
+    $path = Join-Path $script:IcqRoot $rel
+    if (-not (Test-Path -LiteralPath $path)) { return }
+    $bytes = [IO.File]::ReadAllBytes((Get-OriginalPath $path))
+
+    foreach ($p in @($Patches | Where-Object { $_.File -eq $rel -and -not $_.Resource })) {
+        if ((Test-Wanted $skip $p.What) -and $bytes.Length -eq $p.Size) {
+            [Array]::Copy($p.To, 0, $bytes, $p.Offset, $p.To.Length)
+        }
+    }
+
+    # Для зашитых строк берём только корень адреса: место в файле ограничено
+    # длиной исходной ссылки, и каждый символ на счету.
+    $root = Get-PagesRoot $domain
+    foreach ($sp in @($StringPatches | Where-Object { $_.File -eq $rel })) {
         if (-not (Test-Wanted $skip $sp.What)) { continue }
-        $path = Join-Path $script:IcqRoot $sp.File
-        if (-not (Test-Path -LiteralPath $path)) { continue }
-        # Для зашитых строк берём только корень адреса: место в файле
-        # ограничено длиной исходной ссылки, и каждый символ на счету.
-        $root = if ($base -match '^(https?://[^/]+)') { $Matches[1] } else { $base }
         $url = $root + $sp.Path
         if ($url.Length -gt $sp.Original.Length) {
-            $tooLong += ('{0} (needs {1}, room for {2})' -f $sp.Path, $url.Length, $sp.Original.Length)
+            $tooLong.Add(('{0} (needs {1}, room for {2})' -f $sp.Path, $url.Length, $sp.Original.Length))
             continue
         }
-        if ((Get-StringAt $path $sp.Offset $sp.Original.Length) -ceq $url) { continue }
-        Backup-Bin $path
-        $bytes = [IO.File]::ReadAllBytes($path)
         $new = [Text.Encoding]::ASCII.GetBytes($url)
         for ($i = 0; $i -lt $sp.Original.Length; $i++) {
             $bytes[$sp.Offset + $i] = if ($i -lt $new.Length) { $new[$i] } else { 0 }
         }
-        [IO.File]::WriteAllBytes($path, $bytes)
     }
-    return $tooLong
+
+    # The resources, by key; a later one for the same key wins.
+    $res = [ordered]@{}
+    $tr = Get-Translation
+    $entry = $tr.files.$rel
+    $ukrainian = $entry -and (Test-Wanted $skip "uk:$rel") -and $bytes.Length -eq $entry.size
+    if ($ukrainian) { foreach ($it in $entry.items) { $res[$it.Key] = $it.Bytes } }
+    $words = @($Patches | Where-Object { $_.Resource -eq 'sendBy' })[0]
+    if ($rel -eq $tr.sendBy.file -and (Test-Wanted $skip $words.What) -and $bytes.Length -eq $words.Size) {
+        $res[$tr.sendBy.Key] = if ($ukrainian) { $tr.sendBy.BlankUk } else { $tr.sendBy.BlankEn }
+    }
+
+    $tmp = [IO.Path]::GetTempFileName()
+    try {
+        [IO.File]::WriteAllBytes($tmp, $bytes)
+        if ($res.Count) {
+            $parts = @($res.Keys | ForEach-Object { , ($_ -split '\|') })
+            [IcqRes]::Write($tmp, [int[]]@($parts | ForEach-Object { [int]$_[0] }),
+                [string[]]@($parts | ForEach-Object { $_[1] }), [int[]]@($parts | ForEach-Object { [int]$_[2] }),
+                [byte[][]]@($res.Values))
+        }
+        $built = [IO.File]::ReadAllBytes($tmp)
+    } finally { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+
+    if (-not (Test-SameBytes $built ([IO.File]::ReadAllBytes($path)))) {
+        Backup-Bin $path
+        [IO.File]::WriteAllBytes($path, $built)
+    }
 }
 
 #_if PSScript
@@ -665,9 +870,12 @@ $Jobs = [ordered]@{
     'send-by'    = @{ Group = 'Services that are gone'; What = 'the "Send By: ICQ / SMS / Email" strip of the message window' }
     'links'      = @{ Group = 'Your server'; What = 'ICQ.com links in menus and help point at your server' }
     'sign-in'    = @{ Group = 'Your server'; What = 'ICQ signs in to your server, "Get an ICQ Number" too' }
+    # Off until chosen: not everyone wants the client in another language.
+    'ukrainian'  = @{ Group = 'Language'; What = 'Ukrainian interface: menus, windows and messages'; Off = $true }
 }
 $JobOf = @{ 'sign-in' = 'sign-in' }
 foreach ($p in $Patches) { if ($p.Job) { $JobOf[$p.What] = $p.Job } }
+foreach ($f in Get-TranslationFiles) { $JobOf["uk:$f"] = 'ukrainian' }
 foreach ($sp in $StringPatches) { $JobOf[$sp.What] = 'links' }
 foreach ($rel in $LinkFiles) { $JobOf[$rel] = 'links' }
 
@@ -693,6 +901,7 @@ function Get-Items([string]$domain) {
     if (-not $shown) { $shown = Get-SignInServer }
     if (-not $shown) { $shown = '(not set)' }
     & $add 'Sign-in server' 'sign-in' 'ICQ signs in to your server' "now $shown" (Get-SignInState $domain (Get-SavedBase))
+    foreach ($f in Get-TranslationFiles) { & $add 'Language' "uk:$f" "uk:$f" $f (Get-TranslationState $f) }
     return Merge-Jobs $items
 }
 
@@ -708,40 +917,10 @@ function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
     }
     $before = Get-Items $domain
 
-    foreach ($p in $Patches) {
-        $path = Join-Path $script:IcqRoot $p.File
-        if (-not (Test-Path -LiteralPath $path)) { continue }
-        $state = Get-State $p
-        if (Test-Wanted $skip $p.What) {
-            if ($state -ne 'original') { continue }
-            Backup-Bin $path
-            $bytes = [IO.File]::ReadAllBytes($path)
-            [Array]::Copy($p.To, 0, $bytes, $p.Offset, $p.To.Length)
-            [IO.File]::WriteAllBytes($path, $bytes)
-        } elseif ($state -eq 'patched') {
-            # The new code may be longer than the old; the backup has every
-            # byte it covered.
-            $len = [Math]::Max($p.From.Length, $p.To.Length)
-            if (-not (Restore-Bytes $path $p.Offset $len) -and $p.From.Length -eq $p.To.Length) {
-                $bytes = [IO.File]::ReadAllBytes($path)
-                [Array]::Copy($p.From, 0, $bytes, $p.Offset, $p.From.Length)
-                [IO.File]::WriteAllBytes($path, $bytes)
-            }
-        }
-    }
+    $tooLong = New-Object System.Collections.Generic.List[string]
+    foreach ($rel in Get-BinaryFiles) { Build-Binary $rel $domain $skip $tooLong }
 
-    # Зашитые в код адреса — до правки ссылок: обе части пишут в Icq.exe.
     $base = Get-Base $domain
-    $tooLong = Set-StringPatches $base $skip
-    foreach ($sp in $StringPatches) {
-        if ((Test-Wanted $skip $sp.What) -or (Get-StringState $sp) -ne 'patched') { continue }
-        $path = Join-Path $script:IcqRoot $sp.File
-        $bytes = [IO.File]::ReadAllBytes($path)
-        $orig = [Text.Encoding]::ASCII.GetBytes($sp.Original)
-        [Array]::Copy($orig, 0, $bytes, $sp.Offset, $orig.Length)
-        [IO.File]::WriteAllBytes($path, $bytes)
-    }
-
     foreach ($rel in $LinkFiles) {
         $path = Join-Path $script:IcqRoot $rel
         if (-not (Test-Path -LiteralPath $path)) { continue }
@@ -764,7 +943,8 @@ function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
         if ($script:convCount -gt 0) { [IO.File]::WriteAllText($path, $text, $Latin1) }
     }
 
-    if (Test-Wanted $skip 'sign-in') {
+    if ($NoRegistry) {
+    } elseif (Test-Wanted $skip 'sign-in') {
         [void](Set-SignInServer $domain $previous)
     } else {
         try { [void](Restore-SignInServer) } catch { }
@@ -777,12 +957,12 @@ function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
         if ($after[$i].State -eq 'patched') { $lines.Add('applied: ' + $after[$i].What) }
         else { $lines.Add('taken out: ' + $after[$i].What) }
     }
-    return @{ Lines = $lines; TooLong = $tooLong }
+    return @{ Lines = $lines; TooLong = @($tooLong) }
 }
 
 function Invoke-RestoreAll {
     $done = 0
-    foreach ($f in @($Patches.File) + @($StringPatches.File) | Select-Object -Unique) {
+    foreach ($f in Get-BinaryFiles) {
         $path = Join-Path $script:IcqRoot $f
         $backup = $path + $BinSuffix
         if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force; $done++ }
@@ -792,7 +972,7 @@ function Invoke-RestoreAll {
         $backup = $path + $LinkSuffix
         if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force; $done++ }
     }
-    $done += Restore-SignInServer
+    if (-not $NoRegistry) { $done += Restore-SignInServer }
     return $done
 }
 
@@ -810,6 +990,7 @@ if ($Apply -or $Restore) {
     if (-not (Test-Domain $domain)) { Write-Error "not a domain: '$Server' - pass -Server icq.example.org"; exit 1 }
     $set = New-Object 'System.Collections.Generic.HashSet[string]'
     foreach ($k in $Skip) { [void]$set.Add($k) }
+    foreach ($k in $Jobs.Keys) { if ($Jobs[$k].Off -and $Include -notcontains $k) { [void]$set.Add($k) } }
     try {
         $result = Invoke-ApplyAll $domain $previous $set
     } catch {
@@ -936,7 +1117,7 @@ function Update-View {
 $ui.FolderButton.Add_Click({ Select-Folder })
 $saved = Get-SavedBase
 if ($saved) { $ui.Server.Text = $saved }
-Read-PatchUnchecked $ui $SettingsKey
+Read-PatchUnchecked $ui $SettingsKey @($Jobs.Keys | Where-Object { $Jobs[$_].Off })
 $ui.Server.Add_Leave({ Update-View })
 
 [void](Add-PatchButton $ui 'Close' { $ui.Form.Close() })

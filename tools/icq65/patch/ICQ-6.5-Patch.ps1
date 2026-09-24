@@ -903,7 +903,7 @@ function Update-View {
 $ui.FolderButton.Add_Click({ Select-Folder })
 $saved = Get-SavedServer
 if ($saved) { $ui.Server.Text = $saved }
-Read-PatchUnchecked $ui $SettingsKey
+Read-PatchUnchecked $ui $SettingsKey @($Jobs.Keys | Where-Object { $Jobs[$_].Off })
 $ui.Server.Add_Leave({ Update-View })
 
 [void](Add-PatchButton $ui 'Close' { $ui.Form.Close() })
