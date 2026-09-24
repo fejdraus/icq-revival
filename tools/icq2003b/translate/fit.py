@@ -185,7 +185,17 @@ def fit_dialog(d, texts):
     left = []
     for i, c in enumerate(d['controls']):
         t = texts[i + 1]
-        if not isinstance(c['text'], str) or not t or fits(c, t):
+        if not isinstance(c['text'], str) or not t:
+            continue
+        # A label that wraps breaks only between words: a word that barely
+        # fits by the measure was seen cut in the client, so such a label
+        # is given the room there is, up to a tenth more than its longest word.
+        if wraps(c) and kind(c):
+            longest = max((width(w) for w in visible(t).split()), default=0) + (need(c, '') - 2)
+            short = int(du_x(longest * 1.1 - px_x(c['cx']))) + 1
+            if short > 0:
+                c['cx'] += min(short, room_right(d, i))
+        if fits(c, t):
             continue
         if not wraps(c):
             grow = int(du_x(need(c, t) - px_x(c['cx']))) + 1

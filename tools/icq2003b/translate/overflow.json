@@ -99,7 +99,7 @@
   "en": "place left",
   "uk": "place left",
   "where": "ICQMessagePlugin.dll dialog 9509 control 6",
-  "have": 21,
+  "have": 23,
   "need": 48,
   "control": {
    "cls": [
@@ -107,7 +107,7 @@
     130
    ],
    "style": 1073876993,
-   "cx": 14,
+   "cx": 15,
    "cy": 13
   }
  },
@@ -115,7 +115,7 @@
   "en": "place left",
   "uk": "place left",
   "where": "ICQMessagePlugin.dll dialog 9509 control 7",
-  "have": 23,
+  "have": 24,
   "need": 48,
   "control": {
    "cls": [
@@ -123,7 +123,7 @@
     130
    ],
    "style": 1073876993,
-   "cx": 15,
+   "cx": 16,
    "cy": 13
   }
  },
@@ -131,7 +131,7 @@
   "en": "place left",
   "uk": "place left",
   "where": "ICQMessagePlugin.dll dialog 9509 control 8",
-  "have": 23,
+  "have": 26,
   "need": 48,
   "control": {
    "cls": [
@@ -139,7 +139,7 @@
     130
    ],
    "style": 1073876993,
-   "cx": 15,
+   "cx": 17,
    "cy": 13
   }
  },
@@ -147,7 +147,7 @@
   "en": "place Mid",
   "uk": "place Mid",
   "where": "ICQMessagePlugin.dll dialog 9509 control 9",
-  "have": 23,
+  "have": 26,
   "need": 49,
   "control": {
    "cls": [
@@ -155,7 +155,7 @@
     130
    ],
    "style": 1073876993,
-   "cx": 15,
+   "cx": 17,
    "cy": 13
   }
  },
@@ -301,6 +301,22 @@
    "style": 1342308608,
    "cx": 276,
    "cy": 11
+  }
+ },
+ {
+  "en": "Keywords: (e.g. Navy)",
+  "uk": "Слова (напр. ВМС):",
+  "where": "ICQWhite.dll dialog 2510 control 49",
+  "have": 62,
+  "need": 100,
+  "control": {
+   "cls": [
+    "ord",
+    130
+   ],
+   "style": 1342308352,
+   "cx": 40,
+   "cy": 16
   }
  },
  {

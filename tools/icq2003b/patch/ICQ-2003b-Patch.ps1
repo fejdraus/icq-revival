@@ -581,6 +581,7 @@ function Get-Translation {
                 $it | Add-Member Bytes ([Convert]::FromBase64String($it.d))
                 $it | Add-Member Original ([Convert]::FromBase64String($it.from))
             }
+            if ($f.Value.whole) { $f.Value.whole | Add-Member Bytes ([Convert]::FromBase64String($f.Value.whole.d)) }
         }
         $sb = $t.sendBy
         $sb | Add-Member Key ('{0}|{1}|{2}' -f $sb.t, (Get-ResName $sb.n), $sb.l)
@@ -694,6 +695,13 @@ function Get-TranslationState([string]$rel) {
         }
     }
     $all = $items.Count + $places.Count
+    if ($entry.whole) {
+        # A text file written whole.
+        $all++
+        $bytes = [IO.File]::ReadAllBytes($path)
+        if (Test-SameBytes $bytes $entry.whole.Bytes) { $done++ }
+        elseif ((Get-BytesSha $bytes) -eq $entry.whole.from) { $orig++ }
+    }
     if ($done -eq $all) { return 'patched' }
     if ($orig -eq $all) { return 'original' }
     if ($done -gt 0) { return 'partly' }
@@ -852,6 +860,9 @@ function Build-Binary([string]$rel, [string]$domain, $skip, $tooLong) {
     $tr = Get-Translation
     $entry = $tr.files.$rel
     $ukrainian = $entry -and (Test-Wanted $skip "uk:$rel") -and $bytes.Length -eq $entry.size
+    if ($ukrainian -and $entry.whole) {
+        $bytes = [byte[]]$entry.whole.Bytes.Clone()
+    }
     if ($ukrainian) {
         foreach ($it in @($entry.items)) { $res[$it.Key] = $it.Bytes }
         foreach ($pl in @($entry.inplace | Where-Object { $_ })) { [Array]::Copy($pl.Bytes, 0, $bytes, [int]$pl.o, $pl.Bytes.Length) }

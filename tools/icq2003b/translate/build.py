@@ -144,6 +144,24 @@ def main():
             ('d', base64.b64encode(uk + b'\0' * (slot - len(uk))).decode())]))
         counts['texts'] += 1
 
+    # Text files of the client: every field after a tab that is a name the
+    # file lists gets its translation, and the file is written whole.
+    for rel, names in doc.get('datafiles', {}).items():
+        path = os.path.join(root, rel)
+        with open(path, 'rb') as f:
+            data = f.read()
+        lines = data.decode('cp1252').split('\r\n')
+        out = []
+        for line in lines:
+            parts = line.split('\t')
+            if len(parts) > 1 and parts[-1] in names and parts[-1] != 'note':
+                parts[-1] = names[parts[-1]]
+                counts['texts'] += 1
+            out.append('\t'.join(parts))
+        new = '\r\n'.join(out).encode('cp1251')
+        entry = files.setdefault(rel, OrderedDict([('size', len(data)), ('items', [])]))
+        entry['whole'] = OrderedDict([('from', sha(data)), ('d', base64.b64encode(new).decode())])
+
     payload = OrderedDict([('language', 'uk-UA'), ('files', files), ('sendBy', send_by)])
     raw = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     packed = base64.b64encode(gzip.compress(raw, 9, mtime=0)).decode()

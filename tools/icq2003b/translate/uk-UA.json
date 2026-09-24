@@ -1,5 +1,5 @@
 {
- "about": "Ukrainian interface of ICQ Pro 2003b. Key: the English text as the client has it; value: the Ukrainian one, the same text to keep it, null while not translated yet. Keep %s, %d, %1, \\n, \\t and the & of access keys.",
+ "about": "Ukrainian interface of ICQ Pro 2003b. Key: the English text as the client has it; value: the Ukrainian one, the same text to keep it, null while not translated yet. Keep %s, %d, %1, \\n, \\t and the & of access keys. \"datafiles\": text files of the client (DataFiles), written whole with the names in them translated - only the fields after a tab that match a key.",
  "texts": {
   "Arabic (ANSI)": "Арабська (ANSI)",
   "Baltic (ANSI)": "Балтійська (ANSI)",
@@ -2100,8 +2100,8 @@
   "Show the \"Welcome to ICQ\" screen when launching ICQ  ": "Показувати вікно «Ласкаво просимо до ICQ» під час запуску  ",
   "Access User Menu by left button": "Меню користувача лівою кнопкою",
   "Activate the option of right-clicking any file on your computer and sending that file to an ICQ user from your Contact List": "Надсилати будь-який файл користувачеві зі списку контактів через контекстне меню (права кнопка миші)",
-  "In addition to the English language you can also use the following language with ICQ: ": "Крім англійської, в ICQ можна використовувати таку мову: ",
-  "Multilingual Support": "Підтримка мов",
+  "In addition to the English language you can also use the following language with ICQ: ": "Мова повідомлень, крім англійської (кодування тексту): ",
+  "Multilingual Support": "Мова повідомлень",
   "Open Contact List when any type of ICQ message is received": "Відкривати список контактів при отриманні повідомлення",
   "ICQ Window, when open, always showing on your desktop": "Відкрите вікно ICQ завжди поверх інших",
   "\"Floating Users\" always showing on desktop": "«Плаваючі контакти» завжди поверх інших",
@@ -2465,7 +2465,7 @@
   "Search the ICQ Meet People directory by one or more of the following fields:": "Пошук у каталозі ICQ «Знайомства» за одним або кількома полями:",
   "I&nterests": "&Інтереси",
   "H&omepage": "&Сайт",
-  "Search &also in": "Шукати &й у",
+  "Search &also in": "Шукати &в",
   "   S&end Message": "   &Надіслати",
   "   &Go to user's Unified Messaging Center": "   &Перейти до центру повідомлень користувача",
   "Show Only &Online Users": "Лише в &мережі",
@@ -2474,9 +2474,9 @@
   "Company:": "Компанія:",
   "Department:": "Відділ:",
   "Organization Type:": "Тип організації:",
-  "Keywords: (e.g. UN)": "Слова: ООН",
+  "Keywords: (e.g. UN)": "Слова (напр. ООН):",
   "Past Affiliation:": "Минула належність:",
-  "Keywords: (e.g. Navy)": "Слова: ВМС",
+  "Keywords: (e.g. Navy)": "Слова (напр. ВМС):",
   "Search by Keyword:": "Пошук за словом:",
   "Match": "Збіг",
   "Save Search": "Зберегти пошук",
@@ -3671,6 +3671,69 @@
    "en": "System Notice",
    "uk": "Сповіщення",
    "note": "system notices"
+  },
+  {
+   "file": "ICQPref.dll",
+   "offset": "0x20A14",
+   "encoding": "ansi",
+   "en": "General Settings",
+   "uk": "Загальні",
+   "note": "tab of the \"Other\" preferences"
+  },
+  {
+   "file": "ICQRndP.dll",
+   "offset": "0x1422C",
+   "encoding": "ansi",
+   "en": "Finding",
+   "uk": "Пошук",
+   "note": "tab of \"Chat With A Friend\""
+  },
+  {
+   "file": "ICQRndP.dll",
+   "offset": "0x14234",
+   "encoding": "ansi",
+   "en": "Details",
+   "uk": "Дані",
+   "note": "tab of \"Chat With A Friend\""
+  },
+  {
+   "file": "icqmutl.dll",
+   "offset": "0x3AD68",
+   "encoding": "ansi",
+   "en": "Male",
+   "uk": "Чоловік",
+   "note": "gender list"
+  },
+  {
+   "file": "icqmutl.dll",
+   "offset": "0x3AD70",
+   "encoding": "ansi",
+   "en": "Female",
+   "uk": "Жінка",
+   "note": "gender list"
+  },
+  {
+   "file": "icqmutl.dll",
+   "offset": "0x3AD78",
+   "encoding": "ansi",
+   "en": "Not Specified",
+   "uk": "Не вказано",
+   "note": "gender list"
   }
- ]
+ ],
+ "datafiles": {
+  "DataFiles\\Random.txt": {
+   "note": "groups of \"Chat With A Friend\": number, tab, name; the number is what the server knows",
+   "General Chat": "Загальний чат",
+   "Romance": "Романтика",
+   "Games": "Ігри",
+   "Students": "Студенти",
+   "20 Something": "Кому за 20",
+   "30 Something": "Кому за 30",
+   "40 Something": "Кому за 40",
+   "50 Plus": "50 і більше",
+   "Seeking Women": "Шукаю жінку",
+   "Seeking Men": "Шукаю чоловіка"
+  }
+ }
 }
