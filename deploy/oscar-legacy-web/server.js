@@ -998,6 +998,15 @@ const PICTURE_TTL = 5 * 60 * 1000;
 // something absurd.
 const PICTURE_MAX = 16 * 1024 * 1024;
 
+// The address a request reached us at, for links the client is sent back to
+// follow: the Xtraz entries, the uploaded picture. nginx serves these pages
+// over HTTPS on 8102 and says so in X-Forwarded-Proto; requests straight to
+// 8101 are plain HTTP. The Host header carries the port either way.
+function selfBase(req) {
+  const proto = req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+  return `${proto}://${req.headers.host || ''}`;
+}
+
 function uploadPicture(ctx) {
   const type = ctx.req.headers['content-type'] || '';
   const boundary = /boundary=(?:"([^"]+)"|([^;]+))/.exec(type);
@@ -1040,7 +1049,7 @@ function uploadPicture(ctx) {
       ? { body: data, type: (kind ? kind[1].trim() : 'image/jpeg') }
       : { body: small.body, type: pictureType(small.body) });
     setTimeout(() => pictures.delete(id), PICTURE_TTL).unref();
-    const self = `http://${ctx.req.headers.host || ''}`;
+    const self = selfBase(ctx.req);
     send(ctx.res, 200, uploadReply(`${self}/icq/avatar/file/${id}`, '', small.note));
   });
 }
@@ -1184,7 +1193,7 @@ const ACTIONS = {
   // is fetched but rejected, which is why the gallery window kept reporting a
   // problem. This is the same wrapper with our page inside.
   xtrapage: (ctx) => {
-    const self = `http://${ctx.req.headers.host || ''}`;
+    const self = selfBase(ctx.req);
     const html = `<html>
 <head>
 <title>Xtraz</title>
@@ -1221,7 +1230,7 @@ const ACTIONS = {
     //
     // To offer the old entries again, serve `xtrazList` here: it is the
     // archived list, kept next to this file.
-    const self = `http://${ctx.req.headers.host || ''}`;
+    const self = selfBase(ctx.req);
     const body = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
 <xtrazList majorVer="1" minorVer="0" date="06-10-09">
   <groups/>
