@@ -39,6 +39,13 @@ These hold for the patches above and for any new one, for whatever client:
   the exe - the field starts empty and remembers what was typed.
 - **Everything changed is backed up first**, and "Restore original" puts back
   exactly the files as they were, byte for byte.
+- **Every change can be picked.** Each row has a tick, with "Select all" above
+  the list, and Apply makes the client match the ticks: a cleared change that
+  is in place is taken out again, from the backup, and a file with several
+  changes is rebuilt from its original with the ticked ones only. Rows that
+  are one change split over several places share a link and are ticked
+  together. The cleared rows are remembered; a scripted run takes them as
+  `-Skip`.
 - **Binaries are recognised by checksum** before a byte is written; another
   build of the client is refused rather than patched at the wrong offsets.
 - **One look, one name pattern.** A patch describes its window through

@@ -13,8 +13,26 @@
 # Папку клиента ищет сам: сначала рядом с собой (положили в каталог ICQ или
 # взяли портативную сборку), затем в реестре, затем по стандартному пути.
 #
+# In the window each change has a tick, and Apply makes the client match the
+# ticks: what is ticked is put in, what is cleared and in place is taken out
+# again, from the backup of the file.
+#
+# Without arguments the window opens. For a scripted run:
+#   ICQ-2003b-Patch.ps1 -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>]
+#   ICQ-2003b-Patch.ps1 -Restore [-Root <folder>]
+#
 # The window is the one all client patches share, ../../common/PatchWindow.ps1.
 # Built into ICQ-2003b-Patch.exe, with its icon, by ../../common/Build-Patches.ps1.
+
+param(
+    [switch]$Apply,
+    [switch]$Restore,
+    [string]$Root,
+    [string]$Server,
+    # Changes to leave out - or take out, if in place - by the names the
+    # window lists them under (the link file's path, sign-in for that row).
+    [string[]]$Skip
+)
 
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 
@@ -93,6 +111,7 @@ $Patches = @(
         Sha256From = 'AFC36BD67D353EECA1F952C3ED56D372FE93C018D58C966F0A930EDEE5AC887B'
         Sha256To   = 'E40BEEE28D67ECACA0A10182F215CB2901F8CD4A56F85C667C0AE8E09E18E486'
         What = 'tick boxes ICQ / SMS / Email are hidden'
+        Link = 'send-by boxes'
     }
     [pscustomobject]@{
         File = 'ICQMessagePlugin.dll'; Offset = 0x7B84
@@ -102,6 +121,7 @@ $Patches = @(
         Sha256From = 'AFC36BD67D353EECA1F952C3ED56D372FE93C018D58C966F0A930EDEE5AC887B'
         Sha256To   = 'E40BEEE28D67ECACA0A10182F215CB2901F8CD4A56F85C667C0AE8E09E18E486'
         What = 'the same for the group around them'
+        Link = 'send-by boxes'
     }
     [pscustomobject]@{
         # Second layer: the words. There is no control behind them - a walk of
@@ -135,6 +155,7 @@ $Patches = @(
         Sha256From = 'B9E7997D2E60A5E172F09376550596B61C871A45B9804243F23F07D2B14CECD0'
         Sha256To   = '5E126B5C13CF0400FAAF43BBA6631E497F70EC7C85C41B5645BBB5F700CA2370'
         What = 'the frame is pulled up to the Send button'
+        Link = 'send-by frame'
     }
     [pscustomobject]@{
         File = 'Skin\IcqPro.skn'; Offset = 0x41782
@@ -144,6 +165,7 @@ $Patches = @(
         Sha256From = 'B9E7997D2E60A5E172F09376550596B61C871A45B9804243F23F07D2B14CECD0'
         Sha256To   = '5E126B5C13CF0400FAAF43BBA6631E497F70EC7C85C41B5645BBB5F700CA2370'
         What = 'its rectangle follows the offset'
+        Link = 'send-by frame'
     }
 )
 
@@ -314,7 +336,8 @@ function Restore-SignInServer {
         $saved = (Get-ItemProperty -LiteralPath $SettingsKey -ErrorAction Stop).OriginalServerHost
     } catch { return 0 }
     if (-not $saved) { return 0 }
-    Set-ItemProperty -LiteralPath $k -Name $SignInValue -Value $saved
+    # The saved original is only let go once it is back in place.
+    try { Set-ItemProperty -LiteralPath $k -Name $SignInValue -Value $saved -ErrorAction Stop } catch { return 0 }
     Remove-ItemProperty -LiteralPath $SettingsKey -Name OriginalServerHost -ErrorAction SilentlyContinue
     return 1
 }
@@ -423,8 +446,8 @@ function Get-State($patch) {
 
 # --- перенос ссылок ----------------------------------------------------------
 
-function Get-Base {
-    return (Get-PagesRoot (Get-Domain $ui.Server.Text)) + $PagesPath
+function Get-Base([string]$domain) {
+    return (Get-PagesRoot $domain) + $PagesPath
 }
 
 function Get-UrlHost([string]$url) {
@@ -524,10 +547,29 @@ function Get-StringState($sp) {
     return 'other version'
 }
 
-# Возвращает список адресов, которые не влезли в исходную строку.
-function Set-StringPatches([string]$base) {
+# Backs a binary up once, before its first change.
+function Backup-Bin([string]$path) {
+    $backup = $path + $BinSuffix
+    if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $path -Destination $backup }
+}
+
+# Puts back the original bytes of one place in a binary, from its backup.
+function Restore-Bytes([string]$path, [int]$offset, [int]$len) {
+    $backup = $path + $BinSuffix
+    if (-not (Test-Path -LiteralPath $backup)) { return $false }
+    $orig = [IO.File]::ReadAllBytes($backup)
+    $bytes = [IO.File]::ReadAllBytes($path)
+    if ($orig.Length -ne $bytes.Length) { return $false }
+    [Array]::Copy($orig, $offset, $bytes, $offset, $len)
+    [IO.File]::WriteAllBytes($path, $bytes)
+    return $true
+}
+
+# Returns the addresses that did not fit into the original string.
+function Set-StringPatches([string]$base, $skip) {
     $tooLong = @()
     foreach ($sp in $StringPatches) {
+        if (-not (Test-Wanted $skip $sp.What)) { continue }
         $path = Join-Path $script:IcqRoot $sp.File
         if (-not (Test-Path -LiteralPath $path)) { continue }
         # Для зашитых строк берём только корень адреса: место в файле
@@ -538,15 +580,173 @@ function Set-StringPatches([string]$base) {
             $tooLong += ('{0} (needs {1}, room for {2})' -f $sp.Path, $url.Length, $sp.Original.Length)
             continue
         }
+        if ((Get-StringAt $path $sp.Offset $sp.Original.Length) -ceq $url) { continue }
+        Backup-Bin $path
         $bytes = [IO.File]::ReadAllBytes($path)
         $new = [Text.Encoding]::ASCII.GetBytes($url)
         for ($i = 0; $i -lt $sp.Original.Length; $i++) {
             $bytes[$sp.Offset + $i] = if ($i -lt $new.Length) { $new[$i] } else { 0 }
         }
         [IO.File]::WriteAllBytes($path, $bytes)
-        $script:stringsDone++
     }
     return $tooLong
+}
+
+# Whether a change is wanted: all of them, unless a key is in $skip - the
+# rows cleared in the window.
+function Test-Wanted($skip, [string]$key) { return -not ($skip -and $skip.Contains($key)) }
+
+# Every change with its current state, in the order the window lists them.
+# The key names a change for the selection; rows with the same Link are one
+# change and are ticked together.
+function Get-Items([string]$domain) {
+    $items = New-Object System.Collections.Generic.List[object]
+    $add = { param($group, $key, $what, $where, $state, $link)
+        $items.Add([pscustomobject]@{ Group = $group; Key = $key; What = $what; Where = $where; State = $state; Link = $link })
+    }
+    foreach ($p in $Patches) {
+        & $add 'Code' $p.What $p.What ('{0} at 0x{1:X}' -f $p.File, $p.Offset) (Get-State $p) $p.Link
+    }
+    foreach ($sp in $StringPatches) {
+        & $add 'Links inside the executable' $sp.What $sp.What ('{0} at 0x{1:X}' -f $sp.Path, $sp.Offset) (Get-StringState $sp) ''
+    }
+    foreach ($rel in $LinkFiles) {
+        $s = Get-LinkState $rel
+        $name = [IO.Path]::GetFileName($rel)
+        $where = if ($s.Info) { "$name, $($s.Info)" } else { $name }
+        & $add 'Links' $rel "menu items in $name point at your server" $where $s.State ''
+    }
+    $current = Get-SignInServer
+    $state = if (-not (Get-DefaultPrefsKey)) { 'missing' } elseif ($domain -and $current -eq $domain) { 'patched' } else { 'original' }
+    $shown = if ($current) { $current } else { '(not set)' }
+    & $add 'Sign-in server' 'sign-in' 'new accounts and "Get an ICQ Number" connect to your server' "Default Server Host, now $shown" $state ''
+    return $items
+}
+
+# Makes the client match the selection. Returns what changed, one line per
+# change, and the links that did not fit.
+function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
+    $wrong = @($Patches | Where-Object { (Test-Wanted $skip $_.What) -and (Get-State $_) -eq 'other version' } |
+        ForEach-Object { $_.File } | Select-Object -Unique)
+    if ($wrong.Count -gt 0) {
+        throw ("These files do not match ICQ Pro 2003b build 3916:`n`n  " + ($wrong -join "`n  ") +
+            "`n`nThe code patches are tied to exact offsets in that build. Applying them to " +
+            "another version would overwrite unrelated code, so nothing was changed.")
+    }
+    $before = Get-Items $domain
+
+    foreach ($p in $Patches) {
+        $path = Join-Path $script:IcqRoot $p.File
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $state = Get-State $p
+        if (Test-Wanted $skip $p.What) {
+            if ($state -ne 'original') { continue }
+            Backup-Bin $path
+            $bytes = [IO.File]::ReadAllBytes($path)
+            [Array]::Copy($p.To, 0, $bytes, $p.Offset, $p.To.Length)
+            [IO.File]::WriteAllBytes($path, $bytes)
+        } elseif ($state -eq 'patched') {
+            # The new code may be longer than the old; the backup has every
+            # byte it covered.
+            $len = [Math]::Max($p.From.Length, $p.To.Length)
+            if (-not (Restore-Bytes $path $p.Offset $len) -and $p.From.Length -eq $p.To.Length) {
+                $bytes = [IO.File]::ReadAllBytes($path)
+                [Array]::Copy($p.From, 0, $bytes, $p.Offset, $p.From.Length)
+                [IO.File]::WriteAllBytes($path, $bytes)
+            }
+        }
+    }
+
+    # Зашитые в код адреса — до правки ссылок: обе части пишут в Icq.exe.
+    $base = Get-Base $domain
+    $tooLong = Set-StringPatches $base $skip
+    foreach ($sp in $StringPatches) {
+        if ((Test-Wanted $skip $sp.What) -or (Get-StringState $sp) -ne 'patched') { continue }
+        $path = Join-Path $script:IcqRoot $sp.File
+        $bytes = [IO.File]::ReadAllBytes($path)
+        $orig = [Text.Encoding]::ASCII.GetBytes($sp.Original)
+        [Array]::Copy($orig, 0, $bytes, $sp.Offset, $orig.Length)
+        [IO.File]::WriteAllBytes($path, $bytes)
+    }
+
+    foreach ($rel in $LinkFiles) {
+        $path = Join-Path $script:IcqRoot $rel
+        if (-not (Test-Path -LiteralPath $path)) { continue }
+        $backup = $path + $LinkSuffix
+        if (-not (Test-Wanted $skip $rel)) {
+            if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force }
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $path -Destination $backup }
+        $script:convCount = 0
+        $text = [IO.File]::ReadAllText($path, $Latin1)
+        # Links pointed at a previous server move to the new one as they are;
+        # the rest is converted from ICQ.com as before.
+        if ($previous -and $previous -ne $domain) {
+            $old = Get-PagesRoot $previous
+            $n = ([regex]::Matches($text, [regex]::Escape($old))).Count
+            if ($n) { $text = $text.Replace($old, (Get-PagesRoot $domain)); $script:convCount += $n }
+        }
+        $text = Convert-LinkText $text $base ([ref]$null)
+        if ($script:convCount -gt 0) { [IO.File]::WriteAllText($path, $text, $Latin1) }
+    }
+
+    if (Test-Wanted $skip 'sign-in') {
+        [void](Set-SignInServer $domain)
+    } else {
+        try { [void](Restore-SignInServer) } catch { }
+    }
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $after = Get-Items $domain
+    for ($i = 0; $i -lt $after.Count; $i++) {
+        if ($after[$i].State -eq $before[$i].State) { continue }
+        if ($after[$i].State -eq 'patched') { $lines.Add('applied: ' + $after[$i].What) }
+        else { $lines.Add('taken out: ' + $after[$i].What) }
+    }
+    return @{ Lines = $lines; TooLong = $tooLong }
+}
+
+function Invoke-RestoreAll {
+    $done = 0
+    foreach ($f in @($Patches.File) + @($StringPatches.File) | Select-Object -Unique) {
+        $path = Join-Path $script:IcqRoot $f
+        $backup = $path + $BinSuffix
+        if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force; $done++ }
+    }
+    foreach ($rel in $LinkFiles) {
+        $path = Join-Path $script:IcqRoot $rel
+        $backup = $path + $LinkSuffix
+        if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force; $done++ }
+    }
+    $done += Restore-SignInServer
+    return $done
+}
+
+# --- scripted run -------------------------------------------------------------
+
+if ($Apply -or $Restore) {
+    $script:IcqRoot = if ($Root) { [IO.Path]::GetFullPath($Root) } else { Find-IcqRoot }
+    if (-not (Test-IcqFolder $script:IcqRoot)) { Write-Error "ICQ Pro 2003b folder not found: $($script:IcqRoot)"; exit 1 }
+    if ($Restore) {
+        Write-Output "files restored: $(Invoke-RestoreAll)"
+        exit 0
+    }
+    $previous = Get-SavedBase
+    $domain = if ($Server) { Get-Domain $Server } else { $previous }
+    if (-not (Test-Domain $domain)) { Write-Error "not a domain: '$Server' - pass -Server icq.example.org"; exit 1 }
+    $set = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($k in $Skip) { [void]$set.Add($k) }
+    try {
+        $result = Invoke-ApplyAll $domain $previous $set
+    } catch {
+        Write-Error $_.Exception.Message
+        exit 1
+    }
+    foreach ($line in $result.Lines) { Write-Output $line }
+    foreach ($t in $result.TooLong) { Write-Output "did not fit: $t" }
+    Write-Output "changes made: $($result.Lines.Count)"
+    exit 0
 }
 
 function Test-Ready {
@@ -569,20 +769,6 @@ function Test-Ready {
 
 function Invoke-Apply {
     if (-not (Test-Ready)) { return }
-
-    $wrong = @()
-    foreach ($p in $Patches) {
-        if ((Get-State $p) -eq 'other version') { $wrong += $p.File }
-    }
-    if ($wrong.Count -gt 0) {
-        [Windows.Forms.MessageBox]::Show(
-            "These files do not match ICQ Pro 2003b build 3916:`n`n  " + ($wrong -join "`n  ") +
-            "`n`nThe code patches are tied to exact offsets in that build. Applying them to " +
-            "another version would overwrite unrelated code, so nothing was changed.",
-            'Wrong client version', 'OK', 'Error') | Out-Null
-        return
-    }
-
     # Checked before anything is written.
     $domain = Get-Domain $ui.Server.Text
     if (-not (Test-Domain $domain)) {
@@ -592,62 +778,27 @@ function Invoke-Apply {
         return
     }
     $ui.Server.Text = $domain
-    $previous = Get-SavedBase
-
-    $bin = 0
-    foreach ($p in $Patches) {
-        $path = Join-Path $script:IcqRoot $p.File
-        if (-not (Test-Path -LiteralPath $path)) { continue }
-        if ((Get-State $p) -ne 'original') { continue }
-        $backup = $path + $BinSuffix
-        if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $path -Destination $backup }
-        $bytes = [IO.File]::ReadAllBytes($path)
-        [Array]::Copy($p.To, 0, $bytes, $p.Offset, $p.To.Length)
-        [IO.File]::WriteAllBytes($path, $bytes)
-        $bin++
+    Save-PatchUnchecked $ui $SettingsKey
+    try {
+        $result = Invoke-ApplyAll $domain (Get-SavedBase) $ui.Unchecked
+    } catch {
+        [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Wrong client version', 'OK', 'Error') | Out-Null
+        Update-View
+        return
     }
-
-    $base = Get-Base
     Save-Base $domain
-    $signIn = Set-SignInServer $domain
-
-    # Зашитые в код адреса — до правки ссылок: обе части пишут в Icq.exe.
-    $script:stringsDone = 0
-    $tooLong = Set-StringPatches $base
-
-    $script:convCount = 0
-    $files = 0
-    foreach ($rel in $LinkFiles) {
-        $path = Join-Path $script:IcqRoot $rel
-        if (-not (Test-Path -LiteralPath $path)) { continue }
-        $backup = $path + $LinkSuffix
-        if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $path -Destination $backup }
-        $before = $script:convCount
-        $text = [IO.File]::ReadAllText($path, $Latin1)
-        # Links pointed at a previous server move to the new one as they are;
-        # the rest is converted from ICQ.com as before.
-        if ($previous -and $previous -ne $domain) {
-            $old = Get-PagesRoot $previous
-            $n = ([regex]::Matches($text, [regex]::Escape($old))).Count
-            if ($n) { $text = $text.Replace($old, (Get-PagesRoot $domain)); $script:convCount += $n }
-        }
-        $text = Convert-LinkText $text $base ([ref]$null)
-        if ($script:convCount -ne $before) {
-            [IO.File]::WriteAllText($path, $text, $Latin1)
-            $files++
-        }
-    }
-
     Update-View
-    $msg = "Code patches applied: $bin`nLinks redirected: $($script:convCount) in $files files" +
-           "`nLinks inside the executable: $($script:stringsDone)"
-    if ($tooLong.Count -gt 0) {
-        $msg += "`n`nThese did not fit and were left alone:`n  " + ($tooLong -join "`n  ") +
+
+    $done = $result.Lines
+    $msg = if ($done.Count) { "Changes made: $($done.Count)`n`n  " + (@($done | Select-Object -First 12) -join "`n  ") } else { 'The client already matches the selection.' }
+    if ($done.Count -gt 12) { $msg += "`n  ..." }
+    if ($result.TooLong.Count -gt 0) {
+        $msg += "`n`nThese did not fit and were left alone:`n  " + ($result.TooLong -join "`n  ") +
                 "`n`nA link stored inside the executable cannot be made longer than the original," +
                 " so a shorter server address would fix it."
     }
-    if ($signIn) {
-        $msg += "`n`nNew accounts and ""Get an ICQ Number"" now connect to $domain." +
+    if ((Test-PatchSelected $ui 'sign-in') -and (Get-SignInServer) -eq $domain) {
+        $msg += "`n`nNew accounts and ""Get an ICQ Number"" connect to $domain." +
                 " An account that exists already keeps its own server: set it under" +
                 " the connection settings of that account."
     }
@@ -657,18 +808,7 @@ function Invoke-Apply {
 
 function Invoke-Restore {
     if (-not (Test-Ready)) { return }
-    $done = 0
-    foreach ($p in $Patches) {
-        $path = Join-Path $script:IcqRoot $p.File
-        $backup = $path + $BinSuffix
-        if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force; $done++ }
-    }
-    foreach ($rel in $LinkFiles) {
-        $path = Join-Path $script:IcqRoot $rel
-        $backup = $path + $LinkSuffix
-        if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force; $done++ }
-    }
-    $done += Restore-SignInServer
+    $done = Invoke-RestoreAll
     Update-View
     [Windows.Forms.MessageBox]::Show("Files restored: $done.", 'Done', 'OK', 'Information') | Out-Null
 }
@@ -706,30 +846,11 @@ function Update-View {
     Set-PatchFolder $ui $script:IcqRoot
     Clear-PatchList $ui
     if ($script:IcqRoot) {
-        $g = Add-PatchGroup $ui 'Code'
-        foreach ($p in $Patches) {
-            Add-PatchRow $ui $g @($p.What, ('{0} at 0x{1:X}' -f $p.File, $p.Offset)) (Get-State $p)
+        $groups = @{}
+        foreach ($it in Get-Items (Get-Domain $ui.Server.Text)) {
+            if (-not $groups.ContainsKey($it.Group)) { $groups[$it.Group] = Add-PatchGroup $ui $it.Group }
+            Add-PatchRow $ui $groups[$it.Group] @($it.What, $it.Where) $it.State $it.Key $it.Link
         }
-
-        $g = Add-PatchGroup $ui 'Links inside the executable'
-        foreach ($sp in $StringPatches) {
-            Add-PatchRow $ui $g @($sp.What, ('{0} at 0x{1:X}' -f $sp.Path, $sp.Offset)) (Get-StringState $sp)
-        }
-
-        $g = Add-PatchGroup $ui 'Links'
-        foreach ($rel in $LinkFiles) {
-            $s = Get-LinkState $rel
-            $what = 'menu items point at your server'
-            if ($s.Info) { $what += " ($($s.Info))" }
-            Add-PatchRow $ui $g @($what, [IO.Path]::GetFileName($rel)) $s.State
-        }
-
-        $g = Add-PatchGroup $ui 'Sign-in server'
-        $current = Get-SignInServer
-        $wanted = Get-Domain $ui.Server.Text
-        $state = if (-not (Get-DefaultPrefsKey)) { 'missing' } elseif ($wanted -and $current -eq $wanted) { 'patched' } else { 'original' }
-        $shown = if ($current) { $current } else { '(not set)' }
-        Add-PatchRow $ui $g @(('new accounts and "Get an ICQ Number" connect to ' + $shown), 'Default Server Host') $state
     }
     Complete-PatchList $ui
 }
@@ -737,6 +858,7 @@ function Update-View {
 $ui.FolderButton.Add_Click({ Select-Folder })
 $saved = Get-SavedBase
 if ($saved) { $ui.Server.Text = $saved }
+Read-PatchUnchecked $ui $SettingsKey
 $ui.Server.Add_Leave({ Update-View })
 
 [void](Add-PatchButton $ui 'Close' { $ui.Form.Close() })

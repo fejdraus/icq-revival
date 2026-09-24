@@ -283,7 +283,13 @@ function New-PatchWindow {
     $scale = $g.DpiX / 96.0
     $g.Dispose()
 
-    $ui = @{ Scale = $scale; Accent = (ConvertTo-PatchColor $AccentBottom); Rows = New-Object System.Collections.ArrayList }
+    $ui = @{
+        Scale = $scale; Accent = (ConvertTo-PatchColor $AccentBottom); Rows = New-Object System.Collections.ArrayList
+        # What the user took the tick off, by key: kept across refills of the
+        # list, so a re-check does not undo a choice not applied yet.
+        Unchecked = New-Object 'System.Collections.Generic.HashSet[string]'
+        Filling = $false; Syncing = $false
+    }
     $W = 820
 
     $form = New-Object Windows.Forms.Form
@@ -393,6 +399,10 @@ function New-PatchWindow {
     $list.ShowItemToolTips = $true
     $list.BorderStyle = 'None'
     $list.ForeColor = Get-PatchColor 'Ink'
+    $list.CheckBoxes = $true
+    # Handlers outlive this function, so they find the window through Tag.
+    $list.Tag = $ui
+    $list.Add_ItemChecked({ param($sender, $e) Update-PatchChecks $sender.Tag $e.Item })
     $marks = New-Object Windows.Forms.ImageList
     $marks.ColorDepth = 'Depth32Bit'
     $m = [int](18 * $scale)
@@ -402,6 +412,35 @@ function New-PatchWindow {
     foreach ($c in $Columns) { [void]$list.Columns.Add($c[0], [int]($c[1] * $scale)) }
     [void]$list.Columns.Add('State', [int](110 * $scale))
     $card.Controls.Add($list)
+
+    # above the list: tick or clear everything at once
+    $bar = New-Object Windows.Forms.Panel
+    $bar.Width = $card.Width - 2
+    $bar.Dock = 'Top'
+    $bar.Height = 40
+    $ui.All = New-Object Windows.Forms.CheckBox
+    $ui.All.Text = 'Select all'
+    $ui.All.Font = New-Object Drawing.Font('Segoe UI Semibold', 9.5)
+    $ui.All.AutoSize = $true
+    $ui.All.AutoCheck = $false
+    $ui.All.Cursor = [Windows.Forms.Cursors]::Hand
+    $ui.All.Location = New-Object Drawing.Point(12, 10)
+    $ui.All.Tag = $ui
+    $ui.All.Add_Click({ param($sender, $e) Switch-PatchAll $sender.Tag })
+    $bar.Controls.Add($ui.All)
+    $ui.Picked = New-Object Windows.Forms.Label
+    $ui.Picked.ForeColor = Get-PatchColor 'Dim'
+    $ui.Picked.Location = New-Object Drawing.Point(130, 12)
+    $ui.Picked.Size = New-Object Drawing.Size(($bar.Width - 142), 20)
+    $ui.Picked.Anchor = 'Top, Left, Right'
+    $ui.Picked.TextAlign = 'MiddleRight'
+    $bar.Controls.Add($ui.Picked)
+    $sep = New-Object Windows.Forms.Panel
+    $sep.Dock = 'Bottom'
+    $sep.Height = 1
+    $sep.BackColor = ConvertTo-PatchColor '#D5DCD8'
+    $bar.Controls.Add($sep)
+    $card.Controls.Add($bar)
 
     # the bottom bar: how far along it is, and the buttons
     $footer = New-Object Windows.Forms.Panel
@@ -461,6 +500,7 @@ function Set-PatchFolder($ui, [string]$path) {
 }
 
 function Clear-PatchList($ui) {
+    $ui.Filling = $true
     $ui.List.BeginUpdate()
     $ui.List.Items.Clear()
     $ui.List.Groups.Clear()
@@ -474,13 +514,18 @@ function Add-PatchGroup($ui, [string]$name) {
 }
 
 # $cells fills the columns before State; the tooltip shows the whole first one.
-function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state) {
+# $key names the row for the selection; rows sharing a $link are one change
+# split over several places, and are ticked and cleared together.
+function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state, [string]$key, [string]$link) {
     $view = Get-PatchStateView $state
     $text = $cells[0]
     if ($text) { $text = $text.Substring(0, 1).ToUpper() + $text.Substring(1) }
     $item = New-Object Windows.Forms.ListViewItem($text, $view.Mark)
     $item.Group = $group
     $item.ToolTipText = $text
+    $item.Name = $key
+    $item.Tag = $link
+    $item.Checked = -not $ui.Unchecked.Contains($key)
     $item.UseItemStyleForSubItems = $false
     for ($i = 1; $i -lt $cells.Count; $i++) {
         $s = $item.SubItems.Add($cells[$i])
@@ -500,21 +545,86 @@ function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state) {
 # Ends a refill of the list and sums it up in the bottom bar.
 function Complete-PatchList($ui) {
     $ui.List.EndUpdate()
-    $counted = @($ui.Rows | Where-Object { $_.Counts })
-    $done = @($counted | Where-Object { $_.Mark -eq 'done' }).Count
-    $warn = @($counted | Where-Object { $_.Mark -eq 'warn' }).Count
-    if ($counted.Count -eq 0) {
+    $ui.Filling = $false
+    Update-PatchSummary $ui
+}
+
+function Update-PatchChecks($ui, $item) {
+    if ($ui.Filling) { return }
+    if ($item.Checked) { [void]$ui.Unchecked.Remove($item.Name) } else { [void]$ui.Unchecked.Add($item.Name) }
+    if ($item.Tag -and -not $ui.Syncing) {
+        $ui.Syncing = $true
+        foreach ($other in $ui.List.Items) {
+            if ($other.Tag -eq $item.Tag -and $other.Checked -ne $item.Checked) { $other.Checked = $item.Checked }
+        }
+        $ui.Syncing = $false
+    }
+    if (-not $ui.Syncing) { Update-PatchSummary $ui }
+}
+
+# Everything ticked becomes everything cleared; anything else, all ticked.
+function Switch-PatchAll($ui) {
+    $items = @($ui.List.Items)
+    $target = @($items | Where-Object { -not $_.Checked }).Count -gt 0
+    $ui.Syncing = $true
+    foreach ($item in $items) { if ($item.Checked -ne $target) { $item.Checked = $target } }
+    $ui.Syncing = $false
+    Update-PatchSummary $ui
+}
+
+# Whether a row is to be applied: the selection a patch acts on.
+function Test-PatchSelected($ui, [string]$key) { return -not $ui.Unchecked.Contains($key) }
+
+function Update-PatchSummary($ui) {
+    $items = @($ui.List.Items)
+    $ticked = @($items | Where-Object { $_.Checked }).Count
+    $ui.All.CheckState = if ($items.Count -gt 0 -and $ticked -eq $items.Count) { 'Checked' }
+        elseif ($ticked -eq 0) { 'Unchecked' } else { 'Indeterminate' }
+    $ui.Picked.Text = if ($items.Count) { "$ticked of $($items.Count) selected" } else { '' }
+
+    # What Apply would do: put in what is ticked and missing, take out what
+    # is in place and cleared.
+    $counted = 0; $done = 0; $warn = 0; $pending = 0
+    for ($i = 0; $i -lt $items.Count; $i++) {
+        $view = $ui.Rows[$i]
+        if (-not $view.Counts) { continue }
+        $counted++
+        if ($view.Mark -eq 'done') { $done++ }
+        if ($view.Mark -eq 'warn') { $warn++ }
+        if (($items[$i].Checked -and $view.Mark -eq 'todo') -or (-not $items[$i].Checked -and $view.Mark -eq 'done')) { $pending++ }
+    }
+    if ($counted -eq 0) {
         $ui.Summary.Text = ''
     } elseif ($warn -gt 0) {
         $ui.Summary.Text = "$warn item(s) do not match this client version"
         $ui.Summary.ForeColor = ConvertTo-PatchColor '#A24F0B'
-    } elseif ($done -eq $counted.Count) {
+    } elseif ($pending -gt 0) {
+        $ui.Summary.Text = "Apply will change $pending of $counted"
+        $ui.Summary.ForeColor = ConvertTo-PatchColor '#141A17'
+    } elseif ($done -eq $counted) {
         $ui.Summary.Text = "All $done changes are in place"
         $ui.Summary.ForeColor = ConvertTo-PatchColor '#17703C'
     } else {
-        $ui.Summary.Text = "$done of $($counted.Count) changes in place"
-        $ui.Summary.ForeColor = ConvertTo-PatchColor '#141A17'
+        $ui.Summary.Text = "Selection in place: $done of $counted applied"
+        $ui.Summary.ForeColor = ConvertTo-PatchColor '#17703C'
     }
+}
+
+# The cleared rows are remembered between runs, under the patch's own key.
+function Read-PatchUnchecked($ui, [string]$settingsKey) {
+    try {
+        foreach ($k in @((Get-ItemProperty -LiteralPath $settingsKey -ErrorAction Stop).Unchecked)) {
+            if ($k) { [void]$ui.Unchecked.Add($k) }
+        }
+    } catch { }
+}
+
+function Save-PatchUnchecked($ui, [string]$settingsKey) {
+    try {
+        if (-not (Test-Path $settingsKey)) { New-Item -Path $settingsKey -Force | Out-Null }
+        $values = [string[]]@($ui.Unchecked)
+        New-ItemProperty -LiteralPath $settingsKey -Name Unchecked -PropertyType MultiString -Value $values -Force | Out-Null
+    } catch { }
 }
 
 function Show-PatchWindow($ui) {

@@ -21,11 +21,16 @@
 # Every file is backed up next to itself before the first change, and
 # "Restore original" puts them all back. The user's profile is never touched.
 #
+# In the window each change has a tick, and Apply makes the client match the
+# ticks: what is ticked is put in, what is cleared and in place is taken out
+# again. A file with several changes is rebuilt from its backup with the
+# ticked ones only, so taking one out leaves exactly the original behind.
+#
 # The folder is found on its own: next to this tool first (dropped into the ICQ
 # folder), then from the registry, then the standard path.
 #
 # Without arguments the window opens. For a scripted run:
-#   ICQ-6.5-Patch.ps1 -Apply   [-Root <folder>] [-Server <domain>]
+#   ICQ-6.5-Patch.ps1 -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>]
 #   ICQ-6.5-Patch.ps1 -Restore [-Root <folder>]
 #
 # The window is the one all client patches share, ../../common/PatchWindow.ps1.
@@ -35,7 +40,10 @@ param(
     [switch]$Apply,
     [switch]$Restore,
     [string]$Root,
-    [string]$Server
+    [string]$Server,
+    # Changes to leave out - or take out, if in place - by the names the
+    # window lists them under (links, whitelist and sign-in for those rows).
+    [string[]]$Skip
 )
 
 $Headless = $Apply -or $Restore
@@ -488,123 +496,148 @@ function Get-StripState($s) {
 
 # --- applying -----------------------------------------------------------------
 
-function Invoke-ApplyAll([string]$domain) {
-    $report = New-Object System.Collections.Generic.List[string]
+# Whether a change is wanted: all of them, unless a key is in $skip - the
+# rows cleared in the window.
+function Test-Wanted($skip, [string]$key) { return -not ($skip -and $skip.Contains($key)) }
 
-    foreach ($p in $CodePatches) {
-        $state = Get-CodeState $p
-        if ($state -eq 'other version') { throw "$($p.File) is not the one from ICQ 6.5 build 2024; nothing was changed." }
+# Every change with its current state, in the order the window lists them.
+# The key names a change for the selection; rows with the same Link are one
+# change and are ticked together.
+function Get-Items([string]$domain) {
+    $items = New-Object System.Collections.Generic.List[object]
+    $add = { param($group, $key, $what, $where, $state, $link)
+        $items.Add([pscustomobject]@{ Group = $group; Key = $key; What = $what; Where = $where; State = $state; Link = $link })
     }
+    foreach ($p in $CodePatches) { & $add 'Code' $p.What $p.What $p.File (Get-CodeState $p) '' }
+    foreach ($e in $MarkupEdits) { & $add 'Interface' $e.What $e.What (Split-Path $e.File -Leaf) (Get-EditState $e) '' }
+    foreach ($r in $Removals) { & $add 'Interface' $r.What $r.What (Split-Path $r.Path -Leaf) (Get-RemovalState $r) '' }
+    $l = Get-LinkState $domain
+    & $add 'Links and advertising' 'links' 'the pages the client opens point at your server' "ConfigFiles, $($l.Info)" $l.State 'links'
+    & $add 'Links and advertising' 'whitelist' 'your server in the content whitelists' 'XtraConfig.xml, tzer.xml' (Get-WhitelistState $domain) 'links'
+    foreach ($s in $Strips) { & $add 'Links and advertising' $s.What $s.What (Split-Path $s.File -Leaf) (Get-StripState $s) '' }
+    $state = Get-SignInState $domain
+    & $add 'Sign-in server' 'sign-in' 'automatic connection signs in to your server' ('MCore.dll, now ' + (Get-SignInShown)) $state ''
+    return $items
+}
+
+# Puts back a whole file from its backup; the backup stays, as the original.
+function Restore-FromBackup([string]$path) {
+    foreach ($suf in @($Suffix) + $OlderSuffixes) {
+        if (Test-Path -LiteralPath ($path + $suf)) {
+            Copy-Item -LiteralPath ($path + $suf) -Destination $path -Force
+            return $true
+        }
+    }
+    return $false
+}
+
+# The whitelist of one configuration file with the host added, if it has one.
+function Add-Whitelisted([string]$name, [string]$text, [string]$h) {
+    if ($name -eq 'XtraConfig.xml') {
+        if (Test-Whitelisted $name $text $h) { return $text }
+        return [regex]::Replace($text, '(Key="WhiteDomainList" Value=")([^"]*)(")',
+            { param($m) $m.Groups[1].Value + $m.Groups[2].Value + ' ' + $h + $m.Groups[3].Value }, 'None')
+    }
+    if ($name -eq 'tzer.xml') {
+        if (Test-Whitelisted $name $text $h) { return $text }
+        $at = $text.IndexOf('</whitelist>')
+        if ($at -lt 0) { return $text }
+        return $text.Substring(0, $at) + "   <u>$h</u>`n   " + $text.Substring($at)
+    }
+    return $text
+}
+
+# Makes the client match the selection and returns what changed, one line
+# per change.
+function Invoke-ApplyAll([string]$domain, $skip) {
+    foreach ($p in $CodePatches) {
+        if ((Test-Wanted $skip $p.What) -and (Get-CodeState $p) -eq 'other version') {
+            throw "$($p.File) is not the one from ICQ 6.5 build 2024; nothing was changed."
+        }
+    }
+    $before = Get-Items $domain
 
     foreach ($p in $CodePatches) {
-        if ((Get-CodeState $p) -ne 'original') { continue }
         $path = Join-Path $script:IcqRoot $p.File
-        Backup-Once $path
-        $bytes = [IO.File]::ReadAllBytes($path)
-        foreach ($e in $p.Edits) { [Array]::Copy($e.To, 0, $bytes, $e.Offset, $e.To.Length) }
-        [IO.File]::WriteAllBytes($path, $bytes)
-        $report.Add($p.What)
+        $state = Get-CodeState $p
+        if (Test-Wanted $skip $p.What) {
+            if ($state -ne 'original') { continue }
+            Backup-Once $path
+            $bytes = [IO.File]::ReadAllBytes($path)
+            foreach ($e in $p.Edits) { [Array]::Copy($e.To, 0, $bytes, $e.Offset, $e.To.Length) }
+            [IO.File]::WriteAllBytes($path, $bytes)
+        } elseif ($state -eq 'patched') {
+            [void](Restore-FromBackup $path)
+        }
     }
 
+    # Each file is built again from the original with the wanted edits.
     foreach ($group in ($MarkupEdits | Group-Object File)) {
         $path = Join-Path $script:IcqRoot $group.Name
         if (-not (Test-Path -LiteralPath $path)) { continue }
         $file = Read-Text $path
-        $changed = $false
+        $original = Get-OriginalText $path
+        $text = if ($null -ne $original) { $original } else { $file.Text }
         foreach ($edit in $group.Group) {
-            $new = Invoke-Edit $edit $file.Text
-            if ($null -eq $new) { continue }
-            $file.Text = $new
-            $changed = $true
-            $report.Add($edit.What)
+            if (-not (Test-Wanted $skip $edit.What)) { continue }
+            $new = Invoke-Edit $edit $text
+            if ($null -ne $new) { $text = $new }
         }
-        if ($changed) { Backup-Once $path; Write-Text $path $file }
+        if ($text -cne $file.Text) { Backup-Once $path; $file.Text = $text; Write-Text $path $file }
     }
 
     foreach ($r in $Removals) {
-        if ((Get-RemovalState $r) -ne 'original') { continue }
         $path = Join-Path $script:IcqRoot $r.Path
-        Rename-Item -LiteralPath $path -NewName ((Split-Path $path -Leaf) + $Suffix)
-        $report.Add($r.What)
+        $state = Get-RemovalState $r
+        if (Test-Wanted $skip $r.What) {
+            if ($state -eq 'original') { Rename-Item -LiteralPath $path -NewName ((Split-Path $path -Leaf) + $Suffix) }
+        } elseif ($state -eq 'patched') {
+            foreach ($suf in @($Suffix) + $OlderSuffixes) {
+                if (Test-Path -LiteralPath ($path + $suf)) { Rename-Item -LiteralPath ($path + $suf) -NewName (Split-Path $path -Leaf); break }
+            }
+        }
     }
 
+    # The configuration files the same way: the original, then the links, the
+    # whitelists and the emptied lists that are wanted. A server let in before
+    # is gone with that too - the original never had it.
+    #
+    # The client refuses content from a host that is not on the whitelists,
+    # and drops the part of the interface that host would have fed; so the
+    # links and the whitelists go together.
     $dir = Join-Path $script:IcqRoot 'ConfigFiles'
-    $moved = 0
+    $links = Test-Wanted $skip 'links'
+    $white = Test-Wanted $skip 'whitelist'
     foreach ($f in Get-ChildItem -LiteralPath $dir -Filter *.xml -File) {
         $file = Read-Text $f.FullName
-        $count = (Get-StrayLinks $file.Text $domain).Count
-        if ($count -eq 0) { continue }
-        $file.Text = [regex]::Replace($file.Text, $LinkPattern,
-            { param($m) Get-PagesBase $domain $m.Groups['path'].Value }, 'IgnoreCase')
-        Backup-Once $f.FullName
-        Write-Text $f.FullName $file
-        $moved += $count
-    }
-    if ($moved) { $report.Add("$moved links pointed at $domain") }
-
-    # The client refuses content from a host that is not on these lists, and
-    # drops the part of the interface that host would have fed.
-    #
-    # A server this patch let in before is taken off again when the domain
-    # changes: only what the client came with, plus the current domain, stays.
-    $h = $domain
-    $xtra = Join-Path $dir 'XtraConfig.xml'
-    if (Test-Path -LiteralPath $xtra) {
-        $file = Read-Text $xtra
-        $original = Get-OriginalText $xtra
-        if ($null -ne $original) {
-            $came = Get-WhiteDomains $original
-            $now = Get-WhiteDomains $file.Text
-            $keep = @($now | Where-Object { $came -contains $_ -or $_ -eq $h })
-            if ($keep.Count -ne $now.Count) {
-                $stale = @($now | Where-Object { $keep -notcontains $_ })
-                $file.Text = [regex]::Replace($file.Text, '(Key="WhiteDomainList" Value=")[^"]*(")',
-                    { param($m) $m.Groups[1].Value + ($keep -join ' ') + $m.Groups[2].Value }, 'None')
-                Write-Text $xtra $file
-                $report.Add(($stale -join ', ') + " no longer allowed in XtraConfig.xml")
+        $original = Get-OriginalText $f.FullName
+        $text = if ($null -ne $original) { $original } else { $file.Text }
+        if ($links) {
+            $text = [regex]::Replace($text, $LinkPattern,
+                { param($m) Get-PagesBase $domain $m.Groups['path'].Value }, 'IgnoreCase')
+        }
+        if ($white) { $text = Add-Whitelisted $f.Name $text $domain }
+        foreach ($s in $Strips) {
+            if ((Split-Path $s.File -Leaf) -eq $f.Name -and (Test-Wanted $skip $s.What)) {
+                $text = [regex]::Replace($text, $s.Pattern, '')
             }
         }
-        if (-not (Test-Whitelisted 'XtraConfig.xml' $file.Text $h)) {
-            $new = [regex]::Replace($file.Text, '(Key="WhiteDomainList" Value=")([^"]*)(")',
-                { param($m) $m.Groups[1].Value + $m.Groups[2].Value + ' ' + $h + $m.Groups[3].Value }, 'None')
-            if ($new -ne $file.Text) { $file.Text = $new; Backup-Once $xtra; Write-Text $xtra $file; $report.Add("$h allowed in XtraConfig.xml") }
-        }
-    }
-    $tzer = Join-Path $dir 'tzer.xml'
-    if (Test-Path -LiteralPath $tzer) {
-        $file = Read-Text $tzer
-        $original = Get-OriginalText $tzer
-        if ($null -ne $original) {
-            $came = Get-WhitelistHosts $original
-            foreach ($stale in @(Get-WhitelistHosts $file.Text | Where-Object { $came -notcontains $_ -and $_ -ne $h })) {
-                $file.Text = [regex]::Replace($file.Text, '[ \t]*<u>' + [regex]::Escape($stale) + '</u>[ \t]*\r?\n?', '')
-                Write-Text $tzer $file
-                $report.Add("$stale no longer allowed in tzer.xml")
-            }
-        }
-        if (-not (Test-Whitelisted 'tzer.xml' $file.Text $h)) {
-            $at = $file.Text.IndexOf('</whitelist>')
-            if ($at -ge 0) {
-                $file.Text = $file.Text.Substring(0, $at) + "   <u>$h</u>`n   " + $file.Text.Substring($at)
-                Backup-Once $tzer; Write-Text $tzer $file; $report.Add("$h allowed in tzer.xml")
-            }
-        }
+        if ($text -cne $file.Text) { Backup-Once $f.FullName; $file.Text = $text; Write-Text $f.FullName $file }
     }
 
-    $line = Set-SignIn $domain
-    if ($line) { $report.Add($line) }
-
-    foreach ($s in $Strips) {
-        $path = Join-Path $script:IcqRoot $s.File
-        if (-not (Test-Path -LiteralPath $path)) { continue }
-        $file = Read-Text $path
-        $n = [regex]::Matches($file.Text, $s.Pattern).Count
-        if ($n -eq 0) { continue }
-        $file.Text = [regex]::Replace($file.Text, $s.Pattern, '')
-        Backup-Once $path; Write-Text $path $file
-        $report.Add("$($s.What): $n removed")
+    if (Test-Wanted $skip 'sign-in') {
+        [void](Set-SignIn $domain)
+    } elseif (@('patched', 'another server') -contains (Get-SignInState $domain)) {
+        [void](Restore-FromBackup (Join-Path $script:IcqRoot $SignIn.File))
     }
 
+    $report = New-Object System.Collections.Generic.List[string]
+    $after = Get-Items $domain
+    for ($i = 0; $i -lt $after.Count; $i++) {
+        if ($after[$i].State -eq $before[$i].State) { continue }
+        if ($after[$i].State -eq 'patched') { $report.Add('applied: ' + $after[$i].What) }
+        else { $report.Add('taken out: ' + $after[$i].What) }
+    }
     return $report
 }
 
@@ -709,12 +742,14 @@ if ($Headless) {
     $domain = if ($Server) { Get-Domain $Server } else { Get-SavedServer }
     if (-not (Test-Domain $domain)) { Write-Error "not a domain: '$Server' - pass -Server icq.example.org"; exit 1 }
     try {
-        $done = Invoke-ApplyAll $domain
+        $set = New-Object 'System.Collections.Generic.HashSet[string]'
+        foreach ($k in $Skip) { [void]$set.Add($k) }
+        $done = Invoke-ApplyAll $domain $set
     } catch {
         Write-Error $_.Exception.Message
         exit 1
     }
-    foreach ($line in $done) { Write-Output "changed: $line" }
+    foreach ($line in $done) { Write-Output $line }
     Write-Output "changes made: $($done.Count)"
     exit 0
 }
@@ -764,16 +799,19 @@ function Invoke-Apply {
     }
     $ui.Server.Text = $server
     Save-Server $server
+    Save-PatchUnchecked $ui $SettingsKey
     try {
-        $done = Invoke-ApplyAll $server
+        $done = Invoke-ApplyAll $server $ui.Unchecked
     } catch {
         [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Wrong client version', 'OK', 'Error') | Out-Null
         Update-View
         return
     }
     Update-View
-    $msg = if ($done.Count) { "Changes made: $($done.Count)." } else { 'Everything was already in place.' }
-    $msg += "`n`nWith automatic connection settings ICQ signs in to $server.`n`nYou can start ICQ now."
+    $msg = if ($done.Count) { "Changes made: $($done.Count)`n`n  " + (@($done | Select-Object -First 12) -join "`n  ") } else { 'The client already matches the selection.' }
+    if ($done.Count -gt 12) { $msg += "`n  ..." }
+    if (Test-PatchSelected $ui 'sign-in') { $msg += "`n`nWith automatic connection settings ICQ signs in to $server." }
+    $msg += "`n`nYou can start ICQ now."
     [Windows.Forms.MessageBox]::Show($msg, 'Done', 'OK', 'Information') | Out-Null
 }
 
@@ -803,22 +841,11 @@ function Update-View {
     Set-PatchFolder $ui $script:IcqRoot
     Clear-PatchList $ui
     if ($script:IcqRoot) {
-        $g = Add-PatchGroup $ui 'Code'
-        foreach ($p in $CodePatches) { Add-PatchRow $ui $g @($p.What, $p.File) (Get-CodeState $p) }
-
-        $g = Add-PatchGroup $ui 'Interface'
-        foreach ($e in $MarkupEdits) { Add-PatchRow $ui $g @($e.What, (Split-Path $e.File -Leaf)) (Get-EditState $e) }
-        foreach ($r in $Removals) { Add-PatchRow $ui $g @($r.What, (Split-Path $r.Path -Leaf)) (Get-RemovalState $r) }
-
-        $g = Add-PatchGroup $ui 'Links and advertising'
-        $l = Get-LinkState (Get-Server)
-        Add-PatchRow $ui $g @(('pages the client opens, ' + $l.Info), 'ConfigFiles') $l.State
-        Add-PatchRow $ui $g @('your server in the content whitelists', 'XtraConfig.xml, tzer.xml') (Get-WhitelistState (Get-Server))
-        foreach ($s in $Strips) { Add-PatchRow $ui $g @($s.What, (Split-Path $s.File -Leaf)) (Get-StripState $s) }
-
-        $g = Add-PatchGroup $ui 'Sign-in server'
-        $state = Get-SignInState (Get-Server)
-        Add-PatchRow $ui $g @(('automatic connection signs in to ' + (Get-SignInShown)), 'MCore.dll') $state
+        $groups = @{}
+        foreach ($it in Get-Items (Get-Server)) {
+            if (-not $groups.ContainsKey($it.Group)) { $groups[$it.Group] = Add-PatchGroup $ui $it.Group }
+            Add-PatchRow $ui $groups[$it.Group] @($it.What, $it.Where) $it.State $it.Key $it.Link
+        }
     }
     Complete-PatchList $ui
 }
@@ -826,6 +853,7 @@ function Update-View {
 $ui.FolderButton.Add_Click({ Select-Folder })
 $saved = Get-SavedServer
 if ($saved) { $ui.Server.Text = $saved }
+Read-PatchUnchecked $ui $SettingsKey
 $ui.Server.Add_Leave({ Update-View })
 
 [void](Add-PatchButton $ui 'Close' { $ui.Form.Close() })
