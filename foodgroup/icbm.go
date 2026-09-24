@@ -140,11 +140,13 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 
 	if inBody.ChannelID == wire.ICBMChannelSIP {
 		// The signalling of an ICQ 6 call, relayed as it is. Logged by its
-		// first line, "INVITE sip:..." or "SIP/2.0 200 OK", to see a call
-		// through when it fails.
+		// first line, "INVITE sip:..." or "SIP/2.0 200 OK", and its SDP body -
+		// the addresses offered for the sound - to see a call through when it
+		// fails.
 		sip, _ := inBody.Bytes(0x0005)
 		first, _, _ := strings.Cut(string(sip), "\r\n")
-		s.logger.InfoContext(ctx, "call signalling", "to", recip.String(), "bytes", len(sip), "first_line", first)
+		_, sdp, _ := strings.Cut(string(sip), "\r\n\r\n")
+		s.logger.InfoContext(ctx, "call signalling", "to", recip.String(), "bytes", len(sip), "first_line", first, "sdp", sdp)
 	}
 
 	if inBody.ChannelID == wire.ICBMChannelICQ {
