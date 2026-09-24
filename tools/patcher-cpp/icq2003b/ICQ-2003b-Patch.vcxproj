@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Patch for ICQ Pro 2003b (build 3916): one exe, nothing next to it, that
+     runs on Windows XP SP3 through 11 with nothing to install.
+
+     Built with the XP toolset of Visual Studio 2017 (v141_xp: its compiler,
+     static C runtime and the Windows 7.1A SDK), which Visual Studio 2022
+     Build Tools install as the components
+     Microsoft.VisualStudio.Component.VC.v141.x86.x64 and
+     Microsoft.VisualStudio.Component.WinXP. ..\Build.ps1 builds it into
+     tools\patcher-cpp\out. -->
+<Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|Win32">
+      <Configuration>Release</Configuration>
+      <Platform>Win32</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{6D1F5E2A-0B7C-4C35-9E2B-2003B0000001}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>Icq2003bPatch</RootNamespace>
+    <!-- v141_xp by default; another toolset (v143) only for trying things out:
+         what it builds does not start on XP. -->
+    <PlatformToolset Condition="'$(PlatformToolset)' == ''">v141_xp</PlatformToolset>
+    <WindowsTargetPlatformVersion Condition="'$(PlatformToolset)' != 'v141_xp'">10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <CharacterSet>Unicode</CharacterSet>
+    <WholeProgramOptimization>false</WholeProgramOptimization>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <TargetName>ICQ-2003b-Patch</TargetName>
+    <OutDir>$(MSBuildThisFileDirectory)..\obj\$(PlatformToolset)\bin\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)..\obj\$(PlatformToolset)\icq2003b\</IntDir>
+    <GenerateManifest>false</GenerateManifest>
+    <LinkIncremental>false</LinkIncremental>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>WIN32;NDEBUG;UNICODE;_UNICODE;_WIN32_WINNT=0x0501;WINVER=0x0501;_WIN32_IE=0x0600;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <Optimization>MinSpace</Optimization>
+      <FavorSizeOrSpeed>Size</FavorSizeOrSpeed>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <ExceptionHandling>Sync</ExceptionHandling>
+      <WarningLevel>Level3</WarningLevel>
+      <DebugInformationFormat>None</DebugInformationFormat>
+      <SDLCheck>false</SDLCheck>
+      <!-- No thread-safe statics: they lean on thread-local storage that XP
+           does not give an exe's static initialisers the way later Windows
+           does. The patch has one thread. /Brepro: the same bytes from the
+           same sources. -->
+      <AdditionalOptions>/Zc:threadSafeInit- /Brepro %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <MinimumRequiredVersion Condition="'$(PlatformToolset)' == 'v141_xp'">5.01</MinimumRequiredVersion>
+      <MinimumRequiredVersion Condition="'$(PlatformToolset)' != 'v141_xp'">6.00</MinimumRequiredVersion>
+      <GenerateDebugInformation>false</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <EnableUAC>false</EnableUAC>
+      <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;advapi32.lib;shell32.lib;ole32.lib;comctl32.lib;gdiplus.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+    <ResourceCompile>
+      <!-- The translation, written there by ConvertTranslation below. -->
+      <AdditionalIncludeDirectories>$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="..\common\ClientFolder.cpp" />
+    <ClCompile Include="..\common\PatchCli.cpp" />
+    <ClCompile Include="..\common\PatchConsole.cpp" />
+    <ClCompile Include="..\common\PatchFiles.cpp" />
+    <ClCompile Include="..\common\PatchIcon.cpp" />
+    <ClCompile Include="..\common\PatchItems.cpp" />
+    <ClCompile Include="..\common\PatchSettings.cpp" />
+    <ClCompile Include="..\common\PatchWindow.cpp" />
+    <ClCompile Include="..\common\Ps.cpp" />
+    <ClCompile Include="..\common\Registry.cpp" />
+    <ClCompile Include="Icq2003bClient.cpp" />
+    <ClCompile Include="IcqResources.cpp" />
+    <ClCompile Include="Main.cpp" />
+    <ClCompile Include="RegistryPath.cpp" />
+    <ClCompile Include="Translation.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\common\ClientFolder.h" />
+    <ClInclude Include="..\common\PatchCli.h" />
+    <ClInclude Include="..\common\PatchConsole.h" />
+    <ClInclude Include="..\common\PatchFiles.h" />
+    <ClInclude Include="..\common\PatchIcon.h" />
+    <ClInclude Include="..\common\PatchItems.h" />
+    <ClInclude Include="..\common\PatchSettings.h" />
+    <ClInclude Include="..\common\PatchWindow.h" />
+    <ClInclude Include="..\common\Ps.h" />
+    <ClInclude Include="..\common\Registry.h" />
+    <ClInclude Include="Icq2003bClient.h" />
+    <ClInclude Include="IcqResources.h" />
+    <ClInclude Include="RegistryPath.h" />
+    <ClInclude Include="Translation.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="app.rc" />
+    <None Include="app.manifest" />
+    <None Include="Convert-Translation.ps1" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+
+  <!-- The Ukrainian interface: tools\icq2003b\patch\ICQ-2003b-uk-UA.txt stays
+       the source; it is decoded into plain resources before they are
+       compiled in, and again only when it changes. -->
+  <PropertyGroup>
+    <TranslationSource>$(MSBuildThisFileDirectory)..\..\icq2003b\patch\ICQ-2003b-uk-UA.txt</TranslationSource>
+  </PropertyGroup>
+  <Target Name="ConvertTranslation" BeforeTargets="ResourceCompile"
+          Inputs="$(TranslationSource);$(MSBuildThisFileDirectory)Convert-Translation.ps1"
+          Outputs="$(IntDir)translation.idx;$(IntDir)translation.dat">
+    <Exec Command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)Convert-Translation.ps1&quot; -Source &quot;$(TranslationSource)&quot; -OutDir &quot;$(IntDir.TrimEnd('\'))&quot;" />
+  </Target>
+</Project>

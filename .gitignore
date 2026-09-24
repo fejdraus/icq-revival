@@ -21,3 +21,7 @@ deploy/backups/
 # Build output of the C# client patches (the exes are copied into tools\*\patch)
 tools/patcher/**/bin/
 tools/patcher/**/obj/
+
+# Build output of the native client patches (tools\patcher-cpp\Build.ps1)
+tools/patcher-cpp/obj/
+tools/patcher-cpp/out/

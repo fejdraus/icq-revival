@@ -1,0 +1,44 @@
+// The resources of ICQ-2003b-Patch.exe: its icon, its version (Explorer
+// shows the description, hence the client version in it), its manifest and
+// the Ukrainian interface it carries.
+
+#include <windows.h>
+
+// The icon drawn for the C# patch, shared with it.
+1 ICON "..\\..\\patcher\\Icq2003b\\app.ico"
+
+1 24 "app.manifest"
+
+// Written from tools\icq2003b\patch\ICQ-2003b-uk-UA.txt by
+// Convert-Translation.ps1 into the build folder, which the resource
+// compiler searches (see Translation.cpp).
+TRINDEX RCDATA "translation.idx"
+TRDATA RCDATA "translation.dat"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0x0L
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "000004b0"
+        BEGIN
+            VALUE "Comments", "Patch for ICQ Pro 2003b (build 3916)"
+            VALUE "FileDescription", "Patch for ICQ Pro 2003b (build 3916)"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "ICQ-2003b-Patch.exe"
+            VALUE "OriginalFilename", "ICQ-2003b-Patch.exe"
+            VALUE "ProductName", "ICQ Revival"
+            VALUE "ProductVersion", "1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0, 1200
+    END
+END
