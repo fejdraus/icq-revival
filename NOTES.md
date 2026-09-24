@@ -332,7 +332,7 @@ SSLv2, разбор которого выкинули из OpenSSL начина�
 
 ## ICQ 6.5 patch - `tools/icq65/patch/`
 
-`Icq6Patch.exe` is what a user runs: one window, the same kind as the 2003b
+`ICQ-6.5-Patch.exe` is what a user runs: one window, the same kind as the 2003b
 patch. It finds the client, takes the server address (remembered in
 `HKCU\Software\OpenOSCAR\Icq6Patch`), and in one pass removes the Xtraz,
 advertising, tZers, SMS and phone parts of the interface, patches the

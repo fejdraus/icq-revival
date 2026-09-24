@@ -1,6 +1,6 @@
 """Remove the dead-service widgets from the ICQ 6.5 interface.
 
-Superseded by ../patch/Icq6Patch.ps1, which does this and the rest in one
+Superseded by ../patch/ICQ-6.5-Patch.ps1, which does this and the rest in one
 pass and also restores what this script changed. Kept for reference.
 
 The client keeps drawing frames for services that no longer exist: the Xtraz

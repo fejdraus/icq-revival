@@ -13,10 +13,8 @@
 # Папку клиента ищет сам: сначала рядом с собой (положили в каталог ICQ или
 # взяли портативную сборку), затем в реестре, затем по стандартному пути.
 #
-# Built into an exe with ps12exe, under Windows PowerShell 5.1:
-#   ps12exe .\IcqPatch.ps1 .\IcqPatch.exe -App @{Windowed=$true} -Os @{Admin=$true}
-#     -Build @{Target='Framework4.0'; Apartment='STA'}
-#     -Resources @{Title='ICQ Pro 2003b Patch'; Product='ICQ Revival'}
+# The window is the one all client patches share, ../../common/PatchWindow.ps1.
+# Built into ICQ-2003b-Patch.exe, with its icon, by ../../common/Build-Patches.ps1.
 
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 
@@ -361,7 +359,10 @@ function Find-IcqRoot {
             $d = Get-ItemProperty $sub.PSPath -ErrorAction SilentlyContinue
             if ($d.DisplayName -notmatch '(?i)^icq') { continue }
             if ($d.InstallLocation) { $candidates.Add($d.InstallLocation) }
-            if ($d.UninstallString) { $candidates.Add([IO.Path]::GetDirectoryName($d.UninstallString.Trim('"'))) }
+            # The command line may quote the program and add arguments after it.
+            if ($d.UninstallString -match '^\s*"?(?<exe>[^"]+?\.exe)') {
+                try { $candidates.Add([IO.Path]::GetDirectoryName($Matches['exe'])) } catch { }
+            }
         }
     }
 
@@ -423,7 +424,7 @@ function Get-State($patch) {
 # --- перенос ссылок ----------------------------------------------------------
 
 function Get-Base {
-    return (Get-PagesRoot (Get-Domain $txtBase.Text)) + $PagesPath
+    return (Get-PagesRoot (Get-Domain $ui.Server.Text)) + $PagesPath
 }
 
 function Get-UrlHost([string]$url) {
@@ -583,14 +584,14 @@ function Invoke-Apply {
     }
 
     # Checked before anything is written.
-    $domain = Get-Domain $txtBase.Text
+    $domain = Get-Domain $ui.Server.Text
     if (-not (Test-Domain $domain)) {
         [Windows.Forms.MessageBox]::Show(
             "Type your server's domain, nothing else:`n`n  icq.example.org`n`nThe port and path are filled in by the patch.",
             'Server', 'OK', 'Warning') | Out-Null
         return
     }
-    $txtBase.Text = $domain
+    $ui.Server.Text = $domain
     $previous = Get-SavedBase
 
     $bin = 0
@@ -689,144 +690,59 @@ function Select-Folder {
 
 # --- окно -------------------------------------------------------------------
 
-$form = New-Object Windows.Forms.Form
-$form.Text = 'ICQ Pro 2003b Patch'
-$form.Size = New-Object Drawing.Size(700, 520)
-$form.StartPosition = 'CenterScreen'
-$form.FormBorderStyle = 'FixedDialog'
-$form.MaximizeBox = $false
+#_if PSScript
+. (Join-Path $PSScriptRoot '..\..\common\PatchWindow.ps1')
+#_else
+#_include "$PSScriptRoot/../../common/PatchWindow.ps1"
+#_endif
 
-$header = New-Object Windows.Forms.Label
-$header.Text = 'Removes the banners, the Google search bar and the empty strip they occupied, and points the menu items that used to open ICQ.com at your own server. The user database and the skin are left untouched.'
-$header.Location = New-Object Drawing.Point(12, 10)
-$header.Size = New-Object Drawing.Size(660, 34)
-$form.Controls.Add($header)
-
-$pathLabel = New-Object Windows.Forms.Label
-$pathLabel.Location = New-Object Drawing.Point(12, 50)
-$pathLabel.Size = New-Object Drawing.Size(520, 20)
-$pathLabel.Font = New-Object Drawing.Font('Segoe UI', 8.5, [Drawing.FontStyle]::Bold)
-$form.Controls.Add($pathLabel)
-
-$btnFolder = New-Object Windows.Forms.Button
-$btnFolder.Text = 'Change folder...'
-$btnFolder.Location = New-Object Drawing.Point(552, 46)
-$btnFolder.Size = New-Object Drawing.Size(120, 26)
-$btnFolder.Add_Click({ Select-Folder })
-$form.Controls.Add($btnFolder)
-
-$baseLabel = New-Object Windows.Forms.Label
-$baseLabel.Text = 'Server:'
-$baseLabel.Location = New-Object Drawing.Point(12, 82)
-$baseLabel.Size = New-Object Drawing.Size(90, 20)
-$form.Controls.Add($baseLabel)
-
-$txtBase = New-Object Windows.Forms.TextBox
-$txtBase.Location = New-Object Drawing.Point(104, 79)
-$txtBase.Size = New-Object Drawing.Size(568, 22)
-$saved = Get-SavedBase
-$txtBase.Text = if ($saved) { $saved } else { '' }
-$form.Controls.Add($txtBase)
-
-$baseHint = New-Object Windows.Forms.Label
-$baseHint.Text = 'Just the domain, e.g. icq.example.org - the patch fills in the port and path itself. Remembered for next time.'
-$baseHint.Location = New-Object Drawing.Point(104, 103)
-$baseHint.Size = New-Object Drawing.Size(568, 16)
-$baseHint.ForeColor = [Drawing.Color]::DimGray
-$form.Controls.Add($baseHint)
-
-$list = New-Object Windows.Forms.ListView
-$list.Location = New-Object Drawing.Point(12, 126)
-$list.Size = New-Object Drawing.Size(660, 286)
-$list.View = 'Details'
-$list.FullRowSelect = $true
-$list.GridLines = $true
-[void]$list.Columns.Add('Item', 170)
-[void]$list.Columns.Add('Detail', 120)
-[void]$list.Columns.Add('State', 80)
-[void]$list.Columns.Add('Effect', 280)
-$form.Controls.Add($list)
-
-function Add-Row($col1, $col2, $state, $effect) {
-    $item = New-Object Windows.Forms.ListViewItem($col1)
-    [void]$item.SubItems.Add($col2)
-    [void]$item.SubItems.Add($state)
-    [void]$item.SubItems.Add($effect)
-    if ($state -eq 'patched')      { $item.ForeColor = [Drawing.Color]::DarkGreen }
-    elseif ($state -eq 'original') { $item.ForeColor = [Drawing.Color]::Black }
-    elseif ($state -eq 'no links') { $item.ForeColor = [Drawing.Color]::Gray }
-    else                           { $item.ForeColor = [Drawing.Color]::Firebrick }
-    [void]$list.Items.Add($item)
-}
+$ui = New-PatchWindow -Title 'ICQ Pro 2003b Patch' -Badge '2003b' -AccentTop '#4FA3E0' -AccentBottom '#1F66B0' `
+    -ClientName 'ICQ Pro 2003b' `
+    -Subtitle 'Removes the banners, the Google search bar and the empty strip they occupied, and points the menu items that used to open ICQ.com at your own server. The user database and the skin are left untouched.' `
+    -ServerHint 'Just the domain, e.g. icq.example.org. The patch fills in the port and path, and new accounts sign in there. Remembered for next time.' `
+    -Columns @(@('Change', 400), @('Where', 210))
 
 function Update-View {
+    Set-PatchFolder $ui $script:IcqRoot
+    Clear-PatchList $ui
     if ($script:IcqRoot) {
-        $pathLabel.Text = 'Client folder: ' + $script:IcqRoot
-        $pathLabel.ForeColor = [Drawing.Color]::Black
-    } else {
-        $pathLabel.Text = 'Client folder not found - use "Change folder..."'
-        $pathLabel.ForeColor = [Drawing.Color]::Firebrick
-    }
-    $list.Items.Clear()
+        $g = Add-PatchGroup $ui 'Code'
+        foreach ($p in $Patches) {
+            Add-PatchRow $ui $g @($p.What, ('{0} at 0x{1:X}' -f $p.File, $p.Offset)) (Get-State $p)
+        }
 
-    $g1 = New-Object Windows.Forms.ListViewItem('CODE PATCHES')
-    $g1.Font = New-Object Drawing.Font('Segoe UI', 8.5, [Drawing.FontStyle]::Bold)
-    [void]$list.Items.Add($g1)
-    foreach ($p in $Patches) {
-        Add-Row $p.File ('0x{0:X}' -f $p.Offset) (Get-State $p) $p.What
-    }
+        $g = Add-PatchGroup $ui 'Links inside the executable'
+        foreach ($sp in $StringPatches) {
+            Add-PatchRow $ui $g @($sp.What, ('{0} at 0x{1:X}' -f $sp.Path, $sp.Offset)) (Get-StringState $sp)
+        }
 
-    $g2 = New-Object Windows.Forms.ListViewItem('LINKS INSIDE THE EXECUTABLE')
-    $g2.Font = New-Object Drawing.Font('Segoe UI', 8.5, [Drawing.FontStyle]::Bold)
-    [void]$list.Items.Add($g2)
-    foreach ($sp in $StringPatches) {
-        Add-Row $sp.Path ('0x{0:X}' -f $sp.Offset) (Get-StringState $sp) $sp.What
-    }
+        $g = Add-PatchGroup $ui 'Links'
+        foreach ($rel in $LinkFiles) {
+            $s = Get-LinkState $rel
+            $what = 'menu items point at your server'
+            if ($s.Info) { $what += " ($($s.Info))" }
+            Add-PatchRow $ui $g @($what, [IO.Path]::GetFileName($rel)) $s.State
+        }
 
-    $g3 = New-Object Windows.Forms.ListViewItem('LINKS')
-    $g3.Font = New-Object Drawing.Font('Segoe UI', 8.5, [Drawing.FontStyle]::Bold)
-    [void]$list.Items.Add($g3)
-    foreach ($rel in $LinkFiles) {
-        $s = Get-LinkState $rel
-        Add-Row ([IO.Path]::GetFileName($rel)) $s.Info $s.State 'menu items point at your server'
+        $g = Add-PatchGroup $ui 'Sign-in server'
+        $current = Get-SignInServer
+        $wanted = Get-Domain $ui.Server.Text
+        $state = if (-not (Get-DefaultPrefsKey)) { 'missing' } elseif ($wanted -and $current -eq $wanted) { 'patched' } else { 'original' }
+        $shown = if ($current) { $current } else { '(not set)' }
+        Add-PatchRow $ui $g @(('new accounts and "Get an ICQ Number" connect to ' + $shown), 'Default Server Host') $state
     }
-
-    $g4 = New-Object Windows.Forms.ListViewItem('SIGN-IN SERVER')
-    $g4.Font = New-Object Drawing.Font('Segoe UI', 8.5, [Drawing.FontStyle]::Bold)
-    [void]$list.Items.Add($g4)
-    $current = Get-SignInServer
-    $wanted = Get-Domain $txtBase.Text
-    $state = if (-not (Get-DefaultPrefsKey)) { 'missing' } elseif ($wanted -and $current -eq $wanted) { 'patched' } else { 'original' }
-    Add-Row 'Default Server Host' "$current" $state 'new accounts and "Get an ICQ Number" connect here'
+    Complete-PatchList $ui
 }
 
-$btnApply = New-Object Windows.Forms.Button
-$btnApply.Text = 'Apply'
-$btnApply.Location = New-Object Drawing.Point(12, 418)
-$btnApply.Size = New-Object Drawing.Size(150, 34)
-$btnApply.Add_Click({ Invoke-Apply })
-$form.Controls.Add($btnApply)
+$ui.FolderButton.Add_Click({ Select-Folder })
+$saved = Get-SavedBase
+if ($saved) { $ui.Server.Text = $saved }
+$ui.Server.Add_Leave({ Update-View })
 
-$btnRestore = New-Object Windows.Forms.Button
-$btnRestore.Text = 'Restore original'
-$btnRestore.Location = New-Object Drawing.Point(172, 418)
-$btnRestore.Size = New-Object Drawing.Size(150, 34)
-$btnRestore.Add_Click({ Invoke-Restore })
-$form.Controls.Add($btnRestore)
-
-$btnRefresh = New-Object Windows.Forms.Button
-$btnRefresh.Text = 'Re-check'
-$btnRefresh.Location = New-Object Drawing.Point(332, 418)
-$btnRefresh.Size = New-Object Drawing.Size(150, 34)
-$btnRefresh.Add_Click({ Update-View })
-$form.Controls.Add($btnRefresh)
-
-$btnClose = New-Object Windows.Forms.Button
-$btnClose.Text = 'Close'
-$btnClose.Location = New-Object Drawing.Point(522, 418)
-$btnClose.Size = New-Object Drawing.Size(150, 34)
-$btnClose.Add_Click({ $form.Close() })
-$form.Controls.Add($btnClose)
+[void](Add-PatchButton $ui 'Close' { $ui.Form.Close() })
+[void](Add-PatchButton $ui 'Apply' { Invoke-Apply } -Primary)
+[void](Add-PatchButton $ui 'Restore original' { Invoke-Restore })
+[void](Add-PatchButton $ui 'Re-check' { Update-View })
 
 Update-View
-[void]$form.ShowDialog()
+Show-PatchWindow $ui

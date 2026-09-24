@@ -5,13 +5,14 @@ and can put everything back.
 
 | Folder | Client | What it is |
 |---|---|---|
-| `icq2003b/patch/` | ICQ Pro 2003b | **The patch to hand out.** `IcqPatch.exe` - removes the banners and the Google bar, points the ICQ.com menu items at our server. `IcqPatch.ps1` is its source. |
+| `icq2003b/patch/` | ICQ Pro 2003b | **The patch to hand out.** `ICQ-2003b-Patch.exe` - removes the banners and the Google bar, points the ICQ.com menu items at our server. `ICQ-2003b-Patch.ps1` is its source. |
 | `icq2003b/retarget/` | ICQ Pro 2003b | Moves the client's ICQ.com links to our server from `icq-services.json`, from the command line. |
 | `icq2003b/analysis/` | ICQ Pro 2003b | Disassembly and cross-reference helpers used to find the code patches, plus a map of the skin file. |
 | `icq2003b/codes/` | ICQ Pro 2003b | Extracts the profile code lists (countries, interests, ...) from the client's `DataFiles` into `deploy/oscar-register/icq-codes.json`. |
-| `icq65/patch/` | ICQ 6.5 (build 2024) | **The patch to hand out.** `Icq6Patch.exe` - removes Xtraz, advertising, tZers, SMS and phone from the interface and points the ICQ.com pages at our server. `Icq6Patch.ps1` is its source. |
+| `icq65/patch/` | ICQ 6.5 (build 2024) | **The patch to hand out.** `ICQ-6.5-Patch.exe` - removes Xtraz, advertising, tZers, SMS and phone from the interface and points the ICQ.com pages at our server. `ICQ-6.5-Patch.ps1` is its source. |
 | `icq65/declutter/` | ICQ 6.5 | Superseded by `icq65/patch`. The interface half of it, from the command line. |
 | `icq65/retarget/` | ICQ 6.5 | Superseded by `icq65/patch`. The links half of it, from the command line. |
+| `common/` | every patch | `PatchWindow.ps1` - the window and the icon all patches share; `Build-Patches.ps1` - builds every patch's exe with its icon (Windows PowerShell 5.1 and `ps12exe`). |
 | `miranda-icq/` | Miranda NG | The ICQ protocol plugin brought back to the current Miranda NG API: the patch, build output and language pack. |
 
 The patches also point the client's sign-in at the server, where the client allows it (see the rules below).
@@ -40,3 +41,9 @@ These hold for the patches above and for any new one, for whatever client:
   exactly the files as they were, byte for byte.
 - **Binaries are recognised by checksum** before a byte is written; another
   build of the client is refused rather than patched at the wrong offsets.
+- **One look, one name pattern.** A patch describes its window through
+  `common/PatchWindow.ps1` - title, badge, colour, columns - and does not draw
+  its own. Its files are named `ICQ-<client version>-Patch.ps1` / `.exe`, the
+  exe's description names the client and build, and the icon carries the
+  version, so a patch is never mistaken for another client's. A new patch is
+  added to `common/Build-Patches.ps1` with its badge and colour.

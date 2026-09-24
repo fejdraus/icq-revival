@@ -67,9 +67,9 @@ altogether.
 
 **On the client side** (`tools/`)
 
-- [x] `IcqPatch.exe` for ICQ Pro 2003b: removes the banners and the Google bar,
+- [x] `ICQ-2003b-Patch.exe` for ICQ Pro 2003b: removes the banners and the Google bar,
       points the menu items that opened ICQ.com at your server.
-- [x] `Icq6Patch.exe` for ICQ 6.5: removes the Xtraz, advertising, tZers, SMS
+- [x] `ICQ-6.5-Patch.exe` for ICQ 6.5: removes the Xtraz, advertising, tZers, SMS
       and phone parts that have nothing behind them any more, and points the
       pages the client opens at your server.
 - [x] The ICQ protocol plugin for Miranda NG, which Miranda removed, ported to

@@ -25,13 +25,11 @@
 # folder), then from the registry, then the standard path.
 #
 # Without arguments the window opens. For a scripted run:
-#   Icq6Patch.ps1 -Apply   [-Root <folder>] [-Server <domain>]
-#   Icq6Patch.ps1 -Restore [-Root <folder>]
+#   ICQ-6.5-Patch.ps1 -Apply   [-Root <folder>] [-Server <domain>]
+#   ICQ-6.5-Patch.ps1 -Restore [-Root <folder>]
 #
-# Built into an exe with ps12exe, under Windows PowerShell 5.1:
-#   ps12exe .\Icq6Patch.ps1 .\Icq6Patch.exe -App @{Windowed=$true} -Os @{Admin=$true}
-#     -Build @{Target='Framework4.0'; Apartment='STA'}
-#     -Resources @{Title='ICQ 6.5 Patch'; Product='ICQ Revival'}
+# The window is the one all client patches share, ../../common/PatchWindow.ps1.
+# Built into ICQ-6.5-Patch.exe, with its icon, by ../../common/Build-Patches.ps1.
 
 param(
     [switch]$Apply,
@@ -723,11 +721,21 @@ if ($Headless) {
 
 # --- window -------------------------------------------------------------------
 
-Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+#_if PSScript
+. (Join-Path $PSScriptRoot '..\..\common\PatchWindow.ps1')
+#_else
+#_include "$PSScriptRoot/../../common/PatchWindow.ps1"
+#_endif
 
 $script:IcqRoot = Find-IcqRoot
 
-function Get-Server { return Get-Domain $txtServer.Text }
+$ui = New-PatchWindow -Title 'ICQ 6.5 Patch' -Badge '6.5' -AccentTop '#4CC06E' -AccentBottom '#1E8A46' `
+    -ClientName 'ICQ 6.5' `
+    -Subtitle 'Removes what is left of the ICQ.com services - Xtraz, advertising, tZers, SMS and phone - and points the client at your own server. Your profile and history are left untouched.' `
+    -ServerHint 'Just the domain, e.g. icq.example.org. The patch fills in ports and paths, and ICQ signs in there. Remembered for next time.' `
+    -Columns @(@('Change', 420), @('Where', 190))
+
+function Get-Server { return Get-Domain $ui.Server.Text }
 
 function Test-Ready {
     if (-not $script:IcqRoot) {
@@ -754,7 +762,7 @@ function Invoke-Apply {
             'Server', 'OK', 'Warning') | Out-Null
         return
     }
-    $txtServer.Text = $server
+    $ui.Server.Text = $server
     Save-Server $server
     try {
         $done = Invoke-ApplyAll $server
@@ -765,7 +773,7 @@ function Invoke-Apply {
     }
     Update-View
     $msg = if ($done.Count) { "Changes made: $($done.Count)." } else { 'Everything was already in place.' }
-    $msg += "`n`nSet the sign-in server in ICQ itself: Options -> Connection -> ICQ server.`n`nYou can start ICQ now."
+    $msg += "`n`nWith automatic connection settings ICQ signs in to $server.`n`nYou can start ICQ now."
     [Windows.Forms.MessageBox]::Show($msg, 'Done', 'OK', 'Information') | Out-Null
 }
 
@@ -791,124 +799,39 @@ function Select-Folder {
     }
 }
 
-$form = New-Object Windows.Forms.Form
-$form.Text = 'ICQ 6.5 Patch'
-$form.Size = New-Object Drawing.Size(720, 600)
-$form.StartPosition = 'CenterScreen'
-$form.FormBorderStyle = 'FixedDialog'
-$form.MaximizeBox = $false
-
-$header = New-Object Windows.Forms.Label
-$header.Text = 'Removes what is left of the ICQ.com services - Xtraz, advertising, tZers, SMS and phone - and points the pages the client opens at your own server. Your profile and history are left untouched.'
-$header.Location = New-Object Drawing.Point(12, 10)
-$header.Size = New-Object Drawing.Size(680, 34)
-$form.Controls.Add($header)
-
-$pathLabel = New-Object Windows.Forms.Label
-$pathLabel.Location = New-Object Drawing.Point(12, 50)
-$pathLabel.Size = New-Object Drawing.Size(540, 20)
-$pathLabel.Font = New-Object Drawing.Font('Segoe UI', 8.5, [Drawing.FontStyle]::Bold)
-$form.Controls.Add($pathLabel)
-
-$btnFolder = New-Object Windows.Forms.Button
-$btnFolder.Text = 'Change folder...'
-$btnFolder.Location = New-Object Drawing.Point(572, 46)
-$btnFolder.Size = New-Object Drawing.Size(120, 26)
-$btnFolder.Add_Click({ Select-Folder })
-$form.Controls.Add($btnFolder)
-
-$serverLabel = New-Object Windows.Forms.Label
-$serverLabel.Text = 'Server:'
-$serverLabel.Location = New-Object Drawing.Point(12, 82)
-$serverLabel.Size = New-Object Drawing.Size(90, 20)
-$form.Controls.Add($serverLabel)
-
-$txtServer = New-Object Windows.Forms.TextBox
-$txtServer.Location = New-Object Drawing.Point(104, 79)
-$txtServer.Size = New-Object Drawing.Size(588, 22)
-$saved = Get-SavedServer
-$txtServer.Text = if ($saved) { $saved } else { '' }
-$form.Controls.Add($txtServer)
-
-$serverHint = New-Object Windows.Forms.Label
-$serverHint.Text = 'Just the domain, e.g. icq.example.org - the patch fills in ports and paths itself. Remembered for next time. The sign-in server is set in ICQ: Options -> Connection -> ICQ server.'
-$serverHint.Location = New-Object Drawing.Point(104, 103)
-$serverHint.Size = New-Object Drawing.Size(588, 30)
-$serverHint.ForeColor = [Drawing.Color]::DimGray
-$form.Controls.Add($serverHint)
-
-$list = New-Object Windows.Forms.ListView
-$list.Location = New-Object Drawing.Point(12, 138)
-$list.Size = New-Object Drawing.Size(680, 364)
-$list.View = 'Details'
-$list.FullRowSelect = $true
-$list.GridLines = $true
-[void]$list.Columns.Add('Item', 380)
-[void]$list.Columns.Add('Where', 190)
-[void]$list.Columns.Add('State', 90)
-$form.Controls.Add($list)
-
-function Add-Group([string]$title) {
-    $g = New-Object Windows.Forms.ListViewItem($title)
-    $g.Font = New-Object Drawing.Font('Segoe UI', 8.5, [Drawing.FontStyle]::Bold)
-    [void]$list.Items.Add($g)
-}
-
-function Add-Row($what, $where, $state) {
-    $item = New-Object Windows.Forms.ListViewItem($what)
-    [void]$item.SubItems.Add($where)
-    [void]$item.SubItems.Add($state)
-    if ($state -eq 'patched')      { $item.ForeColor = [Drawing.Color]::DarkGreen }
-    elseif ($state -eq 'original') { $item.ForeColor = [Drawing.Color]::Black }
-    else                           { $item.ForeColor = [Drawing.Color]::Firebrick }
-    [void]$list.Items.Add($item)
-}
-
 function Update-View {
-    $list.Items.Clear()
-    if (-not $script:IcqRoot) {
-        $pathLabel.Text = 'Client folder not found - use "Change folder..."'
-        $pathLabel.ForeColor = [Drawing.Color]::Firebrick
-        return
+    Set-PatchFolder $ui $script:IcqRoot
+    Clear-PatchList $ui
+    if ($script:IcqRoot) {
+        $g = Add-PatchGroup $ui 'Code'
+        foreach ($p in $CodePatches) { Add-PatchRow $ui $g @($p.What, $p.File) (Get-CodeState $p) }
+
+        $g = Add-PatchGroup $ui 'Interface'
+        foreach ($e in $MarkupEdits) { Add-PatchRow $ui $g @($e.What, (Split-Path $e.File -Leaf)) (Get-EditState $e) }
+        foreach ($r in $Removals) { Add-PatchRow $ui $g @($r.What, (Split-Path $r.Path -Leaf)) (Get-RemovalState $r) }
+
+        $g = Add-PatchGroup $ui 'Links and advertising'
+        $l = Get-LinkState (Get-Server)
+        Add-PatchRow $ui $g @(('pages the client opens, ' + $l.Info), 'ConfigFiles') $l.State
+        Add-PatchRow $ui $g @('your server in the content whitelists', 'XtraConfig.xml, tzer.xml') (Get-WhitelistState (Get-Server))
+        foreach ($s in $Strips) { Add-PatchRow $ui $g @($s.What, (Split-Path $s.File -Leaf)) (Get-StripState $s) }
+
+        $g = Add-PatchGroup $ui 'Sign-in server'
+        $state = Get-SignInState (Get-Server)
+        Add-PatchRow $ui $g @(('automatic connection signs in to ' + (Get-SignInShown)), 'MCore.dll') $state
     }
-    $pathLabel.Text = 'Client folder: ' + $script:IcqRoot
-    $pathLabel.ForeColor = [Drawing.Color]::Black
-
-    Add-Group 'CODE'
-    foreach ($p in $CodePatches) { Add-Row $p.What $p.File (Get-CodeState $p) }
-
-    Add-Group 'INTERFACE'
-    foreach ($e in $MarkupEdits) { Add-Row $e.What (Split-Path $e.File -Leaf) (Get-EditState $e) }
-    foreach ($r in $Removals) { Add-Row $r.What (Split-Path $r.Path -Leaf) (Get-RemovalState $r) }
-
-    Add-Group 'LINKS AND ADVERTISING'
-    $l = Get-LinkState (Get-Server)
-    Add-Row ('pages the client opens, ' + $l.Info) 'ConfigFiles' $l.State
-    Add-Row 'your server in the content whitelists' 'XtraConfig.xml, tzer.xml' (Get-WhitelistState (Get-Server))
-    foreach ($s in $Strips) { Add-Row $s.What (Split-Path $s.File -Leaf) (Get-StripState $s) }
-
-    Add-Group 'SIGN-IN SERVER'
-    $state = Get-SignInState (Get-Server)
-    if ($state -eq 'another server') { $state = 'original' }
-    Add-Row ("automatic connection signs in to " + (Get-SignInShown)) 'MCore.dll' $state
+    Complete-PatchList $ui
 }
 
-$buttons = @(
-    @{ Text = 'Apply';            Action = { Invoke-Apply } }
-    @{ Text = 'Restore original'; Action = { Invoke-Restore } }
-    @{ Text = 'Re-check';         Action = { Update-View } }
-    @{ Text = 'Close';            Action = { $form.Close() } }
-)
-$x = 12
-foreach ($b in $buttons) {
-    $btn = New-Object Windows.Forms.Button
-    $btn.Text = $b.Text
-    $btn.Location = New-Object Drawing.Point($x, 512)
-    $btn.Size = New-Object Drawing.Size(160, 34)
-    $btn.Add_Click($b.Action)
-    $form.Controls.Add($btn)
-    $x += 173
-}
+$ui.FolderButton.Add_Click({ Select-Folder })
+$saved = Get-SavedServer
+if ($saved) { $ui.Server.Text = $saved }
+$ui.Server.Add_Leave({ Update-View })
+
+[void](Add-PatchButton $ui 'Close' { $ui.Form.Close() })
+[void](Add-PatchButton $ui 'Apply' { Invoke-Apply } -Primary)
+[void](Add-PatchButton $ui 'Restore original' { Invoke-Restore })
+[void](Add-PatchButton $ui 'Re-check' { Update-View })
 
 Update-View
-[void]$form.ShowDialog()
+Show-PatchWindow $ui

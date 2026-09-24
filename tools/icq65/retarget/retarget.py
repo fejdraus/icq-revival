@@ -1,6 +1,6 @@
 """Point an ICQ 6.5 installation at this server.
 
-Superseded by ../patch/Icq6Patch.ps1, which does this and the rest in one
+Superseded by ../patch/ICQ-6.5-Patch.ps1, which does this and the rest in one
 pass and also restores what this script changed. Kept for reference.
 
 The client talks HTTP to ICQ.com services that are long gone: Xtraz (the picture
