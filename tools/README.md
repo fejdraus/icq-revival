@@ -23,8 +23,9 @@ These hold for the patches above and for any new one, for whatever client:
 - **Only the server's domain is asked for** - `icq.example.org`, nothing
   else. Ports, schemes and paths are the same on every ICQ Revival server
   (`deploy/VM-SPEC.md`, section 3), so the patch fills them in itself for each
-  kind of link its client has: the plain HTTP pages on 8101, the HTTPS pages on
-  8102 under `/icq`, the short paths `/p`, `/e`, `/u`, `/m`, and so on. Whatever
+  kind of link its client has: the HTTPS pages on 8102 (under `/icq` for ICQ
+  2003b), plain HTTP on 8101 only for what a client fetches with a loader that
+  cannot do HTTPS, the short paths `/p`, `/e`, `/u`, `/m`, and so on. Whatever
   is typed is reduced to the domain - a scheme, a port or a path after it are
   dropped - and a saved value from an older version is read the same way.
 - **The sign-in server is set too**, as the default the client starts from,

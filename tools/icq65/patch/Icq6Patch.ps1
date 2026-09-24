@@ -50,7 +50,8 @@ $OlderSuffixes = @('.icq6-declutter-backup', '.icq6-retarget-backup')
 # Only the server's domain is asked for. Ports and paths are the same on every
 # ICQ Revival server (deploy/VM-SPEC.md, section 3), so the patch fills them in
 # itself; nobody has to know which port serves what.
-$PagesPortHttp = 8101   # the pages ICQ 6.5 opens, plain HTTP
+$PagesPortHttps = 8102  # pages the client opens in a window or the browser
+$PagesPortHttp = 8101   # what the client fetches with its own loader
 $SettingsKey = 'HKCU:\Software\OpenOSCAR\Icq6Patch'
 
 $Content = 'services\icqApp\ver1\content'
@@ -169,19 +170,40 @@ $DeadHosts = @(
     'xtraz.icq.com', 'openxtraz.icq.com', 'icq.openxtraz.com', 'labs.icq.com',
     'update.icq.com', 'www.icq.com', 'cb.icq.com', 'df.icq.com', 'c.icq.com'
 )
-$PagePaths = @(
-    '/xtraz/srv/', '/compad/', '/legal', '/sms', '/ibs/icq6/', '/download/icq6/',
-    '/register/email_activation/', '/xtraz2/global/'
-)
+# Every page path, and whether the client can reach it over HTTPS. Tried on a
+# real client: whatever it opens in a window or hands to the browser - the Xtraz
+# list and its DTD, the welcome and picture windows, help and registration -
+# works over HTTPS. What it fetches with its own loader does not: that loader
+# drops an https:// address without even connecting. Those stay on plain HTTP.
+$PageLinks = [ordered]@{
+    '/xtraz2/global/'             = $true    # the Xtraz list and its DTD
+    '/compad/'                    = $true    # help, registration, password, report
+    '/legal'                      = $true    # the legal notice
+    '/download/icq6/'             = $true    # the emoticon download page
+    '/xtraz/srv/'                 = $false   # country lookup the client fetches itself
+    '/register/email_activation/' = $false   # the client posts the activation itself
+    '/sms'                        = $false   # SMS carriers (their entries are removed)
+    '/ibs/icq6/'                  = $false   # SMS number check
+}
+$PagePaths = @($PageLinks.Keys)
 # Any host in front of those paths, not only the dead ICQ.com ones: the paths
 # belong to ICQ.com services and nothing else, so a match is either still
 # ICQ.com or a server this patch pointed them at before. Moving to another
 # server is then just applying again with the new domain.
 $LinkPattern = 'https?://[A-Za-z0-9.-]+(?::\d+)?' +
-               '(?=(?:' + (($PagePaths | ForEach-Object { [regex]::Escape($_) }) -join '|') + '))'
+               '(?=(?<path>' + (($PagePaths | ForEach-Object { [regex]::Escape($_) }) -join '|') + '))'
 
-# What the links are pointed at, for a given domain.
-function Get-PagesBase([string]$domain) { return "http://${domain}:$PagesPortHttp" }
+# What a link is pointed at, for a given domain and the path that follows it.
+function Get-PagesBase([string]$domain, [string]$path) {
+    if ($PageLinks[$path]) { return "https://${domain}:$PagesPortHttps" }
+    return "http://${domain}:$PagesPortHttp"
+}
+
+# The links in a text that do not point where they should yet.
+function Get-StrayLinks([string]$text, [string]$domain) {
+    return @([regex]::Matches($text, $LinkPattern, 'IgnoreCase') |
+        Where-Object { $_.Value -ne (Get-PagesBase $domain $_.Groups['path'].Value) })
+}
 
 # The client draws the ad slots and the teaser strip only while these list
 # something, and without SMS carriers it has nowhere to send a text.
@@ -417,15 +439,33 @@ function Test-Whitelisted([string]$name, [string]$text, [string]$h) {
     return $m.Success -and $m.Groups[1].Value.Contains('<u>' + $h + '</u>')
 }
 
+# The file as the client came with it, from this patch's backup (or one left by
+# the older tools); $null while the file has not been changed yet.
+function Get-OriginalText([string]$path) {
+    foreach ($suf in @($Suffix) + $OlderSuffixes) {
+        if (Test-Path -LiteralPath ($path + $suf)) { return (Read-Text ($path + $suf)).Text }
+    }
+    return $null
+}
+
+function Get-WhiteDomains([string]$text) {
+    $m = [regex]::Match($text, 'Key="WhiteDomainList" Value="([^"]*)"')
+    if (-not $m.Success) { return @() }
+    return @($m.Groups[1].Value -split '\s+' | Where-Object { $_ })
+}
+
+function Get-WhitelistHosts([string]$text) {
+    $m = [regex]::Match($text, '(?s)<whitelist>(.*?)</whitelist>')
+    if (-not $m.Success) { return @() }
+    return @([regex]::Matches($m.Groups[1].Value, '<u>([^<]*)</u>') | ForEach-Object { $_.Groups[1].Value })
+}
+
 function Get-LinkState([string]$domain) {
     $dir = Join-Path $script:IcqRoot 'ConfigFiles'
     if (-not (Test-Path -LiteralPath $dir)) { return @{ State = 'missing'; Info = '' } }
-    $base = Get-PagesBase $domain
     $other = 0
     foreach ($f in Get-ChildItem -LiteralPath $dir -Filter *.xml -File) {
-        foreach ($m in [regex]::Matches((Read-Text $f.FullName).Text, $LinkPattern, 'IgnoreCase')) {
-            if ($m.Value -ne $base) { $other++ }
-        }
+        $other += (Get-StrayLinks (Read-Text $f.FullName).Text $domain).Count
     }
     $state = if ($other -gt 0) { 'original' } else { 'patched' }
     return @{ State = $state; Info = "$other not on your server" }
@@ -491,13 +531,13 @@ function Invoke-ApplyAll([string]$domain) {
     }
 
     $dir = Join-Path $script:IcqRoot 'ConfigFiles'
-    $base = Get-PagesBase $domain
     $moved = 0
     foreach ($f in Get-ChildItem -LiteralPath $dir -Filter *.xml -File) {
         $file = Read-Text $f.FullName
-        $count = @([regex]::Matches($file.Text, $LinkPattern, 'IgnoreCase') | Where-Object { $_.Value -ne $base }).Count
+        $count = (Get-StrayLinks $file.Text $domain).Count
         if ($count -eq 0) { continue }
-        $file.Text = [regex]::Replace($file.Text, $LinkPattern, $base, 'IgnoreCase')
+        $file.Text = [regex]::Replace($file.Text, $LinkPattern,
+            { param($m) Get-PagesBase $domain $m.Groups['path'].Value }, 'IgnoreCase')
         Backup-Once $f.FullName
         Write-Text $f.FullName $file
         $moved += $count
@@ -506,10 +546,26 @@ function Invoke-ApplyAll([string]$domain) {
 
     # The client refuses content from a host that is not on these lists, and
     # drops the part of the interface that host would have fed.
+    #
+    # A server this patch let in before is taken off again when the domain
+    # changes: only what the client came with, plus the current domain, stays.
     $h = $domain
     $xtra = Join-Path $dir 'XtraConfig.xml'
     if (Test-Path -LiteralPath $xtra) {
         $file = Read-Text $xtra
+        $original = Get-OriginalText $xtra
+        if ($null -ne $original) {
+            $came = Get-WhiteDomains $original
+            $now = Get-WhiteDomains $file.Text
+            $keep = @($now | Where-Object { $came -contains $_ -or $_ -eq $h })
+            if ($keep.Count -ne $now.Count) {
+                $stale = @($now | Where-Object { $keep -notcontains $_ })
+                $file.Text = [regex]::Replace($file.Text, '(Key="WhiteDomainList" Value=")[^"]*(")',
+                    { param($m) $m.Groups[1].Value + ($keep -join ' ') + $m.Groups[2].Value }, 'None')
+                Write-Text $xtra $file
+                $report.Add(($stale -join ', ') + " no longer allowed in XtraConfig.xml")
+            }
+        }
         if (-not (Test-Whitelisted 'XtraConfig.xml' $file.Text $h)) {
             $new = [regex]::Replace($file.Text, '(Key="WhiteDomainList" Value=")([^"]*)(")',
                 { param($m) $m.Groups[1].Value + $m.Groups[2].Value + ' ' + $h + $m.Groups[3].Value }, 'None')
@@ -519,6 +575,15 @@ function Invoke-ApplyAll([string]$domain) {
     $tzer = Join-Path $dir 'tzer.xml'
     if (Test-Path -LiteralPath $tzer) {
         $file = Read-Text $tzer
+        $original = Get-OriginalText $tzer
+        if ($null -ne $original) {
+            $came = Get-WhitelistHosts $original
+            foreach ($stale in @(Get-WhitelistHosts $file.Text | Where-Object { $came -notcontains $_ -and $_ -ne $h })) {
+                $file.Text = [regex]::Replace($file.Text, '[ \t]*<u>' + [regex]::Escape($stale) + '</u>[ \t]*\r?\n?', '')
+                Write-Text $tzer $file
+                $report.Add("$stale no longer allowed in tzer.xml")
+            }
+        }
         if (-not (Test-Whitelisted 'tzer.xml' $file.Text $h)) {
             $at = $file.Text.IndexOf('</whitelist>')
             if ($at -ge 0) {

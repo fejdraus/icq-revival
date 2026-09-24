@@ -71,8 +71,8 @@ Public:
 | 8082 | TCP | web API, plain | ICQ 7 attempts, web clients |
 | 8443 | TCP | web API over TLS (nginx -> 8082) | same |
 | 4000 | UDP | legacy ICQ protocol v2-v5 | ICQ 95-99 (ICQ 2000 and later use OSCAR) |
-| 8101 | TCP | replacement ICQ.com pages, HTTP | ICQ 6.5 (it only speaks HTTP to these) |
-| 8102 | TCP | the same pages over HTTPS (nginx -> 8101, TLS 1.2) | ICQ 2003b, browsers |
+| 8101 | TCP | replacement ICQ.com pages, HTTP | ICQ 6.5 for what it downloads with its own loader, which cannot do HTTPS: the buddy picture, the country lookup, e-mail activation |
+| 8102 | TCP | the same pages over HTTPS (nginx -> 8101, TLS 1.2) | ICQ 6.5 for everything it opens in a window or the browser, ICQ 2003b, browsers |
 | 443 (or 8444) | TCP | registration and profile pages over HTTPS | people in a browser |
 
 Local only - never open these:
