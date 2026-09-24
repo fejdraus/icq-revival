@@ -57,6 +57,20 @@ namespace IcqRevival.Patch
             return Regex.Replace(input ?? "", pattern, replacement, RegexOptions.IgnoreCase);
         }
 
+        // A byte array in an if: empty is false, one byte is that byte, more
+        // are true.
+        public static bool IsTrue(byte[] value)
+        {
+            if (value == null || value.Length == 0) return false;
+            return value.Length > 1 || value[0] != 0;
+        }
+
+        // A string in an if: false when null or empty.
+        public static bool IsTrue(string value)
+        {
+            return !string.IsNullOrEmpty(value);
+        }
+
         // [int] of a number: rounded half to even, not cut off.
         public static int Int(double value)
         {

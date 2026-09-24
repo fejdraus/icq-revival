@@ -14,10 +14,13 @@
 #   #_endif
 #
 # so that it works run as a script and compiled with ps12exe alike: ps12exe
-# copies the file into the exe, which then needs nothing next to it.
+# copies the file into the exe, which then needs nothing next to it. The exes
+# handed out are no longer built that way: they are the C# ports in
+# tools\patcher, whose Common\PatchWindow.cs is the port of this file.
 #
 # The icon is drawn, not stored: New-PatchIconFile writes the same picture
-# the window shows into an .ico for ps12exe (tools\common\Build-Patches.ps1).
+# the window shows into an .ico - the app.ico of each project in
+# tools\patcher was written with it.
 
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 

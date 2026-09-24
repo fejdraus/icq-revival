@@ -49,7 +49,7 @@ namespace IcqRevival.Patch
         // Says which job a change belongs to.
         public void Assign(string part, string job)
         {
-            jobOf.Add(part, job);
+            jobOf[part] = job;
         }
 
         public IEnumerable<string> Keys { get { return order; } }
