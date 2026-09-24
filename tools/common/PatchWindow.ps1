@@ -149,46 +149,6 @@ function Get-PatchStateView([string]$state) {
     return @{ Mark = 'warn'; Text = $state; Counts = $true }
 }
 
-function New-PatchMark([int]$size, [string]$kind) {
-    $bmp = New-Object Drawing.Bitmap($size, $size)
-    $g = [Drawing.Graphics]::FromImage($bmp)
-    $g.SmoothingMode = 'AntiAlias'
-    $g.Clear([Drawing.Color]::Transparent)
-    $d = $size * 0.78
-    $o = ($size - $d) / 2
-    $pw = [single]([Math]::Max(1.2, $size / 9.0))
-    switch ($kind) {
-        'done' {
-            $g.FillEllipse((New-Object Drawing.SolidBrush((ConvertTo-PatchColor '#2E9E5B'))), $o, $o, $d, $d)
-            $pen = New-Object Drawing.Pen([Drawing.Color]::White, $pw)
-            $pen.StartCap = 'Round'; $pen.EndCap = 'Round'; $pen.LineJoin = 'Round'
-            $pts = [Drawing.PointF[]]@(
-                (New-Object Drawing.PointF(($size * 0.31), ($size * 0.52))),
-                (New-Object Drawing.PointF(($size * 0.45), ($size * 0.65))),
-                (New-Object Drawing.PointF(($size * 0.70), ($size * 0.37))))
-            $g.DrawLines($pen, $pts)
-        }
-        'todo' {
-            $pen = New-Object Drawing.Pen((ConvertTo-PatchColor '#9AA3AD'), $pw)
-            $g.DrawEllipse($pen, $o + $pw / 2, $o + $pw / 2, $d - $pw, $d - $pw)
-        }
-        'warn' {
-            $g.FillEllipse((New-Object Drawing.SolidBrush((ConvertTo-PatchColor '#D9822B'))), $o, $o, $d, $d)
-            $pen = New-Object Drawing.Pen([Drawing.Color]::White, $pw)
-            $pen.StartCap = 'Round'; $pen.EndCap = 'Round'
-            $g.DrawLine($pen, $size / 2, $size * 0.30, $size / 2, $size * 0.54)
-            $dot = $pw * 1.1
-            $g.FillEllipse([Drawing.Brushes]::White, $size / 2 - $dot / 2, $size * 0.64, $dot, $dot)
-        }
-        default {
-            $pen = New-Object Drawing.Pen((ConvertTo-PatchColor '#C5CBD1'), $pw)
-            $g.DrawLine($pen, $size * 0.30, $size / 2, $size * 0.70, $size / 2)
-        }
-    }
-    $g.Dispose()
-    return $bmp
-}
-
 # --- window --------------------------------------------------------------------
 
 try { [Windows.Forms.Application]::EnableVisualStyles() } catch { }
@@ -403,12 +363,11 @@ function New-PatchWindow {
     # Handlers outlive this function, so they find the window through Tag.
     $list.Tag = $ui
     $list.Add_ItemChecked({ param($sender, $e) Update-PatchChecks $sender.Tag $e.Item })
-    $marks = New-Object Windows.Forms.ImageList
-    $marks.ColorDepth = 'Depth32Bit'
-    $m = [int](18 * $scale)
-    $marks.ImageSize = New-Object Drawing.Size($m, $m)
-    foreach ($k in 'done', 'todo', 'warn', 'none') { $marks.Images.Add($k, (New-PatchMark $m $k)) }
-    $list.SmallImageList = $marks
+    # The tick is the only mark on a row; the State column says the rest. An
+    # empty image one pixel wide only gives the rows some height.
+    $spacer = New-Object Windows.Forms.ImageList
+    $spacer.ImageSize = New-Object Drawing.Size(1, [int](22 * $scale))
+    $list.SmallImageList = $spacer
     foreach ($c in $Columns) { [void]$list.Columns.Add($c[0], [int]($c[1] * $scale)) }
     [void]$list.Columns.Add('State', [int](110 * $scale))
     $card.Controls.Add($list)
@@ -520,7 +479,7 @@ function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state, [string]$ke
     $view = Get-PatchStateView $state
     $text = $cells[0]
     if ($text) { $text = $text.Substring(0, 1).ToUpper() + $text.Substring(1) }
-    $item = New-Object Windows.Forms.ListViewItem($text, $view.Mark)
+    $item = New-Object Windows.Forms.ListViewItem($text)
     $item.Group = $group
     $item.ToolTipText = $text
     $item.Name = $key
