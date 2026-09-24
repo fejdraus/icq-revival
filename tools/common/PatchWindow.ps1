@@ -192,6 +192,18 @@ function New-PatchMark([int]$size, [string]$kind) {
 # --- window --------------------------------------------------------------------
 
 try { [Windows.Forms.Application]::EnableVisualStyles() } catch { }
+# Labels and buttons otherwise draw their text through GDI+, which leaves
+# small type without any smoothing at all; GDI text gets ClearType like the
+# text box does. The call fails once a window exists - then every control is
+# switched one by one in Show-PatchWindow.
+try { [Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false) } catch { }
+
+function Set-PatchTextRendering([Windows.Forms.Control]$control) {
+    if ($control -is [Windows.Forms.Label] -or $control -is [Windows.Forms.ButtonBase]) {
+        $control.UseCompatibleTextRendering = $false
+    }
+    foreach ($child in $control.Controls) { Set-PatchTextRendering $child }
+}
 
 # The palette. The window is a grey canvas with white cards on it and a dark
 # header, so the parts stand apart; only the accent line and the main button
@@ -501,6 +513,7 @@ function Complete-PatchList($ui) {
 }
 
 function Show-PatchWindow($ui) {
+    Set-PatchTextRendering $ui.Form
     $ui.Form.ResumeLayout()
     # For checking the layout without a person at the screen: the window is
     # drawn into this file and closed again.
