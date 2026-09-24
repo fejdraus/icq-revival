@@ -441,6 +441,11 @@ function Add-PatchButton($ui, [string]$text, [scriptblock]$action, [switch]$Prim
     $b.Add_Click($action)
     $ui.Footer.Controls.Add($b)
     $ui.ButtonsRight -= 8
+    # The summary ends where the buttons begin, and stays under them.
+    $ui.Summary.Width = [Math]::Max(40, $ui.ButtonsRight - $ui.Summary.Left)
+    $ui.Summary.Anchor = 'Top, Left, Right'
+    $ui.Summary.AutoEllipsis = $true
+    $ui.Summary.SendToBack()
     if ($Primary) { $ui.Form.AcceptButton = $b }
     return $b
 }
