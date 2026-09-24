@@ -41,8 +41,7 @@ param(
     [switch]$Restore,
     [string]$Root,
     [string]$Server,
-    # Changes to leave out - or take out, if in place - by the names the
-    # window lists them under (links, whitelist and sign-in for those rows).
+    # Jobs to leave out - or take out, if in place - by their keys in $Jobs.
     [string[]]$Skip
 )
 
@@ -496,39 +495,79 @@ function Get-StripState($s) {
 
 # --- applying -----------------------------------------------------------------
 
-# Whether a change is wanted: all of them, unless a key is in $skip - the
-# rows cleared in the window.
-function Test-Wanted($skip, [string]$key) { return -not ($skip -and $skip.Contains($key)) }
+#_if PSScript
+. (Join-Path $PSScriptRoot '..\..\common\PatchItems.ps1')
+#_else
+#_include "$PSScriptRoot/../../common/PatchItems.ps1"
+#_endif
 
-# Changes that do one job between them, and are ticked together: the
-# preferences entry and its page, the message window banner and the two
-# parts of its frame.
-$Together = @{
-    'the "SMS & Phone" entry of the preferences list'   = 'sms preferences'
-    'the page of the "SMS & Phone" preferences'         = 'sms preferences'
-    'the banner under the message window'               = 'message banner'
-    'the ad box of the message window'                  = 'message banner'
-    'the white frame at the foot of the message window' = 'message banner'
+# What a person chooses between: one row per job, whatever number of files
+# and places it takes. Every change of the tables above belongs to one.
+$Jobs = [ordered]@{
+    'xtraz'   = @{ Group = 'Services that are gone'; What = 'Xtraz: the strip, the panel, menus, options, sounds and filter' }
+    'tzers'   = @{ Group = 'Services that are gone'; What = 'tZers: the button, the teasers, the option and the sound' }
+    'sms'     = @{ Group = 'Services that are gone'; What = 'SMS and phone: buttons, icons, menus, options, sounds, filter' }
+    'zlango'  = @{ Group = 'Services that are gone'; What = 'the Zlango add-on and its message window buttons' }
+    'ads'     = @{ Group = 'Advertising'; What = 'advertising: the ad slots and boxes, the banner and its frame' }
+    'fix'     = @{ Group = 'Fixes'; What = 'the cut-off bottom of the "Advanced" preferences group' }
+    'links'   = @{ Group = 'Your server'; What = 'the pages the client opens point at your server' }
+    'sign-in' = @{ Group = 'Your server'; What = 'automatic connection signs in to your server' }
+}
+$JobOf = @{
+    'the Xtraz strip above the contact list'             = 'xtraz'
+    'the Xtraz panel below the contact list'             = 'xtraz'
+    'the "Xtraz invitations" option'                     = 'xtraz'
+    'the Xtraz submenu of the contact menu'              = 'xtraz'
+    'the "save Xtraz invitations" option'                = 'xtraz'
+    'the incoming-Xtraz sound'                           = 'xtraz'
+    'the Xtraz filter of the history search'             = 'xtraz'
+    'the "My Xtraz" item of the main menu'               = 'xtraz'
+    'the tZers button of the message window'             = 'tzers'
+    'the "play tZers automatically" option'              = 'tzers'
+    'the incoming-tZer sound'                            = 'tzers'
+    'the teaser strip'                                   = 'tzers'
+    'the "SMS & Phone" entry of the preferences list'    = 'sms'
+    'the page of the "SMS & Phone" preferences'          = 'sms'
+    'the SMS button of the message window'               = 'sms'
+    'the phone button of the message window'             = 'sms'
+    'the SMS icon on a contact row'                      = 'sms'
+    'the phone icon on a contact row'                    = 'sms'
+    'the auto-SMS line of the contact card'              = 'sms'
+    'the "Send SMS" item of the contact menu'            = 'sms'
+    'the auto-SMS section of the options'                = 'sms'
+    'the incoming-SMS sound'                             = 'sms'
+    'the outgoing-SMS sound'                             = 'sms'
+    'the SMS filter of the history search'               = 'sms'
+    'SMS carriers'                                       = 'sms'
+    'the Zlango add-on and its message window buttons'   = 'zlango'
+    'the banner under the message window'                = 'ads'
+    'the ad box of the message window'                   = 'ads'
+    'the white frame at the foot of the message window'  = 'ads'
+    'the ad box of the contact list'                     = 'ads'
+    'advertising slots'                                  = 'ads'
+    'the cut-off bottom of the "Advanced" group'         = 'fix'
+    # The client refuses content from a host not on its whitelists, so the
+    # links are no use without them.
+    'links'                                              = 'links'
+    'whitelist'                                          = 'links'
+    'sign-in'                                            = 'sign-in'
 }
 
-# Every change with its current state, in the order the window lists them.
-# The key names a change for the selection; rows with the same Link are one
-# change and are ticked together.
+# Every change with its current state, folded into one row per job. A row's
+# key is its job: what it is chosen by.
 function Get-Items([string]$domain) {
     $items = New-Object System.Collections.Generic.List[object]
-    $add = { param($group, $key, $what, $where, $state, $link)
-        $items.Add([pscustomobject]@{ Group = $group; Key = $key; What = $what; Where = $where; State = $state; Link = $link })
+    $add = { param($key, $where, $state)
+        $items.Add([pscustomobject]@{ Group = ''; Key = $key; What = $key; Where = $where; State = $state })
     }
-    foreach ($p in $CodePatches) { & $add 'Code' $p.What $p.What $p.File (Get-CodeState $p) $Together[$p.What] }
-    foreach ($e in $MarkupEdits) { & $add 'Interface' $e.What $e.What (Split-Path $e.File -Leaf) (Get-EditState $e) $Together[$e.What] }
-    foreach ($r in $Removals) { & $add 'Interface' $r.What $r.What (Split-Path $r.Path -Leaf) (Get-RemovalState $r) $Together[$r.What] }
-    $l = Get-LinkState $domain
-    & $add 'Links and advertising' 'links' 'the pages the client opens point at your server' "ConfigFiles, $($l.Info)" $l.State 'links'
-    & $add 'Links and advertising' 'whitelist' 'your server in the content whitelists' 'XtraConfig.xml, tzer.xml' (Get-WhitelistState $domain) 'links'
-    foreach ($s in $Strips) { & $add 'Links and advertising' $s.What $s.What (Split-Path $s.File -Leaf) (Get-StripState $s) '' }
-    $state = Get-SignInState $domain
-    & $add 'Sign-in server' 'sign-in' 'automatic connection signs in to your server' ('MCore.dll, now ' + (Get-SignInShown)) $state ''
-    return $items
+    foreach ($p in $CodePatches) { & $add $p.What $p.File (Get-CodeState $p) }
+    foreach ($e in $MarkupEdits) { & $add $e.What (Split-Path $e.File -Leaf) (Get-EditState $e) }
+    foreach ($r in $Removals) { & $add $r.What (Split-Path $r.Path -Leaf) (Get-RemovalState $r) }
+    & $add 'links' 'ConfigFiles' (Get-LinkState $domain).State
+    & $add 'whitelist' 'XtraConfig.xml' (Get-WhitelistState $domain)
+    foreach ($st in $Strips) { & $add $st.What (Split-Path $st.File -Leaf) (Get-StripState $st) }
+    & $add 'sign-in' ('MCore.dll, now ' + (Get-SignInShown)) (Get-SignInState $domain)
+    return Merge-Jobs $items
 }
 
 # Puts back a whole file from its backup; the backup stays, as the original.
@@ -855,7 +894,7 @@ function Update-View {
         $groups = @{}
         foreach ($it in Get-Items (Get-Server)) {
             if (-not $groups.ContainsKey($it.Group)) { $groups[$it.Group] = Add-PatchGroup $ui $it.Group }
-            Add-PatchRow $ui $groups[$it.Group] @($it.What, $it.Where) $it.State $it.Key $it.Link
+            Add-PatchRow $ui $groups[$it.Group] @($it.What, $it.Where) $it.State $it.Key
         }
     }
     Complete-PatchList $ui

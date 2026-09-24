@@ -54,6 +54,7 @@ $Patches = @(
         Sha256From = '7B3198D703D4AB2DAAD6A8062B0C4F885419C3BC72151BF78427D3FA32A6680A'
         Sha256To   = '4530FF4F8190DCE7D213D40BBDC3602E774A65490AE5D927CF7B77D8C245E347'
         What = 'contact list banner is never created'
+        Job = 'banners'
     }
     [pscustomobject]@{
         File = 'ICQProLib.dll'; Offset = 0x1217B
@@ -63,6 +64,7 @@ $Patches = @(
         Sha256From = '192941271B7B50BC9298B665C2C1F0C9F3F74E2AF43FAFF3C0FE0F0E082A31A3'
         Sha256To   = '631780FABA446E9AB5598D88B45296A626F373DAFAA275D828B1920692EC139E'
         What = 'message window banner is never shown'
+        Job = 'banners'
     }
     [pscustomobject]@{
         File = 'ICQTicker.dll'; Offset = 0x750
@@ -72,7 +74,7 @@ $Patches = @(
         Sha256From = '92058B9563288A066DC4884E68930BB67F78A6D10AD8BAB8BD0F8287FB847A39'
         Sha256To   = '2E901493EFB3914273DDD952159B3135FD959A8FC2F0DB8DD67EFDE875D031FF'
         What = 'Google search bar and its button are gone'
-        Link = 'google bar'
+        Job = 'google bar'
     }
     [pscustomobject]@{
         File = 'Icq.exe'; Offset = 0x39AA2
@@ -82,8 +84,8 @@ $Patches = @(
         Sha256From = '6C97F1B8045ED6E6801E0AFD97548B040819F153836B25B0F968184483F1546A'
         Sha256To   = 'BE8AEA553DCABA7108E3442EEEBAA5F00A56A2BE78653290EFFF6A83DF5F0B1B'
         What = 'no empty strip reserved for them'
-        # The 22 px the layout adds for the bar above: one change with it.
-        Link = 'google bar'
+        # The 22 px the layout keeps for the bar above: one job with it.
+        Job = 'google bar'
     }
     [pscustomobject]@{
         # The "Send By: ICQ / SMS / Email" strip in the message window. SMS and
@@ -114,7 +116,7 @@ $Patches = @(
         Sha256From = 'AFC36BD67D353EECA1F952C3ED56D372FE93C018D58C966F0A930EDEE5AC887B'
         Sha256To   = 'E40BEEE28D67ECACA0A10182F215CB2901F8CD4A56F85C667C0AE8E09E18E486'
         What = 'tick boxes ICQ / SMS / Email are hidden'
-        Link = 'send-by'
+        Job = 'send-by'
     }
     [pscustomobject]@{
         File = 'ICQMessagePlugin.dll'; Offset = 0x7B84
@@ -124,7 +126,7 @@ $Patches = @(
         Sha256From = 'AFC36BD67D353EECA1F952C3ED56D372FE93C018D58C966F0A930EDEE5AC887B'
         Sha256To   = 'E40BEEE28D67ECACA0A10182F215CB2901F8CD4A56F85C667C0AE8E09E18E486'
         What = 'the same for the group around them'
-        Link = 'send-by'
+        Job = 'send-by'
     }
     [pscustomobject]@{
         # Second layer: the words. There is no control behind them - a walk of
@@ -139,7 +141,7 @@ $Patches = @(
         Sha256To   = '64EA6C32386A04D71B873522EF3A2662E074EB048AF584459F9E8492DC4F0EBA'
         What = 'the words "Send By:" are gone'
         # The three layers of the strip only make sense together.
-        Link = 'send-by'
+        Job = 'send-by'
     }
     [pscustomobject]@{
         # Third layer: the frame. An object named RgnFrame in the skin, 334x32
@@ -160,7 +162,7 @@ $Patches = @(
         Sha256From = 'B9E7997D2E60A5E172F09376550596B61C871A45B9804243F23F07D2B14CECD0'
         Sha256To   = '5E126B5C13CF0400FAAF43BBA6631E497F70EC7C85C41B5645BBB5F700CA2370'
         What = 'the frame is pulled up to the Send button'
-        Link = 'send-by'
+        Job = 'send-by'
     }
     [pscustomobject]@{
         File = 'Skin\IcqPro.skn'; Offset = 0x41782
@@ -170,7 +172,7 @@ $Patches = @(
         Sha256From = 'B9E7997D2E60A5E172F09376550596B61C871A45B9804243F23F07D2B14CECD0'
         Sha256To   = '5E126B5C13CF0400FAAF43BBA6631E497F70EC7C85C41B5645BBB5F700CA2370'
         What = 'its rectangle follows the offset'
-        Link = 'send-by'
+        Job = 'send-by'
     }
 )
 
@@ -597,35 +599,49 @@ function Set-StringPatches([string]$base, $skip) {
     return $tooLong
 }
 
-# Whether a change is wanted: all of them, unless a key is in $skip - the
-# rows cleared in the window.
-function Test-Wanted($skip, [string]$key) { return -not ($skip -and $skip.Contains($key)) }
+#_if PSScript
+. (Join-Path $PSScriptRoot '..\..\common\PatchItems.ps1')
+#_else
+#_include "$PSScriptRoot/../../common/PatchItems.ps1"
+#_endif
 
-# Every change with its current state, in the order the window lists them.
-# The key names a change for the selection; rows with the same Link are one
-# change and are ticked together.
+# What a person chooses between: one row per job, whatever number of files
+# and places it takes.
+$Jobs = [ordered]@{
+    'banners'    = @{ Group = 'Advertising'; What = 'the banners of the contact list and the message window' }
+    'google bar' = @{ Group = 'Advertising'; What = 'the Google search bar and the strip kept for it' }
+    'send-by'    = @{ Group = 'Services that are gone'; What = 'the "Send By: ICQ / SMS / Email" strip of the message window' }
+    'links'      = @{ Group = 'Your server'; What = 'ICQ.com links in menus and help point at your server' }
+    'sign-in'    = @{ Group = 'Your server'; What = 'new accounts and "Get an ICQ Number" connect to your server' }
+}
+$JobOf = @{ 'sign-in' = 'sign-in' }
+foreach ($p in $Patches) { if ($p.Job) { $JobOf[$p.What] = $p.Job } }
+foreach ($sp in $StringPatches) { $JobOf[$sp.What] = 'links' }
+foreach ($rel in $LinkFiles) { $JobOf[$rel] = 'links' }
+
+# Every change with its current state, in the order the window lists them,
+# the parts of one job folded into one row. A row's key is what it is chosen
+# by: the job, or the change itself.
 function Get-Items([string]$domain) {
     $items = New-Object System.Collections.Generic.List[object]
-    $add = { param($group, $key, $what, $where, $state, $link)
-        $items.Add([pscustomobject]@{ Group = $group; Key = $key; What = $what; Where = $where; State = $state; Link = $link })
+    $add = { param($group, $key, $what, $where, $state)
+        $items.Add([pscustomobject]@{ Group = $group; Key = $key; What = $what; Where = $where; State = $state })
     }
     foreach ($p in $Patches) {
-        & $add 'Code' $p.What $p.What ('{0} at 0x{1:X}' -f $p.File, $p.Offset) (Get-State $p) $p.Link
+        & $add 'Code' $p.What $p.What ('{0} at 0x{1:X}' -f $p.File, $p.Offset) (Get-State $p)
     }
     foreach ($sp in $StringPatches) {
-        & $add 'Links inside the executable' $sp.What $sp.What ('{0} at 0x{1:X}' -f $sp.Path, $sp.Offset) (Get-StringState $sp) ''
+        & $add 'Links inside the executable' $sp.What $sp.What ('{0} at 0x{1:X}' -f $sp.File, $sp.Offset) (Get-StringState $sp)
     }
     foreach ($rel in $LinkFiles) {
-        $s = Get-LinkState $rel
         $name = [IO.Path]::GetFileName($rel)
-        $where = if ($s.Info) { "$name, $($s.Info)" } else { $name }
-        & $add 'Links' $rel "menu items in $name point at your server" $where $s.State ''
+        & $add 'Links' $rel "menu items in $name point at your server" $name (Get-LinkState $rel).State
     }
     $current = Get-SignInServer
     $state = if (-not (Get-DefaultPrefsKey)) { 'missing' } elseif ($domain -and $current -eq $domain) { 'patched' } else { 'original' }
     $shown = if ($current) { $current } else { '(not set)' }
-    & $add 'Sign-in server' 'sign-in' 'new accounts and "Get an ICQ Number" connect to your server' "Default Server Host, now $shown" $state ''
-    return $items
+    & $add 'Sign-in server' 'sign-in' 'new accounts and "Get an ICQ Number" connect to your server' "Default Server Host, now $shown" $state
+    return Merge-Jobs $items
 }
 
 # Makes the client match the selection. Returns what changed, one line per
@@ -854,7 +870,7 @@ function Update-View {
         $groups = @{}
         foreach ($it in Get-Items (Get-Domain $ui.Server.Text)) {
             if (-not $groups.ContainsKey($it.Group)) { $groups[$it.Group] = Add-PatchGroup $ui $it.Group }
-            Add-PatchRow $ui $groups[$it.Group] @($it.What, $it.Where) $it.State $it.Key $it.Link
+            Add-PatchRow $ui $groups[$it.Group] @($it.What, $it.Where) $it.State $it.Key
         }
     }
     Complete-PatchList $ui

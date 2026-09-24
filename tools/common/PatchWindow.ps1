@@ -137,6 +137,7 @@ $PatchStates = @{
     'patched'        = @{ Mark = 'done';  Text = 'Applied';        Counts = $true }
     'original'       = @{ Mark = 'todo';  Text = 'Not applied';    Counts = $true }
     'another server' = @{ Mark = 'todo';  Text = 'Other server';   Counts = $true }
+    'partly'         = @{ Mark = 'todo';  Text = 'Partly applied'; Counts = $true }
     'no links'       = @{ Mark = 'none';  Text = 'Nothing to do';  Counts = $false }
     'missing'        = @{ Mark = 'none';  Text = 'Not in client';  Counts = $false }
     'no folder'      = @{ Mark = 'none';  Text = '-';              Counts = $false }
@@ -484,17 +485,16 @@ function Add-PatchGroup($ui, [string]$name) {
 }
 
 # $cells fills the columns before State; the tooltip shows the whole first one.
-# $key names the row for the selection; rows sharing a $link are one change
-# split over several places, and are ticked and cleared together.
-function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state, [string]$key, [string]$link) {
+# $key names the row for the selection.
+function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state, [string]$key) {
     $view = Get-PatchStateView $state
     $text = $cells[0]
-    if ($text) { $text = $text.Substring(0, 1).ToUpper() + $text.Substring(1) }
+    # A capital to start the row, except for names spelt with one inside (tZers).
+    if ($text.Length -gt 1 -and -not [char]::IsUpper($text[1])) { $text = $text.Substring(0, 1).ToUpper() + $text.Substring(1) }
     $item = New-Object Windows.Forms.ListViewItem($text)
     $item.Group = $group
     $item.ToolTipText = $text
     $item.Name = $key
-    $item.Tag = $link
     $item.Checked = -not $ui.Unchecked.Contains($key)
     $item.UseItemStyleForSubItems = $false
     for ($i = 1; $i -lt $cells.Count; $i++) {
@@ -519,11 +519,6 @@ function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state, [string]$ke
 # only renews what is there - for another domain, say - and never mixes a
 # new choice into a patched client.
 function Complete-PatchList($ui) {
-    foreach ($item in $ui.List.Items) {
-        if (-not $item.Tag) { continue }
-        $others = @($ui.List.Items | Where-Object { $_.Tag -eq $item.Tag -and $_ -ne $item } | ForEach-Object { $_.Text })
-        if ($others.Count) { $item.ToolTipText = $item.Text + "`n`nTicked together with:`n  " + ($others -join "`n  ") }
-    }
     $ui.Locked = @($ui.Rows | Where-Object { $_.Counts -and $_.Mark -eq 'done' }).Count -gt 0
     $ui.All.Enabled = -not $ui.Locked
     $ui.List.EndUpdate()
@@ -534,13 +529,7 @@ function Complete-PatchList($ui) {
 function Update-PatchChecks($ui, $item) {
     if ($ui.Filling) { return }
     if ($item.Checked) { [void]$ui.Unchecked.Remove($item.Name) } else { [void]$ui.Unchecked.Add($item.Name) }
-    if ($item.Tag -and -not $ui.Syncing) {
-        $ui.Syncing = $true
-        foreach ($other in $ui.List.Items) {
-            if ($other.Tag -eq $item.Tag -and $other.Checked -ne $item.Checked) { $other.Checked = $item.Checked }
-        }
-        $ui.Syncing = $false
-    }
+    # Select all sums up once, after the last row.
     if (-not $ui.Syncing) { Update-PatchSummary $ui }
 }
 
