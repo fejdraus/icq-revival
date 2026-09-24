@@ -638,6 +638,16 @@ func (s oscarServer) dispatchIncomingMessages(
 				if err := s.snacHandler(ctx, fg, instance, inFrame, flapBuf, flapc, endpointCfg); err != nil {
 					middleware.LogRequestError(ctx, s.logger, inFrame, err)
 					if errors.Is(err, ErrRouteNotFound) {
+						// What a client asks for that the server does not know: the
+						// only way to find out what a feature of a client needs.
+						body := flapBuf.Bytes()
+						if len(body) > 512 {
+							body = body[:512]
+						}
+						s.logger.InfoContext(ctx, "unknown SNAC",
+							"food_group", fmt.Sprintf("0x%04X", inFrame.FoodGroup),
+							"sub_group", fmt.Sprintf("0x%04X", inFrame.SubGroup),
+							"body", fmt.Sprintf("%X", body))
 						if err1 := sendInvalidSNACErr(inFrame, flapc); err1 != nil {
 							return errors.Join(err1, err)
 						}

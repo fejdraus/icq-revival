@@ -341,8 +341,18 @@ func (s *ICBMService) addExternalIP(ctx context.Context, instance *state.Session
 			break
 		}
 	}
+	var tags []string
+	for _, t := range frag.TLVList {
+		tags = append(tags, fmt.Sprintf("%04X:%d", t.Tag, len(t.Value)))
+	}
+	svc, _ := frag.Bytes(wire.ICBMRdvTLVTagsSvcData)
+	if len(svc) > 1024 {
+		svc = svc[:1024]
+	}
 	s.logger.InfoContext(ctx, "rendezvous proposal",
 		"capability", fmt.Sprintf("%X", frag.Capability),
+		"tlvs", strings.Join(tags, " "),
+		"service_data", fmt.Sprintf("%X", svc),
 		"proposed_ip", net.IP(proposed).String(),
 		"seen_ip", ip.String(),
 		"port", port,
