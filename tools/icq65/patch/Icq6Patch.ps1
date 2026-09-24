@@ -14,8 +14,9 @@
 #   3. Advertising and teasers. Their local descriptors are emptied, which is
 #      what makes the client stop drawing them at all.
 #
-#   4. Sign-in server. The domain becomes the server a new install signs in
-#      to; a server typed under Options -> Connection stays the user's choice.
+#   4. Sign-in server. The domain replaces login.icq.com as the server the
+#      client signs in to with automatic connection settings; a server typed
+#      under Options -> Connection -> manual stays the user's choice.
 #
 # Every file is backed up next to itself before the first change, and
 # "Restore original" puts them all back. The user's profile is never touched.
@@ -192,46 +193,81 @@ $Strips = @(
 
 # --- sign-in server ----------------------------------------------------------
 #
-# ICQ 6.5 keeps the server it signs in to as ServerHostName, a plain setting of
-# its "App" set (stored in %APPDATA%\ICQ\Application.mdb, next to LastOwner).
-# Where the user has not typed one, the value comes from the set's defaults,
-# ConfigFiles\Defaults\App.xml - MKernel's LoadDefaults / GetPrefDefaultValue -
-# and failing that from the built-in login.icq.com, which is gone. A default
-# here is therefore what the client signs in to until someone types another
-# server under Options -> Connection, which it then keeps. The port is 5190
-# out of the box already.
+# With automatic connection settings ICQ 6.5 signs in to ServerHostName of its
+# ConnectionSettings, and the default for it is not in any configuration file:
+# MCore.dll builds it in code, from a UTF-16 string "login.icq.com" that one
+# instruction pushes before SysAllocString. (ConfigFiles\Defaults\App.xml holds
+# defaults for the App set only; a ServerHostName there is ignored - tried.)
+#
+# The string cannot be replaced in place - thirteen characters is too short for
+# a domain - so the domain goes into the unused tail of .rdata, the section is
+# made to map that tail, and the one push is pointed at it. login.icq.com stays
+# where it was, untouched. The push carries a base relocation, so the loader
+# moves the new address along with the image like the old one. The DLL has no
+# checksum and no signature to keep valid.
 
-$AppDefaults = 'ConfigFiles\Defaults\App.xml'
-$SignInPattern = '<ServerHostName\s+default="([^"]*)"\s*/>'
-
-function Get-SignInDefault {
-    $path = Join-Path $script:IcqRoot $AppDefaults
-    if (-not (Test-Path -LiteralPath $path)) { return $null }
-    $m = [regex]::Match((Read-Text $path).Text, $SignInPattern)
-    if ($m.Success) { return $m.Groups[1].Value } else { return '' }
+$SignIn = [pscustomobject]@{
+    File       = 'MCore.dll'
+    Size       = 2349568
+    Sha256From = '939847F9118F8059223729BDFF7FF174C1BF45840CA2BB3A9DD4A415E669587B'
+    PushImm    = 0x4572       # push offset "login.icq.com" - its 4-byte operand
+    OldTarget  = 0x320B2878   # where it points out of the box
+    NewTarget  = 0x32108664   # the slot below, at image base 0x31F00000
+    Slot       = 0x207064     # file offset of the slot: .rdata, past its data
+    SlotEnd    = 0x207200     # end of .rdata in the file
+    VSizeAt    = 0x258        # VirtualSize of .rdata in the section table
+    VSizeFrom  = 0x57662
+    VSizeTo    = 0x57800      # all of its raw data; .data starts at 0x209000
 }
 
-# Returns $true when the file changed.
-function Set-SignInDefault([string]$domain) {
-    $path = Join-Path $script:IcqRoot $AppDefaults
-    if (-not (Test-Path -LiteralPath $path)) { return $false }
-    $file = Read-Text $path
-    $m = [regex]::Match($file.Text, $SignInPattern)
-    if ($m.Success) {
-        if ($m.Groups[1].Value -eq $domain) { return $false }
-        $file.Text = $file.Text.Substring(0, $m.Index) + "<ServerHostName default=""$domain""/>" +
-                     $file.Text.Substring($m.Index + $m.Length)
-    } else {
-        $at = $file.Text.IndexOf('</defaults>')
-        if ($at -lt 0) { return $false }
-        # Same indentation and line ending as the entries already there.
-        $eol = if ($file.Text.Contains("`r`n")) { "`r`n" } else { "`n" }
-        $file.Text = $file.Text.Substring(0, $at) + "`t<ServerHostName default=""$domain""/>$eol" +
-                     $file.Text.Substring($at)
+function Read-SlotDomain([byte[]]$bytes) {
+    $end = $SignIn.Slot
+    while ($end + 1 -lt $SignIn.SlotEnd -and ($bytes[$end] -ne 0 -or $bytes[$end + 1] -ne 0)) { $end += 2 }
+    return [Text.Encoding]::Unicode.GetString($bytes, $SignIn.Slot, $end - $SignIn.Slot)
+}
+
+# original / patched / another server / other version / missing
+function Get-SignInState([string]$domain) {
+    $path = Join-Path $script:IcqRoot $SignIn.File
+    if (-not (Test-Path -LiteralPath $path)) { return 'missing' }
+    $bytes = [IO.File]::ReadAllBytes($path)
+    if ($bytes.Length -ne $SignIn.Size) { return 'other version' }
+    $target = [BitConverter]::ToUInt32($bytes, $SignIn.PushImm)
+    if ($target -eq $SignIn.OldTarget) {
+        if ((Get-Sha256 $path) -eq $SignIn.Sha256From) { return 'original' } else { return 'other version' }
     }
+    if ($target -eq $SignIn.NewTarget) {
+        if ((Read-SlotDomain $bytes) -eq $domain) { return 'patched' } else { return 'another server' }
+    }
+    return 'other version'
+}
+
+function Get-SignInShown {
+    $path = Join-Path $script:IcqRoot $SignIn.File
+    if (-not (Test-Path -LiteralPath $path)) { return '' }
+    $bytes = [IO.File]::ReadAllBytes($path)
+    if ($bytes.Length -ne $SignIn.Size) { return '' }
+    if ([BitConverter]::ToUInt32($bytes, $SignIn.PushImm) -eq $SignIn.NewTarget) { return Read-SlotDomain $bytes }
+    return 'login.icq.com'
+}
+
+# Returns a line for the report, or $null when there was nothing to do.
+function Set-SignIn([string]$domain) {
+    $state = Get-SignInState $domain
+    if ($state -eq 'patched' -or $state -eq 'missing') { return $null }
+    if ($state -eq 'other version') { return "MCore.dll is not the one from build 2024 - sign-in server left as it is" }
+    $text = [Text.Encoding]::Unicode.GetBytes($domain)
+    if ($text.Length + 2 -gt $SignIn.SlotEnd - $SignIn.Slot) { return "the domain is too long for MCore.dll - sign-in server left as it is" }
+
+    $path = Join-Path $script:IcqRoot $SignIn.File
     Backup-Once $path
-    Write-Text $path $file
-    return $true
+    $bytes = [IO.File]::ReadAllBytes($path)
+    for ($i = $SignIn.Slot; $i -lt $SignIn.SlotEnd; $i++) { $bytes[$i] = 0 }
+    [Array]::Copy($text, 0, $bytes, $SignIn.Slot, $text.Length)
+    [Array]::Copy([BitConverter]::GetBytes([uint32]$SignIn.VSizeTo), 0, $bytes, $SignIn.VSizeAt, 4)
+    [Array]::Copy([BitConverter]::GetBytes([uint32]$SignIn.NewTarget), 0, $bytes, $SignIn.PushImm, 4)
+    [IO.File]::WriteAllBytes($path, $bytes)
+    return "the client signs in to $domain"
 }
 
 # --- text files ---------------------------------------------------------------
@@ -492,7 +528,8 @@ function Invoke-ApplyAll([string]$domain) {
         }
     }
 
-    if (Set-SignInDefault $domain) { $report.Add("new installs sign in to $domain") }
+    $line = Set-SignIn $domain
+    if ($line) { $report.Add($line) }
 
     foreach ($s in $Strips) {
         $path = Join-Path $script:IcqRoot $s.File
@@ -786,11 +823,9 @@ function Update-View {
     foreach ($s in $Strips) { Add-Row $s.What (Split-Path $s.File -Leaf) (Get-StripState $s) }
 
     Add-Group 'SIGN-IN SERVER'
-    $current = Get-SignInDefault
-    $wanted = Get-Server
-    $state = if ($null -eq $current) { 'missing' } elseif ($wanted -and $current -eq $wanted) { 'patched' } else { 'original' }
-    $shown = if ($current) { $current } else { 'login.icq.com (built in)' }
-    Add-Row "where a new install signs in: $shown" 'Defaults\App.xml' $state
+    $state = Get-SignInState (Get-Server)
+    if ($state -eq 'another server') { $state = 'original' }
+    Add-Row ("automatic connection signs in to " + (Get-SignInShown)) 'MCore.dll' $state
 }
 
 $buttons = @(
