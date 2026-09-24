@@ -1,13 +1,17 @@
 package foodgroup
 
 import (
+	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/htmlindex"
+
+	"github.com/mk6i/open-oscar-server/state"
 )
 
 // classicText converts the text of the classic ICQ dialect - the 0x07D0
@@ -130,4 +134,34 @@ func isASCIIText(s string) bool {
 		}
 	}
 	return true
+}
+
+// classicZIP is a ZIP code as a classic client can show it. ICQ 2003b takes
+// only a number from 1 to 99999 - a US ZIP code - and refuses to open the
+// page of the details with anything else ("The field Zip is out of range").
+// A code it cannot show, such as a six-digit postcode typed in ICQ 6, goes
+// out empty.
+func classicZIP(zip string) string {
+	n, err := strconv.Atoi(strings.TrimSpace(zip))
+	if err != nil || n < 1 || n > 99999 {
+		return ""
+	}
+	return zip
+}
+
+// keptZIP is the ZIP code to save from a classic client. It sends back empty
+// the code it was given empty because it could not show it; that stored code
+// stays rather than being wiped by the next save.
+func (s *ICQService) keptZIP(ctx context.Context, instance *state.SessionInstance, sent string, stored func(state.User) string) string {
+	if sent != "" {
+		return sent
+	}
+	u, err := s.userFinder.FindByUIN(ctx, instance.UIN())
+	if err != nil {
+		return sent
+	}
+	if old := stored(u); old != "" && classicZIP(old) == "" {
+		return old
+	}
+	return sent
 }

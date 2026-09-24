@@ -122,6 +122,53 @@ func TestICQService_ClassicCodePage(t *testing.T) {
 
 	err := s.SetBasicInfo(context.Background(), newTestInstance("100003", sessOptUIN(100003)),
 		wire.SNACFrame{RequestID: 1234},
-		wire.ICQ_0x07D0_0x03EA_DBQueryMetaReqSetBasicInfo{FirstName: sergeyCP1251, Nickname: "Serg"}, 1)
+		wire.ICQ_0x07D0_0x03EA_DBQueryMetaReqSetBasicInfo{FirstName: sergeyCP1251, Nickname: "Serg", ZIP: "18000"}, 1)
 	assert.NoError(t, err)
+}
+
+func TestClassicZIP(t *testing.T) {
+	tests := []struct {
+		zip  string
+		want string
+	}{
+		{zip: "18000", want: "18000"},
+		{zip: "1", want: "1"},
+		{zip: "99999", want: "99999"},
+		{zip: "180000", want: ""}, // a six-digit postcode
+		{zip: "0", want: ""},
+		{zip: "SW1A 1AA", want: ""},
+		{zip: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.zip, func(t *testing.T) {
+			assert.Equal(t, tt.want, classicZIP(tt.zip))
+		})
+	}
+}
+
+func TestICQService_keptZIP(t *testing.T) {
+	tests := []struct {
+		name   string
+		sent   string
+		stored string
+		want   string
+	}{
+		{name: "a code sent is saved", sent: "18000", stored: "180000", want: "18000"},
+		{name: "empty keeps a code the client could not show", sent: "", stored: "180000", want: "180000"},
+		{name: "empty clears a code the client did show", sent: "", stored: "18000", want: ""},
+		{name: "empty stays empty", sent: "", stored: "", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			finder := newMockICQUserFinder(t)
+			if tt.sent == "" {
+				finder.EXPECT().FindByUIN(mock.Anything, uint32(100003)).
+					Return(state.User{ICQInfo: state.ICQInfo{Basic: state.ICQBasicInfo{ZIPCode: tt.stored}}}, nil)
+			}
+			s := NewICQService(nil, finder, nil, slog.Default(), nil, nil)
+			got := s.keptZIP(context.Background(), newTestInstance("100003", sessOptUIN(100003)), tt.sent,
+				func(u state.User) string { return u.ICQInfo.Basic.ZIPCode })
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }

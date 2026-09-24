@@ -572,7 +572,7 @@ func (s *ICQService) SetBasicInfo(ctx context.Context, instance *state.SessionIn
 		LastName:     inBody.LastName,
 		Nickname:     inBody.Nickname,
 		PublishEmail: inBody.PublishEmail == wire.ICQUserFlagPublishEmailYes,
-		ZIPCode:      inBody.ZIP,
+		ZIPCode:      s.keptZIP(ctx, instance, inBody.ZIP, func(u state.User) string { return u.ICQInfo.Basic.ZIPCode }),
 	}
 
 	if err := s.userUpdater.SetBasicInfo(ctx, instance.IdentScreenName(), u); err != nil {
@@ -959,7 +959,7 @@ func (s *ICQService) SetWorkInfo(ctx context.Context, instance *state.SessionIns
 		Phone:          inBody.Phone,
 		State:          inBody.State,
 		WebPage:        inBody.WebPage,
-		ZIPCode:        inBody.ZIP,
+		ZIPCode:        s.keptZIP(ctx, instance, inBody.ZIP, func(u state.User) string { return u.ICQInfo.Work.ZIPCode }),
 	}
 
 	if err := s.userUpdater.SetWorkInfo(ctx, instance.IdentScreenName(), icqWorkInfo); err != nil {
@@ -1048,7 +1048,7 @@ func (s *ICQService) userInfo(ctx context.Context, instance *state.SessionInstan
 		Fax:         user.ICQInfo.Basic.Fax,
 		Address:     user.ICQInfo.Basic.Address,
 		CellPhone:   user.ICQInfo.Basic.CellPhone,
-		ZIP:         user.ICQInfo.Basic.ZIPCode,
+		ZIP:         classicZIP(user.ICQInfo.Basic.ZIPCode),
 		CountryCode: user.ICQInfo.Basic.CountryCode,
 		GMTOffset:   user.ICQInfo.Basic.GMTOffset,
 		AuthFlag:    0, // required by default
@@ -1155,7 +1155,7 @@ func (s *ICQService) workInfo(ctx context.Context, instance *state.SessionInstan
 				Phone:          user.ICQInfo.Work.Phone,
 				Fax:            user.ICQInfo.Work.Fax,
 				Address:        user.ICQInfo.Work.Address,
-				ZIP:            user.ICQInfo.Work.ZIPCode,
+				ZIP:            classicZIP(user.ICQInfo.Work.ZIPCode),
 				CountryCode:    user.ICQInfo.Work.CountryCode,
 				Company:        user.ICQInfo.Work.Company,
 				Department:     user.ICQInfo.Work.Department,
