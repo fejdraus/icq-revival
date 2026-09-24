@@ -13,8 +13,10 @@
 # Папку клиента ищет сам: сначала рядом с собой (положили в каталог ICQ или
 # взяли портативную сборку), затем в реестре, затем по стандартному пути.
 #
-# Собирается в exe: Invoke-ps2exe .\IcqPatch.ps1 .\IcqPatch.exe
-#                    -noConsole -requireAdmin -title 'ICQ Pro 2003b Patch'
+# Built into an exe with ps12exe, under Windows PowerShell 5.1:
+#   ps12exe .\IcqPatch.ps1 .\IcqPatch.exe -App @{Windowed=$true} -Os @{Admin=$true}
+#     -Build @{Target='Framework4.0'; Apartment='STA'}
+#     -Resources @{Title='ICQ Pro 2003b Patch'; Product='ICQ Revival'}
 
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 
@@ -227,13 +229,34 @@ $UrlRoutes = @(
     [pscustomobject]@{ Match = '/welcome/';               Target = '{base}/welcome?uin=%icquin%' }
 )
 
-$DefaultBase = 'https://chat.example.ts.net:8102/icq'
+# Only the server's domain is asked for. The port and path of the pages are the
+# same on every ICQ Revival server (deploy/VM-SPEC.md, section 3), so the patch
+# fills them in: 2003b opens these links in the browser, which wants HTTPS.
+$PagesPortHttps = 8102
+$PagesPath = '/icq'
+
+# The domain out of whatever was typed: a scheme, a port or a path after it -
+# habits from older versions of this patch - are dropped.
+function Get-Domain([string]$value) {
+    $v = "$value".Trim()
+    $v = $v -replace '^[A-Za-z][A-Za-z0-9+.-]*://', ''
+    $v = ($v -split '[/?#]')[0]
+    $v = ($v -split ':')[0]
+    return $v.ToLowerInvariant()
+}
+
+function Test-Domain([string]$value) {
+    return $value -match '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+}
+
+function Get-PagesRoot([string]$domain) { return "https://${domain}:$PagesPortHttps" }
 
 # Введённый адрес запоминается, чтобы не вбивать его при каждом запуске.
 $SettingsKey = 'HKCU:\Software\OpenOSCAR\IcqPatch'
 
+# Older versions saved the whole address here; only the domain is kept now.
 function Get-SavedBase {
-    try { return (Get-ItemProperty -LiteralPath $SettingsKey -ErrorAction Stop).ServerBase } catch { return $null }
+    try { return Get-Domain (Get-ItemProperty -LiteralPath $SettingsKey -ErrorAction Stop).ServerBase } catch { return $null }
 }
 
 function Save-Base([string]$value) {
@@ -345,9 +368,7 @@ function Get-State($patch) {
 # --- перенос ссылок ----------------------------------------------------------
 
 function Get-Base {
-    $b = $txtBase.Text.Trim().TrimEnd('/')
-    if ($b) { return $b }
-    return $DefaultBase
+    return (Get-PagesRoot (Get-Domain $txtBase.Text)) + $PagesPath
 }
 
 function Get-UrlHost([string]$url) {
@@ -506,6 +527,17 @@ function Invoke-Apply {
         return
     }
 
+    # Checked before anything is written.
+    $domain = Get-Domain $txtBase.Text
+    if (-not (Test-Domain $domain)) {
+        [Windows.Forms.MessageBox]::Show(
+            "Type your server's domain, nothing else:`n`n  icq.example.org`n`nThe port and path are filled in by the patch.",
+            'Server', 'OK', 'Warning') | Out-Null
+        return
+    }
+    $txtBase.Text = $domain
+    $previous = Get-SavedBase
+
     $bin = 0
     foreach ($p in $Patches) {
         $path = Join-Path $script:IcqRoot $p.File
@@ -520,7 +552,7 @@ function Invoke-Apply {
     }
 
     $base = Get-Base
-    Save-Base $base
+    Save-Base $domain
 
     # Зашитые в код адреса — до правки ссылок: обе части пишут в Icq.exe.
     $script:stringsDone = 0
@@ -535,6 +567,13 @@ function Invoke-Apply {
         if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $path -Destination $backup }
         $before = $script:convCount
         $text = [IO.File]::ReadAllText($path, $Latin1)
+        # Links pointed at a previous server move to the new one as they are;
+        # the rest is converted from ICQ.com as before.
+        if ($previous -and $previous -ne $domain) {
+            $old = Get-PagesRoot $previous
+            $n = ([regex]::Matches($text, [regex]::Escape($old))).Count
+            if ($n) { $text = $text.Replace($old, (Get-PagesRoot $domain)); $script:convCount += $n }
+        }
         $text = Convert-LinkText $text $base ([ref]$null)
         if ($script:convCount -ne $before) {
             [IO.File]::WriteAllText($path, $text, $Latin1)
@@ -615,7 +654,7 @@ $btnFolder.Add_Click({ Select-Folder })
 $form.Controls.Add($btnFolder)
 
 $baseLabel = New-Object Windows.Forms.Label
-$baseLabel.Text = 'Server pages:'
+$baseLabel.Text = 'Server:'
 $baseLabel.Location = New-Object Drawing.Point(12, 82)
 $baseLabel.Size = New-Object Drawing.Size(90, 20)
 $form.Controls.Add($baseLabel)
@@ -624,11 +663,11 @@ $txtBase = New-Object Windows.Forms.TextBox
 $txtBase.Location = New-Object Drawing.Point(104, 79)
 $txtBase.Size = New-Object Drawing.Size(568, 22)
 $saved = Get-SavedBase
-$txtBase.Text = if ($saved) { $saved } else { $DefaultBase }
+$txtBase.Text = if ($saved) { $saved } else { '' }
 $form.Controls.Add($txtBase)
 
 $baseHint = New-Object Windows.Forms.Label
-$baseHint.Text = 'Address of the pages that replace the dead ICQ.com services. Change it to your own server; it is remembered for next time.'
+$baseHint.Text = 'Just the domain, e.g. icq.example.org - the patch fills in the port and path itself. Remembered for next time.'
 $baseHint.Location = New-Object Drawing.Point(104, 103)
 $baseHint.Size = New-Object Drawing.Size(568, 16)
 $baseHint.ForeColor = [Drawing.Color]::DimGray

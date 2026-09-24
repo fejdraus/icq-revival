@@ -24,7 +24,7 @@
 # folder), then from the registry, then the standard path.
 #
 # Without arguments the window opens. For a scripted run:
-#   Icq6Patch.ps1 -Apply   [-Root <folder>] [-Server <host:port>]
+#   Icq6Patch.ps1 -Apply   [-Root <folder>] [-Server <domain>]
 #   Icq6Patch.ps1 -Restore [-Root <folder>]
 #
 # Built into an exe with ps12exe, under Windows PowerShell 5.1:
@@ -46,7 +46,10 @@ $Suffix = '.icq6patch-backup'
 # back too, so a client patched the old way can be returned to the original.
 $OlderSuffixes = @('.icq6-declutter-backup', '.icq6-retarget-backup')
 
-$DefaultServer = 'chat.example.ts.net:8101'
+# Only the server's domain is asked for. Ports and paths are the same on every
+# ICQ Revival server (deploy/VM-SPEC.md, section 3), so the patch fills them in
+# itself; nobody has to know which port serves what.
+$PagesPortHttp = 8101   # the pages ICQ 6.5 opens, plain HTTP
 $SettingsKey = 'HKCU:\Software\OpenOSCAR\Icq6Patch'
 
 $Content = 'services\icqApp\ver1\content'
@@ -169,8 +172,15 @@ $PagePaths = @(
     '/xtraz/srv/', '/compad/', '/legal', '/sms', '/ibs/icq6/', '/download/icq6/',
     '/register/email_activation/', '/xtraz2/global/'
 )
-$LinkPattern = 'http://(?:' + (($DeadHosts | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')' +
+# Any host in front of those paths, not only the dead ICQ.com ones: the paths
+# belong to ICQ.com services and nothing else, so a match is either still
+# ICQ.com or a server this patch pointed them at before. Moving to another
+# server is then just applying again with the new domain.
+$LinkPattern = 'https?://[A-Za-z0-9.-]+(?::\d+)?' +
                '(?=(?:' + (($PagePaths | ForEach-Object { [regex]::Escape($_) }) -join '|') + '))'
+
+# What the links are pointed at, for a given domain.
+function Get-PagesBase([string]$domain) { return "http://${domain}:$PagesPortHttp" }
 
 # The client draws the ad slots and the teaser strip only while these list
 # something, and without SMS carriers it has nowhere to send a text.
@@ -301,7 +311,19 @@ function Get-CodeState($patch) {
 
 # --- configuration state ------------------------------------------------------
 
-function Get-ServerHost([string]$server) { return ($server -split ':')[0] }
+# The domain out of whatever was typed: a scheme, a port or a path after it -
+# habits from older versions of this patch - are dropped.
+function Get-Domain([string]$value) {
+    $v = "$value".Trim()
+    $v = $v -replace '^[A-Za-z][A-Za-z0-9+.-]*://', ''
+    $v = ($v -split '[/?#]')[0]
+    $v = ($v -split ':')[0]
+    return $v.ToLowerInvariant()
+}
+
+function Test-Domain([string]$value) {
+    return $value -match '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+}
 
 # Whether a host is already on a whitelist. The lists themselves are checked,
 # not the whole file: by the time they are, the links in the same file already
@@ -315,19 +337,22 @@ function Test-Whitelisted([string]$name, [string]$text, [string]$h) {
     return $m.Success -and $m.Groups[1].Value.Contains('<u>' + $h + '</u>')
 }
 
-function Get-LinkState {
+function Get-LinkState([string]$domain) {
     $dir = Join-Path $script:IcqRoot 'ConfigFiles'
     if (-not (Test-Path -LiteralPath $dir)) { return @{ State = 'missing'; Info = '' } }
-    $dead = 0
+    $base = Get-PagesBase $domain
+    $other = 0
     foreach ($f in Get-ChildItem -LiteralPath $dir -Filter *.xml -File) {
-        $dead += [regex]::Matches((Read-Text $f.FullName).Text, $LinkPattern, 'IgnoreCase').Count
+        foreach ($m in [regex]::Matches((Read-Text $f.FullName).Text, $LinkPattern, 'IgnoreCase')) {
+            if ($m.Value -ne $base) { $other++ }
+        }
     }
-    $state = if ($dead -gt 0) { 'original' } else { 'patched' }
-    return @{ State = $state; Info = "$dead left on ICQ.com" }
+    $state = if ($other -gt 0) { 'original' } else { 'patched' }
+    return @{ State = $state; Info = "$other not on your server" }
 }
 
-function Get-WhitelistState([string]$server) {
-    $h = Get-ServerHost $server
+function Get-WhitelistState([string]$domain) {
+    $h = $domain
     $missing = 0
     foreach ($name in 'XtraConfig.xml', 'tzer.xml') {
         $path = Join-Path $script:IcqRoot "ConfigFiles\$name"
@@ -345,7 +370,7 @@ function Get-StripState($s) {
 
 # --- applying -----------------------------------------------------------------
 
-function Invoke-ApplyAll([string]$server) {
+function Invoke-ApplyAll([string]$domain) {
     $report = New-Object System.Collections.Generic.List[string]
 
     foreach ($p in $CodePatches) {
@@ -386,21 +411,22 @@ function Invoke-ApplyAll([string]$server) {
     }
 
     $dir = Join-Path $script:IcqRoot 'ConfigFiles'
+    $base = Get-PagesBase $domain
     $moved = 0
     foreach ($f in Get-ChildItem -LiteralPath $dir -Filter *.xml -File) {
         $file = Read-Text $f.FullName
-        $count = [regex]::Matches($file.Text, $LinkPattern, 'IgnoreCase').Count
+        $count = @([regex]::Matches($file.Text, $LinkPattern, 'IgnoreCase') | Where-Object { $_.Value -ne $base }).Count
         if ($count -eq 0) { continue }
-        $file.Text = [regex]::Replace($file.Text, $LinkPattern, "http://$server", 'IgnoreCase')
+        $file.Text = [regex]::Replace($file.Text, $LinkPattern, $base, 'IgnoreCase')
         Backup-Once $f.FullName
         Write-Text $f.FullName $file
         $moved += $count
     }
-    if ($moved) { $report.Add("$moved links pointed at $server") }
+    if ($moved) { $report.Add("$moved links pointed at $domain") }
 
     # The client refuses content from a host that is not on these lists, and
     # drops the part of the interface that host would have fed.
-    $h = Get-ServerHost $server
+    $h = $domain
     $xtra = Join-Path $dir 'XtraConfig.xml'
     if (Test-Path -LiteralPath $xtra) {
         $file = Read-Text $xtra
@@ -508,8 +534,9 @@ function Find-IcqRoot {
     return $null
 }
 
+# Older versions saved host:port here; only the domain is kept now.
 function Get-SavedServer {
-    try { return (Get-ItemProperty -LiteralPath $SettingsKey -ErrorAction Stop).Server } catch { return $null }
+    try { return Get-Domain (Get-ItemProperty -LiteralPath $SettingsKey -ErrorAction Stop).Server } catch { return $null }
 }
 
 function Save-Server([string]$value) {
@@ -517,11 +544,6 @@ function Save-Server([string]$value) {
         if (-not (Test-Path $SettingsKey)) { New-Item -Path $SettingsKey -Force | Out-Null }
         Set-ItemProperty -LiteralPath $SettingsKey -Name Server -Value $value
     } catch { }
-}
-
-# host or host:port, nothing else - it goes into addresses as it is.
-function Test-Server([string]$value) {
-    return $value -match '^[A-Za-z0-9.-]+(:\d{1,5})?$'
 }
 
 function Test-ClientRunning {
@@ -538,11 +560,10 @@ if ($Headless) {
         Write-Output "files restored: $n"
         exit 0
     }
-    if (-not $Server) { $Server = Get-SavedServer }
-    if (-not $Server) { $Server = $DefaultServer }
-    if (-not (Test-Server $Server)) { Write-Error "not a host or host:port: $Server"; exit 1 }
+    $domain = if ($Server) { Get-Domain $Server } else { Get-SavedServer }
+    if (-not (Test-Domain $domain)) { Write-Error "not a domain: '$Server' - pass -Server icq.example.org"; exit 1 }
     try {
-        $done = Invoke-ApplyAll $Server
+        $done = Invoke-ApplyAll $domain
     } catch {
         Write-Error $_.Exception.Message
         exit 1
@@ -558,11 +579,7 @@ Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 
 $script:IcqRoot = Find-IcqRoot
 
-function Get-Server {
-    $s = $txtServer.Text.Trim()
-    if ($s -match '^https?://') { $s = $s -replace '^https?://', '' }
-    return $s.TrimEnd('/')
-}
+function Get-Server { return Get-Domain $txtServer.Text }
 
 function Test-Ready {
     if (-not $script:IcqRoot) {
@@ -583,12 +600,13 @@ function Test-Ready {
 function Invoke-Apply {
     if (-not (Test-Ready)) { return }
     $server = Get-Server
-    if (-not (Test-Server $server)) {
+    if (-not (Test-Domain $server)) {
         [Windows.Forms.MessageBox]::Show(
-            "The server address should be a host name, optionally with a port:`n`n  example.org:8101",
-            'Server address', 'OK', 'Warning') | Out-Null
+            "Type your server's domain, nothing else:`n`n  icq.example.org`n`nThe ports and paths are filled in by the patch.",
+            'Server', 'OK', 'Warning') | Out-Null
         return
     }
+    $txtServer.Text = $server
     Save-Server $server
     try {
         $done = Invoke-ApplyAll $server
@@ -652,7 +670,7 @@ $btnFolder.Add_Click({ Select-Folder })
 $form.Controls.Add($btnFolder)
 
 $serverLabel = New-Object Windows.Forms.Label
-$serverLabel.Text = 'Server pages:'
+$serverLabel.Text = 'Server:'
 $serverLabel.Location = New-Object Drawing.Point(12, 82)
 $serverLabel.Size = New-Object Drawing.Size(90, 20)
 $form.Controls.Add($serverLabel)
@@ -661,11 +679,11 @@ $txtServer = New-Object Windows.Forms.TextBox
 $txtServer.Location = New-Object Drawing.Point(104, 79)
 $txtServer.Size = New-Object Drawing.Size(588, 22)
 $saved = Get-SavedServer
-$txtServer.Text = if ($saved) { $saved } else { $DefaultServer }
+$txtServer.Text = if ($saved) { $saved } else { '' }
 $form.Controls.Add($txtServer)
 
 $serverHint = New-Object Windows.Forms.Label
-$serverHint.Text = 'Host and port of the pages that replace ICQ.com, remembered for next time. The sign-in server is set in ICQ: Options -> Connection -> ICQ server.'
+$serverHint.Text = 'Just the domain, e.g. icq.example.org - the patch fills in ports and paths itself. Remembered for next time. The sign-in server is set in ICQ: Options -> Connection -> ICQ server.'
 $serverHint.Location = New-Object Drawing.Point(104, 103)
 $serverHint.Size = New-Object Drawing.Size(588, 30)
 $serverHint.ForeColor = [Drawing.Color]::DimGray
@@ -716,8 +734,8 @@ function Update-View {
     foreach ($r in $Removals) { Add-Row $r.What (Split-Path $r.Path -Leaf) (Get-RemovalState $r) }
 
     Add-Group 'LINKS AND ADVERTISING'
-    $l = Get-LinkState
-    Add-Row ('pages opened on ICQ.com, ' + $l.Info) 'ConfigFiles' $l.State
+    $l = Get-LinkState (Get-Server)
+    Add-Row ('pages the client opens, ' + $l.Info) 'ConfigFiles' $l.State
     Add-Row 'your server in the content whitelists' 'XtraConfig.xml, tzer.xml' (Get-WhitelistState (Get-Server))
     foreach ($s in $Strips) { Add-Row $s.What (Split-Path $s.File -Leaf) (Get-StripState $s) }
 }
