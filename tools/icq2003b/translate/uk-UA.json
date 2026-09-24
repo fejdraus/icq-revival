@@ -3791,6 +3791,102 @@
    "en": "Online",
    "uk": "Онлайн",
    "note": "separator of the contact list"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x240C4",
+   "encoding": "ansi",
+   "en": "Remarks: ",
+   "uk": "Примітки: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x240D0",
+   "encoding": "ansi",
+   "en": "About: ",
+   "uk": "Опис: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x240D8",
+   "encoding": "ansi",
+   "en": "Age: ",
+   "uk": "Вік: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x240EC",
+   "encoding": "ansi",
+   "en": "Birth Date: ",
+   "uk": "Дата народж.: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x240FC",
+   "encoding": "ansi",
+   "en": "Gender: ",
+   "uk": "Стать: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x24108",
+   "encoding": "ansi",
+   "en": "Company: ",
+   "uk": "Компанія: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x24114",
+   "encoding": "ansi",
+   "en": "Address: ",
+   "uk": "Адреса: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x24120",
+   "encoding": "ansi",
+   "en": "Email: ",
+   "uk": "Пошта: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x24140",
+   "encoding": "ansi",
+   "en": "Primary Email: ",
+   "uk": "Осн. пошта: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x24150",
+   "encoding": "ansi",
+   "en": "NickName: ",
+   "uk": "Нік: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x2415C",
+   "encoding": "ansi",
+   "en": "Name: ",
+   "uk": "Ім'я: ",
+   "note": "summary of a user's details"
+  },
+  {
+   "file": "ICQIfDg.dll",
+   "offset": "0x24164",
+   "encoding": "ansi",
+   "en": "User ID : ",
+   "uk": "Номер ICQ: ",
+   "note": "summary of a user's details"
   }
  ],
  "datafiles": {
