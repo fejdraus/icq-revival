@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -180,7 +181,7 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 			continue
 		}
 		if clientIM.ChannelID == wire.ICBMChannelRendezvous && tlv.Tag == wire.ICBMTLVData {
-			if tlv, err = addExternalIP(instance, tlv); err != nil {
+			if tlv, err = s.addExternalIP(ctx, instance, recipSess, tlv); err != nil {
 				return nil, fmt.Errorf("addExternalIP: %w", err)
 			}
 		}
@@ -308,9 +309,18 @@ func (s *ICBMService) sendOfflineMessage(ctx context.Context, instance *state.Se
 	return nil, nil
 }
 
-// addExternalIP appends the client's IP address to the TLV if it's an ICBM
-// rendezvous proposal/accept message.
-func addExternalIP(instance *state.SessionInstance, tlv wire.TLV) (wire.TLV, error) {
+// addExternalIP sets the proposing client's address in an ICBM rendezvous
+// proposal: file transfer, and the voice and video calls of ICQ 6.
+//
+// A client behind NAT proposes its LAN address, useless to a peer on the
+// Internet, so the server puts in the address it sees instead - unlike AOL,
+// which left it and only added the verified one. But two clients behind the
+// same NAT would then be sent to their router's outside address, which many
+// routers do not loop back, and the call fails one way or both. For them the
+// LAN address is kept, and the outside one goes in the verified tag, as AOL
+// did: a client that finds its peer's verified address equal to its own knows
+// they share a network and uses the proposed one.
+func (s *ICBMService) addExternalIP(ctx context.Context, instance *state.SessionInstance, recip *state.Session, tlv wire.TLV) (wire.TLV, error) {
 	frag := wire.ICBMCh2Fragment{}
 	if err := wire.UnmarshalBE(&frag, bytes.NewReader(tlv.Value)); err != nil {
 		return tlv, fmt.Errorf("wire.UnmarshalBE: %w", err)
@@ -318,22 +328,32 @@ func addExternalIP(instance *state.SessionInstance, tlv wire.TLV) (wire.TLV, err
 	if frag.Type != wire.ICBMRdvMessagePropose {
 		return tlv, nil
 	}
-	if frag.HasTag(wire.ICBMRdvTLVTagsRequesterIP) && instance.RemoteAddr() != nil && instance.RemoteAddr().Addr().Is4() {
-		ip := instance.RemoteAddr().Addr()
-		// replace the IP set by the client with the actual IP seen by the
-		// server. unlike AOL's original behavior, this allows NATed clients
-		// to use rendezvous by replacing their LAN IP with the correct
-		// external IP.
-		frag.Set(wire.NewTLVBE(wire.ICBMRdvTLVTagsRequesterIP, ip.AsSlice()))
-		// append the client's IP as seen by the server. the recipient uses
-		// this to verify that the sender's claimed IP matches what the server
-		// detects. although redundant since we override the requester IP
-		// above, it remains required for client compatibility.
-		frag.Append(wire.NewTLVBE(wire.ICBMRdvTLVTagsVerifiedIP, ip.AsSlice()))
-		return wire.NewTLVBE(tlv.Tag, frag), nil
+	if !frag.HasTag(wire.ICBMRdvTLVTagsRequesterIP) || instance.RemoteAddr() == nil || !instance.RemoteAddr().Addr().Is4() {
+		return tlv, nil
 	}
-
-	return tlv, nil
+	ip := instance.RemoteAddr().Addr()
+	proposed, _ := frag.Bytes(wire.ICBMRdvTLVTagsRequesterIP)
+	port, _ := frag.Uint16BE(wire.ICBMRdvTLVTagsPort)
+	sameNetwork := false
+	for _, ri := range recip.Instances() {
+		if ra := ri.RemoteAddr(); ra != nil && ra.Addr() == ip {
+			sameNetwork = true
+			break
+		}
+	}
+	s.logger.InfoContext(ctx, "rendezvous proposal",
+		"capability", fmt.Sprintf("%X", frag.Capability),
+		"proposed_ip", net.IP(proposed).String(),
+		"seen_ip", ip.String(),
+		"port", port,
+		"same_network", sameNetwork)
+	if !sameNetwork {
+		frag.Set(wire.NewTLVBE(wire.ICBMRdvTLVTagsRequesterIP, ip.AsSlice()))
+	}
+	// The address as the server sees it. Required by the clients, which
+	// compare it with the proposed one.
+	frag.Append(wire.NewTLVBE(wire.ICBMRdvTLVTagsVerifiedIP, ip.AsSlice()))
+	return wire.NewTLVBE(tlv.Tag, frag), nil
 }
 
 // stripHTML extracts plaintext from HTML content.
