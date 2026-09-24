@@ -288,6 +288,22 @@
   }
  },
  {
+  "en": "&Add",
+  "uk": "&Додати",
+  "where": "ICQSMS.dll dialog 1508 control 6",
+  "have": 51,
+  "need": 51,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1342242816,
+   "cx": 33,
+   "cy": 14
+  }
+ },
+ {
   "en": " For more information refer to <link=\"http://www.icq.com/directconnection\" text=\"http://www.icq.com/directconnection\">.",
   "uk": " Докладніше див. <link=\"http://www.icq.com/directconnection\" text=\"http://www.icq.com/directconnection\">.",
   "where": "ICQStDlg.dll dialog 3013 control 7",

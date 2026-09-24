@@ -1115,7 +1115,7 @@
   "&Remove Email": "&Видалити",
   "&Edit Email": "&Змінити Email",
   "&Add Email": "&Додати Email",
-  "&Add": "&Внести",
+  "&Add": "&Додати",
   "&Edit": "&Змінити",
   "&Remove": "&Видалити",
   "&Set as Default": "&Основна",
@@ -3719,6 +3719,78 @@
    "en": "Not Specified",
    "uk": "Не вказано",
    "note": "gender list"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x1449FC",
+   "encoding": "ansi",
+   "en": "Future Users Watch",
+   "uk": "Майбутні контакти",
+   "note": "separator of the contact list"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x144A10",
+   "encoding": "ansi",
+   "en": "Awaiting Authorization",
+   "uk": "Очікують авторизації",
+   "note": "separator of the contact list"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x144A28",
+   "encoding": "ansi",
+   "en": "Offline",
+   "uk": "Офлайн",
+   "note": "separator of the contact list"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x144A30",
+   "encoding": "ansi",
+   "en": "Non ICQ Contacts",
+   "uk": "Контакти не з ICQ",
+   "note": "separator of the contact list"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x144A44",
+   "encoding": "ansi",
+   "en": "Others",
+   "uk": "Інші",
+   "note": "separator of the contact list"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x144A4C",
+   "encoding": "ansi",
+   "en": "Web Message",
+   "uk": "Веб-пейджер",
+   "note": "separator of the contact list"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x144A58",
+   "encoding": "ansi",
+   "en": "Random",
+   "uk": "Випадк.",
+   "note": "separator of the contact list"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x144A60",
+   "encoding": "ansi",
+   "en": "Not In List",
+   "uk": "Не в списку",
+   "note": "separator of the contact list"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x144A6C",
+   "encoding": "ansi",
+   "en": "Online",
+   "uk": "Онлайн",
+   "note": "separator of the contact list"
   }
  ],
  "datafiles": {
