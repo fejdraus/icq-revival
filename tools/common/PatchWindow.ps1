@@ -248,7 +248,7 @@ function New-PatchWindow {
         # What the user took the tick off, by key: kept across refills of the
         # list, so a re-check does not undo a choice not applied yet.
         Unchecked = New-Object 'System.Collections.Generic.HashSet[string]'
-        Filling = $false; Syncing = $false
+        Filling = $false; Syncing = $false; Locked = $false; Shown = $false
     }
     $W = 820
 
@@ -266,6 +266,8 @@ function New-PatchWindow {
     $form.ForeColor = Get-PatchColor 'Ink'
     $iconStream = New-Object IO.MemoryStream(, (New-PatchIconBytes $Badge $AccentTop $AccentBottom))
     $form.Icon = New-Object Drawing.Icon($iconStream)
+    $form.Tag = $ui
+    $form.Add_Shown({ $this.Tag.Shown = $true })
 
     # Every panel is given the window's width before anything is anchored to
     # its right edge, or the anchored controls would drift off to the right.
@@ -363,6 +365,14 @@ function New-PatchWindow {
     # Handlers outlive this function, so they find the window through Tag.
     $list.Tag = $ui
     $list.Add_ItemChecked({ param($sender, $e) Update-PatchChecks $sender.Tag $e.Item })
+    # Once anything is applied the ticks stay as they were applied with. Only
+    # a person's clicks are held: the list sets its ticks once more itself
+    # when it first appears on screen.
+    $list.Add_ItemCheck({
+        param($sender, $e)
+        $u = $sender.Tag
+        if ($u.Locked -and $u.Shown -and -not $u.Filling) { $e.NewValue = $e.CurrentValue }
+    })
     # The tick is the only mark on a row; the State column says the rest. An
     # empty image one pixel wide only gives the rows some height.
     $spacer = New-Object Windows.Forms.ImageList
@@ -383,7 +393,7 @@ function New-PatchWindow {
     $ui.All.AutoSize = $true
     $ui.All.AutoCheck = $false
     $ui.All.Cursor = [Windows.Forms.Cursors]::Hand
-    $ui.All.Location = New-Object Drawing.Point(12, 10)
+    $ui.All.Location = New-Object Drawing.Point(4, 10)
     $ui.All.Tag = $ui
     $ui.All.Add_Click({ param($sender, $e) Switch-PatchAll $sender.Tag })
     $bar.Controls.Add($ui.All)
@@ -391,6 +401,7 @@ function New-PatchWindow {
     $ui.Picked.ForeColor = Get-PatchColor 'Dim'
     $ui.Picked.Location = New-Object Drawing.Point(130, 12)
     $ui.Picked.Size = New-Object Drawing.Size(($bar.Width - 142), 20)
+    $ui.Picked.AutoEllipsis = $true
     $ui.Picked.Anchor = 'Top, Left, Right'
     $ui.Picked.TextAlign = 'MiddleRight'
     $bar.Controls.Add($ui.Picked)
@@ -502,7 +513,14 @@ function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state, [string]$ke
 }
 
 # Ends a refill of the list and sums it up in the bottom bar.
+#
+# A client with anything applied is locked: the ticks stay the ones it was
+# applied with, and choosing again starts from "Restore original". Apply then
+# only renews what is there - for another domain, say - and never mixes a
+# new choice into a patched client.
 function Complete-PatchList($ui) {
+    $ui.Locked = @($ui.Rows | Where-Object { $_.Counts -and $_.Mark -eq 'done' }).Count -gt 0
+    $ui.All.Enabled = -not $ui.Locked
     $ui.List.EndUpdate()
     $ui.Filling = $false
     Update-PatchSummary $ui
@@ -523,6 +541,7 @@ function Update-PatchChecks($ui, $item) {
 
 # Everything ticked becomes everything cleared; anything else, all ticked.
 function Switch-PatchAll($ui) {
+    if ($ui.Locked) { return }
     $items = @($ui.List.Items)
     $target = @($items | Where-Object { -not $_.Checked }).Count -gt 0
     $ui.Syncing = $true
@@ -539,7 +558,9 @@ function Update-PatchSummary($ui) {
     $ticked = @($items | Where-Object { $_.Checked }).Count
     $ui.All.CheckState = if ($items.Count -gt 0 -and $ticked -eq $items.Count) { 'Checked' }
         elseif ($ticked -eq 0) { 'Unchecked' } else { 'Indeterminate' }
-    $ui.Picked.Text = if ($items.Count) { "$ticked of $($items.Count) selected" } else { '' }
+    $ui.Picked.Text = if (-not $items.Count) { '' }
+        elseif ($ui.Locked) { "Selection locked - Restore original to change it" }
+        else { "$ticked of $($items.Count) selected" }
 
     # What Apply would do: put in what is ticked and missing, take out what
     # is in place and cleared.

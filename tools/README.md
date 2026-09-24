@@ -44,8 +44,10 @@ These hold for the patches above and for any new one, for whatever client:
   is in place is taken out again, from the backup, and a file with several
   changes is rebuilt from its original with the ticked ones only. Rows that
   are one change split over several places share a link and are ticked
-  together. The cleared rows are remembered; a scripted run takes them as
-  `-Skip`.
+  together. The ticks can only be changed on a client with nothing applied;
+  once anything is, they stay as it was applied with, and choosing again
+  starts from "Restore original". The cleared rows are remembered; a scripted
+  run takes them as `-Skip`.
 - **Binaries are recognised by checksum** before a byte is written; another
   build of the client is refused rather than patched at the wrong offsets.
 - **One look, one name pattern.** A patch describes its window through

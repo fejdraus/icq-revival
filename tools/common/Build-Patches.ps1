@@ -26,13 +26,23 @@ foreach ($p in $Patches) {
     $exe = [IO.Path]::ChangeExtension($script, '.exe')
     $icon = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetFileNameWithoutExtension($script) + '.ico')
     New-PatchIconFile $icon $p.Badge $p.Top $p.Bottom
+    # Now and then the build fails to write the exe - a scanner holding the
+    # file just made, most likely - so it is given a few tries.
     try {
-        ps12exe -inputFile $script -outputFile $exe -NoUpdateCheck -Quiet `
-            -App @{ Windowed = $true; DpiAware = $true } `
-            -Os @{ Admin = $true } `
-            -Build @{ Target = 'Framework4.0'; Apartment = 'STA' } `
-            -Resources @{ Icon = $icon; Title = $p.Description; Description = $p.Description; Product = 'ICQ Revival' } |
-            Out-Null
+        for ($try = 1; $try -le 3; $try++) {
+            try {
+                ps12exe -inputFile $script -outputFile $exe -NoUpdateCheck -Quiet `
+                    -App @{ Windowed = $true; DpiAware = $true } `
+                    -Os @{ Admin = $true } `
+                    -Build @{ Target = 'Framework4.0'; Apartment = 'STA' } `
+                    -Resources @{ Icon = $icon; Title = $p.Description; Description = $p.Description; Product = 'ICQ Revival' } |
+                    Out-Null
+            } catch {
+                Write-Warning "try $try for $exe failed: $($_.Exception.Message)"
+            }
+            if (Test-Path -LiteralPath $exe) { break }
+            Start-Sleep -Seconds 2
+        }
     } finally {
         Remove-Item -LiteralPath $icon -Force -ErrorAction SilentlyContinue
     }
