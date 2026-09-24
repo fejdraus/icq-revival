@@ -3927,6 +3927,54 @@
    "en": "Home Phone",
    "uk": "Дом. тел.",
    "note": "phone labels of a user's details"
+  },
+  {
+   "file": "icqmutl.dll",
+   "offset": "0x3B684",
+   "encoding": "ansi",
+   "en": "The field '%s' can't contain the char \"'\" ",
+   "uk": "Поле '%s' не може містити символ \"'\" ",
+   "note": "check of a field of the details"
+  },
+  {
+   "file": "icqmutl.dll",
+   "offset": "0x3B6B0",
+   "encoding": "ansi",
+   "en": "The field '%s' can't contain escape chars",
+   "uk": "Поле '%s' не може містити службові символи",
+   "note": "check of a field of the details"
+  },
+  {
+   "file": "icqmutl.dll",
+   "offset": "0x3B6E0",
+   "encoding": "ansi",
+   "en": "The field %s is out of range (%d-%d)",
+   "uk": "Поле %s поза межами (%d-%d)",
+   "note": "check of a field of the details"
+  },
+  {
+   "file": "icqmutl.dll",
+   "offset": "0x3B708",
+   "encoding": "ansi",
+   "en": "The field %s is not a valid number",
+   "uk": "Поле %s не є числом",
+   "note": "check of a field of the details"
+  },
+  {
+   "file": "icqmutl.dll",
+   "offset": "0x3B72C",
+   "encoding": "ansi",
+   "en": "The field %s is not a valid phone number",
+   "uk": "Поле %s не є номером телефону",
+   "note": "check of a field of the details"
+  },
+  {
+   "file": "icqmutl.dll",
+   "offset": "0x3B758",
+   "encoding": "ansi",
+   "en": "The field %s is too long",
+   "uk": "Поле %s задовге",
+   "note": "check of a field of the details"
   }
  ],
  "datafiles": {
