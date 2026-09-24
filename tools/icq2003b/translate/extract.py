@@ -45,7 +45,8 @@ def technical(text):
 
 def collect(root):
     """(text, where) for every text of the client, in file order."""
-    files = sorted(glob.glob(os.path.join(root, '*.exe')) + glob.glob(os.path.join(root, '*.dll')))
+    files = sorted(glob.glob(os.path.join(root, '*.exe')) + glob.glob(os.path.join(root, '*.dll')) +
+                   glob.glob(os.path.join(root, '*.ocx')))
     for path in files:
         name = os.path.basename(path)
         try:
@@ -68,10 +69,11 @@ def collect(root):
 def main():
     root = sys.argv[1]
     target = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, 'uk-UA.json')
-    old = {}
+    old, rest = {}, OrderedDict()
     if os.path.exists(target):
         with open(target, encoding='utf-8') as f:
-            old = json.load(f, object_pairs_hook=OrderedDict).get('texts', {})
+            rest = json.load(f, object_pairs_hook=OrderedDict)
+        old = rest.get('texts', {})
     texts, context = OrderedDict(), OrderedDict()
     for text, where in collect(root):
         context.setdefault(text, []).append(where)
@@ -88,6 +90,9 @@ def main():
                   'Keep %s, %d, %1, \\n, \\t and the & of access keys.'),
         ('texts', texts),
     ])
+    for key, value in rest.items():      # "inplace" and whatever comes after
+        if key not in doc:
+            doc[key] = value
     with open(target, 'w', encoding='utf-8', newline='\n') as f:
         json.dump(doc, f, ensure_ascii=False, indent=1)
         f.write('\n')

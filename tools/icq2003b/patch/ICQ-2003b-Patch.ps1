@@ -572,9 +572,14 @@ function Get-Translation {
         $reader.Close()
         # Decoded once: the data of every resource, and a key for each.
         foreach ($f in $t.files.PSObject.Properties) {
-            foreach ($it in $f.Value.items) {
+            foreach ($it in @($f.Value.items)) {
                 $it | Add-Member Key ('{0}|{1}|{2}' -f $it.t, (Get-ResName $it.n), $it.l)
                 $it | Add-Member Bytes ([Convert]::FromBase64String($it.d))
+            }
+            foreach ($it in @($f.Value.inplace)) {
+                if (-not $it) { continue }
+                $it | Add-Member Bytes ([Convert]::FromBase64String($it.d))
+                $it | Add-Member Original ([Convert]::FromBase64String($it.from))
             }
         }
         $sb = $t.sendBy
@@ -666,18 +671,31 @@ function Get-TranslationState([string]$rel) {
     $entry = (Get-Translation).files.$rel
     if ((Get-Item -LiteralPath (Get-OriginalPath $path)).Length -ne $entry.size) { return 'other version' }
     $sb = (Get-Translation).sendBy
-    $cur = Read-Resources $path @($entry.items | ForEach-Object { $_.Key })
+    $items = @($entry.items)
+    $places = @($entry.inplace | Where-Object { $_ })
     $done = 0; $orig = 0
-    for ($i = 0; $i -lt $entry.items.Count; $i++) {
-        $it = $entry.items[$i]
-        $c = $cur[$i]
-        $blankUk = $rel -eq $sb.file -and $it.Key -eq $sb.Key -and (Test-SameBytes $c $sb.BlankUk)
-        $blankEn = $rel -eq $sb.file -and $it.Key -eq $sb.Key -and (Test-SameBytes $c $sb.BlankEn)
-        if ((Test-SameBytes $c $it.Bytes) -or $blankUk) { $done++ }
-        elseif ($blankEn -or ($c -and (Get-BytesSha $c) -eq $it.from)) { $orig++ }
+    if ($items.Count) {
+        $cur = Read-Resources $path @($items | ForEach-Object { $_.Key })
+        for ($i = 0; $i -lt $items.Count; $i++) {
+            $it = $items[$i]
+            $c = $cur[$i]
+            $blankUk = $rel -eq $sb.file -and $it.Key -eq $sb.Key -and (Test-SameBytes $c $sb.BlankUk)
+            $blankEn = $rel -eq $sb.file -and $it.Key -eq $sb.Key -and (Test-SameBytes $c $sb.BlankEn)
+            if ((Test-SameBytes $c $it.Bytes) -or $blankUk) { $done++ }
+            elseif ($blankEn -or ($c -and (Get-BytesSha $c) -eq $it.from)) { $orig++ }
+        }
     }
-    if ($done -eq $entry.items.Count) { return 'patched' }
-    if ($orig -eq $entry.items.Count) { return 'original' }
+    if ($places.Count) {
+        $bytes = [IO.File]::ReadAllBytes($path)
+        foreach ($pl in $places) {
+            $c = New-Object byte[] $pl.Bytes.Length
+            [Array]::Copy($bytes, [int]$pl.o, $c, 0, $c.Length)
+            if (Test-SameBytes $c $pl.Bytes) { $done++ } elseif (Test-SameBytes $c $pl.Original) { $orig++ }
+        }
+    }
+    $all = $items.Count + $places.Count
+    if ($done -eq $all) { return 'patched' }
+    if ($orig -eq $all) { return 'original' }
     if ($done -gt 0) { return 'partly' }
     return 'unknown'
 }
@@ -827,12 +845,17 @@ function Build-Binary([string]$rel, [string]$domain, $skip, $tooLong) {
         }
     }
 
-    # The resources, by key; a later one for the same key wins.
+    # The resources, by key; a later one for the same key wins. Texts that are
+    # not resources - in the data of a program, in the skin - are written in
+    # place, over the English ones.
     $res = [ordered]@{}
     $tr = Get-Translation
     $entry = $tr.files.$rel
     $ukrainian = $entry -and (Test-Wanted $skip "uk:$rel") -and $bytes.Length -eq $entry.size
-    if ($ukrainian) { foreach ($it in $entry.items) { $res[$it.Key] = $it.Bytes } }
+    if ($ukrainian) {
+        foreach ($it in @($entry.items)) { $res[$it.Key] = $it.Bytes }
+        foreach ($pl in @($entry.inplace | Where-Object { $_ })) { [Array]::Copy($pl.Bytes, 0, $bytes, [int]$pl.o, $pl.Bytes.Length) }
+    }
     $words = @($Patches | Where-Object { $_.Resource -eq 'sendBy' })[0]
     if ($rel -eq $tr.sendBy.file -and (Test-Wanted $skip $words.What) -and $bytes.Length -eq $words.Size) {
         $res[$tr.sendBy.Key] = if ($ukrainian) { $tr.sendBy.BlankUk } else { $tr.sendBy.BlankEn }
@@ -853,7 +876,18 @@ function Build-Binary([string]$rel, [string]$domain, $skip, $tooLong) {
     if (-not (Test-SameBytes $built ([IO.File]::ReadAllBytes($path)))) {
         Backup-Bin $path
         [IO.File]::WriteAllBytes($path, $built)
+        return $true
     }
+    return $false
+}
+
+# The client keeps the names its plugins give themselves - menu items, pages
+# of the preferences - in .pnCache, and takes them from there rather than
+# from the plugins once it has it. When the programs change - another
+# language - the cache goes, and the client builds it again from them.
+function Clear-PluginCache {
+    $cache = Join-Path $script:IcqRoot '.pnCache'
+    if (Test-Path -LiteralPath $cache) { Remove-Item -LiteralPath $cache -Force -ErrorAction SilentlyContinue }
 }
 
 #_if PSScript
@@ -921,10 +955,12 @@ function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
     $before = Get-Items $domain
 
     $tooLong = New-Object System.Collections.Generic.List[string]
+    $changed = $false
     foreach ($rel in $binaries) {
         Step-Patch "Building $rel..."
-        Build-Binary $rel $domain $skip $tooLong
+        if (Build-Binary $rel $domain $skip $tooLong) { $changed = $true }
     }
+    if ($changed) { Clear-PluginCache }
     Step-Patch 'Links in DataFiles...'
 
     $base = Get-Base $domain
@@ -979,6 +1015,7 @@ function Invoke-RestoreAll {
         $backup = $path + $BinSuffix
         if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force; $done++ }
     }
+    if ($done) { Clear-PluginCache }
     foreach ($rel in $LinkFiles) {
         Step-Patch "Restoring $rel..."
         $path = Join-Path $script:IcqRoot $rel

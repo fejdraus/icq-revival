@@ -1,0 +1,418 @@
+[
+ {
+  "en": "&Up",
+  "uk": "В&гору",
+  "where": "ICQDBListCtrl.ocx dialog 1021 control 5",
+  "have": 38,
+  "need": 48,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1342242825,
+   "cx": 25,
+   "cy": 10
+  }
+ },
+ {
+  "en": "&Cancel",
+  "uk": "&Скасув.",
+  "where": "ICQDBListCtrl.ocx dialog 1021 control 6",
+  "have": 12,
+  "need": 49,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1073741824,
+   "cx": 8,
+   "cy": 14
+  }
+ },
+ {
+  "en": "Don't publish my Email address on ICQ directories. Save for password retrieval purposes.",
+  "uk": "Не публікувати мою адресу Email у каталогах ICQ. Зберегти для відновлення пароля.",
+  "where": "ICQIfDg.dll dialog 8547 control 2",
+  "have": 383,
+  "need": 475,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1342251011,
+   "cx": 247,
+   "cy": 15
+  }
+ },
+ {
+  "en": "Check1",
+  "uk": "Check1",
+  "where": "ICQMcDgs.dll dialog 2028 control 21",
+  "have": 13,
+  "need": 54,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1073807363,
+   "cx": 9,
+   "cy": 10
+  }
+ },
+ {
+  "en": ">>",
+  "uk": ">>",
+  "where": "ICQMessagePlugin.dll dialog 9505 control 7",
+  "have": 24,
+  "need": 26,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1342242816,
+   "cx": 16,
+   "cy": 14
+  }
+ },
+ {
+  "en": "<<",
+  "uk": "<<",
+  "where": "ICQMessagePlugin.dll dialog 9505 control 8",
+  "have": 24,
+  "need": 26,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1342242816,
+   "cx": 16,
+   "cy": 14
+  }
+ },
+ {
+  "en": "place left",
+  "uk": "place left",
+  "where": "ICQMessagePlugin.dll dialog 9509 control 6",
+  "have": 21,
+  "need": 48,
+  "control": {
+   "cls": [
+    "ord",
+    130
+   ],
+   "style": 1073876993,
+   "cx": 14,
+   "cy": 13
+  }
+ },
+ {
+  "en": "place left",
+  "uk": "place left",
+  "where": "ICQMessagePlugin.dll dialog 9509 control 7",
+  "have": 23,
+  "need": 48,
+  "control": {
+   "cls": [
+    "ord",
+    130
+   ],
+   "style": 1073876993,
+   "cx": 15,
+   "cy": 13
+  }
+ },
+ {
+  "en": "place left",
+  "uk": "place left",
+  "where": "ICQMessagePlugin.dll dialog 9509 control 8",
+  "have": 23,
+  "need": 48,
+  "control": {
+   "cls": [
+    "ord",
+    130
+   ],
+   "style": 1073876993,
+   "cx": 15,
+   "cy": 13
+  }
+ },
+ {
+  "en": "place Mid",
+  "uk": "place Mid",
+  "where": "ICQMessagePlugin.dll dialog 9509 control 9",
+  "have": 23,
+  "need": 49,
+  "control": {
+   "cls": [
+    "ord",
+    130
+   ],
+   "style": 1073876993,
+   "cx": 15,
+   "cy": 13
+  }
+ },
+ {
+  "en": "place Right",
+  "uk": "place Right",
+  "where": "ICQMessagePlugin.dll dialog 9509 control 10",
+  "have": 23,
+  "need": 58,
+  "control": {
+   "cls": [
+    "ord",
+    130
+   ],
+   "style": 1073876993,
+   "cx": 15,
+   "cy": 13
+  }
+ },
+ {
+  "en": "Underline",
+  "uk": "Підкреслений",
+  "where": "ICQSLVC.ocx dialog 200 control 10",
+  "have": 76,
+  "need": 90,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1342275587,
+   "cx": 49,
+   "cy": 10
+  }
+ },
+ {
+  "en": "Antilazing",
+  "uk": "Згладжування",
+  "where": "ICQSLVC.ocx dialog 200 control 11",
+  "have": 97,
+  "need": 98,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1342275587,
+   "cx": 63,
+   "cy": 10
+  }
+ },
+ {
+  "en": "Strike Out",
+  "uk": "Закреслений",
+  "where": "ICQSLVC.ocx dialog 200 control 12",
+  "have": 76,
+  "need": 84,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1342275587,
+   "cx": 49,
+   "cy": 10
+  }
+ },
+ {
+  "en": "Bold",
+  "uk": "Жирний",
+  "where": "ICQSLVC.ocx dialog 200 control 13",
+  "have": 48,
+  "need": 56,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1342275587,
+   "cx": 31,
+   "cy": 10
+  }
+ },
+ {
+  "en": "Italic",
+  "uk": "Курсив",
+  "where": "ICQSLVC.ocx dialog 200 control 14",
+  "have": 48,
+  "need": 54,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1342275587,
+   "cx": 31,
+   "cy": 10
+  }
+ },
+ {
+  "en": "Fore - ",
+  "uk": "Текст - ",
+  "where": "ICQSLVC.ocx dialog 200 control 21",
+  "have": 32,
+  "need": 42,
+  "control": {
+   "cls": [
+    "ord",
+    130
+   ],
+   "style": 1342308352,
+   "cx": 21,
+   "cy": 8
+  }
+ },
+ {
+  "en": "Control's Preview :",
+  "uk": "Control's Preview :",
+  "where": "ICQSLVC.ocx dialog 200 control 25",
+  "have": 91,
+  "need": 95,
+  "control": {
+   "cls": [
+    "ord",
+    130
+   ],
+   "style": 1342308352,
+   "cx": 59,
+   "cy": 8
+  }
+ },
+ {
+  "en": " For more information refer to <link=\"http://www.icq.com/directconnection\" text=\"http://www.icq.com/directconnection\">.",
+  "uk": " Докладніше див. <link=\"http://www.icq.com/directconnection\" text=\"http://www.icq.com/directconnection\">.",
+  "where": "ICQStDlg.dll dialog 3013 control 7",
+  "have": 428,
+  "need": 580,
+  "control": {
+   "cls": [
+    "ord",
+    130
+   ],
+   "style": 1342308608,
+   "cx": 276,
+   "cy": 11
+  }
+ },
+ {
+  "en": "Save As",
+  "uk": "Зберегти як",
+  "where": "Icq.exe dialog 2007 control 0",
+  "have": 24,
+  "need": 73,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1476460544,
+   "cx": 16,
+   "cy": 14
+  }
+ },
+ {
+  "en": "Find",
+  "uk": "Знайти",
+  "where": "Icq.exe dialog 2007 control 1",
+  "have": 24,
+  "need": 46,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1476460544,
+   "cx": 16,
+   "cy": 14
+  }
+ },
+ {
+  "en": "Del",
+  "uk": "Вид.",
+  "where": "Icq.exe dialog 2007 control 2",
+  "have": 24,
+  "need": 32,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1476460544,
+   "cx": 16,
+   "cy": 14
+  }
+ },
+ {
+  "en": "Send Messages Now",
+  "uk": "Надіслати зараз",
+  "where": "Icq.exe dialog 2007 control 9",
+  "have": 9,
+  "need": 96,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1208025088,
+   "cx": 6,
+   "cy": 6
+  }
+ },
+ {
+  "en": "Display &Last Event First",
+  "uk": "&Останні події зверху",
+  "where": "Icq.exe dialog 2007 control 10",
+  "have": 68,
+  "need": 126,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1207959555,
+   "cx": 44,
+   "cy": 9
+  }
+ },
+ {
+  "en": "Delete &Old Database",
+  "uk": "Видалити &стару базу даних",
+  "where": "Icq.exe dialog 2007 control 13",
+  "have": 9,
+  "need": 154,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1208033280,
+   "cx": 6,
+   "cy": 6
+  }
+ },
+ {
+  "en": "'&Deleted Items' Folder",
+  "uk": "Папка '&Видалені'",
+  "where": "Icq.exe dialog 2007 control 14",
+  "have": 35,
+  "need": 98,
+  "control": {
+   "cls": [
+    "ord",
+    128
+   ],
+   "style": 1208025088,
+   "cx": 23,
+   "cy": 7
+  }
+ }
+]
