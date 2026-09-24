@@ -1007,6 +1007,13 @@ function selfBase(req) {
   return `${proto}://${req.headers.host || ''}`;
 }
 
+// The same host on this service's own plain HTTP port, whichever way the
+// request arrived.
+function plainBase(req) {
+  const host = String(req.headers.host || '').replace(/:\d+$/, '');
+  return `http://${host}:${PORT}`;
+}
+
 function uploadPicture(ctx) {
   const type = ctx.req.headers['content-type'] || '';
   const boundary = /boundary=(?:"([^"]+)"|([^;]+))/.exec(type);
@@ -1050,7 +1057,13 @@ function uploadPicture(ctx) {
       : { body: small.body, type: pictureType(small.body) });
     setTimeout(() => pictures.delete(id), PICTURE_TTL).unref();
     const self = selfBase(ctx.req);
-    send(ctx.res, 200, uploadReply(`${self}/icq/avatar/file/${id}`, '', small.note));
+    // Two addresses for the same picture. The page shows it by the scheme the
+    // page itself came in on. The client is handed a plain HTTP one: ICQ 6.5
+    // downloads the picture with a loader of its own that does not speak HTTPS
+    // at all - it drops an https:// address without even connecting - while
+    // everything else it opens, this page included, works over HTTPS.
+    const file = `/icq/avatar/file/${id}`;
+    send(ctx.res, 200, uploadReply(`${self}${file}`, '', small.note, `${plainBase(ctx.req)}${file}`));
   });
 }
 
@@ -1087,8 +1100,8 @@ function shrink(data) {
 
 // The reply lands in a hidden frame; it tells the page the address to hand to
 // the client, or what went wrong.
-function uploadReply(url, error, note) {
-  const payload = JSON.stringify({ url, error, note: note || '' });
+function uploadReply(url, error, note, clientUrl) {
+  const payload = JSON.stringify({ url, error, note: note || '', clientUrl: clientUrl || url });
   return `<!DOCTYPE html><html><body><script>
     parent.uploaded(${payload});
   </script></body></html>`;

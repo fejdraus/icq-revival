@@ -132,7 +132,9 @@ function clearPick() {
 function uploaded(result) {
   clearPick();
   if (result.error) { say('Could not prepare the picture: ' + result.error); return; }
-  pending = result.url;
+  // The preview comes over the page's own scheme; the client gets a plain
+  // HTTP address, since its picture loader cannot do HTTPS.
+  pending = result.clientUrl || result.url;
   document.getElementById('preview').src = result.url;
   document.getElementById('previewRow').style.display = '';
   document.getElementById('previewNote').innerHTML = result.note || 'ready to upload';
