@@ -72,6 +72,7 @@ $Patches = @(
         Sha256From = '92058B9563288A066DC4884E68930BB67F78A6D10AD8BAB8BD0F8287FB847A39'
         Sha256To   = '2E901493EFB3914273DDD952159B3135FD959A8FC2F0DB8DD67EFDE875D031FF'
         What = 'Google search bar and its button are gone'
+        Link = 'google bar'
     }
     [pscustomobject]@{
         File = 'Icq.exe'; Offset = 0x39AA2
@@ -81,6 +82,8 @@ $Patches = @(
         Sha256From = '6C97F1B8045ED6E6801E0AFD97548B040819F153836B25B0F968184483F1546A'
         Sha256To   = 'BE8AEA553DCABA7108E3442EEEBAA5F00A56A2BE78653290EFFF6A83DF5F0B1B'
         What = 'no empty strip reserved for them'
+        # The 22 px the layout adds for the bar above: one change with it.
+        Link = 'google bar'
     }
     [pscustomobject]@{
         # The "Send By: ICQ / SMS / Email" strip in the message window. SMS and
@@ -111,7 +114,7 @@ $Patches = @(
         Sha256From = 'AFC36BD67D353EECA1F952C3ED56D372FE93C018D58C966F0A930EDEE5AC887B'
         Sha256To   = 'E40BEEE28D67ECACA0A10182F215CB2901F8CD4A56F85C667C0AE8E09E18E486'
         What = 'tick boxes ICQ / SMS / Email are hidden'
-        Link = 'send-by boxes'
+        Link = 'send-by'
     }
     [pscustomobject]@{
         File = 'ICQMessagePlugin.dll'; Offset = 0x7B84
@@ -121,7 +124,7 @@ $Patches = @(
         Sha256From = 'AFC36BD67D353EECA1F952C3ED56D372FE93C018D58C966F0A930EDEE5AC887B'
         Sha256To   = 'E40BEEE28D67ECACA0A10182F215CB2901F8CD4A56F85C667C0AE8E09E18E486'
         What = 'the same for the group around them'
-        Link = 'send-by boxes'
+        Link = 'send-by'
     }
     [pscustomobject]@{
         # Second layer: the words. There is no control behind them - a walk of
@@ -135,6 +138,8 @@ $Patches = @(
         Sha256From = '85F31E2FB53366F1FCC03D16788E50E6932AE2BB3F13C10C3242F1D68AD68684'
         Sha256To   = '64EA6C32386A04D71B873522EF3A2662E074EB048AF584459F9E8492DC4F0EBA'
         What = 'the words "Send By:" are gone'
+        # The three layers of the strip only make sense together.
+        Link = 'send-by'
     }
     [pscustomobject]@{
         # Third layer: the frame. An object named RgnFrame in the skin, 334x32
@@ -155,7 +160,7 @@ $Patches = @(
         Sha256From = 'B9E7997D2E60A5E172F09376550596B61C871A45B9804243F23F07D2B14CECD0'
         Sha256To   = '5E126B5C13CF0400FAAF43BBA6631E497F70EC7C85C41B5645BBB5F700CA2370'
         What = 'the frame is pulled up to the Send button'
-        Link = 'send-by frame'
+        Link = 'send-by'
     }
     [pscustomobject]@{
         File = 'Skin\IcqPro.skn'; Offset = 0x41782
@@ -165,7 +170,7 @@ $Patches = @(
         Sha256From = 'B9E7997D2E60A5E172F09376550596B61C871A45B9804243F23F07D2B14CECD0'
         Sha256To   = '5E126B5C13CF0400FAAF43BBA6631E497F70EC7C85C41B5645BBB5F700CA2370'
         What = 'its rectangle follows the offset'
-        Link = 'send-by frame'
+        Link = 'send-by'
     }
 )
 

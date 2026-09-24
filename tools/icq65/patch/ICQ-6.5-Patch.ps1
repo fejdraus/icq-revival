@@ -500,6 +500,17 @@ function Get-StripState($s) {
 # rows cleared in the window.
 function Test-Wanted($skip, [string]$key) { return -not ($skip -and $skip.Contains($key)) }
 
+# Changes that do one job between them, and are ticked together: the
+# preferences entry and its page, the message window banner and the two
+# parts of its frame.
+$Together = @{
+    'the "SMS & Phone" entry of the preferences list'   = 'sms preferences'
+    'the page of the "SMS & Phone" preferences'         = 'sms preferences'
+    'the banner under the message window'               = 'message banner'
+    'the ad box of the message window'                  = 'message banner'
+    'the white frame at the foot of the message window' = 'message banner'
+}
+
 # Every change with its current state, in the order the window lists them.
 # The key names a change for the selection; rows with the same Link are one
 # change and are ticked together.
@@ -508,9 +519,9 @@ function Get-Items([string]$domain) {
     $add = { param($group, $key, $what, $where, $state, $link)
         $items.Add([pscustomobject]@{ Group = $group; Key = $key; What = $what; Where = $where; State = $state; Link = $link })
     }
-    foreach ($p in $CodePatches) { & $add 'Code' $p.What $p.What $p.File (Get-CodeState $p) '' }
-    foreach ($e in $MarkupEdits) { & $add 'Interface' $e.What $e.What (Split-Path $e.File -Leaf) (Get-EditState $e) '' }
-    foreach ($r in $Removals) { & $add 'Interface' $r.What $r.What (Split-Path $r.Path -Leaf) (Get-RemovalState $r) '' }
+    foreach ($p in $CodePatches) { & $add 'Code' $p.What $p.What $p.File (Get-CodeState $p) $Together[$p.What] }
+    foreach ($e in $MarkupEdits) { & $add 'Interface' $e.What $e.What (Split-Path $e.File -Leaf) (Get-EditState $e) $Together[$e.What] }
+    foreach ($r in $Removals) { & $add 'Interface' $r.What $r.What (Split-Path $r.Path -Leaf) (Get-RemovalState $r) $Together[$r.What] }
     $l = Get-LinkState $domain
     & $add 'Links and advertising' 'links' 'the pages the client opens point at your server' "ConfigFiles, $($l.Info)" $l.State 'links'
     & $add 'Links and advertising' 'whitelist' 'your server in the content whitelists' 'XtraConfig.xml, tzer.xml' (Get-WhitelistState $domain) 'links'

@@ -519,6 +519,11 @@ function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state, [string]$ke
 # only renews what is there - for another domain, say - and never mixes a
 # new choice into a patched client.
 function Complete-PatchList($ui) {
+    foreach ($item in $ui.List.Items) {
+        if (-not $item.Tag) { continue }
+        $others = @($ui.List.Items | Where-Object { $_.Tag -eq $item.Tag -and $_ -ne $item } | ForEach-Object { $_.Text })
+        if ($others.Count) { $item.ToolTipText = $item.Text + "`n`nTicked together with:`n  " + ($others -join "`n  ") }
+    }
     $ui.Locked = @($ui.Rows | Where-Object { $_.Counts -and $_.Mark -eq 'done' }).Count -gt 0
     $ui.All.Enabled = -not $ui.Locked
     $ui.List.EndUpdate()
