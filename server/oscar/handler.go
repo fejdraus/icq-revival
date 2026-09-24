@@ -1149,6 +1149,11 @@ func (rt Handler) Handle(ctx context.Context, server uint16, instance *state.Ses
 			return rt.FeedbagRightsQuery(ctx, instance, inFrame, r, rw)
 		case wire.FeedbagStartCluster:
 			return rt.FeedbagStartCluster(ctx, instance, inFrame, r, rw)
+		case wire.FeedbagUserInteraction:
+			// A report the client sends and expects nothing back for; an
+			// error reply would only be noise.
+			rt.LogRequest(ctx, inFrame, nil)
+			return nil
 		case wire.FeedbagUpdateItem:
 			return rt.FeedbagUpdateItem(ctx, instance, inFrame, r, rw)
 		case wire.FeedbagUse:

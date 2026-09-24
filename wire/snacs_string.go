@@ -232,6 +232,7 @@ var subGroupName = map[uint16]map[uint16]string{
 		FeedbagIsAuthRequiredQuery:      "FeedbagIsAuthRequiredQuery",
 		FeedbagIsAuthRequiredReply:      "FeedbagIsAuthRequiredReply",
 		FeedbagRecentBuddyUpdate:        "FeedbagRecentBuddyUpdate",
+		FeedbagUserInteraction:          "FeedbagUserInteraction",
 	},
 	Alert: {
 		AlertErr:                       "AlertErr",

@@ -768,6 +768,10 @@ const (
 	ICBMChannelMIME       uint16 = 0x03
 	ICBMChannelICQ        uint16 = 0x04
 	ICBMChannelCoBrowser  uint16 = 0x05
+	// ICBMChannelSIP carries the SIP messages of ICQ 6 voice and video calls:
+	// the "tunnel" transport of its SIP stack, raw SIP bytes in TLV 0x05. The
+	// server relays them as they are; the media goes between the peers.
+	ICBMChannelSIP uint16 = 0x06
 
 	ICBMMsgTypePlain    uint8 = 0x01 // Plain text (simple) message
 	ICBMMsgTypeChat     uint8 = 0x02 // Chat request message
@@ -1835,6 +1839,10 @@ const (
 	FeedbagIsAuthRequiredQuery      uint16 = 0x0023
 	FeedbagIsAuthRequiredReply      uint16 = 0x0024
 	FeedbagRecentBuddyUpdate        uint16 = 0x0025
+	// FeedbagUserInteraction is ICQ 6's report of messages exchanged with
+	// users: a direction byte (1 outgoing, 2 incoming), a count, that many
+	// screen names, and a zero word. The client expects no reply.
+	FeedbagUserInteraction uint16 = 0x0037
 )
 
 // FeedbagPDMode represents a buddy list permit/deny mode setting that

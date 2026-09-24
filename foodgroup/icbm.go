@@ -85,9 +85,11 @@ func (s *ICBMService) ParameterQuery(_ context.Context, inFrame wire.SNACFrame) 
 			RequestID: inFrame.RequestID,
 		},
 		Body: wire.SNAC_0x04_0x05_ICBMParameterReply{
-			MaxSlots:             100,
-			ICBMFlags:            3,
-			MaxIncomingICBMLen:   512,
+			MaxSlots:  100,
+			ICBMFlags: 3,
+			// What AOL's servers gave. A SIP message of an ICQ 6 call is
+			// several kilobytes and goes over ICBM too.
+			MaxIncomingICBMLen:   8000,
 			MaxSourceEvil:        999,
 			MaxDestinationEvil:   999,
 			MinInterICBMInterval: 0,
@@ -134,6 +136,15 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 			return newICBMErr(inFrame.RequestID, wire.ErrorCodeNotLoggedOn), nil
 		}
 		return msg, err
+	}
+
+	if inBody.ChannelID == wire.ICBMChannelSIP {
+		// The signalling of an ICQ 6 call, relayed as it is. Logged by its
+		// first line, "INVITE sip:..." or "SIP/2.0 200 OK", to see a call
+		// through when it fails.
+		sip, _ := inBody.Bytes(0x0005)
+		first, _, _ := strings.Cut(string(sip), "\r\n")
+		s.logger.InfoContext(ctx, "call signalling", "to", recip.String(), "bytes", len(sip), "first_line", first)
 	}
 
 	if inBody.ChannelID == wire.ICBMChannelICQ {

@@ -3067,7 +3067,7 @@ func TestICBMService_ParameterQuery(t *testing.T) {
 		Body: wire.SNAC_0x04_0x05_ICBMParameterReply{
 			MaxSlots:             100,
 			ICBMFlags:            3,
-			MaxIncomingICBMLen:   512,
+			MaxIncomingICBMLen:   8000,
 			MaxSourceEvil:        999,
 			MaxDestinationEvil:   999,
 			MinInterICBMInterval: 0,

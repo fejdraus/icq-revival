@@ -2402,6 +2402,7 @@ func TestOServiceService_RateParamsQuery(t *testing.T) {
 				{FoodGroup: wire.Feedbag, SubGroup: 0x0026},
 				{FoodGroup: wire.Feedbag, SubGroup: 0x0027},
 				{FoodGroup: wire.Feedbag, SubGroup: 0x0028},
+				{FoodGroup: wire.Feedbag, SubGroup: wire.FeedbagUserInteraction},
 				{FoodGroup: wire.ICQ, SubGroup: wire.ICQErr},
 				{FoodGroup: wire.ICQ, SubGroup: wire.ICQDBQuery},
 				{FoodGroup: wire.ICQ, SubGroup: wire.ICQDBReply},
