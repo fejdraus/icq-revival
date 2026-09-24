@@ -14,8 +14,8 @@
 #   3. Advertising and teasers. Their local descriptors are emptied, which is
 #      what makes the client stop drawing them at all.
 #
-# The sign-in server is not this tool's business: the user sets it in ICQ
-# itself, under Options -> Connection -> ICQ server.
+#   4. Sign-in server. The domain becomes the server a new install signs in
+#      to; a server typed under Options -> Connection stays the user's choice.
 #
 # Every file is backed up next to itself before the first change, and
 # "Restore original" puts them all back. The user's profile is never touched.
@@ -189,6 +189,50 @@ $Strips = @(
     [pscustomobject]@{ File = 'ConfigFiles\tzer.xml'; Pattern = '[ \t]*<tz\b[^>]*/>[ \t]*\r?\n?'; What = 'the teaser strip' }
     [pscustomobject]@{ File = 'ConfigFiles\SMSConfig.xml'; Pattern = '[ \t]*<i n="operator"[^>]*/>[ \t]*\r?\n?'; What = 'SMS carriers' }
 )
+
+# --- sign-in server ----------------------------------------------------------
+#
+# ICQ 6.5 keeps the server it signs in to as ServerHostName, a plain setting of
+# its "App" set (stored in %APPDATA%\ICQ\Application.mdb, next to LastOwner).
+# Where the user has not typed one, the value comes from the set's defaults,
+# ConfigFiles\Defaults\App.xml - MKernel's LoadDefaults / GetPrefDefaultValue -
+# and failing that from the built-in login.icq.com, which is gone. A default
+# here is therefore what the client signs in to until someone types another
+# server under Options -> Connection, which it then keeps. The port is 5190
+# out of the box already.
+
+$AppDefaults = 'ConfigFiles\Defaults\App.xml'
+$SignInPattern = '<ServerHostName\s+default="([^"]*)"\s*/>'
+
+function Get-SignInDefault {
+    $path = Join-Path $script:IcqRoot $AppDefaults
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    $m = [regex]::Match((Read-Text $path).Text, $SignInPattern)
+    if ($m.Success) { return $m.Groups[1].Value } else { return '' }
+}
+
+# Returns $true when the file changed.
+function Set-SignInDefault([string]$domain) {
+    $path = Join-Path $script:IcqRoot $AppDefaults
+    if (-not (Test-Path -LiteralPath $path)) { return $false }
+    $file = Read-Text $path
+    $m = [regex]::Match($file.Text, $SignInPattern)
+    if ($m.Success) {
+        if ($m.Groups[1].Value -eq $domain) { return $false }
+        $file.Text = $file.Text.Substring(0, $m.Index) + "<ServerHostName default=""$domain""/>" +
+                     $file.Text.Substring($m.Index + $m.Length)
+    } else {
+        $at = $file.Text.IndexOf('</defaults>')
+        if ($at -lt 0) { return $false }
+        # Same indentation and line ending as the entries already there.
+        $eol = if ($file.Text.Contains("`r`n")) { "`r`n" } else { "`n" }
+        $file.Text = $file.Text.Substring(0, $at) + "`t<ServerHostName default=""$domain""/>$eol" +
+                     $file.Text.Substring($at)
+    }
+    Backup-Once $path
+    Write-Text $path $file
+    return $true
+}
 
 # --- text files ---------------------------------------------------------------
 #
@@ -447,6 +491,8 @@ function Invoke-ApplyAll([string]$domain) {
             }
         }
     }
+
+    if (Set-SignInDefault $domain) { $report.Add("new installs sign in to $domain") }
 
     foreach ($s in $Strips) {
         $path = Join-Path $script:IcqRoot $s.File
@@ -738,6 +784,13 @@ function Update-View {
     Add-Row ('pages the client opens, ' + $l.Info) 'ConfigFiles' $l.State
     Add-Row 'your server in the content whitelists' 'XtraConfig.xml, tzer.xml' (Get-WhitelistState (Get-Server))
     foreach ($s in $Strips) { Add-Row $s.What (Split-Path $s.File -Leaf) (Get-StripState $s) }
+
+    Add-Group 'SIGN-IN SERVER'
+    $current = Get-SignInDefault
+    $wanted = Get-Server
+    $state = if ($null -eq $current) { 'missing' } elseif ($wanted -and $current -eq $wanted) { 'patched' } else { 'original' }
+    $shown = if ($current) { $current } else { 'login.icq.com (built in)' }
+    Add-Row "where a new install signs in: $shown" 'Defaults\App.xml' $state
 }
 
 $buttons = @(

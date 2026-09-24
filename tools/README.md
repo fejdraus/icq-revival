@@ -14,7 +14,7 @@ and can put everything back.
 | `icq65/retarget/` | ICQ 6.5 | Superseded by `icq65/patch`. The links half of it, from the command line. |
 | `miranda-icq/` | Miranda NG | The ICQ protocol plugin brought back to the current Miranda NG API: the patch, build output and language pack. |
 
-The sign-in server is set in each client itself, not by these tools.
+The patches also point the client's sign-in at the server, where the client allows it (see the rules below).
 
 ## Rules for every client patch
 
@@ -27,6 +27,10 @@ These hold for the patches above and for any new one, for whatever client:
   8102 under `/icq`, the short paths `/p`, `/e`, `/u`, `/m`, and so on. Whatever
   is typed is reduced to the domain - a scheme, a port or a path after it are
   dropped - and a saved value from an older version is read the same way.
+- **The sign-in server is set too**, wherever the client lets a default be set
+  without touching its own database: ICQ 6.5 through `Defaults\App.xml`, ICQ
+  2003b through `Default Server Host` in the registry. A server the user typed
+  in the client's own settings stays theirs.
 - **Moving to another server is applying again** with the new domain; links
   pointed at the previous server move without a restore first.
 - **The server's own name is never built in.** No default domain in the code or
