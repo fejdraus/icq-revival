@@ -142,18 +142,22 @@ function uploaded(result) {
 function apply() {
   if (!pending) { return; }
   transaction = transaction + 1;
+  var sent = pending;
+  // Said before the call, never after it: the client fires its "done" events
+  // synchronously, from inside SetBartItem, so by the time the call returns
+  // done() may already have said "Saved" - and writing "Uploading..." then
+  // left the page stuck on it.
+  say(T.picUploading);
   try {
-    plugin.SetBartItem(transaction, BART_PICTURE, pending);
-    say(T.picUploading);
-    // The client does not always report back, so the wait is short and the
-    // word is plain: by now the picture is either in place or it is not, and
-    // the profile window shows which.
-    setTimeout(function () {
-      if (pending) { cancel(); say(T.picDone); }
-    }, 6000);
+    plugin.SetBartItem(transaction, BART_PICTURE, sent);
   } catch (e) {
     say(T.picRefused + e.message);
+    return;
   }
+  // A net for the case no event comes at all.
+  setTimeout(function () {
+    if (pending === sent) { cancel(); say(T.picDone); }
+  }, 6000);
 }
 
 function cancel() {
