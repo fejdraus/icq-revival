@@ -1,9 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="{{LANG}}">
 <head>
-<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-<meta http-equiv="X-UA-Compatible" content="IE=EmulateIE7">
-<title>Picture</title>
+<meta charset="utf-8">
+<title>{{picTitle}}</title>
+
+<!-- A template, filled in by avatarPage() in server.js: the double-brace
+     markers are texts from its dictionary, the frame every page shares, and
+     the messages the script below shows. -->
 
 <!-- The Xtraz plugin object, the way back into the client. The interface is
      MISBDhtmlXtraWrapper, described in the type library inside MISB.dll; this
@@ -12,83 +15,60 @@
   OBJECT NOT SET
 </OBJECT>
 
-<style>
-  body { font: 13px "Segoe UI", Tahoma, sans-serif; color: #24343d;
-         background: #f2faf4; margin: 0; padding: 14px 16px; }
-  h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; color: #1d6b33; }
-  p.lead { margin: 0 0 12px; color: #5b7080; line-height: 1.4; }
-
-  .card { background: #fff; border: 1px solid #cfe3d5; border-radius: 4px;
-          padding: 10px 12px; margin: 0 0 10px; }
-  .card.pick { padding: 9px 12px; }
-
-  /* The same shape the client itself uses - 85x106 in the profile window - so
-     what is shown here is what will be seen there. */
-  /* 52x64 is the size the client stores, drawn here at the 85x106 of its
-     profile window - the same stretch, so the preview is honest about how
-     sharp the picture will actually look. */
-  .shot { width: 85px; height: 106px; border: 1px solid #cfe3d5; border-radius: 3px;
-          background: #fbfdfb; vertical-align: middle; }
-  .beside { display: inline-block; vertical-align: middle; margin-left: 14px; }
-  .muted { color: #7b8c98; font-size: 12px; }
-  .name { font-size: 13px; color: #24343d; margin-bottom: 3px; }
-
-  input[type=file] { font: inherit; }
-
-  .buttons { margin-top: 10px; }
-  button { font: inherit; padding: 6px 18px; margin-right: 10px;
-           border: 1px solid #9cc4a8; background: #eaf6ec; border-radius: 3px;
-           color: #1d6b33; cursor: pointer; }
-  button:hover { background: #dff0e3; }
-  button.plain { border-color: #cdd8dd; background: #f6f8f9; color: #56707e; }
-
-  #status { color: #5b7080; min-height: 18px; margin-top: 4px; }
+<style>{{STYLE}}
+/* 52x64 is the size the client stores, drawn here at the 85x106 of its profile
+   window - the same stretch, so the preview is honest about how sharp the
+   picture will actually look. */
+.shot { width: 85px; height: 106px; border: 1px solid #cfe3d5; background: #fbfdfb; }
+.shotcell { width: 96px; }
 </style>
 </head>
-<body>
+<body class="compact">
+<main class="window">
+  {{HEADER}}
+  <div class="body">
+    <p>{{picLead}}</p>
 
-<h1>Your picture</h1>
-<p class="lead">This is what people see next to your name. Pick an image: the
-middle of it is taken, in the shape the client draws, and scaled down for you.
-Nothing is sent until you say so.</p>
+    <div class="panel">
+      <table cellpadding="0" cellspacing="0" border="0"><tr>
+        <td class="shotcell" valign="middle"><img id="current" class="shot" src="" alt=""></td>
+        <td valign="middle"><b>{{picCurrent}}</b><br><span class="dim">{{picCurrentNote}}</span></td>
+      </tr></table>
+    </div>
 
-<div class="card">
-  <img id="current" class="shot" src="" alt="">
-  <span class="beside">
-    <div class="name">Current picture</div>
-    <div class="muted" id="currentNote">as your contacts see it now</div>
-  </span>
-</div>
+    <form id="form" method="post" enctype="multipart/form-data"
+          action="/icq/avatar/upload?lang={{LANG}}" target="sink">
+      <div class="soft"><input type="file" id="file" name="picture" onchange="chosen()"></div>
+    </form>
 
-<form id="form" method="post" enctype="multipart/form-data"
-      action="/icq/avatar/upload" target="sink">
-  <div class="card pick">
-    <input type="file" id="file" name="picture" onchange="chosen()">
+    <div class="soft" id="previewRow" style="display:none">
+      <table cellpadding="0" cellspacing="0" border="0"><tr>
+        <td class="shotcell" valign="middle"><img id="preview" class="shot" src="" alt=""></td>
+        <td valign="middle"><b>{{picPreview}}</b><br><span class="dim" id="previewNote"></span></td>
+      </tr></table>
+      <div class="actions">
+        <button type="button" class="primary" onclick="apply()">{{picUpload}}</button>
+        <button type="button" onclick="cancel()">{{picCancel}}</button>
+      </div>
+    </div>
+
+    <div class="hint" id="status"></div>
   </div>
-</form>
+  {{FOOTER}}
+</main>
 
-<div class="card" id="previewRow" style="display:none">
-  <img id="preview" class="shot" src="" alt="">
-  <span class="beside">
-    <div class="name">This is how it will look</div>
-    <div class="muted" id="previewNote"></div>
-  </span>
-  <div class="buttons">
-    <button type="button" onclick="apply()">Upload to the server</button>
-    <button type="button" class="plain" onclick="cancel()">Cancel</button>
-  </div>
-</div>
-
-<div id="status"></div>
-
-<iframe name="sink" id="sink" style="display:none" src="about:blank"></iframe>
+<iframe name="sink" id="sink" style="display:none" src="about:blank" onload="sinkLoaded()"></iframe>
 
 <script type="text/javascript">
+// The messages, in the language the page was opened in.
+var T = {{STRINGS}};
+
 // The picture is a BART item; the type library lists the kinds as
 // sbICQDevi1z = 1 and sbICQExtras = 8. ICQ 6 calls this picture a "devil".
 var BART_PICTURE = 1;
 var transaction = 0;
 var pending = '';
+var waiting = false;
 
 function say(text) {
   document.getElementById('status').innerHTML = text;
@@ -98,28 +78,43 @@ function say(text) {
 // client puts in the address of the page it opens.
 function connect() {
   var m = /[?&]id=([^&]*)/.exec(window.location.search);
-  if (!m) { say('This page only works inside ICQ.'); return; }
+  if (!m) { say(T.picOnlyInIcq); return; }
   try {
     plugin.Initialize(m[1]);
   } catch (e) {
-    say('Could not reach the client: ' + e.message);
+    say(T.picNoClient + e.message);
     return;
   }
   refresh();
 }
 
 // The page cannot read the file itself - this window blocks every way of doing
-// that - so the preview is made by sending the file to the server, which
-// squares it off, scales it down and hands back an address to show. Nothing
-// reaches the client at this point: that is what the button is for.
+// that - so the preview is made by sending the file to the server, which fits
+// it to the client's frame, scales it down and hands back an address to show.
+// Nothing reaches the client at this point: that is what the button is for.
 function chosen() {
   if (!document.getElementById('file').value) { return; }
-  say('Preparing the preview...');
+  say(T.picPreparing);
+  waiting = true;
   try {
     document.getElementById('form').submit();
   } catch (e) {
-    say('Could not send the file: ' + e.message);
+    waiting = false;
+    say(T.picSendFailed + e.message);
   }
+}
+
+// The hidden frame the form posts into has loaded. Our own answer calls
+// uploaded() first; if nothing did, what came back was not ours - an error
+// page from the proxy in front, for a file over its limit - and the page would
+// otherwise sit at "Preparing the preview..." for ever.
+function sinkLoaded() {
+  setTimeout(function () {
+    if (!waiting) { return; }
+    waiting = false;
+    clearPick();
+    say(T.picNoAnswer);
+  }, 100);
 }
 
 // The file control only reports a change, so picking the same file twice in a
@@ -130,14 +125,15 @@ function clearPick() {
 }
 
 function uploaded(result) {
+  waiting = false;
   clearPick();
-  if (result.error) { say('Could not prepare the picture: ' + result.error); return; }
+  if (result.error) { say(T.picPrepareFailed + result.error); return; }
   // The preview comes over the page's own scheme; the client gets a plain
   // HTTP address, since its picture loader cannot do HTTPS.
   pending = result.clientUrl || result.url;
   document.getElementById('preview').src = result.url;
   document.getElementById('previewRow').style.display = '';
-  document.getElementById('previewNote').innerHTML = result.note || 'ready to upload';
+  document.getElementById('previewNote').innerHTML = result.note || T.picReady;
   say('');
 }
 
@@ -148,15 +144,15 @@ function apply() {
   transaction = transaction + 1;
   try {
     plugin.SetBartItem(transaction, BART_PICTURE, pending);
-    say('Uploading...');
+    say(T.picUploading);
     // The client does not always report back, so the wait is short and the
     // word is plain: by now the picture is either in place or it is not, and
     // the profile window shows which.
     setTimeout(function () {
-      if (pending) { cancel(); say('Done.'); }
+      if (pending) { cancel(); say(T.picDone); }
     }, 6000);
   } catch (e) {
-    say('The client refused the picture: ' + e.message);
+    say(T.picRefused + e.message);
   }
 }
 
@@ -172,16 +168,16 @@ function refresh() {
   try {
     plugin.GetBartItem(transaction, BART_PICTURE, plugin.OwnerInfo.ScreenName);
   } catch (e) {
-    say('Could not read the current picture: ' + e.message);
+    say(T.picReadFailed + e.message);
   }
 }
 
 // Ends an upload however the news of it arrives, and never leaves the page
-// saying "Uploading..." forever.
+// saying "Uploading..." for ever.
 function done() {
   if (!pending) { return; }
   cancel();
-  say('Saved. Everyone sees it from now on.');
+  say(T.picSaved);
 }
 
 function show(source) {
@@ -197,7 +193,7 @@ function show(source) {
 
 <script for="plugin" event="OnBartOpFailed(transID)" language="JavaScript">
   // Also fires when there is simply no picture yet, which is not worth a fuss.
-  say(document.getElementById('current').src ? 'The server did not take the picture.' : '');
+  say(document.getElementById('current').src ? T.picServerRefused : '');
 </script>
 
 <script for="plugin" event="OnOwnerBartItemChange(eType, bcstrData)" language="JavaScript">

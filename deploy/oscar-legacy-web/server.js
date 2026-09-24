@@ -149,6 +149,35 @@ const I18N = {
     poweredBy: 'powered by ICQ Revival',
     welcomeTitle: 'Welcome',
     welcomeSub: 'the old ICQ, back on the air',
+    // The picture page ICQ 6.5 opens to set your buddy icon.
+    picTitle: 'Your picture',
+    picSub: 'shown next to your name',
+    picLead: 'Pick an image: its middle is taken in the shape the client draws '
+      + 'and scaled down for you. Nothing is sent until you say so.',
+    picCurrent: 'Current picture',
+    picCurrentNote: 'as your contacts see it now',
+    picPreview: 'This is how it will look',
+    picUpload: 'Upload to the server',
+    picCancel: 'Cancel',
+    picOnlyInIcq: 'This page only works inside ICQ.',
+    picNoClient: 'Could not reach the client: ',
+    picPreparing: 'Preparing the preview...',
+    picSendFailed: 'Could not send the file: ',
+    picPrepareFailed: 'Could not prepare the picture: ',
+    picNoAnswer: 'The server did not take the file. Is it larger than 16 MB?',
+    picReady: 'ready to upload',
+    picUploading: 'Uploading...',
+    picRefused: 'The client refused the picture: ',
+    picReadFailed: 'Could not read the current picture: ',
+    picSaved: 'Saved. Everyone sees it from now on.',
+    picDone: 'Done.',
+    picServerRefused: 'The server did not take the picture.',
+    picErrNotForm: 'not a form upload',
+    picErrTooLarge: 'the file is larger than 16 MB',
+    picErrMalformed: 'the upload is malformed',
+    picErrEmpty: 'the file is empty',
+    picReduced: (from, to) => `${from} reduced to ${to}`,
+    picBytes: (n) => (n < 1024 ? `${n} bytes` : `${Math.round(n / 1024)} KB`),
     signedInAs: (u) => `Signed in as <b>${u}</b>`,
     signedIn: 'Signed in',
     dirDown: 'the server directory is not answering',
@@ -259,6 +288,34 @@ const I18N = {
     poweredBy: 'працює на ICQ Revival',
     welcomeTitle: 'Ласкаво просимо',
     welcomeSub: 'стара ICQ знову в ефірі',
+    picTitle: 'Ваша картинка',
+    picSub: 'поруч із вашим імʼям',
+    picLead: 'Оберіть зображення: з нього береться середина у формі, яку малює '
+      + 'клієнт, і зменшується. Нічого не надсилається, доки ви не скажете.',
+    picCurrent: 'Поточна картинка',
+    picCurrentNote: 'такою її зараз бачать ваші контакти',
+    picPreview: 'Ось як вона виглядатиме',
+    picUpload: 'Завантажити на сервер',
+    picCancel: 'Скасувати',
+    picOnlyInIcq: 'Ця сторінка працює лише всередині ICQ.',
+    picNoClient: 'Не вдалося звʼязатися з клієнтом: ',
+    picPreparing: 'Готуємо попередній перегляд...',
+    picSendFailed: 'Не вдалося надіслати файл: ',
+    picPrepareFailed: 'Не вдалося підготувати картинку: ',
+    picNoAnswer: 'Сервер не прийняв файл. Можливо, він більший за 16 МБ?',
+    picReady: 'готово до завантаження',
+    picUploading: 'Завантажуємо...',
+    picRefused: 'Клієнт не прийняв картинку: ',
+    picReadFailed: 'Не вдалося прочитати поточну картинку: ',
+    picSaved: 'Збережено. Відтепер її бачать усі.',
+    picDone: 'Готово.',
+    picServerRefused: 'Сервер не прийняв картинку.',
+    picErrNotForm: 'це не завантаження з форми',
+    picErrTooLarge: 'файл більший за 16 МБ',
+    picErrMalformed: 'завантаження пошкоджене',
+    picErrEmpty: 'файл порожній',
+    picReduced: (from, to) => `${from} стиснуто до ${to}`,
+    picBytes: (n) => (n < 1024 ? `${n} байт` : `${Math.round(n / 1024)} КБ`),
     signedInAs: (u) => `Ви увійшли як <b>${u}</b>`,
     signedIn: 'Ви увійшли',
     dirDown: 'каталог сервера не відповідає',
@@ -984,7 +1041,27 @@ function hostsFileText(serviceAddress) {
 // config surfaces at startup rather than on the first request.
 // The page that sets the user's own picture, served to the client as an Xtra.
 // Read once at startup like the other data files next to this one.
-const avatarPage = fs.readFileSync(path.join(__dirname, 'pages', 'avatar.html'), 'utf8');
+const avatarTemplate = fs.readFileSync(path.join(__dirname, 'pages', 'avatar.html'), 'utf8');
+
+// The picture page, in the same frame as every other page - the green title bar
+// and the UK/EN switch - and in the reader's language. It is a template rather
+// than markup built here because of its script: the plugin object and the
+// handlers for its events. {{KEY}} is a text from the dictionary, escaped;
+// {{STRINGS}} hands the script the messages it shows; the rest is the shell.
+function avatarPage(u) {
+  const t = u.t;
+  const keys = Object.keys(t).filter((k) => k.startsWith('pic') && typeof t[k] === 'string');
+  const strings = {};
+  for (const k of keys) strings[k] = t[k];
+  return avatarTemplate
+    .replace('{{STYLE}}', () => SHARED_STYLE)
+    .replace('{{HEADER}}', () => header(escapeHtml(t.picTitle), escapeHtml(t.picSub)))
+    .replace('{{FOOTER}}', () => footer({ langs: langSwitch(u.lang, u.selfUrl) }))
+    // JSON inside a script: "</" would end the script early.
+    .replace('{{STRINGS}}', () => JSON.stringify(strings).replace(/</g, '\\u003c'))
+    .replace(/\{\{LANG\}\}/g, () => u.lang)
+    .replace(/\{\{(pic[A-Za-z]+)\}\}/g, (m, k) => (typeof t[k] === 'string' ? escapeHtml(t[k]) : m));
+}
 
 
 // Pictures on their way from the page to the client, held in memory for a few
@@ -1015,9 +1092,10 @@ function plainBase(req) {
 }
 
 function uploadPicture(ctx) {
+  const t = ctx.u.t;
   const type = ctx.req.headers['content-type'] || '';
   const boundary = /boundary=(?:"([^"]+)"|([^;]+))/.exec(type);
-  if (!boundary) { send(ctx.res, 400, uploadReply('', 'not a form upload', '')); return; }
+  if (!boundary) { send(ctx.res, 400, uploadReply('', t.picErrNotForm, '')); return; }
   const mark = Buffer.from('--' + (boundary[1] || boundary[2]).trim());
 
   const chunks = [];
@@ -1032,7 +1110,7 @@ function uploadPicture(ctx) {
   });
   ctx.req.on('end', () => {
     if (stopped) {
-      send(ctx.res, 200, uploadReply('', 'the file is larger than 16 MB', ''));
+      send(ctx.res, 200, uploadReply('', t.picErrTooLarge, ''));
       return;
     }
     const body = Buffer.concat(chunks);
@@ -1042,13 +1120,13 @@ function uploadPicture(ctx) {
     const headEnd = body.indexOf(String.fromCharCode(13, 10, 13, 10), start);
     const next = body.indexOf(mark, headEnd);
     if (start < 0 || headEnd < 0 || next < 0) {
-      send(ctx.res, 200, uploadReply('', 'the upload is malformed', ''));
+      send(ctx.res, 200, uploadReply('', t.picErrMalformed, ''));
       return;
     }
     const head = body.slice(start, headEnd).toString('latin1');
     const kind = new RegExp('content-type:\\s*([^\\r\\n]+)', 'i').exec(head);
     const data = body.slice(headEnd + 4, next - 2);
-    if (!data.length) { send(ctx.res, 200, uploadReply('', 'the file is empty', '')); return; }
+    if (!data.length) { send(ctx.res, 200, uploadReply('', t.picErrEmpty, '')); return; }
 
     const small = shrink(data);
     const id = crypto.randomBytes(8).toString('hex');
@@ -1063,24 +1141,21 @@ function uploadPicture(ctx) {
     // at all - it drops an https:// address without even connecting - while
     // everything else it opens, this page included, works over HTTPS.
     const file = `/icq/avatar/file/${id}`;
-    send(ctx.res, 200, uploadReply(`${self}${file}`, '', small.note, `${plainBase(ctx.req)}${file}`));
+    const note = small.body === data ? '' : t.picReduced(t.picBytes(data.length), t.picBytes(small.body.length));
+    send(ctx.res, 200, uploadReply(`${self}${file}`, '', note, `${plainBase(ctx.req)}${file}`));
   });
 }
 
-// Squares off and scales down anything large. A buddy icon travels with
+// Fits the picture to the client's frame and scales it down. A buddy icon travels with
 // presence and is downloaded by every contact, so a photograph straight from a
 // phone has no business going through as it is. Done by a small Python script
 // next to this file, since the only image library here is the one Python has;
 // without it the picture goes through untouched.
-// The script hands back a PNG where it can and a JPEG where the PNG would be
-// too large, so the type is read off the first bytes rather than assumed.
+// The script hands back a JPEG, but a file it could not decode goes through
+// as it came, so the type is read off the first bytes rather than assumed.
 function pictureType(body) {
   return body.length > 8 && body[0] === 0x89 && body[1] === 0x50
     ? 'image/png' : 'image/jpeg';
-}
-
-function size(bytes) {
-  return bytes < 1024 ? `${bytes} bytes` : `${Math.round(bytes / 1024)} KB`;
 }
 
 function shrink(data) {
@@ -1089,12 +1164,12 @@ function shrink(data) {
       [path.join(__dirname, 'shrink-picture.py')],
       { input: data, maxBuffer: 8 * 1024 * 1024 });
     if (run.status !== 0 || !run.stdout || !run.stdout.length) {
-      return { body: data, note: '' };
+      return { body: data };
     }
-    if (run.stdout.length >= data.length) { return { body: data, note: '' }; }
-    return { body: run.stdout, note: `${size(data.length)} reduced to ${size(run.stdout.length)}` };
+    if (run.stdout.length >= data.length) { return { body: data }; }
+    return { body: run.stdout };
   } catch (e) {
-    return { body: data, note: '' };
+    return { body: data };
   }
 }
 
@@ -1108,7 +1183,7 @@ function uploadReply(url, error, note, clientUrl) {
 }
 
 const ACTIONS = {
-  avatarpage: (ctx) => send(ctx.res, 200, avatarPage),
+  avatarpage: (ctx) => send(ctx.res, 200, avatarPage(ctx.u)),
 
   // Receives a picture from the page and keeps it just long enough for the
   // client to fetch it. The client does not take image data: SetBartItem is
