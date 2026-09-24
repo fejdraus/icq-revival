@@ -157,6 +157,7 @@ type Config struct {
 	DisableMultiLoginNotif bool   `envconfig:"DISABLE_MULTI_LOGIN_NOTIF" required:"false" basic:"true" ssl:"true" description:"Disable notification sent when another client signs in with the same screen name."`
 	LogLevel               string `envconfig:"LOG_LEVEL" required:"true" basic:"info" ssl:"info" description:"Set logging granularity. Possible values: 'trace', 'debug', 'info', 'warn', 'error'."`
 	ICQClassicCodePage     string `envconfig:"ICQ_CLASSIC_CODEPAGE" required:"false" default:"windows-1251" basic:"windows-1251" ssl:"windows-1251" description:"Code page of the text that classic ICQ clients (ICQ 99 to 2003) send and expect in profiles and searches. They know no Unicode and the protocol does not name the code page, so the server keeps their text as UTF-8 and sends it back to them in this one. Names as in the WHATWG encoding list; empty passes their bytes through unchanged.\n\nExamples:\n\t// Cyrillic\n\twindows-1251\n\t// Western European\n\twindows-1252"`
+	STUNListener           string `envconfig:"STUN_LISTENER" required:"false" basic:"0.0.0.0:3478" ssl:"0.0.0.0:3478" default:"0.0.0.0:3478" description:"UDP address of the STUN server. ICQ 6 asks STUN for its public address before a voice or video call; the ICQ 6.5 patch points the client here in place of turn.oscar.aol.com, which no longer exists. Clients reach it on UDP 3478, the port the client has built in. Empty turns it off.\n\nFormat: HOST:PORT\n\nExamples:\n\t// All interfaces\n\t0.0.0.0:3478"`
 
 	// ICQ Legacy Protocol Configuration
 	ICQLegacy ICQLegacyConfig

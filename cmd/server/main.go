@@ -12,6 +12,7 @@ import (
 	"github.com/joho/godotenv"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/mk6i/open-oscar-server/server/stun"
 	"github.com/mk6i/open-oscar-server/server/webapi"
 )
 
@@ -78,6 +79,12 @@ func main() {
 		g.Go(webAPI.ListenAndServe)
 	}
 
+	var stunServer *stun.Server
+	if deps.cfg.STUNListener != "" {
+		stunServer = stun.NewServer(deps.cfg.STUNListener, deps.logger.With("svc", "STUN"))
+		g.Go(stunServer.ListenAndServe)
+	}
+
 	// Start ICQ Legacy server if enabled
 	icqLegacy := ICQLegacy(deps)
 	if deps.cfg.ICQLegacy.Enabled {
@@ -96,6 +103,9 @@ func main() {
 	}
 	if deps.cfg.ICQLegacy.Enabled {
 		_ = icqLegacy.Shutdown(shutdownCtx)
+	}
+	if stunServer != nil {
+		_ = stunServer.Shutdown(shutdownCtx)
 	}
 
 	if err = g.Wait(); err != nil {

@@ -16,7 +16,10 @@
 #
 #   4. Sign-in server. The domain replaces login.icq.com as the server the
 #      client signs in to with automatic connection settings; a server typed
-#      under Options -> Connection -> manual stays the user's choice.
+#      under Options -> Connection -> manual stays the user's choice. It also
+#      replaces turn.oscar.aol.com as the STUN server a voice or video call
+#      asks for the caller's public address - without an answer from it a
+#      call fails as soon as it is picked up.
 #
 # Every file is backed up next to itself before the first change, and
 # "Restore original" puts them all back. The user's profile is never touched.
@@ -232,6 +235,9 @@ $Strips = @(
 # where it was, untouched. The push carries a base relocation, so the loader
 # moves the new address along with the image like the old one. The DLL has no
 # checksum and no signature to keep valid.
+#
+# The STUN server of calls is the same domain. Its default, "turn.oscar.aol.com",
+# is pushed the same way in two places, and both are pointed at the same slot.
 
 $SignIn = [pscustomobject]@{
     File       = 'MCore.dll'
@@ -245,6 +251,15 @@ $SignIn = [pscustomobject]@{
     VSizeAt    = 0x258        # VirtualSize of .rdata in the section table
     VSizeFrom  = 0x57662
     VSizeTo    = 0x57800      # all of its raw data; .data starts at 0x209000
+    StunPushes = @(0x8E2B3, 0x1764CD) # push offset "turn.oscar.aol.com" - their operands
+    StunTarget = 0x320BB7C8   # where they point out of the box
+}
+
+function Test-StunPushes([byte[]]$bytes, [uint32]$target) {
+    foreach ($at in $SignIn.StunPushes) {
+        if ([BitConverter]::ToUInt32($bytes, $at) -ne $target) { return $false }
+    }
+    return $true
 }
 
 function Read-SlotDomain([byte[]]$bytes) {
@@ -264,7 +279,8 @@ function Get-SignInState([string]$domain) {
         if ((Get-Sha256 $path) -eq $SignIn.Sha256From) { return 'original' } else { return 'other version' }
     }
     if ($target -eq $SignIn.NewTarget) {
-        if ((Read-SlotDomain $bytes) -eq $domain) { return 'patched' } else { return 'another server' }
+        # Patched before calls were: the STUN server is still AOL's.
+        if ((Read-SlotDomain $bytes) -eq $domain -and (Test-StunPushes $bytes $SignIn.NewTarget)) { return 'patched' } else { return 'another server' }
     }
     return 'other version'
 }
@@ -292,7 +308,9 @@ function Set-SignIn([string]$domain) {
     for ($i = $SignIn.Slot; $i -lt $SignIn.SlotEnd; $i++) { $bytes[$i] = 0 }
     [Array]::Copy($text, 0, $bytes, $SignIn.Slot, $text.Length)
     [Array]::Copy([BitConverter]::GetBytes([uint32]$SignIn.VSizeTo), 0, $bytes, $SignIn.VSizeAt, 4)
-    [Array]::Copy([BitConverter]::GetBytes([uint32]$SignIn.NewTarget), 0, $bytes, $SignIn.PushImm, 4)
+    foreach ($at in @($SignIn.PushImm) + $SignIn.StunPushes) {
+        [Array]::Copy([BitConverter]::GetBytes([uint32]$SignIn.NewTarget), 0, $bytes, $at, 4)
+    }
     [IO.File]::WriteAllBytes($path, $bytes)
     return "the client signs in to $domain"
 }
@@ -511,7 +529,7 @@ $Jobs = [ordered]@{
     'ads'     = @{ Group = 'Advertising'; What = 'advertising: the ad slots and boxes, the banner and its frame' }
     'fix'     = @{ Group = 'Fixes'; What = 'the cut-off bottom of the "Advanced" preferences group' }
     'links'   = @{ Group = 'Your server'; What = 'the pages the client opens point at your server' }
-    'sign-in' = @{ Group = 'Your server'; What = 'automatic connection signs in to your server' }
+    'sign-in' = @{ Group = 'Your server'; What = 'automatic connection and voice calls use your server' }
 }
 $JobOf = @{
     'the Xtraz strip above the contact list'             = 'xtraz'

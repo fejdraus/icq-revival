@@ -47,8 +47,9 @@ services:
     restart: "no"
 
   # The IM server: OSCAR 5190, TOC 9898, Kerberos 1088, web API 8082, legacy
-  # ICQ UDP 4000; the management API stays on 127.0.0.1:8090 and must never be
-  # reachable from outside - it has no authentication.
+  # ICQ UDP 4000, STUN UDP 3478 for ICQ 6 calls; the management API stays on
+  # 127.0.0.1:8090 and must never be reachable from outside - it has no
+  # authentication.
   server:
     <<: *service
     build:
