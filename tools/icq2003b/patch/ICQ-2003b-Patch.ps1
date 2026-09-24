@@ -295,58 +295,110 @@ function Save-Base([string]$value) {
 
 # --- sign-in server ----------------------------------------------------------
 #
-# The server ICQ 2003b gives a new account and connects to for "Get an ICQ
-# Number". Out of the box it is login.icq.com, which is gone, so registering a
-# number from the client failed with "Info Number 117". An account that already
-# exists keeps the server in its own settings; this is only the default a new
-# one starts from. The port stays 5190, as it is there already.
+# ICQ 2003b keeps the server in two places. Default Server Host under HKLM is
+# what a new install starts from - and what "Get an ICQ Number" connects to:
+# out of the box it is login.icq.com, which is gone, so registering failed
+# with "Info Number 117". On its first run the client copies it into the
+# connection settings under HKCU, and from then on signs in with those; the
+# default is not read again. So both are set.
+#
+# The connection settings are only taken over while they still hold the dead
+# default, or a server this patch put there before: a server the user typed
+# under Preferences -> Connection stays theirs. The port stays 5190, as it is
+# there already. What each held first is saved once, for Restore original.
 
 $DefaultPrefsKeys = @(
     'HKLM:\SOFTWARE\WOW6432Node\Mirabilis\ICQ\ICQPro\DefaultPrefs'   # 64-bit Windows
     'HKLM:\SOFTWARE\Mirabilis\ICQ\ICQPro\DefaultPrefs'               # 32-bit Windows
 )
 $SignInValue = 'Default Server Host'
+$ConnectionKey = 'HKCU:\Software\Mirabilis\ICQ\CommonPrefs\Connection'
+$ConnectionValue = 'ServerHostName'
+$DeadSignIn = 'login.icq.com'
 
 function Get-DefaultPrefsKey {
     foreach ($k in $DefaultPrefsKeys) { if (Test-Path -LiteralPath $k) { return $k } }
     return $null
 }
 
+function Get-RegValue([string]$key, [string]$name) {
+    try { return (Get-ItemProperty -LiteralPath $key -ErrorAction Stop).$name } catch { return $null }
+}
+
 function Get-SignInServer {
     $k = Get-DefaultPrefsKey
     if (-not $k) { return $null }
-    try { return (Get-ItemProperty -LiteralPath $k -ErrorAction Stop).$SignInValue } catch { return $null }
+    return Get-RegValue $k $SignInValue
 }
 
-# Remembers what the client came with - once, so a second apply does not save
-# our own domain as the "original" - and puts the domain in its place.
-function Set-SignInServer([string]$domain) {
+# The server the client signs in with; $null before its first run.
+function Get-ConnectionServer { return Get-RegValue $ConnectionKey $ConnectionValue }
+
+# Whether the connection settings are the patch's to change: the dead default,
+# or the server of an earlier apply.
+function Test-ConnectionOurs([string]$current, [string]$previous) {
+    return $current -eq $DeadSignIn -or ($previous -and $current -eq $previous)
+}
+
+# Saves what a value held first - once, so a second apply does not save our
+# own domain as the "original".
+function Save-Original([string]$name, [string]$value) {
+    if (-not (Test-Path $SettingsKey)) { New-Item -Path $SettingsKey -Force | Out-Null }
+    if (-not (Get-RegValue $SettingsKey $name)) { Set-ItemProperty -LiteralPath $SettingsKey -Name $name -Value "$value" }
+}
+
+# original / patched / missing, for the domain.
+function Get-SignInState([string]$domain, [string]$previous) {
+    if (-not (Get-DefaultPrefsKey)) { return 'missing' }
+    if (-not $domain -or (Get-SignInServer) -ne $domain) { return 'original' }
+    $c = Get-ConnectionServer
+    if ($c -and $c -ne $domain -and (Test-ConnectionOurs $c $previous)) { return 'original' }
+    return 'patched'
+}
+
+function Set-SignInServer([string]$domain, [string]$previous) {
     $k = Get-DefaultPrefsKey
     if (-not $k) { return $false }
-    $current = Get-SignInServer
-    if ($current -eq $domain) { return $false }
+    $changed = $false
     try {
-        if (-not (Test-Path $SettingsKey)) { New-Item -Path $SettingsKey -Force | Out-Null }
-        $saved = (Get-ItemProperty -LiteralPath $SettingsKey -ErrorAction SilentlyContinue).OriginalServerHost
-        if (-not $saved) { Set-ItemProperty -LiteralPath $SettingsKey -Name OriginalServerHost -Value "$current" }
-        Set-ItemProperty -LiteralPath $k -Name $SignInValue -Value $domain -ErrorAction Stop
-        return $true
-    } catch {
-        return $false
-    }
+        $current = Get-SignInServer
+        if ($current -ne $domain) {
+            Save-Original 'OriginalServerHost' $current
+            Set-ItemProperty -LiteralPath $k -Name $SignInValue -Value $domain -ErrorAction Stop
+            $changed = $true
+        }
+        $c = Get-ConnectionServer
+        if ($c -and $c -ne $domain -and (Test-ConnectionOurs $c $previous)) {
+            Save-Original 'OriginalConnectionHost' $c
+            Set-ItemProperty -LiteralPath $ConnectionKey -Name $ConnectionValue -Value $domain -ErrorAction Stop
+            $changed = $true
+        }
+    } catch { }
+    return $changed
 }
 
+# Puts back what was saved; a saved value is only let go once it is back in
+# place.
 function Restore-SignInServer {
+    $done = 0
+    $saved = Get-RegValue $SettingsKey 'OriginalServerHost'
     $k = Get-DefaultPrefsKey
-    if (-not $k) { return 0 }
-    try {
-        $saved = (Get-ItemProperty -LiteralPath $SettingsKey -ErrorAction Stop).OriginalServerHost
-    } catch { return 0 }
-    if (-not $saved) { return 0 }
-    # The saved original is only let go once it is back in place.
-    try { Set-ItemProperty -LiteralPath $k -Name $SignInValue -Value $saved -ErrorAction Stop } catch { return 0 }
-    Remove-ItemProperty -LiteralPath $SettingsKey -Name OriginalServerHost -ErrorAction SilentlyContinue
-    return 1
+    if ($saved -and $k) {
+        try {
+            Set-ItemProperty -LiteralPath $k -Name $SignInValue -Value $saved -ErrorAction Stop
+            Remove-ItemProperty -LiteralPath $SettingsKey -Name OriginalServerHost -ErrorAction SilentlyContinue
+            $done++
+        } catch { }
+    }
+    $saved = Get-RegValue $SettingsKey 'OriginalConnectionHost'
+    if ($saved -and (Test-Path -LiteralPath $ConnectionKey)) {
+        try {
+            Set-ItemProperty -LiteralPath $ConnectionKey -Name $ConnectionValue -Value $saved -ErrorAction Stop
+            Remove-ItemProperty -LiteralPath $SettingsKey -Name OriginalConnectionHost -ErrorAction SilentlyContinue
+            $done++
+        } catch { }
+    }
+    return $done
 }
 
 # --- поиск папки клиента ----------------------------------------------------
@@ -612,7 +664,7 @@ $Jobs = [ordered]@{
     'google bar' = @{ Group = 'Advertising'; What = 'the Google search bar and the strip kept for it' }
     'send-by'    = @{ Group = 'Services that are gone'; What = 'the "Send By: ICQ / SMS / Email" strip of the message window' }
     'links'      = @{ Group = 'Your server'; What = 'ICQ.com links in menus and help point at your server' }
-    'sign-in'    = @{ Group = 'Your server'; What = 'new accounts and "Get an ICQ Number" connect to your server' }
+    'sign-in'    = @{ Group = 'Your server'; What = 'ICQ signs in to your server, "Get an ICQ Number" too' }
 }
 $JobOf = @{ 'sign-in' = 'sign-in' }
 foreach ($p in $Patches) { if ($p.Job) { $JobOf[$p.What] = $p.Job } }
@@ -637,10 +689,10 @@ function Get-Items([string]$domain) {
         $name = [IO.Path]::GetFileName($rel)
         & $add 'Links' $rel "menu items in $name point at your server" $name (Get-LinkState $rel).State
     }
-    $current = Get-SignInServer
-    $state = if (-not (Get-DefaultPrefsKey)) { 'missing' } elseif ($domain -and $current -eq $domain) { 'patched' } else { 'original' }
-    $shown = if ($current) { $current } else { '(not set)' }
-    & $add 'Sign-in server' 'sign-in' 'new accounts and "Get an ICQ Number" connect to your server' "Default Server Host, now $shown" $state
+    $shown = Get-ConnectionServer
+    if (-not $shown) { $shown = Get-SignInServer }
+    if (-not $shown) { $shown = '(not set)' }
+    & $add 'Sign-in server' 'sign-in' 'ICQ signs in to your server' "now $shown" (Get-SignInState $domain (Get-SavedBase))
     return Merge-Jobs $items
 }
 
@@ -713,7 +765,7 @@ function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
     }
 
     if (Test-Wanted $skip 'sign-in') {
-        [void](Set-SignInServer $domain)
+        [void](Set-SignInServer $domain $previous)
     } else {
         try { [void](Restore-SignInServer) } catch { }
     }
@@ -819,9 +871,14 @@ function Invoke-Apply {
                 " so a shorter server address would fix it."
     }
     if ((Test-PatchSelected $ui 'sign-in') -and (Get-SignInServer) -eq $domain) {
-        $msg += "`n`nNew accounts and ""Get an ICQ Number"" connect to $domain." +
-                " An account that exists already keeps its own server: set it under" +
-                " the connection settings of that account."
+        $c = Get-ConnectionServer
+        if ($c -and $c -ne $domain) {
+            $msg += "`n`nICQ is set to sign in to $c under Preferences -> Connection," +
+                    " which looks like your own choice, so it was left alone. Change it there" +
+                    " to $domain to sign in to this server."
+        } else {
+            $msg += "`n`nICQ signs in to $domain."
+        }
     }
     $msg += "`n`nYou can start ICQ now."
     [Windows.Forms.MessageBox]::Show($msg, 'Done', 'OK', 'Information') | Out-Null

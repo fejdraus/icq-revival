@@ -31,8 +31,9 @@ These hold for the patches above and for any new one, for whatever client:
   dropped - and a saved value from an older version is read the same way.
 - **The sign-in server is set too**, as the default the client starts from,
   never inside its own database: ICQ 6.5 in `MCore.dll`, where the built-in
-  `login.icq.com` lives, ICQ 2003b in `Default Server Host` in the registry. A
-  server the user typed in the client's own settings stays theirs.
+  `login.icq.com` lives, ICQ 2003b in `Default Server Host` in the registry
+  and in the connection settings the client copied it into on its first run.
+  A server the user typed in the client's own settings stays theirs.
 - **Moving to another server is applying again** with the new domain; links
   pointed at the previous server move without a restore first.
 - **The server's own name is never built in.** No default domain in the code or
