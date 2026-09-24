@@ -156,6 +156,7 @@ type Config struct {
 	DisableAuth            bool   `envconfig:"DISABLE_AUTH" required:"true" basic:"true" ssl:"true" description:"Disable password check and auto-create new users at login time. Useful for quickly creating new accounts during development without having to register new users via the management API."`
 	DisableMultiLoginNotif bool   `envconfig:"DISABLE_MULTI_LOGIN_NOTIF" required:"false" basic:"true" ssl:"true" description:"Disable notification sent when another client signs in with the same screen name."`
 	LogLevel               string `envconfig:"LOG_LEVEL" required:"true" basic:"info" ssl:"info" description:"Set logging granularity. Possible values: 'trace', 'debug', 'info', 'warn', 'error'."`
+	ICQClassicCodePage     string `envconfig:"ICQ_CLASSIC_CODEPAGE" required:"false" default:"windows-1251" basic:"windows-1251" ssl:"windows-1251" description:"Code page of the text that classic ICQ clients (ICQ 99 to 2003) send and expect in profiles and searches. They know no Unicode and the protocol does not name the code page, so the server keeps their text as UTF-8 and sends it back to them in this one. Names as in the WHATWG encoding list; empty passes their bytes through unchanged.\n\nExamples:\n\t// Cyrillic\n\twindows-1251\n\t// Western European\n\twindows-1252"`
 
 	// ICQ Legacy Protocol Configuration
 	ICQLegacy ICQLegacyConfig

@@ -56,6 +56,20 @@ type ICQService struct {
 	sessionLister    ICQSessionLister
 	randomChatMu     sync.Mutex
 	randomChatGroups map[state.IdentScreenName]uint16
+	// The code page of the classic dialect's text; see classicText.
+	text classicText
+}
+
+// SetClassicCodePage sets the code page clients of the classic dialect (ICQ
+// 99 to 2003) write their text in, e.g. "windows-1251". Their text is kept
+// as UTF-8 and sent back to them in that code page. Empty leaves it as sent.
+func (s *ICQService) SetClassicCodePage(name string) error {
+	t, err := newClassicText(name)
+	if err != nil {
+		return err
+	}
+	s.text = t
+	return nil
 }
 
 // BridgeFeedbagService enables the ICBMService to forward legacy ICQ events to
@@ -72,6 +86,7 @@ func (s *ICQService) DeleteMsgReq(ctx context.Context, instance *state.SessionIn
 }
 
 func (s *ICQService) FindByICQName(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0515_DBQueryMetaReqSearchByDetails, seq uint16) error {
+	s.text.inAll(&inBody)
 	res, err := s.userFinder.FindByICQName(ctx, inBody.FirstName, inBody.LastName, inBody.NickName)
 
 	if err != nil {
@@ -94,6 +109,7 @@ func (s *ICQService) FindByICQName(ctx context.Context, instance *state.SessionI
 }
 
 func (s *ICQService) FindByICQEmail(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0529_DBQueryMetaReqSearchByEmail, seq uint16) error {
+	s.text.inAll(&inBody)
 	res, err := s.userFinder.FindByICQEmail(ctx, inBody.Email)
 
 	switch {
@@ -107,6 +123,7 @@ func (s *ICQService) FindByICQEmail(ctx context.Context, instance *state.Session
 }
 
 func (s *ICQService) FindByEmail3(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0573_DBQueryMetaReqSearchByEmail3, seq uint16) error {
+	s.text.inAll(&inBody)
 	b, hasEmail := inBody.Bytes(wire.ICQTLVTagsEmail)
 	if !hasEmail {
 		return errors.New("unable to get email from request")
@@ -130,6 +147,7 @@ func (s *ICQService) FindByEmail3(ctx context.Context, instance *state.SessionIn
 }
 
 func (s *ICQService) FindByICQInterests(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0533_DBQueryMetaReqSearchWhitePages, seq uint16) error {
+	s.text.inAll(&inBody)
 
 	interests := strings.Split(inBody.InterestsKeyword, ",")
 	res, err := s.userFinder.FindByICQInterests(ctx, inBody.InterestsCode, interests)
@@ -278,6 +296,7 @@ func (s *ICQService) FindByWhitePages2(ctx context.Context, instance *state.Sess
 		onlineOnly = true
 	}
 
+	s.text.inAll(&criteria)
 	users, err := s.userFinder.SearchICQUsers(ctx, criteria)
 	if err != nil {
 		if errors.Is(err, state.ErrICQSearchEmptyCriteria) {
@@ -511,6 +530,7 @@ func (s *ICQService) OfflineMsgReq(ctx context.Context, inFrame wire.SNACFrame, 
 }
 
 func (s *ICQService) SetAffiliations(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x041A_DBQueryMetaReqSetAffiliations, seq uint16) error {
+	s.text.inAll(&inBody)
 	if len(inBody.PastAffiliations) != 3 || len(inBody.Affiliations) != 3 {
 		return fmt.Errorf("%w: expected 3 past affiliations and 3 affiliations", errICQBadRequest)
 	}
@@ -537,6 +557,7 @@ func (s *ICQService) SetAffiliations(ctx context.Context, instance *state.Sessio
 }
 
 func (s *ICQService) SetBasicInfo(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x03EA_DBQueryMetaReqSetBasicInfo, seq uint16) error {
+	s.text.inAll(&inBody)
 	u := state.ICQBasicInfo{
 		CellPhone:    inBody.CellPhone,
 		CountryCode:  inBody.CountryCode,
@@ -570,6 +591,7 @@ func (s *ICQService) SetBasicInfo(ctx context.Context, instance *state.SessionIn
 }
 
 func (s *ICQService) SetEmails(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x040B_DBQueryMetaReqSetEmails, seq uint16) error {
+	s.text.inAll(&inBody)
 	if len(inBody.Emails) > 0 {
 		s.logger.Debug("adding additional emails is not yet supported")
 	}
@@ -837,6 +859,8 @@ func (s *ICQService) SetICQInfo(ctx context.Context, instance *state.SessionInst
 	}
 
 	name := instance.IdentScreenName()
+	// What was kept is UTF-8 already and stays as it is; what came in is converted.
+	s.text.inAll(&user.ICQInfo)
 	if err := s.userUpdater.SetICQInfo(ctx, name, user.ICQInfo); err != nil {
 		return err
 	}
@@ -850,6 +874,7 @@ func (s *ICQService) SetICQPhone(ctx context.Context, instance *state.SessionIns
 }
 
 func (s *ICQService) SetInterests(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0410_DBQueryMetaReqSetInterests, seq uint16) error {
+	s.text.inAll(&inBody)
 	if len(inBody.Interests) != 4 {
 		return fmt.Errorf("%w: expected 4 interests", errICQBadRequest)
 	}
@@ -872,6 +897,7 @@ func (s *ICQService) SetInterests(ctx context.Context, instance *state.SessionIn
 }
 
 func (s *ICQService) SetMoreInfo(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x03FD_DBQueryMetaReqSetMoreInfo, seq uint16) error {
+	s.text.inAll(&inBody)
 	u := state.ICQMoreInfo{
 		Gender:       inBody.Gender,
 		HomePageAddr: inBody.HomePageAddr,
@@ -907,6 +933,7 @@ func (s *ICQService) SetPermissions(ctx context.Context, instance *state.Session
 }
 
 func (s *ICQService) SetUserNotes(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0406_DBQueryMetaReqSetNotes, seq uint16) error {
+	s.text.inAll(&inBody)
 	u := state.ICQUserNotes{
 		Notes: inBody.Notes,
 	}
@@ -919,6 +946,7 @@ func (s *ICQService) SetUserNotes(ctx context.Context, instance *state.SessionIn
 }
 
 func (s *ICQService) SetWorkInfo(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x03F3_DBQueryMetaReqSetWorkInfo, seq uint16) error {
+	s.text.inAll(&inBody)
 	icqWorkInfo := state.ICQWorkInfo{
 		Company:        inBody.Company,
 		Department:     inBody.Department,
@@ -1249,6 +1277,7 @@ func (s *ICQService) affiliations(ctx context.Context, instance *state.SessionIn
 }
 
 func (s *ICQService) reply(ctx context.Context, instance *state.SessionInstance, message wire.ICQMessageReplyEnvelope, requestID uint32, snacFlags uint16) error {
+	message.Message = s.text.outAll(message.Message)
 	s.messageRelayer.RelayToScreenName(ctx, instance.IdentScreenName(), replySNAC(message, requestID, snacFlags))
 	return nil
 }
@@ -1256,6 +1285,7 @@ func (s *ICQService) reply(ctx context.Context, instance *state.SessionInstance,
 // replyToSelf answers the instance that made the request rather than every
 // instance of the account.
 func (s *ICQService) replyToSelf(ctx context.Context, instance *state.SessionInstance, message wire.ICQMessageReplyEnvelope, requestID uint32, snacFlags uint16) error {
+	message.Message = s.text.outAll(message.Message)
 	s.messageRelayer.RelayToSelf(ctx, instance, replySNAC(message, requestID, snacFlags))
 	return nil
 }

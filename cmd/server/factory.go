@@ -116,6 +116,9 @@ func MakeCommonDeps() (Container, error) {
 		c.inMemorySessionManager,
 		c.sqLiteUserStore,
 	)
+	if err := c.icqService.SetClassicCodePage(c.cfg.ICQClassicCodePage); err != nil {
+		return c, fmt.Errorf("ICQ_CLASSIC_CODEPAGE: %w", err)
+	}
 	// Random chat picks a partner among the live sessions.
 	c.icqService.BridgeSessionLister(c.inMemorySessionManager)
 
