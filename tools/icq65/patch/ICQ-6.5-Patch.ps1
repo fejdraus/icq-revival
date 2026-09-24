@@ -37,7 +37,9 @@
 #   ICQ-6.5-Patch.ps1 -Restore [-Root <folder>]
 #
 # The window is the one all client patches share, ../../common/PatchWindow.ps1.
-# Built into ICQ-6.5-Patch.exe, with its icon, by ../../common/Build-Patches.ps1.
+# ICQ-6.5-Patch.exe is no longer built from this script: it is the C# port in
+# ../../patcher/Icq65, built by ../../common/Build-Patches.ps1. This script stays
+# as the reference for what the patch does, and runs as it is.
 
 param(
     [switch]$Apply,

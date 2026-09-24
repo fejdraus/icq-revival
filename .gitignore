@@ -17,3 +17,7 @@ deploy/.env
 deploy/secrets/*.env
 deploy/certs/
 deploy/backups/
+
+# Build output of the C# client patches (the exes are copied into tools\*\patch)
+tools/patcher/**/bin/
+tools/patcher/**/obj/
