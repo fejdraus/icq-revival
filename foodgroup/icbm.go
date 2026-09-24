@@ -343,7 +343,11 @@ func (s *ICBMService) addExternalIP(ctx context.Context, instance *state.Session
 	}
 	var tags []string
 	for _, t := range frag.TLVList {
-		tags = append(tags, fmt.Sprintf("%04X:%d", t.Tag, len(t.Value)))
+		v := t.Value
+		if len(v) > 256 {
+			v = v[:256]
+		}
+		tags = append(tags, fmt.Sprintf("%04X=%X", t.Tag, v))
 	}
 	svc, _ := frag.Bytes(wire.ICBMRdvTLVTagsSvcData)
 	if len(svc) > 1024 {
