@@ -26,26 +26,24 @@ foreach ($p in $Patches) {
     $exe = [IO.Path]::ChangeExtension($script, '.exe')
     $icon = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetFileNameWithoutExtension($script) + '.ico')
     New-PatchIconFile $icon $p.Badge $p.Top $p.Bottom
-    # Now and then the build fails to write the exe - a scanner holding the
-    # file just made, most likely - so it is given a few tries.
+    # Now and then the build does not write the exe - a scanner holding the
+    # file, most likely - and an old exe left in place looks built. Only one
+    # written after the start counts, and a failed try shows what ps12exe said.
+    $start = Get-Date
     try {
         for ($try = 1; $try -le 3; $try++) {
-            try {
-                ps12exe -inputFile $script -outputFile $exe -NoUpdateCheck -Quiet `
-                    -App @{ Windowed = $true; DpiAware = $true } `
-                    -Os @{ Admin = $true } `
-                    -Build @{ Target = 'Framework4.0'; Apartment = 'STA' } `
-                    -Resources @{ Icon = $icon; Title = $p.Description; Description = $p.Description; Product = 'ICQ Revival' } |
-                    Out-Null
-            } catch {
-                Write-Warning "try $try for $exe failed: $($_.Exception.Message)"
-            }
-            if (Test-Path -LiteralPath $exe) { break }
+            $said = ps12exe -inputFile $script -outputFile $exe -NoUpdateCheck `
+                -App @{ Windowed = $true; DpiAware = $true } `
+                -Os @{ Admin = $true } `
+                -Build @{ Target = 'Framework4.0'; Apartment = 'STA' } `
+                -Resources @{ Icon = $icon; Title = $p.Description; Description = $p.Description; Product = 'ICQ Revival' } 2>&1
+            if ((Test-Path -LiteralPath $exe) -and (Get-Item -LiteralPath $exe).LastWriteTime -ge $start) { break }
+            Write-Warning ("try $try did not write $exe`n" + ($said | Out-String))
             Start-Sleep -Seconds 2
         }
     } finally {
         Remove-Item -LiteralPath $icon -Force -ErrorAction SilentlyContinue
     }
-    if (-not (Test-Path -LiteralPath $exe)) { throw "not built: $exe" }
+    if (-not ((Test-Path -LiteralPath $exe) -and (Get-Item -LiteralPath $exe).LastWriteTime -ge $start)) { throw "not built: $exe" }
     Write-Output ("built {0} ({1:N0} bytes)" -f $exe, (Get-Item -LiteralPath $exe).Length)
 }
