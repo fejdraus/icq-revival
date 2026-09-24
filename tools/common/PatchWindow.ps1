@@ -193,13 +193,24 @@ function New-PatchMark([int]$size, [string]$kind) {
 
 try { [Windows.Forms.Application]::EnableVisualStyles() } catch { }
 
+# The palette. The window is a grey canvas with white cards on it and a dark
+# header, so the parts stand apart; only the accent line and the main button
+# carry the colour of the client version.
+$PatchPalette = @{
+    Canvas = '#DDE3E0'; Card = '#FFFFFF'; Border = '#B4BFBA'; Header = '#1B2420'
+    HeaderText = '#FFFFFF'; HeaderDim = '#B9C6C0'; Ink = '#141A17'; Dim = '#3E4A45'
+    Button = '#F1F4F2'; ButtonBorder = '#8E9B95'; ButtonHover = '#E2E8E5'
+}
+
+function Get-PatchColor([string]$name) { return ConvertTo-PatchColor $PatchPalette[$name] }
+
 function New-PatchButton([string]$text, [bool]$primary, $ui) {
     $b = New-Object Windows.Forms.Button
     $b.Text = $text
     $b.FlatStyle = 'Flat'
     $b.Cursor = [Windows.Forms.Cursors]::Hand
-    $b.Height = 32
-    $b.Width = [Math]::Max(96, [Windows.Forms.TextRenderer]::MeasureText($text, $ui.Form.Font).Width + 36)
+    $b.Height = 34
+    $b.Width = [Math]::Max(100, [Windows.Forms.TextRenderer]::MeasureText($text, $ui.Form.Font).Width + 40)
     $b.UseVisualStyleBackColor = $false
     if ($primary) {
         $b.BackColor = $ui.Accent
@@ -207,14 +218,46 @@ function New-PatchButton([string]$text, [bool]$primary, $ui) {
         $b.Font = New-Object Drawing.Font($ui.Form.Font, [Drawing.FontStyle]::Bold)
         $b.FlatAppearance.BorderColor = $ui.Accent
         $b.FlatAppearance.MouseOverBackColor = [Drawing.Color]::FromArgb(255,
-            [int]($ui.Accent.R * 0.88), [int]($ui.Accent.G * 0.88), [int]($ui.Accent.B * 0.88))
+            [int]($ui.Accent.R * 0.85), [int]($ui.Accent.G * 0.85), [int]($ui.Accent.B * 0.85))
     } else {
-        $b.BackColor = [Drawing.Color]::White
-        $b.ForeColor = ConvertTo-PatchColor '#1F2933'
-        $b.FlatAppearance.BorderColor = ConvertTo-PatchColor '#C3CAD2'
-        $b.FlatAppearance.MouseOverBackColor = ConvertTo-PatchColor '#EEF1F4'
+        $b.BackColor = Get-PatchColor 'Button'
+        $b.ForeColor = Get-PatchColor 'Ink'
+        $b.FlatAppearance.BorderColor = Get-PatchColor 'ButtonBorder'
+        $b.FlatAppearance.MouseOverBackColor = Get-PatchColor 'ButtonHover'
     }
     return $b
+}
+
+# A white card with a thin border, set into the canvas by $margin. Returns
+# the outer panel, to dock, and the card, to fill.
+function New-PatchCard([int]$width, [Windows.Forms.Padding]$margin) {
+    $outer = New-Object Windows.Forms.Panel
+    $outer.Width = $width
+    $outer.Padding = $margin
+    $card = New-Object Windows.Forms.Panel
+    $card.Width = $width - $margin.Horizontal
+    $card.Dock = 'Fill'
+    $card.BackColor = Get-PatchColor 'Card'
+    $card.Padding = New-Object Windows.Forms.Padding(1)
+    $card.Add_Paint({
+        param($sender, $e)
+        $pen = New-Object Drawing.Pen([Drawing.ColorTranslator]::FromHtml('#B4BFBA'))
+        $e.Graphics.DrawRectangle($pen, 0, 0, $sender.Width - 1, $sender.Height - 1)
+        $pen.Dispose()
+    })
+    $card.Add_Resize({ $this.Invalidate() })
+    $outer.Controls.Add($card)
+    return @($outer, $card)
+}
+
+function New-PatchCaption([string]$text, [int]$x, [int]$y) {
+    $l = New-Object Windows.Forms.Label
+    $l.Text = $text.ToUpper()
+    $l.Font = New-Object Drawing.Font('Segoe UI', 8.25, [Drawing.FontStyle]::Bold)
+    $l.ForeColor = Get-PatchColor 'Dim'
+    $l.AutoSize = $true
+    $l.Location = New-Object Drawing.Point($x, $y)
+    return $l
 }
 
 # Columns: @(@('Change', 360), @('Where', 200)); a State column is added last.
@@ -229,107 +272,106 @@ function New-PatchWindow {
     $g.Dispose()
 
     $ui = @{ Scale = $scale; Accent = (ConvertTo-PatchColor $AccentBottom); Rows = New-Object System.Collections.ArrayList }
-    $ink = ConvertTo-PatchColor '#1F2933'
-    $dim = ConvertTo-PatchColor '#5F6B7A'
+    $W = 820
 
     $form = New-Object Windows.Forms.Form
     $ui.Form = $form
     $form.SuspendLayout()
     $form.AutoScaleDimensions = New-Object Drawing.SizeF(96, 96)
     $form.AutoScaleMode = 'Dpi'
-    $form.Font = New-Object Drawing.Font('Segoe UI', 9)
+    $form.Font = New-Object Drawing.Font('Segoe UI', 9.5)
     $form.Text = $Title
-    $form.ClientSize = New-Object Drawing.Size(800, 620)
-    $form.MinimumSize = New-Object Drawing.Size(640, 480)
+    $form.ClientSize = New-Object Drawing.Size($W, 660)
+    $form.MinimumSize = New-Object Drawing.Size(680, 520)
     $form.StartPosition = 'CenterScreen'
-    $form.BackColor = [Drawing.Color]::White
-    $form.ForeColor = $ink
+    $form.BackColor = Get-PatchColor 'Canvas'
+    $form.ForeColor = Get-PatchColor 'Ink'
     $iconStream = New-Object IO.MemoryStream(, (New-PatchIconBytes $Badge $AccentTop $AccentBottom))
     $form.Icon = New-Object Drawing.Icon($iconStream)
 
+    # Every panel is given the window's width before anything is anchored to
+    # its right edge, or the anchored controls would drift off to the right.
+
     # header: the icon, the name of the patch and what it does
     $header = New-Object Windows.Forms.Panel
-    # Sized like the window before anything is anchored to its right edge.
-    $header.Width = 800
+    $header.Width = $W
     $header.Dock = 'Top'
-    $header.Height = 92
-    $header.BackColor = ConvertTo-PatchColor '#F6F8F7'
+    $header.Height = 96
+    $header.BackColor = Get-PatchColor 'Header'
     $pic = New-Object Windows.Forms.PictureBox
     $pic.Location = New-Object Drawing.Point(20, 18)
-    $pic.Size = New-Object Drawing.Size(56, 56)
+    $pic.Size = New-Object Drawing.Size(60, 60)
     $pic.SizeMode = 'Zoom'
-    $pic.Image = New-PatchIconBitmap ([int](56 * $scale)) $Badge $AccentTop $AccentBottom
+    $pic.Image = New-PatchIconBitmap ([int](60 * $scale)) $Badge $AccentTop $AccentBottom
     $header.Controls.Add($pic)
     $titleLabel = New-Object Windows.Forms.Label
     $titleLabel.Text = $Title
-    $titleLabel.Font = New-Object Drawing.Font('Segoe UI Semibold', 15)
+    $titleLabel.Font = New-Object Drawing.Font('Segoe UI Semibold', 16)
+    $titleLabel.ForeColor = Get-PatchColor 'HeaderText'
     $titleLabel.AutoSize = $true
-    $titleLabel.Location = New-Object Drawing.Point(88, 14)
+    $titleLabel.Location = New-Object Drawing.Point(94, 12)
     $header.Controls.Add($titleLabel)
     $sub = New-Object Windows.Forms.Label
     $sub.Text = $Subtitle
-    $sub.ForeColor = $dim
-    $sub.Location = New-Object Drawing.Point(90, 46)
-    $sub.Size = New-Object Drawing.Size(690, 40)
+    $sub.ForeColor = Get-PatchColor 'HeaderDim'
+    $sub.Location = New-Object Drawing.Point(96, 48)
+    $sub.Size = New-Object Drawing.Size(($W - 116), 42)
     $sub.Anchor = 'Top, Left, Right'
     $header.Controls.Add($sub)
 
     $accent = New-Object Windows.Forms.Panel
     $accent.Dock = 'Top'
-    $accent.Height = 3
+    $accent.Height = 4
     $accent.BackColor = $ui.Accent
 
-    # the client folder and the server
-    $settings = New-Object Windows.Forms.Panel
-    $settings.Width = 800
+    # the client folder and the server, on one card
+    $pair = New-PatchCard $W (New-Object Windows.Forms.Padding(16, 16, 16, 0))
+    $settings = $pair[0]
+    $card = $pair[1]
     $settings.Dock = 'Top'
-    $settings.Height = 128
-    $capFont = New-Object Drawing.Font('Segoe UI', 8, [Drawing.FontStyle]::Bold)
+    $settings.Height = 16 + 142
+    $cw = $card.Width
 
-    $capFolder = New-Object Windows.Forms.Label
-    $capFolder.Text = ($ClientName + ' folder').ToUpper()
-    $capFolder.Font = $capFont
-    $capFolder.ForeColor = $dim
-    $capFolder.AutoSize = $true
-    $capFolder.Location = New-Object Drawing.Point(20, 14)
-    $settings.Controls.Add($capFolder)
+    $card.Controls.Add((New-PatchCaption ($ClientName + ' folder') 16 14))
     $ui.Path = New-Object Windows.Forms.Label
-    $ui.Path.Location = New-Object Drawing.Point(20, 34)
-    $ui.Path.Size = New-Object Drawing.Size(620, 22)
+    $ui.Path.Location = New-Object Drawing.Point(16, 36)
+    $ui.Path.Size = New-Object Drawing.Size(($cw - 200), 22)
     $ui.Path.Anchor = 'Top, Left, Right'
     $ui.Path.AutoEllipsis = $true
-    $ui.Path.Font = New-Object Drawing.Font('Segoe UI', 9.5)
-    $settings.Controls.Add($ui.Path)
+    $ui.Path.Font = New-Object Drawing.Font('Segoe UI Semibold', 10)
+    $card.Controls.Add($ui.Path)
     $ui.FolderButton = New-PatchButton 'Change folder...' $false $ui
-    $ui.FolderButton.Location = New-Object Drawing.Point((780 - $ui.FolderButton.Width), 28)
+    $ui.FolderButton.Location = New-Object Drawing.Point(($cw - 16 - $ui.FolderButton.Width), 26)
     $ui.FolderButton.Anchor = 'Top, Right'
-    $settings.Controls.Add($ui.FolderButton)
+    $card.Controls.Add($ui.FolderButton)
 
-    $capServer = New-Object Windows.Forms.Label
-    $capServer.Text = 'SERVER DOMAIN'
-    $capServer.Font = $capFont
-    $capServer.ForeColor = $dim
-    $capServer.AutoSize = $true
-    $capServer.Location = New-Object Drawing.Point(20, 68)
-    $settings.Controls.Add($capServer)
+    $rule = New-Object Windows.Forms.Panel
+    $rule.BackColor = ConvertTo-PatchColor '#D5DCD8'
+    $rule.Location = New-Object Drawing.Point(16, 70)
+    $rule.Size = New-Object Drawing.Size(($cw - 32), 1)
+    $rule.Anchor = 'Top, Left, Right'
+    $card.Controls.Add($rule)
+
+    $card.Controls.Add((New-PatchCaption 'Server domain' 16 82))
     $ui.Server = New-Object Windows.Forms.TextBox
-    $ui.Server.Font = New-Object Drawing.Font('Segoe UI', 10.5)
-    $ui.Server.Location = New-Object Drawing.Point(20, 88)
-    $ui.Server.Width = 300
-    $settings.Controls.Add($ui.Server)
+    $ui.Server.Font = New-Object Drawing.Font('Segoe UI', 11)
+    $ui.Server.BorderStyle = 'FixedSingle'
+    $ui.Server.Location = New-Object Drawing.Point(16, 104)
+    $ui.Server.Width = 320
+    $card.Controls.Add($ui.Server)
     $hint = New-Object Windows.Forms.Label
     $hint.Text = $ServerHint
-    $hint.ForeColor = $dim
-    $hint.Location = New-Object Drawing.Point(336, 84)
-    $hint.Size = New-Object Drawing.Size(444, 40)
+    $hint.ForeColor = Get-PatchColor 'Dim'
+    $hint.Location = New-Object Drawing.Point(352, 100)
+    $hint.Size = New-Object Drawing.Size(($cw - 368), 38)
     $hint.Anchor = 'Top, Left, Right'
-    $settings.Controls.Add($hint)
+    $card.Controls.Add($hint)
 
-    # the list of changes
-    $content = New-Object Windows.Forms.Panel
-    $content.Width = 800
+    # the list of changes, on a card of its own
+    $pair = New-PatchCard $W (New-Object Windows.Forms.Padding(16, 12, 16, 16))
+    $content = $pair[0]
+    $card = $pair[1]
     $content.Dock = 'Fill'
-    $content.Padding = New-Object Windows.Forms.Padding(20, 4, 20, 12)
     $list = New-Object Windows.Forms.ListView
     $ui.List = $list
     $list.Dock = 'Fill'
@@ -337,7 +379,8 @@ function New-PatchWindow {
     $list.FullRowSelect = $true
     $list.HeaderStyle = 'Nonclickable'
     $list.ShowItemToolTips = $true
-    $list.BorderStyle = 'FixedSingle'
+    $list.BorderStyle = 'None'
+    $list.ForeColor = Get-PatchColor 'Ink'
     $marks = New-Object Windows.Forms.ImageList
     $marks.ColorDepth = 'Depth32Bit'
     $m = [int](18 * $scale)
@@ -346,27 +389,27 @@ function New-PatchWindow {
     $list.SmallImageList = $marks
     foreach ($c in $Columns) { [void]$list.Columns.Add($c[0], [int]($c[1] * $scale)) }
     [void]$list.Columns.Add('State', [int](110 * $scale))
-    $content.Controls.Add($list)
+    $card.Controls.Add($list)
 
     # the bottom bar: how far along it is, and the buttons
     $footer = New-Object Windows.Forms.Panel
-    $footer.Width = 800
+    $footer.Width = $W
     $footer.Dock = 'Bottom'
-    $footer.Height = 60
-    $footer.BackColor = ConvertTo-PatchColor '#F6F8F7'
+    $footer.Height = 64
+    $footer.BackColor = Get-PatchColor 'Card'
     $line = New-Object Windows.Forms.Panel
     $line.Dock = 'Top'
     $line.Height = 1
-    $line.BackColor = ConvertTo-PatchColor '#E1E6E3'
+    $line.BackColor = Get-PatchColor 'Border'
     $footer.Controls.Add($line)
     $ui.Summary = New-Object Windows.Forms.Label
-    $ui.Summary.Location = New-Object Drawing.Point(20, 12)
-    $ui.Summary.Size = New-Object Drawing.Size(300, 38)
+    $ui.Summary.Location = New-Object Drawing.Point(20, 13)
+    $ui.Summary.Size = New-Object Drawing.Size(300, 40)
     $ui.Summary.TextAlign = 'MiddleLeft'
-    $ui.Summary.Font = New-Object Drawing.Font('Segoe UI Semibold', 9.5)
+    $ui.Summary.Font = New-Object Drawing.Font('Segoe UI Semibold', 10)
     $footer.Controls.Add($ui.Summary)
     $ui.Footer = $footer
-    $ui.ButtonsRight = 780
+    $ui.ButtonsRight = $W - 16
 
     # Docking goes from the last control added to the first.
     $form.Controls.Add($content)
@@ -381,7 +424,7 @@ function New-PatchWindow {
 function Add-PatchButton($ui, [string]$text, [scriptblock]$action, [switch]$Primary) {
     $b = New-PatchButton $text $Primary.IsPresent $ui
     $ui.ButtonsRight -= $b.Width
-    $b.Location = New-Object Drawing.Point($ui.ButtonsRight, 14)
+    $b.Location = New-Object Drawing.Point($ui.ButtonsRight, 15)
     $b.Anchor = 'Top, Right'
     $b.Add_Click($action)
     $ui.Footer.Controls.Add($b)
@@ -393,7 +436,7 @@ function Add-PatchButton($ui, [string]$text, [scriptblock]$action, [switch]$Prim
 function Set-PatchFolder($ui, [string]$path) {
     if ($path) {
         $ui.Path.Text = $path
-        $ui.Path.ForeColor = ConvertTo-PatchColor '#1F2933'
+        $ui.Path.ForeColor = ConvertTo-PatchColor '#141A17'
     } else {
         $ui.Path.Text = 'Not found - use "Change folder..." to pick it'
         $ui.Path.ForeColor = ConvertTo-PatchColor '#C0392B'
@@ -424,14 +467,14 @@ function Add-PatchRow($ui, $group, [string[]]$cells, [string]$state) {
     $item.UseItemStyleForSubItems = $false
     for ($i = 1; $i -lt $cells.Count; $i++) {
         $s = $item.SubItems.Add($cells[$i])
-        $s.ForeColor = ConvertTo-PatchColor '#5F6B7A'
+        $s.ForeColor = Get-PatchColor 'Dim'
     }
     $s = $item.SubItems.Add($view.Text)
     $s.ForeColor = switch ($view.Mark) {
-        'done' { ConvertTo-PatchColor '#23804A' }
-        'warn' { ConvertTo-PatchColor '#B8641A' }
-        'todo' { ConvertTo-PatchColor '#1F2933' }
-        default { ConvertTo-PatchColor '#8A949E' }
+        'done' { ConvertTo-PatchColor '#17703C' }
+        'warn' { ConvertTo-PatchColor '#A24F0B' }
+        'todo' { Get-PatchColor 'Ink' }
+        default { ConvertTo-PatchColor '#6B7570' }
     }
     [void]$ui.List.Items.Add($item)
     [void]$ui.Rows.Add($view)
@@ -447,13 +490,13 @@ function Complete-PatchList($ui) {
         $ui.Summary.Text = ''
     } elseif ($warn -gt 0) {
         $ui.Summary.Text = "$warn item(s) do not match this client version"
-        $ui.Summary.ForeColor = ConvertTo-PatchColor '#B8641A'
+        $ui.Summary.ForeColor = ConvertTo-PatchColor '#A24F0B'
     } elseif ($done -eq $counted.Count) {
         $ui.Summary.Text = "All $done changes are in place"
-        $ui.Summary.ForeColor = ConvertTo-PatchColor '#23804A'
+        $ui.Summary.ForeColor = ConvertTo-PatchColor '#17703C'
     } else {
         $ui.Summary.Text = "$done of $($counted.Count) changes in place"
-        $ui.Summary.ForeColor = ConvertTo-PatchColor '#1F2933'
+        $ui.Summary.ForeColor = ConvertTo-PatchColor '#141A17'
     }
 }
 
