@@ -266,6 +266,61 @@ function Save-Base([string]$value) {
     } catch { }
 }
 
+# --- sign-in server ----------------------------------------------------------
+#
+# The server ICQ 2003b gives a new account and connects to for "Get an ICQ
+# Number". Out of the box it is login.icq.com, which is gone, so registering a
+# number from the client failed with "Info Number 117". An account that already
+# exists keeps the server in its own settings; this is only the default a new
+# one starts from. The port stays 5190, as it is there already.
+
+$DefaultPrefsKeys = @(
+    'HKLM:\SOFTWARE\WOW6432Node\Mirabilis\ICQ\ICQPro\DefaultPrefs'   # 64-bit Windows
+    'HKLM:\SOFTWARE\Mirabilis\ICQ\ICQPro\DefaultPrefs'               # 32-bit Windows
+)
+$SignInValue = 'Default Server Host'
+
+function Get-DefaultPrefsKey {
+    foreach ($k in $DefaultPrefsKeys) { if (Test-Path -LiteralPath $k) { return $k } }
+    return $null
+}
+
+function Get-SignInServer {
+    $k = Get-DefaultPrefsKey
+    if (-not $k) { return $null }
+    try { return (Get-ItemProperty -LiteralPath $k -ErrorAction Stop).$SignInValue } catch { return $null }
+}
+
+# Remembers what the client came with - once, so a second apply does not save
+# our own domain as the "original" - and puts the domain in its place.
+function Set-SignInServer([string]$domain) {
+    $k = Get-DefaultPrefsKey
+    if (-not $k) { return $false }
+    $current = Get-SignInServer
+    if ($current -eq $domain) { return $false }
+    try {
+        if (-not (Test-Path $SettingsKey)) { New-Item -Path $SettingsKey -Force | Out-Null }
+        $saved = (Get-ItemProperty -LiteralPath $SettingsKey -ErrorAction SilentlyContinue).OriginalServerHost
+        if (-not $saved) { Set-ItemProperty -LiteralPath $SettingsKey -Name OriginalServerHost -Value "$current" }
+        Set-ItemProperty -LiteralPath $k -Name $SignInValue -Value $domain -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Restore-SignInServer {
+    $k = Get-DefaultPrefsKey
+    if (-not $k) { return 0 }
+    try {
+        $saved = (Get-ItemProperty -LiteralPath $SettingsKey -ErrorAction Stop).OriginalServerHost
+    } catch { return 0 }
+    if (-not $saved) { return 0 }
+    Set-ItemProperty -LiteralPath $k -Name $SignInValue -Value $saved
+    Remove-ItemProperty -LiteralPath $SettingsKey -Name OriginalServerHost -ErrorAction SilentlyContinue
+    return 1
+}
+
 # --- поиск папки клиента ----------------------------------------------------
 
 function Test-IcqFolder([string]$path) {
@@ -553,6 +608,7 @@ function Invoke-Apply {
 
     $base = Get-Base
     Save-Base $domain
+    $signIn = Set-SignInServer $domain
 
     # Зашитые в код адреса — до правки ссылок: обе части пишут в Icq.exe.
     $script:stringsDone = 0
@@ -589,6 +645,11 @@ function Invoke-Apply {
                 "`n`nA link stored inside the executable cannot be made longer than the original," +
                 " so a shorter server address would fix it."
     }
+    if ($signIn) {
+        $msg += "`n`nNew accounts and ""Get an ICQ Number"" now connect to $domain." +
+                " An account that exists already keeps its own server: set it under" +
+                " the connection settings of that account."
+    }
     $msg += "`n`nYou can start ICQ now."
     [Windows.Forms.MessageBox]::Show($msg, 'Done', 'OK', 'Information') | Out-Null
 }
@@ -606,6 +667,7 @@ function Invoke-Restore {
         $backup = $path + $LinkSuffix
         if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force; $done++ }
     }
+    $done += Restore-SignInServer
     Update-View
     [Windows.Forms.MessageBox]::Show("Files restored: $done.", 'Done', 'OK', 'Information') | Out-Null
 }
@@ -728,6 +790,14 @@ function Update-View {
         $s = Get-LinkState $rel
         Add-Row ([IO.Path]::GetFileName($rel)) $s.Info $s.State 'menu items point at your server'
     }
+
+    $g4 = New-Object Windows.Forms.ListViewItem('SIGN-IN SERVER')
+    $g4.Font = New-Object Drawing.Font('Segoe UI', 8.5, [Drawing.FontStyle]::Bold)
+    [void]$list.Items.Add($g4)
+    $current = Get-SignInServer
+    $wanted = Get-Domain $txtBase.Text
+    $state = if (-not (Get-DefaultPrefsKey)) { 'missing' } elseif ($wanted -and $current -eq $wanted) { 'patched' } else { 'original' }
+    Add-Row 'Default Server Host' "$current" $state 'new accounts and "Get an ICQ Number" connect here'
 }
 
 $btnApply = New-Object Windows.Forms.Button
