@@ -61,3 +61,18 @@ function Merge-Jobs($items) {
     }
     return $out
 }
+
+# How far a long run is. The patch says how many steps there are and names
+# each as it starts; whoever shows it - the window - sets Show. Without it
+# the steps cost nothing.
+$PatchSteps = @{ Total = 0; Done = 0; Show = $null; Ui = $null }
+
+function Start-PatchSteps([int]$total) {
+    $PatchSteps.Total = [Math]::Max(1, $total)
+    $PatchSteps.Done = 0
+}
+
+function Step-Patch([string]$text) {
+    $PatchSteps.Done++
+    if ($PatchSteps.Show) { & $PatchSteps.Show $PatchSteps.Done $PatchSteps.Total $text }
+}

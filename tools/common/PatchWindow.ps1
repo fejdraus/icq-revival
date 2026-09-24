@@ -249,7 +249,7 @@ function New-PatchWindow {
         # What the user took the tick off, by key: kept across refills of the
         # list, so a re-check does not undo a choice not applied yet.
         Unchecked = New-Object 'System.Collections.Generic.HashSet[string]'
-        Filling = $false; Syncing = $false; Locked = $false; Shown = $false
+        Filling = $false; Syncing = $false; Locked = $false; Shown = $false; Busy = $false
     }
     $W = 820
 
@@ -269,6 +269,8 @@ function New-PatchWindow {
     $form.Icon = New-Object Drawing.Icon($iconStream)
     $form.Tag = $ui
     $form.Add_Shown({ $this.Tag.Shown = $true })
+    # Not closed halfway through writing the client's files.
+    $form.Add_FormClosing({ param($sender, $e) if ($sender.Tag.Busy) { $e.Cancel = $true } })
 
     # Every panel is given the window's width before anything is anchored to
     # its right edge, or the anchored controls would drift off to the right.
@@ -430,6 +432,15 @@ function New-PatchWindow {
     $ui.Summary.TextAlign = 'MiddleLeft'
     $ui.Summary.Font = New-Object Drawing.Font('Segoe UI Semibold', 10)
     $footer.Controls.Add($ui.Summary)
+    # Shown under the summary while Apply or Restore runs; the summary then
+    # names the step.
+    $ui.Bar = New-Object Windows.Forms.ProgressBar
+    $ui.Bar.Location = New-Object Drawing.Point(20, 40)
+    $ui.Bar.Size = New-Object Drawing.Size(300, 10)
+    $ui.Bar.Anchor = 'Top, Left, Right'
+    $ui.Bar.Style = 'Continuous'
+    $ui.Bar.Visible = $false
+    $footer.Controls.Add($ui.Bar)
     $ui.Footer = $footer
     $ui.ButtonsRight = $W - 16
 
@@ -453,6 +464,7 @@ function Add-PatchButton($ui, [string]$text, [scriptblock]$action, [switch]$Prim
     $ui.ButtonsRight -= 8
     # The summary ends where the buttons begin, and stays under them.
     $ui.Summary.Width = [Math]::Max(40, $ui.ButtonsRight - $ui.Summary.Left)
+    $ui.Bar.Width = $ui.Summary.Width
     $ui.Summary.Anchor = 'Top, Left, Right'
     $ui.Summary.AutoEllipsis = $true
     $ui.Summary.SendToBack()
@@ -615,6 +627,46 @@ function Save-PatchUnchecked($ui, [string]$settingsKey) {
         $known = [string[]]@($ui.List.Items | ForEach-Object { $_.Name })
         New-ItemProperty -LiteralPath $settingsKey -Name Known -PropertyType MultiString -Value $known -Force | Out-Null
     } catch { }
+}
+
+# Apply and Restore run on the window's own thread: the bar is moved and the
+# window repainted at each step, with everything that could start another
+# run held still meanwhile.
+function Start-PatchWork($ui, [string]$text) {
+    $ui.Busy = $true
+    foreach ($c in @($ui.Footer.Controls) + @($ui.FolderButton, $ui.Server, $ui.List, $ui.All)) {
+        if ($c -isnot [Windows.Forms.Label] -and $c -isnot [Windows.Forms.ProgressBar] -and $c -isnot [Windows.Forms.Panel]) { $c.Enabled = $false }
+    }
+    $ui.Form.UseWaitCursor = $true
+    $ui.Summary.Height = 26
+    $ui.Summary.TextAlign = 'BottomLeft'
+    $ui.Summary.ForeColor = ConvertTo-PatchColor '#141A17'
+    $ui.Summary.Text = $text
+    $ui.Bar.Value = 0
+    $ui.Bar.Visible = $true
+    $PatchSteps.Ui = $ui
+    $PatchSteps.Show = {
+        param($done, $total, $text)
+        $u = $PatchSteps.Ui
+        $u.Bar.Maximum = $total
+        $u.Bar.Value = [Math]::Min($done - 1, $total)
+        $u.Summary.Text = $text
+        [Windows.Forms.Application]::DoEvents()
+    }
+    [Windows.Forms.Application]::DoEvents()
+}
+
+function Stop-PatchWork($ui) {
+    $ui.Bar.Value = $ui.Bar.Maximum
+    [Windows.Forms.Application]::DoEvents()
+    $PatchSteps.Show = $null
+    $ui.Bar.Visible = $false
+    $ui.Summary.Height = 40
+    $ui.Summary.TextAlign = 'MiddleLeft'
+    foreach ($c in @($ui.Footer.Controls) + @($ui.FolderButton, $ui.Server, $ui.List)) { $c.Enabled = $true }
+    $ui.All.Enabled = -not $ui.Locked
+    $ui.Form.UseWaitCursor = $false
+    $ui.Busy = $false
 }
 
 function Show-PatchWindow($ui) {

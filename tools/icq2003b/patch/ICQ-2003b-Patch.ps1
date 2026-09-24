@@ -915,10 +915,17 @@ function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
             "`n`nThe code patches are tied to exact offsets in that build. Applying them to " +
             "another version would overwrite unrelated code, so nothing was changed.")
     }
+    $binaries = @(Get-BinaryFiles)
+    Start-PatchSteps ($binaries.Count + 4)
+    Step-Patch 'Checking the client...'
     $before = Get-Items $domain
 
     $tooLong = New-Object System.Collections.Generic.List[string]
-    foreach ($rel in Get-BinaryFiles) { Build-Binary $rel $domain $skip $tooLong }
+    foreach ($rel in $binaries) {
+        Step-Patch "Building $rel..."
+        Build-Binary $rel $domain $skip $tooLong
+    }
+    Step-Patch 'Links in DataFiles...'
 
     $base = Get-Base $domain
     foreach ($rel in $LinkFiles) {
@@ -943,6 +950,7 @@ function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
         if ($script:convCount -gt 0) { [IO.File]::WriteAllText($path, $text, $Latin1) }
     }
 
+    Step-Patch 'Sign-in server...'
     if ($NoRegistry) {
     } elseif (Test-Wanted $skip 'sign-in') {
         [void](Set-SignInServer $domain $previous)
@@ -951,6 +959,7 @@ function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
     }
 
     $lines = New-Object System.Collections.Generic.List[string]
+    Step-Patch 'Checking the result...'
     $after = Get-Items $domain
     for ($i = 0; $i -lt $after.Count; $i++) {
         if ($after[$i].State -eq $before[$i].State) { continue }
@@ -962,16 +971,21 @@ function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
 
 function Invoke-RestoreAll {
     $done = 0
-    foreach ($f in Get-BinaryFiles) {
+    $binaries = @(Get-BinaryFiles)
+    Start-PatchSteps ($binaries.Count + $LinkFiles.Count + 1)
+    foreach ($f in $binaries) {
+        Step-Patch "Restoring $f..."
         $path = Join-Path $script:IcqRoot $f
         $backup = $path + $BinSuffix
         if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force; $done++ }
     }
     foreach ($rel in $LinkFiles) {
+        Step-Patch "Restoring $rel..."
         $path = Join-Path $script:IcqRoot $rel
         $backup = $path + $LinkSuffix
         if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force; $done++ }
     }
+    Step-Patch 'Sign-in server...'
     if (-not $NoRegistry) { $done += Restore-SignInServer }
     return $done
 }
@@ -1033,13 +1047,16 @@ function Invoke-Apply {
     }
     $ui.Server.Text = $domain
     Save-PatchUnchecked $ui $SettingsKey
+    Start-PatchWork $ui 'Applying...'
     try {
         $result = Invoke-ApplyAll $domain (Get-SavedBase) $ui.Unchecked
     } catch {
+        Stop-PatchWork $ui
         [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Wrong client version', 'OK', 'Error') | Out-Null
         Update-View
         return
     }
+    Stop-PatchWork $ui
     Save-Base $domain
     Update-View
 
@@ -1067,7 +1084,8 @@ function Invoke-Apply {
 
 function Invoke-Restore {
     if (-not (Test-Ready)) { return }
-    $done = Invoke-RestoreAll
+    Start-PatchWork $ui 'Restoring...'
+    try { $done = Invoke-RestoreAll } finally { Stop-PatchWork $ui }
     Update-View
     [Windows.Forms.MessageBox]::Show("Files restored: $done.", 'Done', 'OK', 'Information') | Out-Null
 }

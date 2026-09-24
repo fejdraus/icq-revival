@@ -605,9 +605,15 @@ function Invoke-ApplyAll([string]$domain, $skip) {
             throw "$($p.File) is not the one from ICQ 6.5 build 2024; nothing was changed."
         }
     }
+    $dir = Join-Path $script:IcqRoot 'ConfigFiles'
+    $configs = @(Get-ChildItem -LiteralPath $dir -Filter *.xml -File)
+    $groups = @($MarkupEdits | Group-Object File)
+    Start-PatchSteps (3 + $CodePatches.Count + $groups.Count + $Removals.Count + $configs.Count + 1)
+    Step-Patch 'Checking the client...'
     $before = Get-Items $domain
 
     foreach ($p in $CodePatches) {
+        Step-Patch "Building $($p.File)..."
         $path = Join-Path $script:IcqRoot $p.File
         $state = Get-CodeState $p
         if (Test-Wanted $skip $p.What) {
@@ -622,7 +628,8 @@ function Invoke-ApplyAll([string]$domain, $skip) {
     }
 
     # Each file is built again from the original with the wanted edits.
-    foreach ($group in ($MarkupEdits | Group-Object File)) {
+    foreach ($group in $groups) {
+        Step-Patch "Interface: $(Split-Path $group.Name -Leaf)..."
         $path = Join-Path $script:IcqRoot $group.Name
         if (-not (Test-Path -LiteralPath $path)) { continue }
         $file = Read-Text $path
@@ -637,6 +644,7 @@ function Invoke-ApplyAll([string]$domain, $skip) {
     }
 
     foreach ($r in $Removals) {
+        Step-Patch "Interface: $(Split-Path $r.Path -Leaf)..."
         $path = Join-Path $script:IcqRoot $r.Path
         $state = Get-RemovalState $r
         if (Test-Wanted $skip $r.What) {
@@ -655,10 +663,10 @@ function Invoke-ApplyAll([string]$domain, $skip) {
     # The client refuses content from a host that is not on the whitelists,
     # and drops the part of the interface that host would have fed; so the
     # links and the whitelists go together.
-    $dir = Join-Path $script:IcqRoot 'ConfigFiles'
     $links = Test-Wanted $skip 'links'
     $white = Test-Wanted $skip 'whitelist'
-    foreach ($f in Get-ChildItem -LiteralPath $dir -Filter *.xml -File) {
+    foreach ($f in $configs) {
+        Step-Patch "Configuration: $($f.Name)..."
         $file = Read-Text $f.FullName
         $original = Get-OriginalText $f.FullName
         $text = if ($null -ne $original) { $original } else { $file.Text }
@@ -675,6 +683,7 @@ function Invoke-ApplyAll([string]$domain, $skip) {
         if ($text -cne $file.Text) { Backup-Once $f.FullName; $file.Text = $text; Write-Text $f.FullName $file }
     }
 
+    Step-Patch 'Sign-in server...'
     if (Test-Wanted $skip 'sign-in') {
         [void](Set-SignIn $domain)
     } elseif (@('patched', 'another server') -contains (Get-SignInState $domain)) {
@@ -682,6 +691,7 @@ function Invoke-ApplyAll([string]$domain, $skip) {
     }
 
     $report = New-Object System.Collections.Generic.List[string]
+    Step-Patch 'Checking the result...'
     $after = Get-Items $domain
     for ($i = 0; $i -lt $after.Count; $i++) {
         if ($after[$i].State -eq $before[$i].State) { continue }
@@ -696,7 +706,10 @@ function Invoke-RestoreAll {
     $suffixes = @($Suffix) + $OlderSuffixes
     $items = Get-ChildItem -LiteralPath $script:IcqRoot -Recurse -Force |
         Where-Object { $n = $_.Name; @($suffixes | Where-Object { $n.EndsWith($_) }).Count -gt 0 }
+    $items = @($items)
+    Start-PatchSteps $items.Count
     foreach ($item in $items) {
+        Step-Patch "Restoring $($item.Name.Substring(0, $item.Name.Length - @($suffixes | Where-Object { $item.Name.EndsWith($_) })[0].Length))..."
         $s = @($suffixes | Where-Object { $item.Name.EndsWith($_) })[0]
         $orig = $item.FullName.Substring(0, $item.FullName.Length - $s.Length)
         if ($item.PSIsContainer) {
@@ -850,13 +863,16 @@ function Invoke-Apply {
     $ui.Server.Text = $server
     Save-Server $server
     Save-PatchUnchecked $ui $SettingsKey
+    Start-PatchWork $ui 'Applying...'
     try {
         $done = Invoke-ApplyAll $server $ui.Unchecked
     } catch {
+        Stop-PatchWork $ui
         [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Wrong client version', 'OK', 'Error') | Out-Null
         Update-View
         return
     }
+    Stop-PatchWork $ui
     Update-View
     $msg = if ($done.Count) { "Changes made: $($done.Count)`n`n  " + (@($done | Select-Object -First 12) -join "`n  ") } else { 'The client already matches the selection.' }
     if ($done.Count -gt 12) { $msg += "`n  ..." }
@@ -867,7 +883,8 @@ function Invoke-Apply {
 
 function Invoke-Restore {
     if (-not (Test-Ready)) { return }
-    $n = Invoke-RestoreAll
+    Start-PatchWork $ui 'Restoring...'
+    try { $n = Invoke-RestoreAll } finally { Stop-PatchWork $ui }
     Update-View
     [Windows.Forms.MessageBox]::Show("Files restored: $n.", 'Done', 'OK', 'Information') | Out-Null
 }
