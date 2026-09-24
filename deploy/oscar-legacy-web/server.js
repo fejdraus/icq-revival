@@ -515,6 +515,78 @@ function sendText(res, text) {
   res.end(body);
 }
 
+// --- the "Map" button of ICQ 2003b ------------------------------------------
+//
+// The client appends the address to the link itself: ?countrycode= &country=
+// &state= &city= &zip= &address=, in its code page (windows-1251 here), and
+// mangles part of it: some letters it escapes with a stray byte in place of the
+// first hex digit - "к" (0xEA) arrives as "%" 0x8A "A". The stray byte stands
+// for the high half of the letter, one byte per half, so the letter can be read
+// back. The browser then encodes the lot again as UTF-8.
+
+const CP1251 = (() => {
+  const dec = new TextDecoder('windows-1251');
+  const toChar = [];
+  const toByte = new Map();
+  for (let b = 0; b < 256; b++) {
+    const c = dec.decode(Uint8Array.of(b));
+    toChar[b] = c;
+    if (!toByte.has(c)) toByte.set(c, b);
+  }
+  return { toChar, toByte };
+})();
+
+// The stray byte ICQ 2003b writes, and the high half of the letter it stands for.
+const MANGLED_HIGH = new Map([[0x72, 0x8], [0x8c, 0xc], [0xe7, 0xd], [0x8a, 0xe], [0x24, 0xf]]);
+
+const isHex = (b) => (b >= 0x30 && b <= 0x39) || (b >= 0x41 && b <= 0x46) || (b >= 0x61 && b <= 0x66);
+
+// One value of the client's query, as it arrived, back to readable text.
+function clientText(raw) {
+  // The browser's escapes; a "%" without two hex digits after it is the client's own.
+  const bytes = [];
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (c === '%' && /^[0-9a-f]{2}$/i.test(raw.slice(i + 1, i + 3))) {
+      bytes.push(parseInt(raw.slice(i + 1, i + 3), 16));
+      i += 2;
+    } else if (c === '+') {
+      bytes.push(0x20);
+    } else {
+      bytes.push(...Buffer.from(c, 'utf8'));
+    }
+  }
+  // Back to the bytes the client sent, in its code page.
+  const sent = [...Buffer.from(bytes).toString('utf8')].map((ch) => (CP1251.toByte.has(ch) ? CP1251.toByte.get(ch) : 0x3f));
+  // The client's own escapes, the mangled ones included.
+  const out = [];
+  for (let i = 0; i < sent.length; i++) {
+    const b = sent[i];
+    if (b === 0x25 && i + 2 < sent.length && isHex(sent[i + 2])) {
+      const hi = MANGLED_HIGH.get(sent[i + 1]);
+      const lo = parseInt(String.fromCharCode(sent[i + 2]), 16);
+      if (hi !== undefined) { out.push((hi << 4) | lo); i += 2; continue; }
+      if (isHex(sent[i + 1])) { out.push(parseInt(String.fromCharCode(sent[i + 1], sent[i + 2]), 16)); i += 2; continue; }
+    }
+    out.push(b);
+  }
+  return out.map((b) => CP1251.toChar[b]).join('').trim();
+}
+
+// Google Maps, searching for the address the client sent.
+function mapUrl(reqUrl) {
+  const q = String(reqUrl).split('?')[1] || '';
+  const f = {};
+  for (const pair of q.split('&')) {
+    const at = pair.indexOf('=');
+    if (at > 0) f[pair.slice(0, at).toLowerCase()] = clientText(pair.slice(at + 1));
+  }
+  const place = [f.address, f.city, f.state, f.zip, f.country].filter(Boolean).join(', ');
+  return place
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(place)}`
+    : 'https://www.google.com/maps/';
+}
+
 function redirect(res, url) {
   res.writeHead(302, { location: url, 'content-length': 0 });
   res.end();
@@ -1230,6 +1302,8 @@ const ACTIONS = {
     ctx.res, 200,
     await welcomePage((ctx.url.searchParams.get('uin') || '').trim(), ctx.path, ctx.u),
   ),
+
+  map: async (ctx) => redirect(ctx.res, mapUrl(ctx.req.url)),
 
   whitepages: async (ctx) => send(
     ctx.res, 200,

@@ -246,7 +246,7 @@ $NamedRoutes = [ordered]@{
     'Users Lists'            = '{base}/whitepages'
     'OtherDirectories'       = '{base}/whitepages'
     'Homepage Directory'     = '{base}/whitepages'
-    'Map'                    = '{base}/whitepages'
+    'Map'                    = '{base}/map'           # Google Maps at the address the client appends
 }
 
 # Ссылки без имени опознаются по самому адресу. Порядок важен: частное раньше
@@ -983,18 +983,13 @@ function Invoke-ApplyAll([string]$domain, [string]$previous, $skip) {
             if (Test-Path -LiteralPath $backup) { Copy-Item -LiteralPath $backup -Destination $path -Force }
             continue
         }
+        # Built again from the original each time, like the programs: a new
+        # domain or a new target for a link then reaches a client patched
+        # before, and nothing of an earlier server is left behind.
         if (-not (Test-Path -LiteralPath $backup)) { Copy-Item -LiteralPath $path -Destination $backup }
         $script:convCount = 0
-        $text = [IO.File]::ReadAllText($path, $Latin1)
-        # Links pointed at a previous server move to the new one as they are;
-        # the rest is converted from ICQ.com as before.
-        if ($previous -and $previous -ne $domain) {
-            $old = Get-PagesRoot $previous
-            $n = ([regex]::Matches($text, [regex]::Escape($old))).Count
-            if ($n) { $text = $text.Replace($old, (Get-PagesRoot $domain)); $script:convCount += $n }
-        }
-        $text = Convert-LinkText $text $base ([ref]$null)
-        if ($script:convCount -gt 0) { [IO.File]::WriteAllText($path, $text, $Latin1) }
+        $text = Convert-LinkText ([IO.File]::ReadAllText($backup, $Latin1)) $base ([ref]$null)
+        if ($text -cne [IO.File]::ReadAllText($path, $Latin1)) { [IO.File]::WriteAllText($path, $text, $Latin1) }
     }
 
     Step-Patch 'Sign-in server...'

@@ -16,6 +16,7 @@
     "  redirect    redirect to target",
     "  today       the \"who is online\" panel",
     "  whitepages  look a user up by number",
+    "  map         Google Maps at the address the \"Map\" button sends",
     "  pager       web pager: the form and sending a message",
     "  hostsfile   serve a ready-made hosts block for the client",
     "  welcome     the welcome page shown after sign-in",
@@ -152,6 +153,11 @@
       "path": "^/icq/welcome",
       "action": "welcome",
       "note": "the \"ICQ Welcome\" window after sign-in: server state and what works"
+    },
+    {
+      "path": "^/icq/map",
+      "action": "map",
+      "note": "the \"Map\" button of a user's home address: redirects to Google Maps"
     },
     {
       "path": "^/icq/whitepages",
