@@ -3887,6 +3887,46 @@
    "en": "User ID : ",
    "uk": "Номер ICQ: ",
    "note": "summary of a user's details"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x1486C0",
+   "encoding": "ansi",
+   "en": "Private Cellular",
+   "uk": "Особистий мобільний",
+   "note": "phone labels of a user's details"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x1486D4",
+   "encoding": "ansi",
+   "en": "Work Fax",
+   "uk": "Роб. факс",
+   "note": "phone labels of a user's details"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x1486E0",
+   "encoding": "ansi",
+   "en": "Work Phone",
+   "uk": "Роб. тел.",
+   "note": "phone labels of a user's details"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x1486EC",
+   "encoding": "ansi",
+   "en": "Home Fax",
+   "uk": "Дом. факс",
+   "note": "phone labels of a user's details"
+  },
+  {
+   "file": "Icq.exe",
+   "offset": "0x1486F8",
+   "encoding": "ansi",
+   "en": "Home Phone",
+   "uk": "Дом. тел.",
+   "note": "phone labels of a user's details"
   }
  ],
  "datafiles": {
