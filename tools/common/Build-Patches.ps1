@@ -26,24 +26,26 @@ foreach ($p in $Patches) {
     $exe = [IO.Path]::ChangeExtension($script, '.exe')
     $icon = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetFileNameWithoutExtension($script) + '.ico')
     New-PatchIconFile $icon $p.Badge $p.Top $p.Bottom
-    # Now and then the build does not write the exe - a scanner holding the
-    # file, most likely - and an old exe left in place looks built. Only one
-    # written after the start counts, and a failed try shows what ps12exe said.
-    $start = Get-Date
+    # The exe is built in the temp folder and copied into place after: a
+    # failed build then leaves the one there as it was, and a scanner holding
+    # the file just made - which happened - only delays the copy.
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetFileName($exe))
     try {
-        for ($try = 1; $try -le 3; $try++) {
-            $said = ps12exe -inputFile $script -outputFile $exe -NoUpdateCheck `
-                -App @{ Windowed = $true; DpiAware = $true } `
-                -Os @{ Admin = $true } `
-                -Build @{ Target = 'Framework4.0'; Apartment = 'STA' } `
-                -Resources @{ Icon = $icon; Title = $p.Description; Description = $p.Description; Product = 'ICQ Revival' } 2>&1
-            if ((Test-Path -LiteralPath $exe) -and (Get-Item -LiteralPath $exe).LastWriteTime -ge $start) { break }
-            Write-Warning ("try $try did not write $exe`n" + ($said | Out-String))
-            Start-Sleep -Seconds 2
-        }
+        $said = ps12exe -inputFile $script -outputFile $tmp -NoUpdateCheck `
+            -App @{ Windowed = $true; DpiAware = $true } `
+            -Os @{ Admin = $true } `
+            -Build @{ Target = 'Framework4.0'; Apartment = 'STA' } `
+            -Resources @{ Icon = $icon; Title = $p.Description; Description = $p.Description; Product = 'ICQ Revival' } 2>&1
     } finally {
         Remove-Item -LiteralPath $icon -Force -ErrorAction SilentlyContinue
     }
-    if (-not ((Test-Path -LiteralPath $exe) -and (Get-Item -LiteralPath $exe).LastWriteTime -ge $start)) { throw "not built: $exe" }
+    if (-not (Test-Path -LiteralPath $tmp)) { throw ("not built: $exe`n" + ($said | Out-String)) }
+    for ($try = 1; ; $try++) {
+        try { Copy-Item -LiteralPath $tmp -Destination $exe -Force -ErrorAction Stop; break }
+        catch { if ($try -ge 5) { throw "could not write $exe (open, or held by a scanner): $($_.Exception.Message)" } }
+        Start-Sleep -Seconds 2
+    }
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -LiteralPath ([IO.Path]::GetDirectoryName($exe)) -Filter '*.win32manifest' | Remove-Item -Force -ErrorAction SilentlyContinue
     Write-Output ("built {0} ({1:N0} bytes)" -f $exe, (Get-Item -LiteralPath $exe).Length)
 }
