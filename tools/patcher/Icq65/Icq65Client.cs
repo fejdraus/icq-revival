@@ -246,6 +246,39 @@ namespace IcqRevival.Patch
             return "http://" + domain + ":" + PagesPortHttp;
         }
 
+        // "My page" in a user's details: the client appends the number to this
+        // address and opens it in the browser. It lives in the interface's DTD,
+        // not in the configuration files, and our server shows the user's card
+        // at the white pages when given the number.
+        const string ProfileFile = @"services\icqApp\ver1\content\data.dtd";
+        const string ProfileEntity = "<!ENTITY detailsDlg.IcqHomePageLink \"";
+
+        static string ProfileBase(string domain)
+        {
+            return "https://" + domain + ":" + PagesPortHttps + "/icq/whitepages?icq=";
+        }
+
+        // The DTD with the "My page" address pointed at the domain, or as it was
+        // when it has no such entity.
+        static string SetProfileLink(string text, string domain)
+        {
+            int at = text.IndexOf(ProfileEntity, StringComparison.Ordinal);
+            if (at < 0) return text;
+            int from = at + ProfileEntity.Length;
+            int end = text.IndexOf('"', from);
+            if (end < 0) return text;
+            return text.Substring(0, from) + ProfileBase(domain) + text.Substring(end);
+        }
+
+        string ProfileState(string domain)
+        {
+            string path = At(ProfileFile);
+            if (!PatchFiles.Exists(path)) return "missing";
+            string text = PatchFiles.ReadText(path).Text;
+            if (text.IndexOf(ProfileEntity, StringComparison.Ordinal) < 0) return "unknown";
+            return Ps.Ceq(SetProfileLink(text, domain), text) ? "patched" : "original";
+        }
+
         // The links in a text that do not point where they should yet.
         static int CountStrayLinks(string text, string domain)
         {
@@ -583,6 +616,7 @@ namespace IcqRevival.Patch
             // the links are no use without them.
             j.Assign("links", "links");
             j.Assign("whitelist", "links");
+            j.Assign("profile page", "links");
             j.Assign("sign-in", "sign-in");
             return j;
         }
@@ -599,6 +633,7 @@ namespace IcqRevival.Patch
             foreach (Removal r in Removals) add(r.What, PatchFiles.Leaf(r.Path), RemovalState(r));
             add("links", "ConfigFiles", LinkState(domain));
             add("whitelist", "XtraConfig.xml", WhitelistState(domain));
+            add("profile page", "data.dtd", ProfileState(domain));
             foreach (Strip st in Strips) add(st.What, PatchFiles.Leaf(st.File), StripState(st));
             add("sign-in", "MCore.dll, now " + SignInShown(), SignInState(domain));
             return Jobs.Merge(items);
@@ -654,7 +689,7 @@ namespace IcqRevival.Patch
             // Group-Object File: the edits of one file together, in the order
             // the files first come up.
             var groups = MarkupEdits.GroupBy(e => e.File, Ps.Keys).ToList();
-            PatchSteps.Start(3 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + 1);
+            PatchSteps.Start(3 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + 2);
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -755,6 +790,23 @@ namespace IcqRevival.Patch
                     PatchFiles.BackupOnce(f, Suffix);
                     file.Text = text;
                     PatchFiles.WriteText(f, file);
+                }
+            }
+
+            // "My page" goes with the links: built from the original DTD, so
+            // leaving the links out takes it back.
+            PatchSteps.Step("Interface: data.dtd...");
+            string profilePath = At(ProfileFile);
+            if (PatchFiles.Exists(profilePath))
+            {
+                TextFile file = PatchFiles.ReadText(profilePath);
+                string text = OriginalText(profilePath) ?? file.Text;
+                if (links) text = SetProfileLink(text, domain);
+                if (!Ps.Ceq(text, file.Text))
+                {
+                    PatchFiles.BackupOnce(profilePath, Suffix);
+                    file.Text = text;
+                    PatchFiles.WriteText(profilePath, file);
                 }
             }
 
