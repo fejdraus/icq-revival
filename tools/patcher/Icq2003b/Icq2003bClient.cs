@@ -515,16 +515,23 @@ namespace IcqRevival.Patch
             return IcqResources.Read(File.ReadAllBytes(path), keys.ToArray());
         }
 
+        // Everything one file's resources come to on this client, built from its
+        // English original (the backup, or the file while it has none).
+        static MatFile Materialize(string rel, string path)
+        {
+            return Tr.Materialize(Tr.File(rel), File.ReadAllBytes(OriginalPath(path)));
+        }
+
         // The "Send By:" words: blank in either language, or as they came.
         static string SendByState(string path)
         {
             TrSendBy sb = Tr.SendBy;
             byte[] cur = ReadResources(path, new[] { sb.Key })[0];
-            if (IcqResources.Same(cur, sb.BlankEn) || IcqResources.Same(cur, sb.BlankUk)) return "patched";
+            MatFile mat = Materialize(sb.File, path);
+            if (IcqResources.Same(cur, mat.BlankEn) || IcqResources.Same(cur, mat.BlankUk)) return "patched";
             if (Ps.IsTrue(cur) && Ps.Eq(Translation.Sha(cur), sb.From)) return "original";
-            TrFile file = Tr.File(sb.File);
-            List<TrItem> tr = file == null ? new List<TrItem>() : file.Items.Where(i => Ps.Eq(i.Key, sb.Key)).ToList();
-            if (tr.Count > 0 && IcqResources.Same(cur, tr[0].Bytes)) return "original";
+            byte[] table = mat.ByKey(sb.Key);
+            if (table != null && IcqResources.Same(cur, table)) return "original";
             return "unknown";
         }
 
@@ -565,7 +572,8 @@ namespace IcqRevival.Patch
             TrFile entry = Tr.File(rel);
             if (new FileInfo(OriginalPath(path)).Length != entry.Size) return "other version";
             TrSendBy sb = Tr.SendBy;
-            List<TrItem> items = entry.Items;
+            MatFile mat = Tr.Materialize(entry, File.ReadAllBytes(OriginalPath(path)));
+            List<KeyValuePair<string, byte[]>> items = mat.Items;
             List<TrPlace> places = entry.Inplace;
             int done = 0, orig = 0;
             if (items.Count > 0)
@@ -573,12 +581,12 @@ namespace IcqRevival.Patch
                 byte[][] cur = ReadResources(path, items.Select(i => i.Key));
                 for (int i = 0; i < items.Count; i++)
                 {
-                    TrItem it = items[i];
+                    KeyValuePair<string, byte[]> it = items[i];
                     byte[] c = cur[i];
-                    bool blankUk = Ps.Eq(rel, sb.File) && Ps.Eq(it.Key, sb.Key) && IcqResources.Same(c, sb.BlankUk);
-                    bool blankEn = Ps.Eq(rel, sb.File) && Ps.Eq(it.Key, sb.Key) && IcqResources.Same(c, sb.BlankEn);
-                    if (IcqResources.Same(c, it.Bytes) || blankUk) done++;
-                    else if (blankEn || (Ps.IsTrue(c) && Ps.Eq(Translation.Sha(c), it.From))) orig++;
+                    bool blankUk = Ps.Eq(rel, sb.File) && Ps.Eq(it.Key, sb.Key) && IcqResources.Same(c, mat.BlankUk);
+                    bool blankEn = Ps.Eq(rel, sb.File) && Ps.Eq(it.Key, sb.Key) && IcqResources.Same(c, mat.BlankEn);
+                    if (IcqResources.Same(c, it.Value) || blankUk) done++;
+                    else if (blankEn || (Ps.IsTrue(c) && Ps.Eq(Translation.Sha(c), mat.KeyFrom[it.Key]))) orig++;
                 }
             }
             if (places.Count > 0)
@@ -740,6 +748,9 @@ namespace IcqRevival.Patch
             string path = PatchFiles.Join(Root, rel);
             if (!PatchFiles.Exists(path)) return false;
             byte[] bytes = File.ReadAllBytes(OriginalPath(path));
+            // The English original, kept aside: the translated resources are
+            // built from it, whatever the code patches change in these bytes.
+            byte[] pristine = (byte[])bytes.Clone();
 
             foreach (CodePatch p in Patches.Where(x => Ps.Eq(x.File, rel) && !Ps.IsTrue(x.Resource)))
             {
@@ -781,19 +792,20 @@ namespace IcqRevival.Patch
             };
             TrFile entry = Tr.File(rel);
             bool ukrainian = entry != null && Jobs.IsWanted(skip, "uk:" + rel) && bytes.Length == entry.Size;
+            MatFile mat = entry != null ? Tr.Materialize(entry, pristine) : null;
             if (ukrainian && entry.Whole != null)
             {
                 bytes = (byte[])entry.Whole.Clone();
             }
             if (ukrainian)
             {
-                foreach (TrItem it in entry.Items) put(it.Key, it.Bytes);
+                foreach (KeyValuePair<string, byte[]> it in mat.Items) put(it.Key, it.Value);
                 foreach (TrPlace pl in entry.Inplace) Array.Copy(pl.Bytes, 0, bytes, pl.Offset, pl.Bytes.Length);
             }
             CodePatch words = Patches.First(x => Ps.Eq(x.Resource, "sendBy"));
             if (Ps.Eq(rel, Tr.SendBy.File) && Jobs.IsWanted(skip, words.What) && bytes.Length == words.Size)
             {
-                put(Tr.SendBy.Key, ukrainian ? Tr.SendBy.BlankUk : Tr.SendBy.BlankEn);
+                put(Tr.SendBy.Key, ukrainian ? mat.BlankUk : mat.BlankEn);
             }
 
             // The resources are laid into the file's own bytes, in memory: the

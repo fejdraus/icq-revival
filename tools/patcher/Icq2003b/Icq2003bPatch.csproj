@@ -38,14 +38,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The build step of the translation runs in MSBuild, not in the exe. -->
-    <Compile Remove="build\**" />
+    <!-- The Ukrainian interface, as the translation tools write it
+         (icq2003b\translate\build.py): a readable text recipe of what to
+         change. The patch rebuilds each translated resource from the client's
+         own English one, so the exe carries only text. The .json stays the
+         source for the exe; the translator's source is translate\uk-UA.json. -->
+    <EmbeddedResource Include="..\..\icq2003b\patch\ICQ-2003b-uk-UA.json" LogicalName="ICQ-2003b-uk-UA.json" />
   </ItemGroup>
-
-  <!-- The Ukrainian interface: decoded at build time from
-       tools\icq2003b\patch\ICQ-2003b-uk-UA.txt, which stays the source, and
-       carried as raw data and a readable index. -->
-  <Import Project="build\ConvertTranslation.targets" />
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />

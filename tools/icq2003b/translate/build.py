@@ -1,28 +1,30 @@
-"""Builds the translated resources the ICQ 2003b patch writes into the client.
+"""Builds the recipe the ICQ 2003b patch follows to translate the client.
 
     python build.py <client folder> [uk-UA.json]
 
 The client folder must hold the untouched files of ICQ Pro 2003b build 3916
 (a copy, or the backups the patch keeps). For every menu, dialog and string
-table with a translated text it writes the whole resource again, and puts
-them all into ../patch/ICQ-2003b-uk-UA.txt: gzip, then base64, so the patch
-can carry it inside its exe.
+table with a translated text it records WHAT to change - the replaced strings,
+menu items and control captions, and the widths a dialog's controls are given
+to fit the longer text - and writes it all, as readable UTF-8 text, to
+../patch/ICQ-2003b-uk-UA.json. The patch carries that recipe and rebuilds each
+translated resource itself, from the client's own English resource, so the exe
+holds only text, no packed or binary payload.
 
-A resource is only written into a client when its English original is the
-one this was built from: each carries the SHA-256 of that original.
+A resource is only translated in a client when its English original is the one
+this was built from: each record carries the SHA-256 of that original.
 
-A translated dialog is also fitted: a control whose text no longer fits is
-widened where the dialog has room to its right (fit.py). What still does
-not fit is listed in overflow.json, with the pixels there are, for the
-translation to be made shorter.
+A translated dialog is also fitted here, at build time (fit.py measures fonts
+with Windows): a control whose text no longer fits is widened where the dialog
+has room to its right, and the recipe records the width it ends up with. What
+still does not fit is listed in overflow.json, with the pixels there are, for
+the translation to be made shorter.
 
 The "Send By:" words, which the patch blanks, live in a string table of
-Icq.exe. The patch writes that table as a whole in both languages, so the
-build also gives it blanked in English and in Ukrainian.
+Icq.exe. The recipe names that table and the string in it, and the patch
+blanks it in whichever language it writes.
 """
 
-import base64
-import gzip
 import hashlib
 import json
 import os
@@ -35,7 +37,7 @@ import fit
 import icqres
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, '..', 'patch', 'ICQ-2003b-uk-UA.txt')
+OUT = os.path.join(HERE, '..', 'patch', 'ICQ-2003b-uk-UA.json')
 
 # The words the "Send By" job blanks: Icq.exe, string 8727.
 SEND_BY = {'file': 'Icq.exe', 'string': 8727, 'text': 'Send By:', 'blank': ' ' * 8}
@@ -43,6 +45,15 @@ SEND_BY = {'file': 'Icq.exe', 'string': 8727, 'text': 'Send By:', 'blank': ' ' *
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def changed_map(old, new):
+    """Which texts changed, by index, as a string-keyed ordered dict."""
+    out = OrderedDict()
+    for i, (a, b) in enumerate(zip(old, new)):
+        if a != b:
+            out[str(i)] = b
+    return out
 
 
 def main():
@@ -53,7 +64,7 @@ def main():
     tr = doc['texts']
 
     files = OrderedDict()
-    counts = {'resources': 0, 'texts': 0, 'missing': 0}
+    counts = {'resources': 0, 'texts': 0}
     missing = set()
     send_by = None
     overflow = []
@@ -66,7 +77,7 @@ def main():
             res = list(icqres.resources(path))
         except pefile.PEFormatError:
             continue
-        items = []
+        records = []
         for rtype, rname, lang, data in res:
             old = icqres.texts(rtype, data)
             new = []
@@ -89,17 +100,20 @@ def main():
             if is_send_by:
                 i = SEND_BY['string'] - (rname - 1) * 16
                 assert old[i] == SEND_BY['text'], old[i]
-                blank_en = list(old)
-                blank_uk = list(new)
-                blank_en[i] = blank_uk[i] = SEND_BY['blank']
                 send_by = OrderedDict([
-                    ('file', name), ('t', rtype), ('n', rname), ('l', lang), ('from', sha(data)),
-                    ('en', base64.b64encode(icqres.with_texts(rtype, data, blank_en)).decode()),
-                    ('uk', base64.b64encode(icqres.with_texts(rtype, data, blank_uk)).decode()),
+                    ('file', name), ('type', rtype), ('name', rname), ('lang', lang),
+                    ('from', sha(data)), ('index', i), ('blank', SEND_BY['blank']),
                 ])
             if new == old:
                 continue
-            if rtype == icqres.RT_DIALOG:
+            record = OrderedDict([('type', rtype), ('name', rname), ('lang', lang), ('from', sha(data))])
+            if rtype == icqres.RT_STRING:
+                record['strings'] = changed_map(old, new)
+            elif rtype == icqres.RT_MENU:
+                record['items'] = changed_map(old, new)
+            else:
+                # A dialog: its caption (index 0), the control captions that
+                # changed, and the widths fit.py gives the controls it widens.
                 d = icqres.read_dialog(data)
                 before = [c['cx'] for c in d['controls']]
                 d['text'] = new[0]
@@ -112,20 +126,31 @@ def main():
                                                  ('have', have), ('need', int(needed)),
                                                  ('control', OrderedDict([('cls', list(c['cls']) if isinstance(c['cls'], tuple) else c['cls']),
                                                                           ('style', c['style']), ('cx', c['cx']), ('cy', c['cy'])]))]))
-                widened += sum(1 for a, b in zip(before, d['controls']) if b['cx'] != a)
-                out = icqres.write_dialog(d)
-            else:
-                out = icqres.with_texts(rtype, data, new)
-            items.append(OrderedDict([('t', rtype), ('n', rname), ('l', lang), ('from', sha(data)),
-                                      ('d', base64.b64encode(out).decode())]))
+                widths = OrderedDict()
+                for j, (a, c) in enumerate(zip(before, d['controls'])):
+                    if c['cx'] != a:
+                        widths[str(j)] = c['cx']
+                        widened += 1
+                if new[0] != old[0]:
+                    record['caption'] = new[0]
+                controls = OrderedDict()
+                for j, c in enumerate(d['controls']):
+                    if isinstance(c['text'], str) and new[j + 1] != old[j + 1]:
+                        controls[str(j)] = new[j + 1]
+                if controls:
+                    record['controls'] = controls
+                if widths:
+                    record['widths'] = widths
+            records.append(record)
             counts['resources'] += 1
             counts['texts'] += sum(1 for a, b in zip(old, new) if a != b)
-        if items:
-            files[name] = OrderedDict([('size', os.path.getsize(path)), ('items', items)])
+        if records:
+            files[name] = OrderedDict([('size', os.path.getsize(path)), ('resources', records)])
 
     # Texts in the data of a program or in the skin: written over the English
     # one, never longer than the room it had - its own bytes, and for ANSI the
-    # zeros after it up to where the next text is aligned.
+    # zeros after it up to where the next text is aligned. The recipe records
+    # the text and the room; the patch encodes and pads.
     for e in doc.get('inplace', []):
         path = os.path.join(root, e['file'])
         with open(path, 'rb') as f:
@@ -143,14 +168,15 @@ def main():
             slot = room + 2
         assert data[off:off + len(en)] == en, (e['file'], e['offset'], e['en'])
         assert len(uk) <= room, f"{e['file']} {e['offset']}: '{e['uk']}' needs {len(uk)} bytes, room for {room}"
-        entry = files.setdefault(e['file'], OrderedDict([('size', len(data)), ('items', [])]))
+        entry = files.setdefault(e['file'], OrderedDict([('size', len(data)), ('resources', [])]))
         entry.setdefault('inplace', []).append(OrderedDict([
-            ('o', off), ('from', base64.b64encode(data[off:off + slot]).decode()),
-            ('d', base64.b64encode(uk + b'\0' * (slot - len(uk))).decode())]))
+            ('offset', off), ('encoding', e['encoding']), ('slot', slot),
+            ('en', e['en']), ('uk', e['uk'])]))
         counts['texts'] += 1
 
-    # Text files of the client: every field after a tab that is a name the
-    # file lists gets its translation, and the file is written whole.
+    # Text files of the client: every field after a tab that is a name the file
+    # lists gets its translation, and the file is written whole. The recipe
+    # records the translated text; the patch encodes it (Windows-1251).
     for rel, names in doc.get('datafiles', {}).items():
         path = os.path.join(root, rel)
         with open(path, 'rb') as f:
@@ -163,20 +189,19 @@ def main():
                 parts[-1] = names[parts[-1]]
                 counts['texts'] += 1
             out.append('\t'.join(parts))
-        new = '\r\n'.join(out).encode('cp1251')
-        entry = files.setdefault(rel, OrderedDict([('size', len(data)), ('items', [])]))
-        entry['whole'] = OrderedDict([('from', sha(data)), ('d', base64.b64encode(new).decode())])
+        text = '\r\n'.join(out)
+        entry = files.setdefault(rel, OrderedDict([('size', len(data)), ('resources', [])]))
+        entry['whole'] = OrderedDict([('from', sha(data)), ('text', text)])
 
-    payload = OrderedDict([('language', 'uk-UA'), ('files', files), ('sendBy', send_by)])
-    raw = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
-    packed = base64.b64encode(gzip.compress(raw, 9, mtime=0)).decode()
-    with open(OUT, 'w', newline='\n') as f:
-        for i in range(0, len(packed), 100):
-            f.write(packed[i:i + 100] + '\n')
+    payload = OrderedDict([('language', 'uk-UA'), ('sendBy', send_by), ('files', files)])
+    with open(OUT, 'w', encoding='utf-8', newline='\n') as f:
+        json.dump(payload, f, ensure_ascii=False, indent=1)
+        f.write('\n')
     with open(os.path.join(HERE, 'overflow.json'), 'w', encoding='utf-8', newline='\n') as f:
         json.dump(overflow, f, ensure_ascii=False, indent=1)
+    size = os.path.getsize(OUT)
     print(f'{len(files)} files, {counts["resources"]} resources, {counts["texts"]} texts; '
-          f'{len(missing)} texts not translated yet; {len(packed):,} bytes -> {os.path.normpath(OUT)}')
+          f'{len(missing)} texts not translated yet; {size:,} bytes -> {os.path.normpath(OUT)}')
     print(f'{widened} controls widened to fit, {len(overflow)} texts still too long (overflow.json)')
 
 
