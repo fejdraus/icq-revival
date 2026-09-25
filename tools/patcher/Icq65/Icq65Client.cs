@@ -7,9 +7,12 @@
 //      taken out of the client's own markup (services\icqApp\ver1, Boxely .box
 //      files, plain XML), and the "SMS & Phone" entry of the preferences list,
 //      which is built in code, out of MUICore.dll.
-//   2. Links. The pages the client opens on ICQ.com - help, the legal notice,
-//      e-mail confirmation, the Xtraz list - are pointed at our server, which is
-//      also added to the client's content whitelists.
+//   2. Links. The pages the client opens on ICQ.com - help, search, "My page",
+//      the About box and the legal notice, the add-on galleries, e-mail
+//      confirmation, the Xtraz list - are pointed at our server, which is also
+//      added to the client's content whitelists. They live in the
+//      configuration files, in the DTDs of the interface and its translations,
+//      and one in MUIMessage.dll.
 //   3. Advertising and teasers. Their local descriptors are emptied, which is
 //      what makes the client stop drawing them at all.
 //
@@ -246,37 +249,305 @@ namespace IcqRevival.Patch
             return "http://" + domain + ":" + PagesPortHttp;
         }
 
-        // "My page" in a user's details: the client appends the number to this
-        // address and opens it in the browser. It lives in the interface's DTD,
-        // not in the configuration files, and our server shows the user's card
-        // at the white pages when given the number.
-        const string ProfileFile = @"services\icqApp\ver1\content\data.dtd";
-        const string ProfileEntity = "<!ENTITY detailsDlg.IcqHomePageLink \"";
+        // --- links in the interface ------------------------------------------------
+        //
+        // The pages the interface itself opens - search, help, "My page", the
+        // About box, the add-on galleries - are not in the configuration files
+        // but in the DTDs of its markup: data.dtd for the addresses, and the
+        // translations under resources\<language>\ where an address is written
+        // into a sentence. Each is pointed at the same page on our server,
+        // under /icq on the HTTPS port. The client's own placeholders - #STRING#,
+        // #NUMBER#, &#37;s - are kept as they were, since it fills them in.
+        //
+        // What the client fetches by itself from these DTDs (the Xtraz install
+        // counter) is left alone, like the machine-fetched addresses of the
+        // configuration files.
 
-        static string ProfileBase(string domain)
+        const string Ver1 = @"services\icqApp\ver1";
+        const string DataDtd = Ver1 + @"\content\data.dtd";
+        const string Resources = Ver1 + @"\resources";
+
+        sealed class DtdLink
         {
-            return "https://" + domain + ":" + PagesPortHttps + "/icq/whitepages?icq=";
+            public string File;    // relative; a "*" segment stands for every folder there
+            public string Entity;  // the entity whose value is changed, or null for the whole file
+            public string Find;    // what is replaced, a pattern; null for the whole value
+            public string To;      // the path on our server, placeholders and all
         }
 
-        // The DTD with the "My page" address pointed at the domain, or as it was
-        // when it has no such entity.
-        static string SetProfileLink(string text, string domain)
+        static DtdLink Value(string entity, string to)
         {
-            int at = text.IndexOf(ProfileEntity, StringComparison.Ordinal);
+            return new DtdLink { File = DataDtd, Entity = entity, To = to };
+        }
+
+        static DtdLink InValue(string entity, string find, string to)
+        {
+            return new DtdLink { File = DataDtd, Entity = entity, Find = find, To = to };
+        }
+
+        static DtdLink InText(string file, string find, string to)
+        {
+            return new DtdLink { File = file, Find = find, To = to };
+        }
+
+        const string XtrazStub = "/icq/stub/xtraz.html";
+
+        static readonly DtdLink[] DtdLinks =
+        {
+            // "My page" in a user's details: the client appends the number.
+            Value("detailsDlg.IcqHomePageLink", "/icq/whitepages?icq="),
+            Value("Search.SearchLink", "/icq/search?q=#STRING#"),
+            Value("Password.ForgotPassword", "/icq/password"),
+            Value("MainDlg.HelpLink", "/icq/help/"),
+            Value("AboutDlg.icqSite_URL", "/icq/about"),
+            Value("AboutDlg.icqSite_Legal", "/icq/legal/"),
+            Value("AboutDlg.icqSite_ViewTerms", "/icq/terms?lspid=#NUMBER#&amp;lang=#STRING#"),
+            Value("OPrefsPanelSkin.MoreSkinsLink", "/icq/addons/skins/"),
+            Value("OPrefsPanelSkin.MoreLangsLink", "/icq/addons/languages/"),
+            Value("MsgSessionDlg.MoreLexiconsLink", "/icq/addons/dictionaries/"),
+            Value("MoodsGallery.MoreMoodsLink", "/icq/addons/moods"),
+            // Escaped HTML: only the address of its link.
+            InValue("MsgSessionPanel.BirthdayMessageHTML", "http://greetings\\.icq\\.com", "/icq/greetings"),
+            Value("XtraController.UserXtraDetailsUrl", XtrazStub + "?xtra_id=#STRING#"),
+            Value("XtraController.UserXtraTermsOfServiceUrl", XtrazStub),
+            Value("XtraController.UserXtraTermsOfServiceMoreDetailsUrl", XtrazStub),
+            Value("MyXtraz.XtrazGalleryURL", XtrazStub),
+            Value("MyXtraz.DevelopersSiteURL", XtrazStub),
+            Value("XtraController.XtraNotAvailableUrl", XtrazStub + "?xtra_id=&#37;s&client_id=&#37;s&client_lsp_id=&#37;s&build=&#37;s"),
+            // Inside translated sentences: only the address, not the words or the
+            // punctuation after it ("http://www.icq.com/Download," in German).
+            InText(Resources + @"\*\AboutDlg.dtd", "http://www\\.icq\\.com/legal\\b/?", "/icq/legal/"),
+            InText(Resources + @"\*\MsgSessionPanel.dtd", "(?i)http://www\\.icq\\.com/download(?:[\\w/-]|\\.(?=[\\w/]))*", "/icq/download"),
+            InText(Resources + @"\*\SMS.dtd", "http://www\\.icq\\.com/sms\\b", "/icq/stub/sms.html"),
+        };
+
+        static string LinkTo(string domain, string path)
+        {
+            return "https://" + domain + ":" + PagesPortHttps + path;
+        }
+
+        // A text with the links of one rule pointed at the domain; as it was
+        // when the rule finds nothing in it.
+        static string ApplyDtdLink(DtdLink link, string text, string domain)
+        {
+            string to = LinkTo(domain, link.To);
+            if (link.Entity == null)
+            {
+                return Regex.Replace(text, link.Find, m => to);
+            }
+            string head = "<!ENTITY " + link.Entity + " \"";
+            int at = text.IndexOf(head, StringComparison.Ordinal);
             if (at < 0) return text;
-            int from = at + ProfileEntity.Length;
+            int from = at + head.Length;
             int end = text.IndexOf('"', from);
             if (end < 0) return text;
-            return text.Substring(0, from) + ProfileBase(domain) + text.Substring(end);
+            string value = text.Substring(from, end - from);
+            string changed = link.Find == null ? to : Regex.Replace(value, link.Find, m => to);
+            return text.Substring(0, from) + changed + text.Substring(end);
         }
 
-        string ProfileState(string domain)
+        // Every DTD some rule is for, each with its rules, in the order of the
+        // table. A "*" segment is every folder there - the languages.
+        List<KeyValuePair<string, List<DtdLink>>> DtdFiles()
         {
-            string path = At(ProfileFile);
+            var files = new List<KeyValuePair<string, List<DtdLink>>>();
+            var index = new Dictionary<string, List<DtdLink>>(Ps.Keys);
+            foreach (DtdLink link in DtdLinks)
+            {
+                var paths = new List<string>();
+                int star = link.File.IndexOf(@"\*\", StringComparison.Ordinal);
+                if (star < 0)
+                {
+                    paths.Add(link.File);
+                }
+                else
+                {
+                    string parent = link.File.Substring(0, star);
+                    string rest = link.File.Substring(star + 3);
+                    string dir = At(parent);
+                    if (!Directory.Exists(dir)) continue;
+                    foreach (string d in Directory.GetDirectories(dir).OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                    {
+                        paths.Add(parent + @"\" + Path.GetFileName(d) + @"\" + rest);
+                    }
+                }
+                foreach (string p in paths)
+                {
+                    List<DtdLink> rules;
+                    if (!index.TryGetValue(p, out rules))
+                    {
+                        rules = new List<DtdLink>();
+                        index[p] = rules;
+                        files.Add(new KeyValuePair<string, List<DtdLink>>(p, rules));
+                    }
+                    rules.Add(link);
+                }
+            }
+            return files;
+        }
+
+        static string BuildDtd(IEnumerable<DtdLink> rules, string original, string domain)
+        {
+            string text = original;
+            foreach (DtdLink link in rules) text = ApplyDtdLink(link, text, domain);
+            return text;
+        }
+
+        // One state per DTD that has something to change, keyed by its path.
+        // A file whose original none of the rules finds anything in is left
+        // out: that language says nothing about ICQ.com.
+        List<KeyValuePair<string, string>> DtdStates(string domain)
+        {
+            var result = new List<KeyValuePair<string, string>>();
+            foreach (var f in DtdFiles())
+            {
+                string path = At(f.Key);
+                if (!PatchFiles.Exists(path)) continue;
+                string current = PatchFiles.ReadText(path).Text;
+                string original = OriginalText(path) ?? current;
+                string built = BuildDtd(f.Value, original, domain);
+                if (Ps.Ceq(built, original)) continue;
+                string state = Ps.Ceq(current, built) ? "patched" : Ps.Ceq(current, original) ? "original" : "partly";
+                result.Add(new KeyValuePair<string, string>(f.Key, state));
+            }
+            return result;
+        }
+
+        // Makes every DTD match the selection, built again from its original.
+        void SetDtdLinks(string domain, bool wanted)
+        {
+            foreach (var f in DtdFiles())
+            {
+                string path = At(f.Key);
+                if (!PatchFiles.Exists(path)) continue;
+                TextFile file = PatchFiles.ReadText(path);
+                string text = OriginalText(path) ?? file.Text;
+                if (wanted) text = BuildDtd(f.Value, text, domain);
+                if (!Ps.Ceq(text, file.Text))
+                {
+                    PatchFiles.BackupOnce(path, Suffix);
+                    file.Text = text;
+                    PatchFiles.WriteText(path, file);
+                }
+            }
+        }
+
+        // --- links in code ----------------------------------------------------------
+        //
+        // A few addresses have their default in a DLL, as a UTF-16 string one
+        // instruction pushes. They are moved the way the sign-in server is (see
+        // below): the new address goes into the unused tail of .rdata, the
+        // section is made to map that tail, and the push - which carries a base
+        // relocation, so the loader moves it with the image - is pointed at it.
+        // The old string stays where it was. The DLLs have no checksum and no
+        // signature to keep valid, and each is recognised by the checksum of
+        // its original before a byte is written; a changed one is always built
+        // again from its backup.
+        //
+        // MUICore.dll's "http://icq.com" is not one of them: it is where the
+        // client sets its tracking cookie (CookieContent of System.xml, with
+        // the screen name and session key), not a page anyone opens.
+
+        sealed class CodeLink
+        {
+            public string File;
+            public long Size;
+            public string Sha256From;
+            public int[] Pushes;      // file offsets of the pushes' 4-byte operands
+            public uint OldTarget;    // where they point out of the box
+            public uint NewTarget;    // the slot, at the image base
+            public int Slot;          // file offset of the slot: .rdata, past its data
+            public int SlotEnd;       // end of .rdata in the file
+            public int VSizeAt;       // VirtualSize of .rdata in the section table
+            public uint VSizeFrom;
+            public uint VSizeTo;      // all of its raw data
+            public string To;         // the path on our server
+            public string What;
+        }
+
+        static readonly CodeLink[] CodeLinks =
+        {
+            // The default of DownloadEmoticonGalleriesUrl (System.xml), the page
+            // "more emoticons" opens.
+            new CodeLink
+            {
+                File = "MUIMessage.dll",
+                Size = 1305600,
+                Sha256From = "8C7654D2A4A225BFD6C3B9001E82A22564EB5A9514507C0C352850865DD1701D",
+                Pushes = new[] { 0xC2B0A },
+                OldTarget = 0x33DFE540,   // L"http://www.icq.com/download/icq6/download_emoticons.html"
+                NewTarget = 0x33E23950,   // image base 0x33D00000
+                Slot = 0x122D50,
+                SlotEnd = 0x122E00,       // .data starts at RVA 0x124000
+                VSizeAt = 0x250,
+                VSizeFrom = 0x3E94E,
+                VSizeTo = 0x3EA00,
+                To = "/icq/addons/emoticons",
+                What = "the emoticon download page",
+            },
+        };
+
+        static bool PushesAt(CodeLink c, byte[] bytes, uint target)
+        {
+            return c.Pushes.All(at => BitConverter.ToUInt32(bytes, at) == target);
+        }
+
+        static string ReadSlot(byte[] bytes, int slot, int slotEnd)
+        {
+            int end = slot;
+            while (end + 1 < slotEnd && (bytes[end] != 0 || bytes[end + 1] != 0)) end += 2;
+            return Encoding.Unicode.GetString(bytes, slot, end - slot);
+        }
+
+        // original / patched / another server / other version / missing
+        string CodeLinkState(CodeLink c, string domain)
+        {
+            string path = At(c.File);
             if (!PatchFiles.Exists(path)) return "missing";
-            string text = PatchFiles.ReadText(path).Text;
-            if (text.IndexOf(ProfileEntity, StringComparison.Ordinal) < 0) return "unknown";
-            return Ps.Ceq(SetProfileLink(text, domain), text) ? "patched" : "original";
+            byte[] bytes = File.ReadAllBytes(path);
+            if (bytes.Length != c.Size) return "other version";
+            if (PushesAt(c, bytes, c.OldTarget))
+            {
+                return Ps.Eq(PatchFiles.Sha256(path), c.Sha256From) ? "original" : "other version";
+            }
+            if (PushesAt(c, bytes, c.NewTarget))
+            {
+                return Ps.Ceq(ReadSlot(bytes, c.Slot, c.SlotEnd), LinkTo(domain, c.To)) ? "patched" : "another server";
+            }
+            return "other version";
+        }
+
+        // Makes one DLL match the selection. Gives a line for the report when
+        // something could not be done, or null.
+        string SetCodeLink(CodeLink c, string domain, bool wanted)
+        {
+            string state = CodeLinkState(c, domain);
+            string path = At(c.File);
+            if (!wanted)
+            {
+                if (state == "patched" || state == "another server") RestoreFromBackup(path);
+                return null;
+            }
+            if (state == "patched" || state == "missing") return null;
+            if (state == "other version") return c.File + " is not the one from build 2024 - " + c.What + " left as it is";
+            byte[] text = Encoding.Unicode.GetBytes(LinkTo(domain, c.To));
+            if (text.Length + 2 > c.SlotEnd - c.Slot) return "the domain is too long for " + c.File + " - " + c.What + " left as it is";
+
+            // From the original: the file itself, or its backup once changed.
+            string source = path;
+            foreach (string suffix in AllSuffixes)
+            {
+                if (PatchFiles.Exists(path + suffix)) { source = path + suffix; break; }
+            }
+            if (!Ps.Eq(PatchFiles.Sha256(source), c.Sha256From)) return "the backup of " + c.File + " is not the original - " + c.What + " left as it is";
+            byte[] bytes = File.ReadAllBytes(source);
+            for (int i = c.Slot; i < c.SlotEnd; i++) bytes[i] = 0;
+            Array.Copy(text, 0, bytes, c.Slot, text.Length);
+            Array.Copy(BitConverter.GetBytes(c.VSizeTo), 0, bytes, c.VSizeAt, 4);
+            foreach (int at in c.Pushes) Array.Copy(BitConverter.GetBytes(c.NewTarget), 0, bytes, at, 4);
+            PatchFiles.BackupOnce(path, Suffix);
+            File.WriteAllBytes(path, bytes);
+            return null;
         }
 
         // The links in a text that do not point where they should yet.
@@ -616,7 +887,8 @@ namespace IcqRevival.Patch
             // the links are no use without them.
             j.Assign("links", "links");
             j.Assign("whitelist", "links");
-            j.Assign("profile page", "links");
+            j.Assign("page links", "links");
+            foreach (CodeLink c in CodeLinks) j.Assign(c.What, "links");
             j.Assign("sign-in", "sign-in");
             return j;
         }
@@ -633,7 +905,8 @@ namespace IcqRevival.Patch
             foreach (Removal r in Removals) add(r.What, PatchFiles.Leaf(r.Path), RemovalState(r));
             add("links", "ConfigFiles", LinkState(domain));
             add("whitelist", "XtraConfig.xml", WhitelistState(domain));
-            add("profile page", "data.dtd", ProfileState(domain));
+            foreach (var d in DtdStates(domain)) add("page links", d.Key.Substring(Ver1.Length + 1), d.Value);
+            foreach (CodeLink c in CodeLinks) add(c.What, c.File, CodeLinkState(c, domain));
             foreach (Strip st in Strips) add(st.What, PatchFiles.Leaf(st.File), StripState(st));
             add("sign-in", "MCore.dll, now " + SignInShown(), SignInState(domain));
             return Jobs.Merge(items);
@@ -689,7 +962,7 @@ namespace IcqRevival.Patch
             // Group-Object File: the edits of one file together, in the order
             // the files first come up.
             var groups = MarkupEdits.GroupBy(e => e.File, Ps.Keys).ToList();
-            PatchSteps.Start(3 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + 2);
+            PatchSteps.Start(4 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + CodeLinks.Length);
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -793,21 +1066,17 @@ namespace IcqRevival.Patch
                 }
             }
 
-            // "My page" goes with the links: built from the original DTD, so
-            // leaving the links out takes it back.
-            PatchSteps.Step("Interface: data.dtd...");
-            string profilePath = At(ProfileFile);
-            if (PatchFiles.Exists(profilePath))
+            // The links of the interface go with the others: each DTD and DLL
+            // is built from its original, so leaving the links out takes them
+            // back.
+            var notes = new List<string>();
+            PatchSteps.Step("Interface: links in the DTDs...");
+            SetDtdLinks(domain, Jobs.IsWanted(skip, "page links"));
+            foreach (CodeLink c in CodeLinks)
             {
-                TextFile file = PatchFiles.ReadText(profilePath);
-                string text = OriginalText(profilePath) ?? file.Text;
-                if (links) text = SetProfileLink(text, domain);
-                if (!Ps.Ceq(text, file.Text))
-                {
-                    PatchFiles.BackupOnce(profilePath, Suffix);
-                    file.Text = text;
-                    PatchFiles.WriteText(profilePath, file);
-                }
+                PatchSteps.Step("Links: " + c.File + "...");
+                string note = SetCodeLink(c, domain, Jobs.IsWanted(skip, c.What));
+                if (note != null) notes.Add(note);
             }
 
             PatchSteps.Step("Sign-in server...");
@@ -829,6 +1098,7 @@ namespace IcqRevival.Patch
                 if (Ps.Eq(after[i].State, "patched")) report.Add("applied: " + after[i].What);
                 else report.Add("taken out: " + after[i].What);
             }
+            report.AddRange(notes);
             return report;
         }
 
