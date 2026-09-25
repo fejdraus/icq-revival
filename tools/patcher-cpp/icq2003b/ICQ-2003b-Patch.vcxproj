@@ -79,6 +79,7 @@
     <ClCompile Include="..\common\PatchFiles.cpp" />
     <ClCompile Include="..\common\PatchIcon.cpp" />
     <ClCompile Include="..\common\PatchItems.cpp" />
+    <ClCompile Include="..\common\PeResources.cpp" />
     <ClCompile Include="..\common\PatchSettings.cpp" />
     <ClCompile Include="..\common\PatchWindow.cpp" />
     <ClCompile Include="..\common\Ps.cpp" />
@@ -96,6 +97,7 @@
     <ClInclude Include="..\common\PatchFiles.h" />
     <ClInclude Include="..\common\PatchIcon.h" />
     <ClInclude Include="..\common\PatchItems.h" />
+    <ClInclude Include="..\common\PeResources.h" />
     <ClInclude Include="..\common\PatchSettings.h" />
     <ClInclude Include="..\common\PatchWindow.h" />
     <ClInclude Include="..\common\Ps.h" />

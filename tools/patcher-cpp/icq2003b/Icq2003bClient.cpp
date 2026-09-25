@@ -372,9 +372,7 @@ namespace
 
     std::vector<std::optional<Bytes>> ReadResources(const std::wstring& path, const std::vector<std::wstring>& keys)
     {
-        std::vector<IcqResources::Key> parsed;
-        for (const std::wstring& k : keys) parsed.push_back(IcqResources::Key::Parse(k));
-        return IcqResources::Read(path, parsed);
+        return IcqResources::Read(PatchFiles::ReadAllBytes(path), keys);
     }
 
     // A byte array in an if.
@@ -603,15 +601,6 @@ namespace
         for (const StringPatch& s : StringPatches()) all.push_back(s.File);
         for (const std::wstring& f : TranslationFiles()) all.push_back(f);
         return ps::Unique(all);
-    }
-
-    std::wstring TempFileName()
-    {
-        wchar_t dir[MAX_PATH + 1], file[MAX_PATH + 1];
-        DWORD n = GetTempPathW(MAX_PATH + 1, dir);
-        if (n == 0 || n > MAX_PATH) throw PatchError{ PatchFiles::SystemMessage(GetLastError()) };
-        if (GetTempFileNameW(dir, L"tmp", 0, file) == 0) throw PatchError{ PatchFiles::SystemMessage(GetLastError()) };
-        return file;
     }
 
     void Put(Bytes& bytes, size_t at, const Bytes& data)
@@ -875,30 +864,20 @@ namespace
             put(sb.Key, ukrainian ? sb.BlankUk : sb.BlankEn);
         }
 
-        Bytes built;
-        std::wstring tmp = TempFileName();
-        try
+        // The resources are laid into the file's own bytes, in memory: the
+        // section that holds them is rebuilt where it is, nothing else moves.
+        if (!res.empty())
         {
-            PatchFiles::WriteAllBytes(tmp, bytes);
-            if (!res.empty())
+            std::vector<std::wstring> keys;
+            std::vector<Bytes> data;
+            for (const auto& r : res)
             {
-                std::vector<IcqResources::Key> keys;
-                std::vector<Bytes> data;
-                for (const auto& r : res)
-                {
-                    keys.push_back(IcqResources::Key::Parse(r.first));
-                    data.push_back(r.second);
-                }
-                IcqResources::Write(tmp, keys, data);
+                keys.push_back(r.first);
+                data.push_back(r.second);
             }
-            built = PatchFiles::ReadAllBytes(tmp);
+            bytes = IcqResources::Write(bytes, keys, data);
         }
-        catch (...)
-        {
-            DeleteFileW(tmp.c_str());
-            throw;
-        }
-        DeleteFileW(tmp.c_str());
+        const Bytes& built = bytes;
 
         if (built != PatchFiles::ReadAllBytes(path))
         {

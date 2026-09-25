@@ -1,13 +1,18 @@
-// Reading and writing the resources of the client's programs - the port of
-// tools\patcher\Icq2003b\IcqResources.cs.
+// Reading and replacing the resources of the client's programs, over their
+// bytes - the port of tools\patcher\Icq2003b\IcqResources.cs, no longer
+// through Windows.
 //
-// Resources are written by Windows itself (UpdateResource). It rebuilds the
-// resource section and nothing before it - code and data stay where they are,
-// so the offsets of the code patches hold in a translated file as well.
+// The C# patch called BeginUpdateResource / UpdateResource; those calls, and
+// the ones that read another file's resources, are what scanners took the
+// patch's resource work for something worse. The work is done here in plain
+// C++ instead (PeResources), so the exe imports none of them. The resources
+// the exe carries for itself are still read the ordinary way, from its own
+// module (Translation.cpp).
 
 #pragma once
 
 #include "../common/PatchFiles.h"
+#include "../common/PeResources.h"
 
 #include <optional>
 #include <string>
@@ -17,21 +22,13 @@ namespace IcqResources
 {
     // A resource by its key "type|name|lang"; the name is "#123" for a
     // number, anything else for a name.
-    struct Key
-    {
-        int Type = 0;
-        std::wstring Name;
-        int Lang = 0;
+    PeResources::Key ParseKey(const std::wstring& key);
 
-        static Key Parse(const std::wstring& key);
-    };
-
-    // The data of each resource, nothing where the file has none.
-    std::vector<std::optional<Bytes>> Read(const std::wstring& file, const std::vector<Key>& keys);
+    // The data of each key in the file bytes, nothing where the file has none.
+    std::vector<std::optional<Bytes>> Read(const Bytes& file, const std::vector<std::wstring>& keys);
 
     bool Same(const std::optional<Bytes>& a, const Bytes& b);
-    bool Same(const Bytes& a, const Bytes& b);
 
-    // Throws a PatchError with the reason Windows gives.
-    void Write(const std::wstring& file, const std::vector<Key>& keys, const std::vector<Bytes>& data);
+    // The file with those keys' data replaced.
+    Bytes Write(const Bytes& file, const std::vector<std::wstring>& keys, const std::vector<Bytes>& data);
 }
