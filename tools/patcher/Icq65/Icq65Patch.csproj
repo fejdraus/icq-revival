@@ -19,7 +19,10 @@
     <AssemblyTitle>Patch for ICQ 6.5 (build 2024)</AssemblyTitle>
     <Description>Patch for ICQ 6.5 (build 2024)</Description>
     <Product>ICQ Revival</Product>
-    <GenerateAssemblyCompanyAttribute>false</GenerateAssemblyCompanyAttribute>
+    <Company>ICQ Revival</Company>
+    <Copyright>Copyright (c) 2026 ICQ Revival contributors</Copyright>
+    <Version>1.0.0</Version>
+    <NeutralLanguage>en</NeutralLanguage>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 
     <!-- The same bytes from the same sources, wherever they are built. -->
