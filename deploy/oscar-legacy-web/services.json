@@ -21,6 +21,11 @@
     "  hostsfile   serve a ready-made hosts block for the client",
     "  welcome     the welcome page shown after sign-in",
     "  center      the owner's unified messaging center",
+    "  help        the help page: signing in, account, calls, what is gone",
+    "  about       about the service",
+    "  legal       legal notice and privacy, with the terms of use",
+    "  terms       the terms of use",
+    "  download    the clients that work and the patches, from downloads below",
     "  stub        a \"this service is gone\" page",
     "",
     "Substitutions in target: {registerBase}, {q}, {host}, {path}."
@@ -133,6 +138,31 @@
       "path": "^/icq/howto",
       "action": "howto",
       "note": "\"How to Start\" from the contact list: a short guide instead of a stub"
+    },
+    {
+      "path": "^/icq/help",
+      "action": "help",
+      "note": "ICQ 6.5 Help menu: a help page for this server instead of help.icq.com"
+    },
+    {
+      "path": "^/icq/about",
+      "action": "about",
+      "note": "ICQ 6.5 Help > About: what this service is"
+    },
+    {
+      "path": "^/icq/legal",
+      "action": "legal",
+      "note": "legal notice and privacy"
+    },
+    {
+      "path": "^/icq/terms",
+      "action": "terms",
+      "note": "the terms link of the sign-in window; its ?lspid= and lang= are ignored"
+    },
+    {
+      "path": "^/icq/download",
+      "action": "download",
+      "note": "the clients that work and the patches for them"
     },
     {
       "path": "^/icq/avatar/upload",
@@ -306,6 +336,14 @@
       "www.icqit.com",
       "wwp.icq.com"
     ]
+  },
+  "_contact": "An e-mail address or a web page for questions about this server, shown on /icq/about and /icq/legal. Empty: no contact line. TODO: fill in before the server is public. CONTACT in the environment overrides it.",
+  "contact": "",
+  "_downloads": "Where the patches are published, listed on /icq/download. A value that is empty or starts with TODO is shown as not published yet.",
+  "downloads": {
+    "icq2003bPatch": "TODO: the address of ICQ-2003b-Patch.exe (tools/icq2003b/patch)",
+    "icq65Patch": "TODO: the address of ICQ-6.5-Patch.exe (tools/icq65/patch)",
+    "mirandaPlugin": "TODO: the address of the Miranda NG plugin, IcqOscarJ.dll for x32 and x64 (tools/miranda-icq/build)"
   },
   "_oscarHost": "The server address for clients, shown in the \"how to start\" guide. Leave empty to drop that section.",
   "oscarHost": "chat.example.ts.net"

@@ -78,6 +78,8 @@ function loadConfig() {
   cfg.registerBase = process.env.REGISTER_BASE || cfg.registerBase || '';
   cfg.serverName = process.env.SERVER_NAME || cfg.serverName || 'ICQ Revival';
   cfg.oscarHost = process.env.OSCAR_HOST || cfg.oscarHost || '';
+  cfg.contact = process.env.CONTACT || cfg.contact || '';
+  cfg.downloads = cfg.downloads || {};
   return cfg;
 }
 
@@ -282,6 +284,185 @@ const I18N = {
       + 'service. The contact list, messages and statuses are unaffected.',
     errorTitle: 'Error',
     unit: { h: 'h', m: 'm', s: 's' },
+
+    // The information pages: help, about, legal, terms, downloads.
+    lnkHelp: 'Help',
+    lnkAbout: 'About this service',
+    lnkLegal: 'Legal notice and privacy',
+    lnkTerms: 'Terms of use',
+    lnkDownload: 'Clients and patches',
+    lnkRecover: 'Recover a forgotten password',
+
+    helpTitle: 'Help',
+    helpSub: 'ICQ Revival',
+    helpIntro: (name) => `<b>${name}</b> is a server for the classic ICQ and AIM `
+      + 'clients. Below is what you need to get going, and what no longer exists.',
+    helpSignIn: 'Signing in',
+    helpSignInSteps: [
+      'You need a number registered on this server. A number from the old ICQ is '
+        + 'not carried over: take a new one on the registration page.',
+      '<b>ICQ 6.5</b> and <b>ICQ Pro 2003b</b>: close the client, run the patch for '
+        + 'it and type the server\'s domain. The patch points the sign-in and the menu '
+        + 'links at this server; nothing else needs to be set.',
+      '<b>Miranda NG</b>: install our ICQ plugin and give it the server below.',
+      '<b>AIM</b> and other clients: enter the server and port below in the '
+        + 'client\'s connection settings.',
+    ],
+    helpAccount: 'Your number and password',
+    helpAccountSteps: (reg, profile, recover) => [
+      reg ? `A new number: <a href="${reg}">the registration page</a>.` : '',
+      profile ? `Nickname, details, password and recovery e-mail: `
+        + `<a href="${profile}">your profile page</a>.` : '',
+      recover ? `Forgot the password? <a href="${recover}">The recovery page</a> sends `
+        + 'a link to your recovery e-mail. It can only do that if you added an e-mail '
+        + 'on your profile page and confirmed it, so do that now, while you still '
+        + 'remember the password.' : '',
+    ],
+    helpCalls: 'Voice calls in ICQ 6.5',
+    helpCallsSteps: [
+      'Calls go straight between the two computers. The server only passes the '
+        + 'invitation; the sound does not go through it and is not recorded.',
+      'Before a call, ICQ asks the server on <b>UDP port 3478</b> (STUN) how it is '
+        + 'seen from the Internet, so that the other side can reach it through the '
+        + 'router. The patch points ICQ at this server for that.',
+      'There is no relay. If both of you are behind routers or firewalls that let '
+        + 'no incoming UDP through, the call may connect and stay silent. Allowing '
+        + 'ICQ through the firewall usually helps.',
+    ],
+    helpGone: 'What no longer exists',
+    helpGoneText: 'These lived on ICQ.com and AOL servers and died with them. The '
+      + 'patches take them out of the interface; anything left over opens a short '
+      + 'page that says so.',
+    helpGoneList: [
+      '<b>Xtraz</b>: the gallery, animated greetings and mini-games.',
+      '<b>SMS</b> and phone calls to real phone numbers.',
+      '<b>tZers</b>.',
+      '<b>Advertising</b>: the banners, the news ticker and the ad windows.',
+      'The ICQ.com web services: e-mail, news, the chat directory, the web '
+        + 'version of the contact list.',
+    ],
+    helpPatches: 'Where to get the patches',
+    helpPatchesText: (href) => `The patches, the Miranda NG plugin and the list of `
+      + `clients that work are on the <a href="${href}">downloads page</a>.`,
+    helpMore: 'More',
+
+    aboutTitle: 'About',
+    aboutSub: 'ICQ Revival',
+    aboutP1: 'ICQ Revival is a private, non-commercial server for the classic ICQ '
+      + 'and AIM clients: ICQ Pro 2003b, ICQ 6.5, Miranda NG, AIM and the others '
+      + 'that speak the OSCAR protocol. The old clients sign in, keep their contact '
+      + 'lists and talk to each other again.',
+    aboutP2: 'It is independent: not affiliated with, endorsed by or connected to '
+      + 'ICQ, AOL, Yahoo or VK. ICQ and AIM are trademarks of their owners and are '
+      + 'named here only to say which clients the server works with.',
+    aboutP3: (href) => 'No advertising and no fees. The software is open source, '
+      + `built on <a href="${href}">Open OSCAR Server</a>.`,
+    aboutThis: 'This server',
+    aboutName: 'Name',
+    aboutAddress: 'Address',
+    aboutContact: 'Contact',
+
+    legalTitle: 'Legal notice and privacy',
+    legalSub: 'what is kept, and the rules',
+    legalWho: 'Who runs it',
+    legalWhoText: (name) => `<b>${name}</b> is run privately, as a non-commercial `
+      + 'hobby project. It is not a company and sells nothing.',
+    legalContact: (c) => `Questions about the server or your data: ${c}.`,
+    legalStored: 'What the server keeps',
+    legalStoredList: [
+      '<b>Your account</b>: the number, the password in the form the old clients\' '
+        + 'sign-in needs, and the e-mail addresses you gave (for recovery and for '
+        + 'signing in by e-mail).',
+      '<b>Your profile</b>: what you filled in yourself (nickname, name, city, '
+        + 'interests, "about") and your picture.',
+      '<b>Your contact list</b> and your privacy settings (visible, invisible and '
+        + 'ignore lists), and authorization requests that are still waiting.',
+      '<b>Offline messages</b>: a message sent while you were offline is kept until '
+        + 'you sign in, and deleted once it is delivered.',
+    ],
+    legalNotStored: 'What it does not keep',
+    legalNotStoredList: [
+      'Messages between people who are online pass through the server and are not '
+        + 'saved. There is no message archive or history on the server; your client '
+        + 'keeps its own history on your computer.',
+      'Group chats are not saved.',
+      'Voice calls and file transfers go straight between the two computers.',
+    ],
+    legalLogs: 'Logs and backups',
+    legalLogsText: 'To keep the server running and to deal with abuse, it writes '
+      + 'technical logs: sign-ins, the network addresses connections come from, '
+      + 'errors. Message text is not written to them. The logs rotate and are '
+      + 'overwritten after a short time. The database is copied once a day and each '
+      + 'copy is kept for two weeks, so something deleted today can remain in a '
+      + 'backup for up to fourteen days.',
+    legalSeen: 'What other people see',
+    legalSeenText: 'Your number, profile and online status are visible to other '
+      + 'users of the server, in search and in "who is online" (unless you are '
+      + 'invisible). Your e-mail address is shown only if you allowed that in your '
+      + 'profile.',
+    legalNoTrack: 'No ads, no tracking',
+    legalNoTrackText: 'There is no advertising, no analytics and no third-party '
+      + 'tracking, and nothing is sold or handed to anyone. One thing leaves the '
+      + 'server by your own action: the search box in the client sends your query '
+      + 'to Google, and the "Map" button opens Google Maps, under their own terms.',
+    legalDelete: 'Deleting your data',
+    legalDeleteText: (href) => `You can close your account yourself on `
+      + `<a href="${href}">the account page</a>. That removes the account, the `
+      + 'profile, the contact list and the privacy settings; the daily backups age '
+      + 'out within two weeks.',
+
+    termsTitle: 'Terms of use',
+    termsSub: 'short and plain',
+    termsList: [
+      'The service is free and provided as is, with no guarantee that it is '
+        + 'available or that your data is kept. It may change or stop at any time.',
+      'Do not use it for spam, harassment, fraud, malware or anything illegal, and '
+        + 'do not try to get into other people\'s accounts or into the server.',
+      'You are responsible for what you send. Accounts that break these rules may '
+        + 'be suspended or removed without notice.',
+      'The old clients protect the password poorly, and without SSL they send '
+        + 'everything unencrypted. Do not reuse a password you use anywhere else.',
+      'By using the server you accept these terms and the privacy notice.',
+    ],
+    termsPrivacy: (href) => `What the server keeps about you: <a href="${href}">legal `
+      + 'notice and privacy</a>.',
+
+    dlTitle: 'Clients and patches',
+    dlSub: 'what works, and what it needs',
+    dlIntro: 'These clients are known to work. The patches only accept the exact '
+      + 'builds listed: they check every file before changing it and refuse '
+      + 'another build rather than damage it.',
+    dlClient: 'Client',
+    dlBuild: 'Build',
+    dlNeeds: 'What it needs',
+    dlGet: 'Download',
+    dlSoon: 'not published yet',
+    dlAny: 'any',
+    dlIcq2003b: 'the ICQ 2003b patch',
+    dlIcq65: 'the ICQ 6.5 patch',
+    dlMiranda: 'our ICQ plugin (32 and 64 bit)',
+    dlByHand: 'nothing: set the server by hand',
+    dlOthers: 'AIM 5.x and other OSCAR clients',
+    dlHow: 'How to apply a patch',
+    dlHowSteps: (host) => [
+      'Close the client.',
+      'Run the patch and allow it administrator rights: the client lives in '
+        + 'Program Files. If the patch does not find the client there, point it at '
+        + 'the client\'s folder.',
+      host ? `Type the server's domain: <code>${host}</code>. Only the domain; the `
+        + 'patch fills in the ports itself.'
+        : 'Type the server\'s domain. Only the domain; the patch fills in the ports '
+        + 'itself.',
+      'Leave the ticks as they are, or clear what you want to keep, and press '
+        + '<b>Apply</b>.',
+      'Start the client and sign in with your number.',
+    ],
+    dlHowNote: 'Every file is backed up before it is changed. <b>Restore original</b> '
+      + 'puts the client back exactly as it was. To move to another server, apply '
+      + 'the patch again with the new domain.',
+    dlMirandaNote: 'Miranda NG: put the DLL of your Miranda\'s bitness into the '
+      + '<code>Plugins</code> folder and restart it. The file is deliberately not '
+      + 'named <code>ICQ.dll</code>, so that the plugin updater does not replace it.',
   },
 
   uk: {
@@ -422,6 +603,183 @@ const I18N = {
       + 'На список контактів, повідомлення та статуси це не впливає.',
     errorTitle: 'Помилка',
     unit: { h: 'год', m: 'хв', s: 'с' },
+
+    lnkHelp: 'Довідка',
+    lnkAbout: 'Про сервіс',
+    lnkLegal: 'Правова інформація та приватність',
+    lnkTerms: 'Умови користування',
+    lnkDownload: 'Клієнти та патчі',
+    lnkRecover: 'Відновити забутий пароль',
+
+    helpTitle: 'Довідка',
+    helpSub: 'ICQ Revival',
+    helpIntro: (name) => `<b>${name}</b> — сервер для класичних клієнтів ICQ та AIM. `
+      + 'Нижче — усе, що потрібно для початку, і те, чого більше немає.',
+    helpSignIn: 'Вхід',
+    helpSignInSteps: [
+      'Потрібен номер, зареєстрований на цьому сервері. Номер зі старої ICQ сюди '
+        + 'не переноситься: візьміть новий на сторінці реєстрації.',
+      '<b>ICQ 6.5</b> та <b>ICQ Pro 2003b</b>: закрийте клієнт, запустіть патч для '
+        + 'нього й введіть домен сервера. Патч спрямовує на цей сервер і вхід, і '
+        + 'посилання з меню; більше нічого налаштовувати не треба.',
+      '<b>Miranda NG</b>: встановіть наш плагін ICQ і вкажіть у ньому сервер, '
+        + 'наведений нижче.',
+      '<b>AIM</b> та інші клієнти: впишіть сервер і порт, наведені нижче, у '
+        + 'налаштування зʼєднання клієнта.',
+    ],
+    helpAccount: 'Ваш номер і пароль',
+    helpAccountSteps: (reg, profile, recover) => [
+      reg ? `Новий номер: <a href="${reg}">сторінка реєстрації</a>.` : '',
+      profile ? 'Нік, анкета, пароль і пошта для відновлення: '
+        + `<a href="${profile}">ваш профіль</a>.` : '',
+      recover ? `Забули пароль? <a href="${recover}">Сторінка відновлення</a> надішле `
+        + 'посилання на пошту для відновлення. Це можливо, лише якщо ви додали пошту '
+        + 'в профілі й підтвердили її, тож зробіть це зараз, поки пароль ще '
+        + 'памʼятаєте.' : '',
+    ],
+    helpCalls: 'Голосові дзвінки в ICQ 6.5',
+    helpCallsSteps: [
+      'Дзвінок іде напряму між двома компʼютерами. Сервер лише передає '
+        + 'запрошення; звук через нього не проходить і не записується.',
+      'Перед дзвінком ICQ питає сервер через <b>UDP-порт 3478</b> (STUN), як її '
+        + 'видно з інтернету, щоб співрозмовник міг достукатися крізь роутер. Патч '
+        + 'спрямовує ICQ для цього на цей сервер.',
+      'Ретранслятора немає. Якщо ви обидва за роутерами чи брандмауерами, які не '
+        + 'пропускають вхідний UDP, дзвінок може зʼєднатися, але без звуку. Зазвичай '
+        + 'допомагає дозволити ICQ у брандмауері.',
+    ],
+    helpGone: 'Чого більше немає',
+    helpGoneText: 'Це жило на серверах ICQ.com та AOL і зникло разом із ними. '
+      + 'Патчі прибирають це з інтерфейсу; те, що лишилося, відкриває коротку '
+      + 'сторінку з поясненням.',
+    helpGoneList: [
+      '<b>Xtraz</b>: галерея, анімовані привітання та міні-ігри.',
+      '<b>SMS</b> і дзвінки на звичайні телефони.',
+      '<b>tZers</b>.',
+      '<b>Реклама</b>: банери, стрічка новин і рекламні вікна.',
+      'Вебслужби ICQ.com: пошта, новини, каталог чатів, веб-версія списку контактів.',
+    ],
+    helpPatches: 'Де взяти патчі',
+    helpPatchesText: (href) => 'Патчі, плагін для Miranda NG і перелік клієнтів, '
+      + `що працюють, — на <a href="${href}">сторінці завантажень</a>.`,
+    helpMore: 'Ще',
+
+    aboutTitle: 'Про сервіс',
+    aboutSub: 'ICQ Revival',
+    aboutP1: 'ICQ Revival — приватний некомерційний сервер для класичних клієнтів '
+      + 'ICQ та AIM: ICQ Pro 2003b, ICQ 6.5, Miranda NG, AIM та інших, що говорять '
+      + 'протоколом OSCAR. Старі клієнти знову входять, зберігають списки контактів '
+      + 'і спілкуються між собою.',
+    aboutP2: 'Сервіс незалежний: не повʼязаний з ICQ, AOL, Yahoo чи VK і не '
+      + 'схвалений ними. ICQ та AIM — торговельні марки їхніх власників; тут вони '
+      + 'згадуються лише для того, щоб назвати клієнти, з якими працює сервер.',
+    aboutP3: (href) => 'Без реклами й без плати. Програмне забезпечення відкрите, '
+      + `побудоване на <a href="${href}">Open OSCAR Server</a>.`,
+    aboutThis: 'Цей сервер',
+    aboutName: 'Назва',
+    aboutAddress: 'Адреса',
+    aboutContact: 'Контакт',
+
+    legalTitle: 'Правова інформація та приватність',
+    legalSub: 'що зберігається і правила',
+    legalWho: 'Хто це веде',
+    legalWhoText: (name) => `<b>${name}</b> ведеться приватно, як некомерційний `
+      + 'аматорський проєкт. Це не компанія, і вона нічого не продає.',
+    legalContact: (c) => `Питання щодо сервера чи ваших даних: ${c}.`,
+    legalStored: 'Що зберігає сервер',
+    legalStoredList: [
+      '<b>Обліковий запис</b>: номер, пароль у тому вигляді, якого потребує вхід '
+        + 'старих клієнтів, і адреси пошти, які ви вказали (для відновлення та для '
+        + 'входу за поштою).',
+      '<b>Профіль</b>: те, що ви заповнили самі (нік, імʼя, місто, інтереси, '
+        + '«про себе»), і ваша картинка.',
+      '<b>Список контактів</b> і налаштування приватності (списки видимості, '
+        + 'невидимості та ігнорування), а також запити на авторизацію, що чекають '
+        + 'відповіді.',
+      '<b>Повідомлення офлайн</b>: надіслане, поки вас не було в мережі, '
+        + 'зберігається до вашого входу й видаляється, щойно його доставлено.',
+    ],
+    legalNotStored: 'Чого він не зберігає',
+    legalNotStoredList: [
+      'Повідомлення між тими, хто в мережі, проходять через сервер і не '
+        + 'зберігаються. Архіву чи історії повідомлень на сервері немає; клієнт '
+        + 'веде власну історію на вашому компʼютері.',
+      'Групові чати не зберігаються.',
+      'Голосові дзвінки й передавання файлів ідуть напряму між двома компʼютерами.',
+    ],
+    legalLogs: 'Журнали та резервні копії',
+    legalLogsText: 'Щоб сервер працював і щоб протидіяти зловживанням, він веде '
+      + 'технічні журнали: входи, мережеві адреси, з яких приходять зʼєднання, '
+      + 'помилки. Текст повідомлень туди не пишеться. Журнали ротуються й '
+      + 'перезаписуються за короткий час. Базу даних копіюють раз на добу, і кожна '
+      + 'копія зберігається два тижні, тож видалене сьогодні може лишатися в '
+      + 'резервній копії до чотирнадцяти днів.',
+    legalSeen: 'Що бачать інші',
+    legalSeenText: 'Ваш номер, профіль і статус бачать інші користувачі сервера — у '
+      + 'пошуку та в списку «хто в мережі» (якщо ви не невидимі). Адресу пошти '
+      + 'видно, лише якщо ви це дозволили в профілі.',
+    legalNoTrack: 'Без реклами й стеження',
+    legalNoTrackText: 'Реклами, аналітики та стороннього стеження немає, нічого не '
+      + 'продається й нікому не передається. Одне залишає сервер лише з вашої дії: '
+      + 'поле пошуку в клієнті надсилає запит до Google, а кнопка «Map» відкриває '
+      + 'Google Maps — на їхніх власних умовах.',
+    legalDelete: 'Видалення даних',
+    legalDeleteText: (href) => 'Закрити обліковий запис можна самостійно на '
+      + `<a href="${href}">сторінці облікового запису</a>. Це видаляє обліковий `
+      + 'запис, профіль, список контактів і налаштування приватності; щоденні '
+      + 'резервні копії зникають упродовж двох тижнів.',
+
+    termsTitle: 'Умови користування',
+    termsSub: 'коротко й просто',
+    termsList: [
+      'Сервіс безкоштовний і надається «як є», без гарантій доступності чи '
+        + 'збереження ваших даних. Він може змінитися або припинити роботу будь-коли.',
+      'Не використовуйте його для спаму, цькування, шахрайства, шкідливих програм '
+        + 'чи будь-чого незаконного й не намагайтеся проникнути в чужі облікові '
+        + 'записи чи на сервер.',
+      'За надіслане відповідаєте ви. Облікові записи, що порушують ці правила, '
+        + 'можуть бути заблоковані або видалені без попередження.',
+      'Старі клієнти погано захищають пароль, а без SSL надсилають усе '
+        + 'незашифрованим. Не використовуйте пароль, який маєте деінде.',
+      'Користуючись сервером, ви приймаєте ці умови та положення про приватність.',
+    ],
+    termsPrivacy: (href) => `Що сервер зберігає про вас: <a href="${href}">правова `
+      + 'інформація та приватність</a>.',
+
+    dlTitle: 'Клієнти та патчі',
+    dlSub: 'що працює і що для цього треба',
+    dlIntro: 'Ці клієнти перевірено. Патчі приймають лише саме ці збірки: вони '
+      + 'перевіряють кожен файл перед зміною й відмовляються від іншої збірки, '
+      + 'щоб її не зіпсувати.',
+    dlClient: 'Клієнт',
+    dlBuild: 'Збірка',
+    dlNeeds: 'Що потрібно',
+    dlGet: 'Завантажити',
+    dlSoon: 'ще не опубліковано',
+    dlAny: 'будь-яка',
+    dlIcq2003b: 'патч для ICQ 2003b',
+    dlIcq65: 'патч для ICQ 6.5',
+    dlMiranda: 'наш плагін ICQ (32 і 64 біти)',
+    dlByHand: 'нічого: сервер вказується вручну',
+    dlOthers: 'AIM 5.x та інші клієнти OSCAR',
+    dlHow: 'Як застосувати патч',
+    dlHowSteps: (host) => [
+      'Закрийте клієнт.',
+      'Запустіть патч і дозвольте йому права адміністратора: клієнт лежить у '
+        + 'Program Files. Якщо патч не знайде клієнт там, вкажіть йому теку клієнта.',
+      host ? `Введіть домен сервера: <code>${host}</code>. Лише домен; порти патч `
+        + 'підставить сам.'
+        : 'Введіть домен сервера. Лише домен; порти патч підставить сам.',
+      'Залиште позначки як є або зніміть те, що хочете зберегти, і натисніть '
+        + '<b>Apply</b>.',
+      'Запустіть клієнт і увійдіть зі своїм номером.',
+    ],
+    dlHowNote: 'Кожен файл перед зміною зберігається в резервну копію. '
+      + '<b>Restore original</b> повертає клієнт точно таким, яким він був. Щоб '
+      + 'перейти на інший сервер, застосуйте патч ще раз із новим доменом.',
+    dlMirandaNote: 'Miranda NG: покладіть DLL тієї розрядності, що й ваша Miranda, '
+      + 'у теку <code>Plugins</code> і перезапустіть її. Файл навмисно названо не '
+      + '<code>ICQ.dll</code>, щоб засіб оновлення плагінів його не замінив.',
   },
 };
 
@@ -996,19 +1354,7 @@ function howtoPage(uin, selfPath, u) {
     : '';
 
   const host = config.oscarHost || '';
-  const ports = host
-    ? `<div class="card">
-        <table cellpadding="0" cellspacing="0" border="0">
-          <tr><td style="padding:1px 10px 1px 0"><span class="dim">${t.howtoServer}</span></td>
-              <td><code>${escapeHtml(host)}</code></td></tr>
-          <tr><td style="padding:1px 10px 1px 0"><span class="dim">${t.howtoPlain}</span></td>
-              <td><code>5190</code></td></tr>
-          <tr><td style="padding:1px 10px 1px 0"><span class="dim">${t.howtoSsl}</span></td>
-              <td><code>5193</code></td></tr>
-        </table>
-      </div>
-      <p><span class="dim">${t.howtoPorts}</span></p>`
-    : '';
+  const ports = serverCard(t);
 
   return page(t.howtoTitle, `
     <div class="panel">${uin ? t.howtoYou(escapeHtml(uin)) : ''}</div>
@@ -1026,6 +1372,237 @@ function howtoPage(uin, selfPath, u) {
 
     ${host ? `<h2>${t.howtoSettings}</h2>` : ''}
     ${ports}`, t.howtoSub, false, u);
+}
+
+// The server address and ports, for a client that is set up by hand. Empty
+// when the config names no address.
+function serverCard(t) {
+  const host = config.oscarHost || '';
+  if (!host) return '';
+  return `<div class="card">
+        <table cellpadding="0" cellspacing="0" border="0">
+          <tr><td style="padding:1px 10px 1px 0"><span class="dim">${t.howtoServer}</span></td>
+              <td><code>${escapeHtml(host)}</code></td></tr>
+          <tr><td style="padding:1px 10px 1px 0"><span class="dim">${t.howtoPlain}</span></td>
+              <td><code>5190</code></td></tr>
+          <tr><td style="padding:1px 10px 1px 0"><span class="dim">${t.howtoSsl}</span></td>
+              <td><code>5193</code></td></tr>
+        </table>
+      </div>
+      <p><span class="dim">${t.howtoPorts}</span></p>`;
+}
+
+// ------------------------------------------------------------ information pages
+//
+// Help, about, legal, terms and downloads: the pages ICQ 6.5's Help menu and
+// sign-in window open once the patch points them here. Plain text pages, the
+// same shell as the rest.
+
+// A list with the green square bullets the other pages use. Empty lines are
+// left out, so a caller can drop an item by passing ''.
+function bullets(lines) {
+  const rows = lines.filter(Boolean).map((line) => `<tr>
+    <td valign="top" width="14" style="padding:5px 0 0 0">
+      <table cellpadding="0" cellspacing="0" border="0"><tr><td class="bul"></td></tr></table>
+    </td>
+    <td style="padding:2px 0 4px 0">${line}</td></tr>`).join('');
+  return `<div class="soft">
+      <table cellpadding="0" cellspacing="0" border="0">${rows}</table>
+    </div>`;
+}
+
+// A link to one of our own pages that keeps the language the reader chose: the
+// pages carry no cookies, so the switch would be lost on every click.
+function ownLink(path, u) {
+  return escapeHtml(`/icq${path}?lang=${u.lang}`);
+}
+
+// The pages on the registration service, reached through our own redirects.
+// Without a registration service there is nothing to link to.
+function accountLink(path, u) {
+  return config.registerBase ? ownLink(path, u) : '';
+}
+
+// The contact for questions about the server, from the config: an e-mail
+// address, a web page or plain text. Empty when none is configured.
+function contactHtml() {
+  const c = String(config.contact || '').trim();
+  if (!c) return '';
+  if (/^[^@\s]+@[^@\s]+$/.test(c)) {
+    return `<a href="mailto:${escapeHtml(c)}">${escapeHtml(c)}</a>`;
+  }
+  if (/^https?:\/\//i.test(c)) return `<a href="${escapeHtml(c)}">${escapeHtml(c)}</a>`;
+  return escapeHtml(c);
+}
+
+// A download from the config. A value that is empty or still says TODO is not
+// a link yet, and the page says so instead of sending the reader nowhere.
+function downloadLink(key, t) {
+  const url = String((config.downloads || {})[key] || '').trim();
+  if (!url || /^todo/i.test(url)) return `<span class="dim">${t.dlSoon}</span>`;
+  return `<a href="${escapeHtml(url)}">${t.dlGet}</a>`;
+}
+
+// The links at the foot of every information page, minus the page itself.
+function infoLinks(self, u) {
+  const t = u.t;
+  const all = [
+    ['/help/', t.lnkHelp],
+    ['/about', t.lnkAbout],
+    ['/download', t.lnkDownload],
+    ['/legal/', t.lnkLegal],
+    ['/terms', t.lnkTerms],
+  ];
+  return bullets(all.filter(([p]) => p !== self)
+    .map(([p, text]) => `<a href="${ownLink(p, u)}">${text}</a>`));
+}
+
+function helpPage(u) {
+  const t = u.t;
+  const name = escapeHtml(config.serverName);
+  const more = [
+    `<a href="${ownLink('/howto', u)}">${t.howtoTitle}</a>`,
+    accountLink('/profile', u) ? `<a href="${accountLink('/profile', u)}">${t.lnkProfile}</a>` : '',
+    `<a href="${ownLink('/whitepages', u)}">${t.lnkFind}</a>`,
+    `<a href="${ownLink('/wwp', u)}">${t.lnkPager}</a>`,
+    `<a href="${ownLink('/today', u)}">${t.lnkToday}</a>`,
+    `<a href="${ownLink('/about', u)}">${t.lnkAbout}</a>`,
+    `<a href="${ownLink('/legal/', u)}">${t.lnkLegal}</a>`,
+  ];
+
+  return page(t.helpTitle, `
+    <p>${t.helpIntro(name)}</p>
+
+    <h2>${t.helpSignIn}</h2>
+    ${bullets(t.helpSignInSteps)}
+    <div style="margin-top:10px">${serverCard(t)}</div>
+
+    <h2>${t.helpAccount}</h2>
+    ${bullets(t.helpAccountSteps(accountLink('/register', u),
+      accountLink('/profile', u), accountLink('/password', u)))}
+
+    <h2>${t.helpCalls}</h2>
+    ${bullets(t.helpCallsSteps)}
+
+    <h2>${t.helpGone}</h2>
+    <p>${t.helpGoneText}</p>
+    ${bullets(t.helpGoneList)}
+
+    <h2>${t.helpPatches}</h2>
+    <p>${t.helpPatchesText(ownLink('/download', u))}</p>
+
+    <h2>${t.helpMore}</h2>
+    ${bullets(more)}`, t.helpSub, false, u);
+}
+
+function aboutPage(u) {
+  const t = u.t;
+  const row = (label, value) => (value ? `<tr>
+    <td valign="top" style="padding:1px 10px 1px 0"><span class="dim">${label}</span></td>
+    <td valign="top" style="padding:1px 0">${value}</td></tr>` : '');
+  const host = config.oscarHost ? `<code>${escapeHtml(config.oscarHost)}</code>` : '';
+
+  return page(t.aboutTitle, `
+    <p>${t.aboutP1}</p>
+    <p>${t.aboutP2}</p>
+    <p>${t.aboutP3('https://github.com/mk6i/open-oscar-server')}</p>
+
+    <h2>${t.aboutThis}</h2>
+    <div class="card">
+      <table cellpadding="0" cellspacing="0" border="0">
+        ${row(t.aboutName, `<b>${escapeHtml(config.serverName)}</b>`)}
+        ${row(t.aboutAddress, host)}
+        ${row(t.aboutContact, contactHtml())}
+      </table>
+    </div>
+
+    ${infoLinks('/about', u)}`, t.aboutSub, false, u);
+}
+
+// The terms, shared by their own page and the legal page.
+function termsBody(u) {
+  return bullets(u.t.termsList);
+}
+
+function legalPage(u) {
+  const t = u.t;
+  const contact = contactHtml();
+  const account = accountLink('/account', u);
+
+  return page(t.legalTitle, `
+    <h2>${t.legalWho}</h2>
+    <p>${t.legalWhoText(escapeHtml(config.serverName))}</p>
+    ${contact ? `<p>${t.legalContact(contact)}</p>` : ''}
+
+    <h2>${t.legalStored}</h2>
+    ${bullets(t.legalStoredList)}
+
+    <h2>${t.legalNotStored}</h2>
+    ${bullets(t.legalNotStoredList)}
+
+    <h2>${t.legalLogs}</h2>
+    <p>${t.legalLogsText}</p>
+
+    <h2>${t.legalSeen}</h2>
+    <p>${t.legalSeenText}</p>
+
+    <h2>${t.legalNoTrack}</h2>
+    <p>${t.legalNoTrackText}</p>
+
+    ${account ? `<h2>${t.legalDelete}</h2>
+    <p>${t.legalDeleteText(account)}</p>` : ''}
+
+    <h2>${t.termsTitle}</h2>
+    ${termsBody(u)}
+
+    <h2>${t.helpMore}</h2>
+    ${infoLinks('/legal/', u)}`, t.legalSub, false, u);
+}
+
+function termsPage(u) {
+  const t = u.t;
+  return page(t.termsTitle, `
+    ${termsBody(u)}
+    <p>${t.termsPrivacy(ownLink('/legal/', u))}</p>
+
+    <h2>${t.helpMore}</h2>
+    ${infoLinks('/terms', u)}`, t.termsSub, false, u);
+}
+
+function downloadPage(u) {
+  const t = u.t;
+  const row = (client, build, needs, link) => `<tr>
+    <td valign="top">${client}</td>
+    <td valign="top">${build}</td>
+    <td valign="top">${needs}</td>
+    <td valign="top" nowrap>${link}</td></tr>`;
+  const host = config.oscarHost ? escapeHtml(config.oscarHost) : '';
+
+  return page(t.dlTitle, `
+    <p>${t.dlIntro}</p>
+
+    <div class="scroll">
+    <table class="data" cellpadding="0" cellspacing="0" border="0">
+      <thead><tr>
+        <th>${t.dlClient}</th><th>${t.dlBuild}</th><th>${t.dlNeeds}</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${row('<b>ICQ Pro 2003b</b>', '3916', t.dlIcq2003b, downloadLink('icq2003bPatch', t))}
+        ${row('<b>ICQ 6.5</b>', '2024', t.dlIcq65, downloadLink('icq65Patch', t))}
+        ${row('<b>Miranda NG</b>', '0.96.7', t.dlMiranda, downloadLink('mirandaPlugin', t))}
+        ${row(`<b>${t.dlOthers}</b>`, t.dlAny, t.dlByHand,
+          `<a href="${ownLink('/help/', u)}">${t.lnkHelp}</a>`)}
+      </tbody>
+    </table>
+    </div>
+
+    <h2>${t.dlHow}</h2>
+    ${bullets(t.dlHowSteps(host))}
+    <p><span class="dim">${t.dlHowNote}</span></p>
+    <p><span class="dim">${t.dlMirandaNote}</span></p>
+
+    <h2>${t.helpMore}</h2>
+    ${infoLinks('/download', u)}`, t.dlSub, false, u);
 }
 
 function stubPage(topic, u, compact = false) {
@@ -1286,6 +1863,15 @@ const ACTIONS = {
   },
 
   today: async (ctx) => send(ctx.res, 200, await todayPage(ctx.u)),
+
+  // The information pages. /icq/terms arrives from ICQ 6.5 with ?lspid= and a
+  // lang= of its own; neither matters here, and a lang= we do not know simply
+  // falls back to Accept-Language.
+  help: (ctx) => send(ctx.res, 200, helpPage(ctx.u)),
+  about: (ctx) => send(ctx.res, 200, aboutPage(ctx.u)),
+  legal: (ctx) => send(ctx.res, 200, legalPage(ctx.u)),
+  terms: (ctx) => send(ctx.res, 200, termsPage(ctx.u)),
+  download: (ctx) => send(ctx.res, 200, downloadPage(ctx.u)),
 
   center: async (ctx) => send(
     ctx.res, 200,
