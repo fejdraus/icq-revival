@@ -5,16 +5,14 @@ and can put everything back.
 
 | Folder | Client | What it is |
 |---|---|---|
-| `icq2003b/patch/` | ICQ Pro 2003b | **The patch to hand out.** `ICQ-2003b-Patch.exe` - removes the banners and the Google bar, points the ICQ.com menu items at our server. Built from the C# project in `patcher/Icq2003b`; `ICQ-2003b-Patch.ps1` is the script it was ported from, kept as the reference and still runnable. |
+| `icq2003b/patch/` | ICQ Pro 2003b | **The patch to hand out.** `ICQ-2003b-Patch.exe` - removes the banners and the Google bar, points the ICQ.com menu items at our server. Built from the C# project in `patcher/Icq2003b`. |
 | `icq2003b/translate/` | ICQ Pro 2003b | The Ukrainian interface: `uk-UA.json` holds every text of the client's menus, dialogs and string tables (programs, libraries and ActiveX controls) with its translation, and under `inplace` the few texts that live in a program's data or in the skin. `extract.py` brings it up to date from the client, `build.py` turns it into `patch/ICQ-2003b-uk-UA.json`, a readable text recipe of what to change - the replaced strings, menu items and control captions, and the widths the controls are fitted to - which the patch carries and follows, rebuilding each translated resource from the client's own English one, when "Ukrainian interface" is ticked. `build.py` also widens the controls a longer text needs where the dialog has room (`fit.py`), and lists what still does not fit in `overflow.json`; `check_fit.py` tries shorter wordings against it. |
-| `icq2003b/retarget/` | ICQ Pro 2003b | Moves the client's ICQ.com links to our server from `icq-services.json`, from the command line. |
 | `icq2003b/analysis/` | ICQ Pro 2003b | Disassembly and cross-reference helpers used to find the code patches, plus a map of the skin file. |
 | `icq2003b/codes/` | ICQ Pro 2003b | Extracts the profile code lists (countries, interests, ...) from the client's `DataFiles` into `deploy/oscar-register/icq-codes.json`. |
-| `icq65/patch/` | ICQ 6.5 (build 2024) | **The patch to hand out.** `ICQ-6.5-Patch.exe` - removes Xtraz, advertising, tZers, SMS and phone from the interface and points the ICQ.com pages at our server. Built from the C# project in `patcher/Icq65`; `ICQ-6.5-Patch.ps1` is the script it was ported from, kept as the reference and still runnable. |
-| `icq65/declutter/` | ICQ 6.5 | Superseded by `icq65/patch`. The interface half of it, from the command line. |
-| `icq65/retarget/` | ICQ 6.5 | Superseded by `icq65/patch`. The links half of it, from the command line. |
+| `icq65/patch/` | ICQ 6.5 (build 2024) | **The patch to hand out.** `ICQ-6.5-Patch.exe` - removes Xtraz, advertising, tZers, SMS and phone from the interface and points the ICQ.com pages at our server. Built from the C# project in `patcher/Icq65`. |
 | `patcher/` | every patch | The patches as C# WinForms programs (.NET Framework 4.8, one exe each): `Common/` - the window, the icon, the job list, backups and the command line all patches share, compiled into each exe as source; `Icq65/` and `Icq2003b/` - the patches for ICQ 6.5 and ICQ Pro 2003b. |
-| `common/` | every patch | `PatchWindow.ps1` - the window and the icon all script patches share; `Build-Patches.ps1` - builds every patch's exe from `patcher/` (the .NET SDK). The scripts are the references the C# patches were ported from. |
+| `patcher-cpp/` | ICQ Pro 2003b | The same 2003b patch in C++ on the plain Win32 API, for Windows XP SP3 to 11 with nothing to install (`Build.ps1`, toolset v141_xp). Not yet moved to the text recipe of the translation, so it does not build until it is. |
+| `common/` | every patch | `Build-Patches.ps1` - builds every patch's exe from `patcher/` (the .NET SDK); `Check-VirusTotal.ps1` - checks the built exes on VirusTotal (key in `VT_API_KEY`). |
 | `miranda-icq/` | Miranda NG | The ICQ protocol plugin brought back to the current Miranda NG API: the patch, build output and language pack. |
 
 The patches also point the client's sign-in at the server, where the client allows it (see the rules below).
@@ -59,5 +57,5 @@ These hold for the patches above and for any new one, for whatever client:
   not draw its own. Its exe is named `ICQ-<client version>-Patch.exe`, the
   exe's description names the client and build, and the icon carries the
   version, so a patch is never mistaken for another client's. A new patch is
-  a project under `patcher/`, with an `app.ico` drawn by `New-PatchIconFile`
+  a project under `patcher/`, with an `app.ico` written by `PatchIcon.WriteFile`
   with its badge and colour, and a line in `common/Build-Patches.ps1`.

@@ -6,7 +6,7 @@
 #
 # The patches are C# projects under tools\patcher, built with dotnet build;
 # the same sources give the same exe. Each carries its icon as the app.ico
-# next to its project, drawn once by New-PatchIconFile of PatchWindow.ps1 -
+# next to its project, written once by PatchIcon.WriteFile (patcher\Common) -
 # the same picture the window shows. Explorer shows the title as the file
 # description, hence the client version in it.
 

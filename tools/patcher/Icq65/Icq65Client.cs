@@ -27,9 +27,6 @@
 // is not wanted and in place is taken out again. A file with several changes
 // is rebuilt from its backup with the wanted ones only, so taking one out
 // leaves exactly the original behind.
-//
-// This is the port of tools\icq65\patch\ICQ-6.5-Patch.ps1, which stays in the
-// repository as the reference for what the patch does.
 
 using System;
 using System.Collections.Generic;

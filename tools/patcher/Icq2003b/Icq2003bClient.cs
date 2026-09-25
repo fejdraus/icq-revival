@@ -16,9 +16,6 @@
 //
 // Apply makes the client match the selection: what is wanted is put in, what
 // is not wanted and in place is taken out again, from the backup of the file.
-//
-// This is the port of tools\icq2003b\patch\ICQ-2003b-Patch.ps1, which stays in
-// the repository as the reference for what the patch does.
 
 using System;
 using System.Collections.Generic;

@@ -93,7 +93,7 @@ func TestServer(t *testing.T) {
 
 	conn, err := net.Dial("udp", addr.String())
 	assert.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_, err = conn.Write(request(0x0001, classicID, nil))
 	assert.NoError(t, err)
 

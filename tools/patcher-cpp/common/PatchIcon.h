@@ -3,7 +3,7 @@
 //
 // The icon is drawn, not stored: the same picture is drawn into the window's
 // header, and the app.ico each exe is built with was written from it once
-// (by New-PatchIconFile of tools\common\PatchWindow.ps1). This exe carries
+// (by PatchIcon.WriteFile of tools\patcher\Common\PatchIcon.cs). This exe carries
 // that same app.ico for its title bar and for Explorer.
 
 #pragma once

@@ -2,8 +2,7 @@
 //
 // The icon is drawn, not stored: the same picture is drawn into the window's
 // header and into its title bar, and the app.ico each exe is built with was
-// written from it once (by New-PatchIconFile of tools\common\PatchWindow.ps1,
-// which this is the port of; WriteFile here writes the very same bytes).
+// written from it once, by WriteFile below.
 
 using System;
 using System.Drawing;
