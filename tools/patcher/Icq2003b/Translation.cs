@@ -2,15 +2,16 @@
 // client's programs, the texts that live in a program's data or in the skin,
 // and the blank "Send By:" in both languages.
 //
-// Built by ..\..\icq2003b\translate\build.py into ICQ-2003b-uk-UA.txt (JSON,
-// gzip, base64), which is compiled into the exe as it is and decoded once.
+// The source is ..\..\icq2003b\patch\ICQ-2003b-uk-UA.txt, written by the
+// translation tools. It is decoded at build time (build\ConvertTranslation.cs)
+// into two files the exe carries as they are: translation.dat, the raw bytes
+// of every item one after another, and translation.idx, a UTF-8 index into
+// them. Here the index is only read; nothing is unpacked or decoded.
 
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.IO.Compression;
-using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -52,98 +53,101 @@ namespace IcqRevival.Patch
 
     internal sealed class Translation
     {
-        public const string ResourceName = "ICQ-2003b-uk-UA.txt";
-
-        // In the order of the file; looked up ignoring case.
+        // In the order of the source; looked up ignoring case, the first of a name.
         public readonly List<TrFile> Files = new List<TrFile>();
-        readonly Dictionary<string, TrFile> byRel = new Dictionary<string, TrFile>(StringComparer.OrdinalIgnoreCase);
         public TrSendBy SendBy;
 
         public TrFile File(string rel)
         {
-            TrFile f;
-            return rel != null && byRel.TryGetValue(rel, out f) ? f : null;
+            if (rel == null) return null;
+            foreach (TrFile f in Files)
+            {
+                if (string.Equals(f.Rel, rel, StringComparison.OrdinalIgnoreCase)) return f;
+            }
+            return null;
         }
 
         static Translation loaded;
 
         public static Translation Get()
         {
-            if (loaded == null) loaded = Load();
+            if (loaded == null) loaded = Parse(Resource("translation.idx"), Resource("translation.dat"));
             return loaded;
         }
 
-        // "#123" for a number, the name itself otherwise.
-        static string ResName(object n)
+        static byte[] Resource(string name)
         {
-            var s = n as string;
-            if (s != null) return s;
-            return "#" + Convert.ToString(n, CultureInfo.InvariantCulture);
+            using (Stream s = typeof(Translation).Assembly.GetManifestResourceStream(name))
+            {
+                if (s == null) throw new InvalidOperationException("The translation is missing from the exe: " + name);
+                var ms = new MemoryStream();
+                s.CopyTo(ms);
+                return ms.ToArray();
+            }
         }
 
-        static string KeyOf(Json o)
+        // The index: one record per line, fields split by tabs.
+        //   language <name>
+        //   file     <rel> <size>
+        //   item     <type|name|lang> <sha256 of the English data> <offset> <length>
+        //   place    <file offset> <offset> <length> <offset of the original> <its length>
+        //   whole    <sha256 of the English file> <offset> <length>
+        //   sendby   <file> <type|name|lang> <sha256> <offset> <length> <offset> <length>
+        // A line starting with # is a comment. Offsets and lengths are into the
+        // data.
+        static Translation Parse(byte[] index, byte[] data)
         {
-            return string.Format(CultureInfo.InvariantCulture, "{0}|{1}|{2}", o["t"], ResName(o["n"]), o["l"]);
-        }
-
-        static byte[] B64(object s) { return Convert.FromBase64String((string)s); }
-
-        static Translation Load()
-        {
-            string packed;
-            using (Stream s = typeof(Translation).Assembly.GetManifestResourceStream(ResourceName))
-            using (var r = new StreamReader(s, Encoding.UTF8))
+            Func<string, string, byte[]> slice = (offset, length) =>
             {
-                packed = r.ReadToEnd();
-            }
-            string json;
-            using (var ms = new MemoryStream(Convert.FromBase64String(packed)))
-            using (var gz = new GZipStream(ms, CompressionMode.Decompress))
-            using (var reader = new StreamReader(gz, Encoding.UTF8))
-            {
-                json = reader.ReadToEnd();
-            }
-            var t = (Json)Json.Parse(json);
-            var result = new Translation();
-            foreach (KeyValuePair<string, object> f in ((Json)t["files"]).Pairs)
-            {
-                var v = (Json)f.Value;
-                var file = new TrFile { Rel = f.Key, Size = Convert.ToInt64(v["size"], CultureInfo.InvariantCulture) };
-                foreach (object o in Json.List(v["items"]))
-                {
-                    var it = (Json)o;
-                    file.Items.Add(new TrItem { Key = KeyOf(it), Bytes = B64(it["d"]), From = (string)it["from"] });
-                }
-                foreach (object o in Json.List(v["inplace"]))
-                {
-                    var it = o as Json;
-                    if (it == null) continue;
-                    file.Inplace.Add(new TrPlace
-                    {
-                        Offset = Convert.ToInt32(it["o"], CultureInfo.InvariantCulture),
-                        Bytes = B64(it["d"]),
-                        Original = B64(it["from"]),
-                    });
-                }
-                var whole = v["whole"] as Json;
-                if (whole != null)
-                {
-                    file.Whole = B64(whole["d"]);
-                    file.WholeFrom = (string)whole["from"];
-                }
-                result.Files.Add(file);
-                if (!result.byRel.ContainsKey(file.Rel)) result.byRel.Add(file.Rel, file);
-            }
-            var sb = (Json)t["sendBy"];
-            result.SendBy = new TrSendBy
-            {
-                File = (string)sb["file"],
-                Key = KeyOf(sb),
-                From = (string)sb["from"],
-                BlankEn = B64(sb["en"]),
-                BlankUk = B64(sb["uk"]),
+                long o = long.Parse(offset, CultureInfo.InvariantCulture), n = long.Parse(length, CultureInfo.InvariantCulture);
+                if (o < 0 || n < 0 || o + n > data.Length) throw new InvalidDataException("The translation in the exe is damaged.");
+                var b = new byte[n];
+                Buffer.BlockCopy(data, (int)o, b, 0, (int)n);
+                return b;
             };
-            return result;
+            var t = new Translation();
+            TrFile file = null;
+            foreach (string raw in new UTF8Encoding(false).GetString(index).Split('\n'))
+            {
+                string line = raw.TrimEnd('\r');
+                if (line.Length == 0 || line[0] == '#') continue;
+                string[] f = line.Split('\t');
+                switch (f[0])
+                {
+                    case "file":
+                        if (f.Length < 3) break;
+                        file = new TrFile { Rel = f[1], Size = long.Parse(f[2], CultureInfo.InvariantCulture) };
+                        t.Files.Add(file);
+                        break;
+                    case "item":
+                        if (f.Length < 5 || file == null) break;
+                        file.Items.Add(new TrItem { Key = f[1], From = f[2], Bytes = slice(f[3], f[4]) });
+                        break;
+                    case "place":
+                        if (f.Length < 6 || file == null) break;
+                        file.Inplace.Add(new TrPlace
+                        {
+                            Offset = int.Parse(f[1], CultureInfo.InvariantCulture),
+                            Bytes = slice(f[2], f[3]),
+                            Original = slice(f[4], f[5]),
+                        });
+                        break;
+                    case "whole":
+                        if (f.Length < 4 || file == null) break;
+                        file.WholeFrom = f[1];
+                        file.Whole = slice(f[2], f[3]);
+                        break;
+                    case "sendby":
+                        if (f.Length < 8) break;
+                        t.SendBy = new TrSendBy
+                        {
+                            File = f[1], Key = f[2], From = f[3],
+                            BlankEn = slice(f[4], f[5]), BlankUk = slice(f[6], f[7]),
+                        };
+                        break;
+                }
+            }
+            return t;
         }
 
         // SHA-256 of some bytes, as lower-case hex.
@@ -152,131 +156,6 @@ namespace IcqRevival.Patch
             using (var sha = SHA256.Create())
             {
                 return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
-            }
-        }
-    }
-
-    // A JSON object that keeps the order of its members and finds them
-    // ignoring case, as PowerShell's ConvertFrom-Json does. Arrays are
-    // List<object>, numbers long or double, and null is null.
-    internal sealed class Json
-    {
-        public readonly List<KeyValuePair<string, object>> Pairs = new List<KeyValuePair<string, object>>();
-
-        public object this[string name]
-        {
-            get
-            {
-                foreach (KeyValuePair<string, object> p in Pairs)
-                {
-                    if (string.Equals(p.Key, name, StringComparison.OrdinalIgnoreCase)) return p.Value;
-                }
-                return null;
-            }
-        }
-
-        // A member as a list: an array as it is, nothing as none, anything else as one.
-        public static IEnumerable<object> List(object value)
-        {
-            if (value == null) return Enumerable.Empty<object>();
-            var list = value as List<object>;
-            return list ?? new List<object> { value };
-        }
-
-        public static object Parse(string text)
-        {
-            int i = 0;
-            object v = Value(text, ref i);
-            Space(text, ref i);
-            if (i != text.Length) throw new FormatException("JSON: text after the value at " + i);
-            return v;
-        }
-
-        static void Space(string s, ref int i)
-        {
-            while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
-        }
-
-        static object Value(string s, ref int i)
-        {
-            Space(s, ref i);
-            if (i >= s.Length) throw new FormatException("JSON: unexpected end");
-            char c = s[i];
-            if (c == '{')
-            {
-                var o = new Json();
-                i++;
-                Space(s, ref i);
-                if (s[i] == '}') { i++; return o; }
-                while (true)
-                {
-                    Space(s, ref i);
-                    string name = Str(s, ref i);
-                    Space(s, ref i);
-                    if (s[i] != ':') throw new FormatException("JSON: ':' expected at " + i);
-                    i++;
-                    o.Pairs.Add(new KeyValuePair<string, object>(name, Value(s, ref i)));
-                    Space(s, ref i);
-                    if (s[i] == ',') { i++; continue; }
-                    if (s[i] == '}') { i++; return o; }
-                    throw new FormatException("JSON: ',' or '}' expected at " + i);
-                }
-            }
-            if (c == '[')
-            {
-                var a = new List<object>();
-                i++;
-                Space(s, ref i);
-                if (s[i] == ']') { i++; return a; }
-                while (true)
-                {
-                    a.Add(Value(s, ref i));
-                    Space(s, ref i);
-                    if (s[i] == ',') { i++; continue; }
-                    if (s[i] == ']') { i++; return a; }
-                    throw new FormatException("JSON: ',' or ']' expected at " + i);
-                }
-            }
-            if (c == '"') return Str(s, ref i);
-            if (s.Length - i >= 4 && string.CompareOrdinal(s, i, "null", 0, 4) == 0) { i += 4; return null; }
-            if (s.Length - i >= 4 && string.CompareOrdinal(s, i, "true", 0, 4) == 0) { i += 4; return true; }
-            if (s.Length - i >= 5 && string.CompareOrdinal(s, i, "false", 0, 5) == 0) { i += 5; return false; }
-            int start = i;
-            while (i < s.Length && "+-0123456789.eE".IndexOf(s[i]) >= 0) i++;
-            string num = s.Substring(start, i - start);
-            if (num.Length == 0) throw new FormatException("JSON: value expected at " + start);
-            long l;
-            if (long.TryParse(num, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out l)) return l;
-            return double.Parse(num, NumberStyles.Float, CultureInfo.InvariantCulture);
-        }
-
-        static string Str(string s, ref int i)
-        {
-            if (s[i] != '"') throw new FormatException("JSON: string expected at " + i);
-            i++;
-            var sb = new StringBuilder();
-            while (true)
-            {
-                char c = s[i++];
-                if (c == '"') return sb.ToString();
-                if (c != '\\') { sb.Append(c); continue; }
-                char e = s[i++];
-                switch (e)
-                {
-                    case '"': sb.Append('"'); break;
-                    case '\\': sb.Append('\\'); break;
-                    case '/': sb.Append('/'); break;
-                    case 'b': sb.Append('\b'); break;
-                    case 'f': sb.Append('\f'); break;
-                    case 'n': sb.Append('\n'); break;
-                    case 'r': sb.Append('\r'); break;
-                    case 't': sb.Append('\t'); break;
-                    case 'u':
-                        sb.Append((char)int.Parse(s.Substring(i, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture));
-                        i += 4;
-                        break;
-                    default: throw new FormatException("JSON: bad escape at " + (i - 1));
-                }
             }
         }
     }

@@ -512,7 +512,7 @@ namespace IcqRevival.Patch
 
         static byte[][] ReadResources(string path, IEnumerable<string> keys)
         {
-            return IcqResources.Read(path, keys.Select(IcqResources.Key.Parse).ToArray());
+            return IcqResources.Read(File.ReadAllBytes(path), keys.ToArray());
         }
 
         // The "Send By:" words: blank in either language, or as they came.
@@ -796,20 +796,12 @@ namespace IcqRevival.Patch
                 put(Tr.SendBy.Key, ukrainian ? Tr.SendBy.BlankUk : Tr.SendBy.BlankEn);
             }
 
-            byte[] built;
-            string tmp = Path.GetTempFileName();
-            try
+            // The resources are laid into the file's own bytes, in memory: the
+            // section that holds them is rebuilt where it is, nothing else moves.
+            byte[] built = bytes;
+            if (resKeys.Count > 0)
             {
-                File.WriteAllBytes(tmp, bytes);
-                if (resKeys.Count > 0)
-                {
-                    IcqResources.Write(tmp, resKeys.Select(IcqResources.Key.Parse).ToArray(), resKeys.Select(k => res[k]).ToArray());
-                }
-                built = File.ReadAllBytes(tmp);
-            }
-            finally
-            {
-                try { File.Delete(tmp); } catch { }
+                built = IcqResources.Write(bytes, resKeys.ToArray(), resKeys.Select(k => res[k]).ToArray());
             }
 
             if (!IcqResources.Same(built, File.ReadAllBytes(path)))

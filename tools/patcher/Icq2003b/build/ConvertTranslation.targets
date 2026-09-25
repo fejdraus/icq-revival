@@ -1,0 +1,42 @@
+<Project>
+
+  <!-- The Ukrainian interface is decoded at build time, from
+       tools\icq2003b\patch\ICQ-2003b-uk-UA.txt (the source, as the
+       translation tools write it), into translation.idx and translation.dat
+       in the intermediate folder, and those go into the exe as they are. The
+       exe then decodes nothing. The step is plain C# run by MSBuild itself
+       (ConvertTranslation.cs), so `dotnet build` needs nothing else. -->
+
+  <PropertyGroup>
+    <TranslationSource>$(MSBuildThisFileDirectory)..\..\..\icq2003b\patch\ICQ-2003b-uk-UA.txt</TranslationSource>
+    <TranslationTask>$(MSBuildThisFileDirectory)ConvertTranslation.cs</TranslationTask>
+  </PropertyGroup>
+
+  <UsingTask TaskName="ConvertTranslation" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Source ParameterType="System.String" Required="true" />
+      <OutDir ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Class" Language="cs" Source="$(TranslationTask)" />
+    </Task>
+  </UsingTask>
+
+  <Target Name="ConvertTranslation" BeforeTargets="BeforeBuild"
+          Inputs="$(TranslationSource);$(TranslationTask)"
+          Outputs="$(IntermediateOutputPath)translation.idx;$(IntermediateOutputPath)translation.dat">
+    <ConvertTranslation Source="$(TranslationSource)" OutDir="$(IntermediateOutputPath)" />
+  </Target>
+
+  <!-- Apart from the step above, so the files are embedded also when they
+       were up to date and the step was skipped. -->
+  <Target Name="EmbedTranslation" AfterTargets="ConvertTranslation" BeforeTargets="BeforeBuild">
+    <ItemGroup>
+      <EmbeddedResource Include="$(IntermediateOutputPath)translation.idx" LogicalName="translation.idx" />
+      <EmbeddedResource Include="$(IntermediateOutputPath)translation.dat" LogicalName="translation.dat" />
+      <FileWrites Include="$(IntermediateOutputPath)translation.idx;$(IntermediateOutputPath)translation.dat" />
+    </ItemGroup>
+  </Target>
+
+</Project>
