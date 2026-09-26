@@ -873,6 +873,7 @@ dependencies = [
  "futures",
  "image",
  "ruffle_core",
+ "ruffle_render",
  "ruffle_render_wgpu",
  "windows-sys 0.61.2",
 ]

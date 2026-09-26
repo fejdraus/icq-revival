@@ -16,11 +16,15 @@ use windows_sys::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleDC, CreateDIBSection, DIB_RGB_COLORS,
     DeleteDC, DeleteObject, HBITMAP, HDC, SelectObject,
 };
+use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, GetClientRect, KillTimer, PostMessageW, SetTimer, ULW_ALPHA,
     UpdateLayeredWindow, WM_NCCREATE, WM_NCDESTROY, WM_SIZE, WM_TIMER,
 };
+use windows_sys::Win32::UI::WindowsAndMessaging::{GW_OWNER, GetParent, GetWindow};
 use windows_sys::core::HRESULT;
+
+const RPC_E_WRONG_THREAD: HRESULT = 0x8001010Eu32 as i32;
 
 use crate::com::FlashObject;
 use crate::log;
@@ -63,11 +67,33 @@ pub struct Instance {
     last_tick: Cell<Option<Instant>>,
     fs: FsQueue,
     surface: RefCell<Option<Surface>>,
+    /// Created without owner or parent: the client's offscreen snapshot
+    /// service (Flash avatars). Its movies play without sound.
+    muted: bool,
+}
+
+/// The windows of one thread. Each window lives on the thread that created
+/// it; every export and message for it runs there.
+struct Registry(RefCell<HashMap<usize, Rc<Instance>>>);
+
+impl Drop for Registry {
+    /// Runs from the DLL's TLS callback when a thread exits, under the loader
+    /// lock. Windows still registered here (not destroyed before the thread
+    /// ended) are leaked: dropping a player tears down GPU and audio objects,
+    /// which must not happen under the loader lock.
+    fn drop(&mut self) {
+        for (_, inst) in self.0.get_mut().drain() {
+            std::mem::forget(inst);
+        }
+    }
 }
 
 thread_local! {
-    static INSTANCES: RefCell<HashMap<usize, Rc<Instance>>> = RefCell::new(HashMap::new());
+    static INSTANCES: Registry = Registry(RefCell::new(HashMap::new()));
 }
+
+/// Which thread owns each window, to tell "wrong thread" from "not ours".
+static OWNERS: Mutex<Vec<(usize, u32)>> = Mutex::new(Vec::new());
 
 /// Finished background loads, keyed by (window, generation).
 static LOADS: Mutex<Vec<(usize, u32, Result<Vec<u8>, String>)>> = Mutex::new(Vec::new());
@@ -76,7 +102,30 @@ pub fn get(hwnd: HWND) -> Option<Rc<Instance>> {
     if hwnd.is_null() {
         return None;
     }
-    INSTANCES.with(|m| m.borrow().get(&(hwnd as usize)).cloned())
+    INSTANCES.with(|m| m.0.borrow().get(&(hwnd as usize)).cloned())
+}
+
+/// Like `get`, but says why a window has no instance on this thread.
+pub fn lookup(hwnd: HWND) -> Result<Rc<Instance>, HRESULT> {
+    if let Some(i) = get(hwnd) {
+        return Ok(i);
+    }
+    let owner = OWNERS
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(h, _)| *h == hwnd as usize)
+        .map(|(_, t)| *t);
+    match owner {
+        Some(t) => {
+            log(&format!(
+                "window {hwnd:?} belongs to thread {t}, called from thread {}",
+                unsafe { GetCurrentThreadId() }
+            ));
+            Err(RPC_E_WRONG_THREAD)
+        }
+        None => Err(E_INVALIDARG),
+    }
 }
 
 /// A DIB section the frames are copied into for UpdateLayeredWindow.
@@ -169,6 +218,7 @@ impl Instance {
             last_tick: Cell::new(None),
             fs: Rc::new(RefCell::new(VecDeque::new())),
             surface: RefCell::new(None),
+            muted: unsafe { GetWindow(hwnd, GW_OWNER).is_null() && GetParent(hwnd).is_null() },
         }
     }
 
@@ -224,14 +274,29 @@ impl Instance {
         self.idle_since.set(None);
         let hwnd = self.hwnd as usize;
         let url = url.to_owned();
-        std::thread::spawn(move || {
-            let result = crate::fetch::fetch(&url);
-            if let Err(e) = &result {
-                log(&format!("load failed: {url}: {e}"));
-            }
-            LOADS.lock().unwrap().push((hwnd, generation, result));
-            unsafe { PostMessageW(hwnd as HWND, MSG_LOADED, generation as usize, 0) };
-        });
+        // Fetch, and wait for the graphics device and sound output, on a
+        // background thread; the window's thread only builds the player.
+        let spawned = std::thread::Builder::new()
+            .name("FlashPlayerControl load".into())
+            .spawn(move || {
+                let mut result = crate::fetch::fetch(&url);
+                if result.is_ok() {
+                    if let Err(e) = crate::gpu::wait(Duration::from_secs(60)) {
+                        result = Err(e);
+                    }
+                    crate::audio::wait(Duration::from_secs(10));
+                }
+                if let Err(e) = &result {
+                    log(&format!("load failed: {url}: {e}"));
+                }
+                LOADS.lock().unwrap().push((hwnd, generation, result));
+                unsafe { PostMessageW(hwnd as HWND, MSG_LOADED, generation as usize, 0) };
+            });
+        if spawned.is_err() {
+            self.loading.set(false);
+            self.ended.set(true);
+            return E_FAIL;
+        }
         S_OK
     }
 
@@ -258,7 +323,7 @@ impl Instance {
         };
         let url = crate::fetch::movie_url(&self.url.borrow());
         let (w, h) = client_size(self.hwnd);
-        let movie = match Movie::new(&data, &url, w, h, self.fs.clone()) {
+        let movie = match Movie::new(&data, &url, w, h, self.fs.clone(), self.muted) {
             Ok(m) => m,
             Err(e) => {
                 log(&format!("cannot play {url}: {e}"));
@@ -495,11 +560,19 @@ unsafe fn handle(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT
     match msg {
         WM_NCCREATE => {
             let inst = Rc::new(Instance::new(hwnd));
-            INSTANCES.with(|m| m.borrow_mut().insert(hwnd as usize, inst));
+            INSTANCES.with(|m| m.0.borrow_mut().insert(hwnd as usize, inst));
+            OWNERS
+                .lock()
+                .unwrap()
+                .push((hwnd as usize, unsafe { GetCurrentThreadId() }));
+            // Start opening the GPU device and sound output in the background.
+            crate::gpu::start();
+            crate::audio::start();
             None
         }
         WM_NCDESTROY => {
-            let inst = INSTANCES.with(|m| m.borrow_mut().remove(&(hwnd as usize)));
+            OWNERS.lock().unwrap().retain(|(h, _)| *h != hwnd as usize);
+            let inst = INSTANCES.with(|m| m.0.borrow_mut().remove(&(hwnd as usize)));
             if let Some(i) = inst {
                 i.destroy();
             }

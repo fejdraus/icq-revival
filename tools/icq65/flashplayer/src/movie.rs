@@ -7,23 +7,16 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use ruffle_core::backend::audio::NullAudioBackend;
 use ruffle_core::config::Letterbox;
 use ruffle_core::external::FsCommandProvider;
 use ruffle_core::limits::ExecutionLimit;
 use ruffle_core::tag_utils::SwfMovie;
 use ruffle_core::{FloatDuration, Player, PlayerBuilder, StageScaleMode, ViewportDimensions};
-use ruffle_render_wgpu::backend::{
-    WgpuRenderBackend, create_wgpu_instance, request_adapter_and_device,
-};
-use ruffle_render_wgpu::descriptors::Descriptors;
+use ruffle_render_wgpu::backend::WgpuRenderBackend;
 use ruffle_render_wgpu::target::TextureTarget;
 use ruffle_render_wgpu::utils::capture_image;
-use ruffle_render_wgpu::wgpu;
 
-use crate::log;
-
-type Renderer = WgpuRenderBackend<TextureTarget>;
+pub(crate) type Renderer = WgpuRenderBackend<TextureTarget>;
 
 /// fscommands raised while the player ran, delivered after it is unlocked.
 pub type FsQueue = Rc<RefCell<VecDeque<(String, String)>>>;
@@ -37,80 +30,6 @@ impl FsCommandProvider for QueueFsCommands {
             .push_back((command.to_owned(), args.to_owned()));
         true
     }
-}
-
-thread_local! {
-    static GPU: RefCell<Option<Arc<Descriptors>>> = const { RefCell::new(None) };
-}
-
-/// Graphics APIs to try, in order. FLASHPLAYERCONTROL_BACKEND (e.g. "vulkan"
-/// or "gl,dx12") overrides the order.
-fn backends() -> Vec<wgpu::Backends> {
-    let default = vec![
-        wgpu::Backends::VULKAN,
-        wgpu::Backends::DX12,
-        wgpu::Backends::GL,
-    ];
-    let Ok(list) = std::env::var("FLASHPLAYERCONTROL_BACKEND") else {
-        return default;
-    };
-    let picked: Vec<_> = list
-        .split(',')
-        .filter_map(|b| match b.trim().to_ascii_lowercase().as_str() {
-            "vulkan" => Some(wgpu::Backends::VULKAN),
-            "dx12" => Some(wgpu::Backends::DX12),
-            "gl" => Some(wgpu::Backends::GL),
-            _ => None,
-        })
-        .collect();
-    if picked.is_empty() { default } else { picked }
-}
-
-/// Opens a device on `backend` and checks that Ruffle's pipelines build on it.
-fn open_backend(backend: wgpu::Backends) -> Result<Arc<Descriptors>, String> {
-    let instance = create_wgpu_instance(backend, wgpu::BackendOptions::from_env_or_default(), None);
-    let (adapter, device, queue) = futures::executor::block_on(request_adapter_and_device(
-        backend,
-        &instance,
-        None,
-        wgpu::PowerPreference::LowPower,
-    ))
-    .map_err(|e| e.to_string())?;
-    let info = adapter.get_info();
-    let name = format!("{:?} {} ({:?})", info.backend, info.name, info.device_type);
-    let d = Arc::new(Descriptors::new(instance, adapter, device, queue));
-    // Building a renderer compiles the shaders; some drivers fail here.
-    let probe = d.clone();
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-        let target = TextureTarget::new(&probe.device, (4, 4)).map_err(|e| e.to_string())?;
-        Renderer::new(probe, target)
-            .map(drop)
-            .map_err(|e| e.to_string())
-    }))
-    .map_err(|_| format!("{name}: shader/pipeline creation failed"))??;
-    log(&format!("gpu: {name}"));
-    Ok(d)
-}
-
-/// The wgpu device shared by every player on this thread.
-fn gpu() -> Result<Arc<Descriptors>, String> {
-    if let Some(d) = GPU.with(|g| g.borrow().clone()) {
-        return Ok(d);
-    }
-    let mut errors = Vec::new();
-    for backend in backends() {
-        match open_backend(backend) {
-            Ok(d) => {
-                GPU.with(|g| *g.borrow_mut() = Some(d.clone()));
-                return Ok(d);
-            }
-            Err(e) => {
-                log(&format!("gpu {backend:?} unusable: {e}"));
-                errors.push(format!("{backend:?}: {e}"));
-            }
-        }
-    }
-    Err(errors.join("; "))
 }
 
 /// Premultiplied BGRA pixels, top-down, tightly packed.
@@ -136,6 +55,7 @@ impl Movie {
         width: u32,
         height: u32,
         fs: FsQueue,
+        muted: bool,
     ) -> Result<Self, String> {
         let swf =
             SwfMovie::from_data(data, url.to_owned(), None, None).map_err(|e| e.to_string())?;
@@ -149,7 +69,8 @@ impl Movie {
             (width, height)
         };
 
-        let descriptors = gpu()?;
+        // Ready by now: the load thread waited for it (see instance.rs).
+        let descriptors = crate::gpu::get()?;
         let target =
             TextureTarget::new(&descriptors.device, (width, height)).map_err(|e| e.to_string())?;
         let renderer = Renderer::new(descriptors, target).map_err(|e| e.to_string())?;
@@ -162,14 +83,8 @@ impl Movie {
             .with_letterbox(Letterbox::Off)
             .with_scale_mode(StageScaleMode::ShowAll, false)
             .with_max_execution_duration(Duration::from_secs(5))
-            .with_autoplay(true);
-        let builder = match crate::audio::CpalAudioBackend::new() {
-            Ok(audio) => builder.with_audio(audio),
-            Err(e) => {
-                log(&format!("no sound: {e}"));
-                builder.with_audio(NullAudioBackend::new())
-            }
-        };
+            .with_autoplay(true)
+            .with_boxed_audio(crate::audio::backend(muted));
         let player = builder.build();
         {
             let mut p = player.lock().map_err(|_| "player lock poisoned")?;

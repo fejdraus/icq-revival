@@ -21,20 +21,20 @@ use windows_sys::Win32::System::Ole::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 use windows_sys::core::{BOOL, GUID, HRESULT};
 
-type Unk = *mut c_void;
+pub type Unk = *mut c_void;
 
-const IID_ISHOCKWAVEFLASH: GUID = GUID::from_u128(0xD27CDB6C_AE6D_11cf_96B8_444553540000);
-const DIID_EVENTS: GUID = GUID::from_u128(0xD27CDB6D_AE6D_11cf_96B8_444553540000);
+pub const IID_ISHOCKWAVEFLASH: GUID = GUID::from_u128(0xD27CDB6C_AE6D_11cf_96B8_444553540000);
+pub const DIID_EVENTS: GUID = GUID::from_u128(0xD27CDB6D_AE6D_11cf_96B8_444553540000);
 const LIBID: GUID = GUID::from_u128(0xD27CDB6B_AE6D_11cf_96B8_444553540000);
 const IID_IUNKNOWN: GUID = GUID::from_u128(0x00000000_0000_0000_C000_000000000046);
 const IID_IDISPATCH: GUID = GUID::from_u128(0x00020400_0000_0000_C000_000000000046);
-const IID_ICPC: GUID = GUID::from_u128(0xB196B284_BAB4_101A_B69C_00AA00341D07);
+pub const IID_ICPC: GUID = GUID::from_u128(0xB196B284_BAB4_101A_B69C_00AA00341D07);
 
 macro_rules! vcall {
     ($p:expr, $slot:expr, fn($($t:ty),* $(,)?) -> $r:ty $(, $a:expr)* $(,)?) => {{
-        let p: *mut c_void = $p;
+        let p: *mut std::ffi::c_void = $p;
         let vtbl = *(p as *const *const usize);
-        let f: unsafe extern "system" fn(*mut c_void $(, $t)*) -> $r =
+        let f: unsafe extern "system" fn(*mut std::ffi::c_void $(, $t)*) -> $r =
             std::mem::transmute(*vtbl.add($slot));
         f(p $(, $a)*)
     }};
@@ -50,8 +50,11 @@ fn t0() -> Instant {
 }
 
 macro_rules! say {
-    ($($a:tt)*) => { println!("[{:7.3}s] {}", t0().elapsed().as_secs_f64(), format!($($a)*)) };
+    ($($a:tt)*) => { println!("[{:7.3}s] {}", crate::t0().elapsed().as_secs_f64(), format!($($a)*)) };
 }
+
+mod avatar;
+mod stacks;
 
 // ---------------------------------------------------------------------------
 // The DLL
@@ -113,6 +116,8 @@ struct Sink {
     anim_end_at: std::cell::Cell<Option<f64>>,
     ready: std::cell::RefCell<Vec<i32>>,
     fscommands: std::cell::RefCell<Vec<(String, String)>>,
+    /// Avatar jobs: window to post 0x7BA/0x7BB to on ready states 3/4.
+    post_to: std::cell::Cell<isize>,
 }
 
 #[repr(C)]
@@ -210,7 +215,17 @@ unsafe extern "system" fn sink_invoke(
         desc.join(", ")
     );
     if dispid == -609 && args.len() == 1 && args[0].vt == 3 {
-        sink.ready.borrow_mut().push(args[0].value as u32 as i32);
+        let state = args[0].value as u32 as i32;
+        sink.ready.borrow_mut().push(state);
+        let to = sink.post_to.get();
+        if to != 0 && (state == 3 || state == 4) {
+            let m = if state == 3 {
+                avatar::MSG_STATE3
+            } else {
+                avatar::MSG_STATE4
+            };
+            unsafe { PostMessageW(to as HWND, m, 0, 0) };
+        }
     }
     if dispid == 0x96 && args.len() == 2 && args[0].vt == 8 && args[1].vt == 8 {
         let cmd = unsafe { bstr_str(args[1].value as usize as *const u16) };
@@ -243,6 +258,7 @@ fn new_sink(name: &'static str) -> Box<Sink> {
         anim_end_at: Default::default(),
         ready: Default::default(),
         fscommands: Default::default(),
+        post_to: Default::default(),
     })
 }
 
@@ -383,12 +399,29 @@ fn pump_for(d: Duration) {
     }
 }
 
+// Longest single DispatchMessage on this thread: (microseconds, message).
+thread_local! {
+    static SLOWEST: std::cell::Cell<(u128, u32)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+fn slowest_dispatch() -> String {
+    let (us, msg) = SLOWEST.with(|s| s.get());
+    format!("{:.1} ms (message {msg:#x})", us as f64 / 1000.0)
+}
+
 fn pump_once() {
     unsafe {
         let mut msg: MSG = std::mem::zeroed();
         while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
             TranslateMessage(&msg);
+            let t = Instant::now();
             DispatchMessageW(&msg);
+            let us = t.elapsed().as_micros();
+            SLOWEST.with(|s| {
+                if us > s.get().0 {
+                    s.set((us, msg.message))
+                }
+            });
         }
     }
 }
@@ -450,10 +483,13 @@ fn advise(flash: Unk, sink: &Sink) -> (Unk, u32) {
     }
 }
 
-fn snapshot(hwnd: HWND, path: &str) -> (u32, u32, usize, usize, [u8; 4]) {
+fn snapshot(hwnd: HWND, path: &str) -> Option<(u32, u32, usize, usize, [u8; 4])> {
     let mut bmp: HBITMAP = null_mut();
     let r = unsafe { SendMessageW(hwnd, 0x1404, 0, &mut bmp as *mut HBITMAP as LPARAM) };
-    assert!(!bmp.is_null(), "0x1404 returned no bitmap (ret {r})");
+    if bmp.is_null() {
+        say!("0x1404 returned no bitmap (ret {r})");
+        return None;
+    }
     let mut ds: DIBSECTION = unsafe { std::mem::zeroed() };
     unsafe {
         GetObjectW(
@@ -494,7 +530,7 @@ fn snapshot(hwnd: HWND, path: &str) -> (u32, u32, usize, usize, [u8; 4]) {
         ds.dsBm.bmBitsPixel
     );
     unsafe { DeleteObject(bmp) };
-    (w, h, transparent, opaque, corner)
+    Some((w, h, transparent, opaque, corner))
 }
 
 fn screenshot(owner: HWND, path: &str) {
@@ -643,10 +679,11 @@ fn play(fpc: &Fpc, movie: &str, out: &str) {
     );
     let a = audio_stats(hwnd);
     say!(
-        "summary: audio streams started {}, samples mixed {}, audible samples {}",
+        "summary: audio streams started {}, samples mixed {}, audible samples {}; slowest UI-thread message {}",
         a[0],
         a[1],
-        a[2]
+        a[2],
+        slowest_dispatch()
     );
 
     // Snapshot-service path: GotoFrame then 0x1404.
@@ -900,14 +937,37 @@ fn typelib_check() {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     t0();
+    if args[1] == "dumpstacks" {
+        stacks::dump(
+            args[2].parse().unwrap(),
+            args.get(3).map_or("", |s| s.as_str()),
+        );
+        return;
+    }
+    say!("pid {}", std::process::id());
     unsafe { OleInitialize(null_mut()) };
-    let fpc = load_dll(&args[1]);
+    let fpc: &'static Fpc = Box::leak(Box::new(load_dll(&args[1])));
     match args[2].as_str() {
-        "play" => play(&fpc, &args[3], &args[4]),
-        "two" => two(&fpc, &args[3], &args[4], &args[5]),
+        "play" => play(fpc, &args[3], &args[4]),
+        "two" => two(fpc, &args[3], &args[4], &args[5]),
         "reg" => say!("DllRegisterServer -> {:#x}", (fpc.DllRegisterServer)()),
         "unreg" => say!("DllUnregisterServer -> {:#x}", (fpc.DllUnregisterServer)()),
         "check" => typelib_check(),
+        // avatars <base-url> <out> <mta|none|sta|mixed> <concurrency> <rounds> <spawn|pool> <tzer.swf|-> <names...>
+        "avatars" => {
+            let plan = avatar::Plan {
+                base_url: args[3].clone(),
+                out: args[4].clone(),
+                apt: args[5].clone(),
+                concurrency: args[6].parse().unwrap(),
+                rounds: args[7].parse().unwrap(),
+                pool: args[8] == "pool",
+                tzer: (args[9] != "-").then(|| args[9].clone()),
+                names: args[10..].to_vec(),
+            };
+            let ok = avatar::run_all(fpc, plan);
+            std::process::exit(if ok { 0 } else { 1 });
+        }
         m => panic!("unknown mode {m}"),
     }
 }

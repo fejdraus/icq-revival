@@ -1,7 +1,6 @@
 //! The embedded type library (resource TYPELIB #1, built from typelib\flash.idl)
 //! and its per-user registration.
 
-use std::cell::Cell;
 use std::ffi::c_void;
 use std::ptr::null_mut;
 
@@ -16,9 +15,9 @@ use crate::com::{IID_ISHOCKWAVEFLASH, LIBID_SHOCKWAVEFLASHOBJECTS, com_release, 
 
 type Unk = *mut c_void;
 
-thread_local! {
-    static INFOS: Cell<Option<(Unk, Unk)>> = const { Cell::new(None) };
-}
+/// Loaded once per process (type information objects are free-threaded) and
+/// never released.
+static INFOS: std::sync::OnceLock<(usize, usize)> = std::sync::OnceLock::new();
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
@@ -62,19 +61,22 @@ unsafe fn shockwave_infos(lib: Unk) -> Result<(Unk, Unk), HRESULT> {
 }
 
 fn infos() -> (Unk, Unk) {
-    if let Some(v) = INFOS.with(|c| c.get()) {
-        return v;
-    }
-    let v = load(&crate::module_path())
+    let (a, b) = *INFOS.get_or_init(|| {
+        let (d, i) = load_infos();
+        (d as usize, i as usize)
+    });
+    (a as Unk, b as Unk)
+}
+
+fn load_infos() -> (Unk, Unk) {
+    load(&crate::module_path())
         .ok()
         .and_then(|lib| {
             let r = unsafe { shockwave_infos(lib) }.ok();
             unsafe { com_release(lib) };
             r
         })
-        .unwrap_or((null_mut(), null_mut()));
-    INFOS.with(|c| c.set(Some(v)));
-    v
+        .unwrap_or((null_mut(), null_mut()))
 }
 
 /// ITypeInfo of IShockwaveFlash as a dispinterface (for GetTypeInfo).

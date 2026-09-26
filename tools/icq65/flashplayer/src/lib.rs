@@ -6,6 +6,7 @@
 mod audio;
 mod com;
 mod fetch;
+mod gpu;
 mod instance;
 mod movie;
 mod typelib;
@@ -14,7 +15,7 @@ use std::ffi::c_void;
 use std::io::Write;
 use std::ptr::null_mut;
 
-use windows_sys::Win32::Foundation::{E_INVALIDARG, E_POINTER, HMODULE, HWND, LPARAM, S_OK};
+use windows_sys::Win32::Foundation::{E_POINTER, HMODULE, HWND, LPARAM, S_OK};
 use windows_sys::Win32::System::Diagnostics::Debug::OutputDebugStringW;
 use windows_sys::Win32::System::LibraryLoader::{
     GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -71,14 +72,14 @@ pub(crate) fn log(msg: &str) {
 }
 
 fn with_instance(hwnd: HWND, f: impl FnOnce(&instance::Instance) -> HRESULT) -> HRESULT {
-    match instance::get(hwnd) {
-        Some(i) => {
+    match instance::lookup(hwnd) {
+        Ok(i) => {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&i))).unwrap_or_else(|_| {
                 log("panic in export");
                 windows_sys::Win32::Foundation::E_FAIL
             })
         }
-        None => E_INVALIDARG,
+        Err(hr) => hr,
     }
 }
 
@@ -173,12 +174,12 @@ pub extern "system" fn FPCSetEventListener(
     listener: Option<Listener>,
     param: LPARAM,
 ) -> BOOL {
-    match instance::get(hwnd) {
-        Some(i) => {
+    match instance::lookup(hwnd) {
+        Ok(i) => {
             i.listener.set(listener.map(|l| (l, param)));
             1
         }
-        None => 0,
+        Err(_) => 0,
     }
 }
 

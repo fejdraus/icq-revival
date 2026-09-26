@@ -55,6 +55,38 @@ some tZers stop it while a nested clip plays, and the clip moves it on.
 `FPC_Stop`, `FPC_StopPlay` and `GotoFrame` make it `VARIANT_FALSE` at once, and
 so does a movie that fails to load.
 
+## Threads
+
+The client uses the DLL from more than one thread. tZers play on the UI thread.
+Flash avatars (BART type 8) are rendered by MCore's FlashSnapshotImgService
+job on a worker thread. That job creates an ownerless, offscreen window, runs
+its own `GetMessage` loop, takes one `0x1404` snapshot and destroys the window;
+then the thread may exit. Its COM apartment is unknown. So:
+
+- **Each window belongs to the thread that created it.** Its player, timer and
+  events all run on that thread. An export called for the window from another
+  thread returns `RPC_E_WRONG_THREAD` at once. The DLL never sends messages
+  across threads and holds no lock while it waits for anything.
+- **One GPU device for the whole process.** It is opened on a thread of its own,
+  `FlashPlayerControl gpu`, which never exits, and it is never destroyed.
+  Earlier builds kept one device per thread in a thread-local. When an avatar
+  job's thread exited, the DLL's TLS callback destroyed that device under the
+  loader lock. The Vulkan driver's `vkDestroyInstance` then waited for its own
+  thread, which needed the loader lock to exit. That deadlock froze the whole
+  client.
+- **One sound output for the whole process.** The `FlashPlayerControl audio`
+  thread owns the cpal stream and never exits. Each player gets its own mixer,
+  and the stream sums them. So no COM initialisation and no audio teardown
+  happen on the client's threads. A window created with no owner or parent
+  (the snapshot service) plays without sound.
+- **Loads run in the background.** A load thread fetches the movie and waits
+  for the GPU device and the sound output. The window's thread then only
+  builds the player (about 30-40 ms for a tZer), so the UI thread never waits
+  for the device to open.
+- **Nothing heavy runs at thread exit.** If a thread exits with windows it has
+  not destroyed, their players are leaked rather than torn down under the
+  loader lock.
+
 ## How it works
 
 - `src/lib.rs` holds the exports and the window class.
@@ -63,11 +95,13 @@ so does a movie that fails to load.
   frames with `UpdateLayeredWindow`.
 - `src/movie.rs` wraps the Ruffle player. It renders offscreen with
   `ruffle_render_wgpu` into a texture, reads the pixels back, and converts them
-  from premultiplied RGBA to BGRA. It tries the graphics APIs in the order
-  Vulkan, DX12, GL. An API only counts once Ruffle's shaders build on it; on
-  failure the next one is tried.
+  from premultiplied RGBA to BGRA.
+- `src/gpu.rs` opens the shared device on its own thread. It tries the graphics
+  APIs in the order Vulkan, DX12, GL. An API only counts once Ruffle's shaders,
+  including the multisampled ones, build on it; on failure the next one is
+  tried.
 - `src/audio.rs` sends sound to the default output device through cpal
-  (WASAPI), like Ruffle's desktop player does.
+  (WASAPI) from its own thread, mixing all players.
 - `src/com.rs` implements `IShockwaveFlash` and the connection point by hand.
 - `src/typelib.rs` loads the embedded type library and handles its
   registration.
@@ -110,7 +144,7 @@ bytes as the type library says, and that +0x20 and +0x88 are `TotalFrames` and
 cargo test --release --lib
 ```
 
-`examples/host.rs` is a 32-bit program that drives the DLL the way the client
+`examples/host/` is a 32-bit program that drives the DLL the way the client
 does. It loads the DLL with `LoadLibrary`, creates the layered popup over an
 owner window and subclasses it. It gets `IShockwaveFlash` through `0x1401` and
 advises a logging event sink. Then it loads a movie, plays it and polls
@@ -127,7 +161,30 @@ set H=target\i686-pc-windows-msvc\release
 %H%\examples\host.exe %H%\FlashPlayerControl.dll unreg
 ```
 
-`reg` writes the type library registration to HKCU; run `unreg` afterwards.
+`reg` writes the type library registration to HKCU and `unreg` removes it.
+`unreg` removes any registration of this LIBID for the user, including the
+patch's registration of the installed client. Re-register the client afterwards.
+
+`avatars` reproduces the client's avatar snapshot jobs. Each job runs on a
+worker thread in the given COM apartment (`mta`, `none`, `sta`, or `mixed` to
+alternate), with its own `GetMessage` loop. It creates an ownerless 87x109
+window offscreen, advises a sink that posts `0x7BA`/`0x7BB` on ready states 3
+and 4, and loads the SWF over http. It then calls `GotoFrame(total/2)`, saves
+the `0x1404` bitmap as PNG and tears everything down. `spawn` starts a thread
+per job, which then exits; `pool` reuses the same threads. Meanwhile the UI
+thread replays a tZer. The host also checks that exports called from the wrong
+thread fail, and reports the longest message the UI thread handled:
+
+```
+%H%\examples\host.exe %H%\FlashPlayerControl.dll avatars http://127.0.0.1:8766 C:\out mixed 3 2 spawn C:\path\kisses.swf pirate.swf robot.swf ...
+```
+
+(Serve the avatar SWFs, for example `deploy/oscar-legacy-web/avatars`, with
+`python -m http.server 8766`.)
+
+If a run hangs, `host.exe dumpstacks <pid> <symbol path>` attaches from outside
+and prints every thread's stack and the owner of the loader lock. Build with
+`cargo build --profile diag` to get a PDB for the DLL.
 
 ## Try it in ICQ 6.5
 
@@ -182,11 +239,15 @@ to that file. It always writes the same lines to the debugger
   creation fails with `E_INVALIDARG` from the FXC shader path. The DLL falls
   back to Vulkan or OpenGL on its own, but a machine with neither cannot play
   tZers.
-- **Slow first load.** The first movie per process waits 0.3 to 1.6 s while the
-  GPU device starts. Later movies reuse the device.
+- **Slow first load.** The first movie per process waits 0.2 to 1.6 s while the
+  GPU device starts. The wait happens on the load thread, not the UI thread.
+  Later movies reuse the device.
 - **Only the ten exports.** `FPC_SetVariable*`, `FPC_GetVariable*`,
   `FPCLoadMovieFromMemory` and the other exports of the original are missing.
-  Features that use them, such as Flash avatars, do not work.
+  The client imports none of them.
+- **Snapshot windows play no sound.** A window created with no owner or parent
+  plays without sound. That matches the client's avatar snapshot service; a
+  sound in any other ownerless use would be lost.
 - **Many IShockwaveFlash methods return `E_NOTIMPL`**, including
   `SetVariable`, `TGotoLabel` and `CallFunction`. The type library still
   describes them all.
