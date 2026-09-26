@@ -27,6 +27,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const child_process = require('node:child_process');
+const zlib = require('node:zlib');
 // The shared look of the project, the same as registration and the admin page.
 const { STYLE: SHARED_STYLE, LANGS, FALLBACK_LANG, pickLang,
   langLabel, header, footer, serveAsset } = require('./ui.js');
@@ -70,14 +71,17 @@ const TZER_TYPES = {
 };
 let tzerFiles = new Map();
 
+// A plain file name: letters, digits, _ and -, one extension.
+const PLAIN_NAME = /^[a-z0-9_-]+\.[a-z]+$/i;
+
 // The files of one folder with a known type and a plain name, in memory.
 // Without the folder the map is empty and every request is a 404.
-function loadFolder(dir, types) {
+function loadFolder(dir, types, names = PLAIN_NAME) {
   const files = new Map();
   try {
     for (const name of fs.readdirSync(dir)) {
       const type = types[path.extname(name).toLowerCase()];
-      if (!type || !/^[a-z0-9_-]+\.[a-z]+$/i.test(name)) continue;
+      if (!type || !names.test(name)) continue;
       files.set(name.toLowerCase(), { body: fs.readFileSync(path.join(dir, name)), type });
     }
   } catch {
@@ -121,6 +125,191 @@ function loadAvatars() {
   }
   avatarFiles = files;
   avatarList = list;
+  moodMovies = new Map();
+}
+
+// An animated avatar stands still until it is told its owner's mood: the
+// client sets face.emotion, and the face clip's class goes to the frame label
+// of that name (stam, idle; smile, sad, ... offline), where a short gesture
+// plays once and stops. A browser player has nobody to do that, so the card
+// is served a copy of the movie that does it itself, with one DoAction at the
+// end of the first frame, run once the face clip is on the stage and its
+// class is registered:
+//   face.emotion = "stam";
+//   setInterval(function () { face.emotion = "<other>"; face.emotion = "stam"; }, 4000);
+// The detour through another label within the same frame is never drawn; it
+// only makes the face start its gesture over, so the card keeps moving.
+// The copies are made on first request and kept.
+let moodMovies = new Map();
+
+// How often the card's face starts its gesture over.
+const REPLAY_MS = 4000;
+
+// The movie with its face on `emotion`, replayed through `other`, another of
+// its labels (see above); null when the movie cannot be read.
+function moodMovie(swf, emotion, other) {
+  let body;
+  try {
+    body = swf.toString('latin1', 0, 3) === 'CWS' ? zlib.inflateSync(swf.subarray(8)) : swf.subarray(8);
+  } catch {
+    return null;
+  }
+  // After the stage's rectangle, the frame rate and the frame count come the
+  // tags; the new one goes in front of the first frame's ShowFrame.
+  const bits = body[0] >> 3;
+  let pos = Math.ceil((5 + 4 * bits) / 8) + 4;
+  for (;;) {
+    if (pos + 2 > body.length) return null;
+    const head = body.readUInt16LE(pos);
+    const code = head >> 6;
+    let len = head & 0x3f;
+    let headLen = 2;
+    if (len === 0x3f) {
+      if (pos + 6 > body.length) return null;
+      len = body.readUInt32LE(pos + 2);
+      headLen = 6;
+    }
+    if (code === 1) break;
+    if (code === 0) return null;
+    pos += headLen + len;
+  }
+  const str = (s) => Buffer.from(`${s}\0`, 'latin1');
+  const push = (...values) => {
+    const data = Buffer.concat(values.map((v) => (typeof v === 'number'
+      ? Buffer.from([7, v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff]) // int
+      : Buffer.concat([Buffer.from([0]), str(v)])))); // string
+    const head = Buffer.from([0x96, 0, 0]);
+    head.writeUInt16LE(data.length, 1);
+    return Buffer.concat([head, data]);
+  };
+  const setEmotion = (label) => Buffer.concat([
+    push('face'), Buffer.from([0x1c]), // GetVariable
+    push('emotion', label), Buffer.from([0x4f]), // SetMember
+  ]);
+  const replay = Buffer.concat([setEmotion(other), setEmotion(emotion)]);
+  // DefineFunction with no name and no parameters: pushes the function.
+  const define = Buffer.from([0x9b, 5, 0, 0, 0, 0, 0, 0]);
+  define.writeUInt16LE(replay.length, 6);
+  const actions = Buffer.concat([
+    setEmotion(emotion),
+    push(REPLAY_MS), define, replay, // the arguments, last first
+    push(2, 'setInterval'), Buffer.from([0x3d, 0x17]), // CallFunction, Pop
+    Buffer.from([0x00]), // End
+  ]);
+  const tag = Buffer.alloc(6);
+  tag.writeUInt16LE((12 << 6) | 0x3f, 0); // DoAction, long length
+  tag.writeUInt32LE(actions.length, 2);
+  const out = Buffer.concat([body.subarray(0, pos), tag, actions, body.subarray(pos)]);
+  const header = Buffer.from([0x46, 0x57, 0x53, swf[3], 0, 0, 0, 0]); // FWS, version
+  header.writeUInt32LE(out.length + 8, 4);
+  return Buffer.concat([header, out]);
+}
+
+// GET /icq/avatars/<movie>.swf?emotion=<label>: that copy, for one of the
+// gallery's movies and one of the labels it has; anything else is a 404.
+function serveMoodMovie(ctx) {
+  const name = ctx.path.replace(/^\/icq\/avatars\//i, '').toLowerCase();
+  const emotion = ctx.url.searchParams.get('emotion') || '';
+  const avatar = avatarList.find((a) => a.file.toLowerCase() === name);
+  const file = avatarFiles.get(name);
+  const key = `${name}?${emotion}`;
+  let body = moodMovies.get(key);
+  const labels = (avatar && avatar.labels) || [];
+  const other = labels.find((l) => l !== emotion);
+  if (!body && file && other && labels.includes(emotion)) {
+    body = moodMovie(file.body, emotion, other);
+    if (body) moodMovies.set(key, body);
+  }
+  if (!body || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) {
+    ctx.res.writeHead(404, { 'content-length': 0 });
+    ctx.res.end();
+    return;
+  }
+  ctx.res.writeHead(200, {
+    'content-type': 'application/x-shockwave-flash',
+    'content-length': body.length,
+    'cache-control': 'public, max-age=86400',
+  });
+  ctx.res.end(ctx.req.method === 'HEAD' ? undefined : body);
+}
+
+// Ruffle, the Flash player written in Rust, in its web build
+// (@ruffle-rs/ruffle 0.6.0 from npm): the user card plays the animated avatar
+// with it in a browser of today, which has no Flash of its own. Only what the
+// card needs is kept: the loader, ruffle.js, and the build for browsers with
+// the WebAssembly extensions - every current one. A browser without them asks
+// for the other build, gets a 404, and the card keeps its still picture.
+//
+// The loader is fetched only by pages that show an animated avatar, and the
+// WebAssembly (14 MB, about 4 MB compressed) only once the player starts.
+// Served by exact name like the tZers; the chunk names carry a content hash
+// and are cached for good, ruffle.js is linked with its own hash as ?v=.
+// Compressed copies are made in the background at start.
+const RUFFLE_DIR = path.join(__dirname, 'ruffle');
+const RUFFLE_TYPES = {
+  '.js': 'text/javascript; charset=utf-8',
+  '.wasm': 'application/wasm',
+};
+// Ruffle's chunks are named like core.ruffle.<hash>.js, with dots inside.
+const RUFFLE_NAME = /^[a-z0-9_-]+(\.[a-z0-9_-]+)*\.[a-z]+$/i;
+const HASHED_NAME = /(^|\.)[0-9a-f]{20}\.[a-z]+$/i;
+let ruffleFiles = new Map();
+let ruffleTag = '';
+
+function loadRuffle() {
+  const files = loadFolder(RUFFLE_DIR, RUFFLE_TYPES, RUFFLE_NAME);
+  const loader = files.get('ruffle.js');
+  ruffleTag = loader ? crypto.createHash('sha1').update(loader.body).digest('hex').slice(0, 8) : '';
+  for (const file of files.values()) {
+    file.etag = `"${crypto.createHash('sha1').update(file.body).digest('hex').slice(0, 20)}"`;
+    zlib.brotliCompress(file.body, {
+      params: {
+        [zlib.constants.BROTLI_PARAM_QUALITY]: 9,
+        [zlib.constants.BROTLI_PARAM_SIZE_HINT]: file.body.length,
+      },
+    }, (err, out) => { if (!err) file.br = out; });
+    zlib.gzip(file.body, { level: 9 }, (err, out) => { if (!err) file.gzip = out; });
+  }
+  ruffleFiles = files;
+}
+
+// GET /icq/ruffle/<name>: one file of Ruffle's web build, compressed when the
+// browser takes it and the copy is ready.
+function serveRuffle(ctx) {
+  const name = ctx.path.replace(/^\/icq\/ruffle\//i, '');
+  const file = RUFFLE_NAME.test(name) ? ruffleFiles.get(name.toLowerCase()) : null;
+  if (!file || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) {
+    ctx.res.writeHead(404, { 'content-length': 0 });
+    ctx.res.end();
+    return;
+  }
+  // A hashed name, or the loader asked for by its current hash, never changes.
+  const forever = HASHED_NAME.test(name)
+    || (name.toLowerCase() === 'ruffle.js' && ctx.url.searchParams.get('v') === ruffleTag);
+  const headers = {
+    'content-type': file.type,
+    'cache-control': forever ? 'public, max-age=31536000, immutable' : 'public, max-age=3600',
+    'x-content-type-options': 'nosniff',
+    etag: file.etag,
+    vary: 'accept-encoding',
+  };
+  if (ctx.req.headers['if-none-match'] === file.etag) {
+    ctx.res.writeHead(304, headers);
+    ctx.res.end();
+    return;
+  }
+  const accepts = String(ctx.req.headers['accept-encoding'] || '');
+  let body = file.body;
+  if (file.br && /\bbr\b/.test(accepts)) {
+    body = file.br;
+    headers['content-encoding'] = 'br';
+  } else if (file.gzip && /\bgzip\b/.test(accepts)) {
+    body = file.gzip;
+    headers['content-encoding'] = 'gzip';
+  }
+  headers['content-length'] = body.length;
+  ctx.res.writeHead(200, headers);
+  ctx.res.end(ctx.req.method === 'HEAD' ? undefined : body);
 }
 
 let CODES = {};
@@ -273,8 +462,8 @@ const I18N = {
     picTabAnimated: 'Animated',
     picAnimLead: 'A moving face instead of a still picture. ICQ 6 plays it next to '
       + 'your name, and it changes with your mood and status. Pick one, then set it.',
-    picAnimNote: 'Contacts on other clients, or on older ICQ versions, keep seeing '
-      + 'your picture.',
+    picAnimNote: 'Your picture becomes a still of the same face, for contacts on '
+      + 'other clients or older ICQ versions, which cannot play the animation.',
     picAnimNow: 'Now set:',
     picAnimNone: 'none',
     picAnimOther: 'one that is not on this server',
@@ -286,6 +475,9 @@ const I18N = {
     picAnimSaved: 'Set. Your contacts see it from now on.',
     picAnimRefused: 'The client refused the animation: ',
     picAnimServerRefused: 'The server did not take the animation.',
+    picAnimStill: 'Animation set. Now its still picture, for the other clients...',
+    picAnimStillRefused: 'The animation is set, but its still picture was not: '
+      + 'contacts on other clients keep seeing your old picture.',
     picReduced: (from, to) => `${from} reduced to ${to}`,
     picBytes: (n) => (n < 1024 ? `${n} bytes` : `${Math.round(n / 1024)} KB`),
     signedInAs: (u) => `Signed in as <b>${u}</b>`,
@@ -610,8 +802,8 @@ const I18N = {
     picAnimLead: 'Живе обличчя замість нерухомої картинки. ICQ 6 програє його поруч '
       + 'із вашим імʼям, і воно змінюється разом із вашим настроєм і статусом. '
       + 'Оберіть і встановіть.',
-    picAnimNote: 'Контакти в інших клієнтах чи старіших версіях ICQ і далі бачать '
-      + 'вашу картинку.',
+    picAnimNote: 'Вашою картинкою стане нерухоме зображення того ж обличчя - для '
+      + 'контактів в інших клієнтах чи старіших версіях ICQ, які не програють анімацію.',
     picAnimNow: 'Зараз встановлено:',
     picAnimNone: 'нічого',
     picAnimOther: 'анімація не з цього сервера',
@@ -623,6 +815,9 @@ const I18N = {
     picAnimSaved: 'Встановлено. Відтепер її бачать ваші контакти.',
     picAnimRefused: 'Клієнт не прийняв анімацію: ',
     picAnimServerRefused: 'Сервер не прийняв анімацію.',
+    picAnimStill: 'Анімацію встановлено. Тепер її нерухома картинка, для інших клієнтів...',
+    picAnimStillRefused: 'Анімацію встановлено, а її нерухому картинку - ні: '
+      + 'контакти в інших клієнтах і далі бачать вашу попередню картинку.',
     picReduced: (from, to) => `${from} стиснуто до ${to}`,
     picBytes: (n) => (n < 1024 ? `${n} байт` : `${Math.round(n / 1024)} КБ`),
     signedInAs: (u) => `Ви увійшли як <b>${u}</b>`,
@@ -1083,9 +1278,9 @@ function redirect(res, url) {
 // One file of a folder loaded by loadFolder, by its exact name after the
 // prefix. The name is looked up, never joined to a path, so a request cannot
 // walk out of the folder; anything else is a 404.
-function serveFolderFile(ctx, prefix, files) {
+function serveFolderFile(ctx, prefix, files, names = PLAIN_NAME) {
   const name = ctx.path.replace(prefix, '');
-  const file = /^[a-z0-9_-]+\.[a-z]+$/i.test(name) ? files.get(name.toLowerCase()) : null;
+  const file = names.test(name) ? files.get(name.toLowerCase()) : null;
   if (!file || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) {
     ctx.res.writeHead(404, { 'content-length': 0 });
     ctx.res.end();
@@ -1302,9 +1497,12 @@ function profileRows(icq, t, row) {
 // ---------------------------------------------------------------- user picture
 //
 // A user has a static picture (the buddy icon), an animated Flash avatar, both
-// or neither. The card shows the animated one when it is one of ours - by its
-// thumbnail from the gallery, since a page for old browsers cannot count on
-// Flash - and otherwise the static picture.
+// or neither. The card shows the animated one when it is one of ours, and
+// otherwise the static picture. The animated one is drawn at twice the
+// gallery's size, as a still picture first; a browser of today then plays the
+// movie over it with Ruffle (see loadRuffle). The client's own embedded IE,
+// which opens the card for "My page", and any browser with scripts off or
+// without WebAssembly keep the still picture.
 
 // The picture types every browser the pages are made for shows in an <img>.
 const CARD_ICON_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/bmp']);
@@ -1376,7 +1574,84 @@ function iconSizeAttrs(body) {
   return ` width="${w}" height="${h}"`;
 }
 
-// The picture cell of a user card, or '' when the user has no picture.
+// How Ruffle is set up for the card: the movie starts on its own, silently,
+// with none of the player's own screens - no splash, no "click to unmute", no
+// menu - and it may not open anything. The movie is transparent, over the
+// white of its frame, like the still picture under it. Nothing in the page is
+// taken over: the card makes the one player itself.
+const CARD_RUFFLE_CONFIG = {
+  publicPath: '/icq/ruffle/',
+  polyfills: false,
+  autoplay: 'on',
+  unmuteOverlay: 'hidden',
+  splashScreen: false,
+  contextMenu: 'off',
+  letterbox: 'off',
+  wmode: 'transparent',
+  backgroundColor: null,
+  quality: 'high',
+  allowFullscreen: false,
+  allowNetworking: 'none',
+  openUrlMode: 'deny',
+  showSwfDownload: false,
+  warnOnUnsupportedContent: false,
+  favorFlash: false,
+  logLevel: 'error',
+};
+
+// The script that turns the card's still picture into the playing movie. It
+// has to be harmless in the embedded IE the client opens the card in: plain
+// old JavaScript, no syntax that engine cannot parse, and it stops at once
+// where there is no WebAssembly. Only then is Ruffle fetched. The player is
+// kept hidden over the picture until the movie has loaded, and is taken away
+// again if it never does, so the still picture stays whatever goes wrong.
+function cardAvatarScript(boxId, swf) {
+  return `<script type="text/javascript">
+(function () {
+  var box = document.getElementById(${scriptJson(boxId)});
+  if (!box || typeof WebAssembly != 'object' || typeof Promise == 'undefined'
+      || !window.fetch || !box.addEventListener) { return; }
+  var img = box.getElementsByTagName('img')[0];
+  var player = null;
+  var shown = false;
+  function giveUp() {
+    if (shown || !player) { return; }
+    try { box.removeChild(player); } catch (e) {}
+    player = null;
+  }
+  function start() {
+    if (!window.RufflePlayer || !window.RufflePlayer.newest) { return; }
+    player = window.RufflePlayer.newest().createPlayer();
+    var s = player.style;
+    s.position = 'absolute'; s.left = '0'; s.top = '0';
+    s.width = box.offsetWidth + 'px'; s.height = box.offsetHeight + 'px';
+    s.visibility = 'hidden';
+    box.appendChild(player);
+    player.addEventListener('loadeddata', function () {
+      // A moment for the first frame to be drawn before it replaces the picture.
+      setTimeout(function () {
+        if (!player) { return; }
+        shown = true;
+        player.style.visibility = 'visible';
+        if (img) { img.style.visibility = 'hidden'; }
+      }, 250);
+    });
+    var api = player.ruffle ? player.ruffle() : player;
+    api.load({ url: ${scriptJson(swf)} }).then(null, giveUp);
+    setTimeout(giveUp, 20000);
+  }
+  window.RufflePlayer = window.RufflePlayer || {};
+  window.RufflePlayer.config = ${scriptJson(CARD_RUFFLE_CONFIG)};
+  var script = document.createElement('script');
+  script.src = ${scriptJson(`/icq/ruffle/ruffle.js?v=${ruffleTag}`)};
+  script.onload = function () { try { start(); } catch (e) { giveUp(); } };
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>`;
+}
+
+// The picture cell of a user card as { html, width }, or null when the user
+// has no picture.
 async function cardPicture(uin, t, lang) {
   let avatar = null;
   try {
@@ -1387,22 +1662,47 @@ async function cardPicture(uin, t, lang) {
   if (avatar) {
     const stem = avatar.file.replace(/\.[a-z]+$/i, '');
     const title = (avatar.title && (avatar.title[lang] || avatar.title.en)) || stem;
-    return `<img src="/icq/avatars/${escapeHtml(avatar.thumb)}" width="52" height="64"`
-      + ` alt="${escapeHtml(title)}" title="${escapeHtml(title)}" border="0">`
-      + `<div class="dim" style="font-size:11px;line-height:13px;margin-top:3px">${escapeHtml(t.cAnimatedAvatar(title))}</div>`;
+    const label = `<div class="dim" style="font-size:11px;line-height:13px;margin-top:3px">`
+      + `${escapeHtml(t.cAnimatedAvatar(title))}</div>`;
+    // The large still, when the folder has it; the gallery's thumbnail
+    // otherwise, as before.
+    const large = avatar.large && avatarFiles.get(String(avatar.large).toLowerCase());
+    const size = large && imageSize(large.body);
+    if (!size) {
+      return {
+        width: 72,
+        html: `<img src="/icq/avatars/${escapeHtml(avatar.thumb)}" width="52" height="64"`
+          + ` alt="${escapeHtml(title)}" title="${escapeHtml(title)}" border="0">${label}`,
+      };
+    }
+    // The movie plays only where Ruffle is here to play it, on its idle loop
+    // (see moodMovie).
+    const playable = ruffleFiles.has('ruffle.js') && (avatar.labels || []).includes('stam');
+    return {
+      width: Math.max(72, size.w),
+      html: `<div id="cardAvatar" style="position:relative;width:${size.w}px;height:${size.h}px;`
+        + `background:#fff;overflow:hidden">`
+        + `<img src="/icq/avatars/${escapeHtml(avatar.large)}" width="${size.w}" height="${size.h}"`
+        + ` alt="${escapeHtml(title)}" title="${escapeHtml(title)}" border="0" style="display:block"></div>`
+        + label
+        + (playable ? cardAvatarScript('cardAvatar', `/icq/avatars/${avatar.file}?emotion=stam`) : ''),
+    };
   }
   // The static picture comes through our own route: the management API it is
   // stored behind is reachable only from this machine.
-  if (!/^\d{4,10}$/.test(uin)) return '';
+  if (!/^\d{4,10}$/.test(uin)) return null;
   let icon = null;
   try {
     icon = await staticIcon(uin);
   } catch {
     // As above.
   }
-  if (!icon) return '';
-  return `<img src="/icq/whitepages/icon?icq=${escapeHtml(uin)}"${iconSizeAttrs(icon.body)}`
-    + ' alt="" border="0">';
+  if (!icon) return null;
+  return {
+    width: 72,
+    html: `<img src="/icq/whitepages/icon?icq=${escapeHtml(uin)}"${iconSizeAttrs(icon.body)}`
+      + ' alt="" border="0">',
+  };
 }
 
 // GET /icq/whitepages/icon?icq=<uin>: the user's static picture, relayed from
@@ -1517,7 +1817,7 @@ async function userCard(uin, t, lang = FALLBACK_LANG) {
     html: picture
       ? `<div class="card">
       <table cellpadding="0" cellspacing="0" border="0"><tr>
-        <td valign="top" align="center" width="72" style="padding:0 12px 0 0">${picture}</td>
+        <td valign="top" align="center" width="${picture.width}" style="padding:0 12px 0 0">${picture.html}</td>
         <td valign="top">${table}</td>
       </tr></table>
     </div>`
@@ -2062,11 +2362,14 @@ function avatarPage(u, req) {
   // "now set", and the address it hands the client. That address is plain
   // HTTP on this service's own port whichever way the page came in: the
   // client fetches the movie with its own loader, and so does every
-  // contact's client, and none of them speaks HTTPS.
+  // contact's client, and none of them speaks HTTPS. `still` is the 52x64
+  // picture of the same face, set as the buddy picture alongside the movie
+  // for the clients that cannot play it; '' when the folder has none.
   const avatars = avatarList.map((a) => ({
     file: a.file,
     title: (a.title && (a.title[u.lang] || a.title.en)) || a.file,
     thumb: a.thumb,
+    still: a.still && avatarFiles.has(String(a.still).toLowerCase()) ? a.still : '',
   }));
   const hasAnimated = avatars.length > 0;
   return avatarTemplate
@@ -2381,7 +2684,15 @@ const ACTIONS = {
   tzer: (ctx) => serveFolderFile(ctx, /^\/icq\/tzers\//i, tzerFiles),
 
   // An animated avatar or its thumbnail, the same way: /icq/avatars/pirate.swf.
-  avatarfiles: (ctx) => serveFolderFile(ctx, /^\/icq\/avatars\//i, avatarFiles),
+  // With ?emotion=stam (or another of its labels) the movie comes with its
+  // face on that mood already, for the user card's player (see moodMovie).
+  avatarfiles: (ctx) => (ctx.url.searchParams.has('emotion')
+    ? serveMoodMovie(ctx)
+    : serveFolderFile(ctx, /^\/icq\/avatars\//i, avatarFiles)),
+
+  // Ruffle's web build, for the user card: /icq/ruffle/ruffle.js and the
+  // files it loads itself.
+  ruffle: (ctx) => serveRuffle(ctx),
 
   // The list the original avatar gallery loaded first
   // (xtraz.icq.com/xtraz2/products/avatar/xml/avatarsGalery.php), in its 2007
@@ -2496,6 +2807,7 @@ config = loadConfig();
 loadTopics();
 loadTzers();
 loadAvatars();
+loadRuffle();
 
 // SIGHUP reloads the config: a host can be added without restarting the service.
 // If the new file is broken we keep the old one instead of dying.
@@ -2505,6 +2817,7 @@ process.on('SIGHUP', () => {
     loadTopics();
     loadTzers();
     loadAvatars();
+    loadRuffle();
     console.log(`config reloaded: ${config.routes.length} routes, ${tzerFiles.size} tZer files, `
       + `${avatarList.length} animated avatars`);
   } catch (err) {

@@ -30,6 +30,7 @@
     "  tzer        a tZer movie or thumbnail from the tzers folder, by exact name",
     "  avatarfiles an animated avatar or its thumbnail from the avatars folder, by exact name",
     "  avatargallery the avatar gallery list (2007 XML) with our animated avatars",
+    "  ruffle      Ruffle's web build from the ruffle folder, by exact name; the user card plays the animated avatar with it",
     "  stub        a \"this service is gone\" page",
     "",
     "Substitutions in target: {registerBase}, {q}, {host}, {path}."
@@ -182,6 +183,11 @@
       "path": "^/icq/avatars/",
       "action": "avatarfiles",
       "note": "animated avatars (Flash devils) and their thumbnails from the avatars folder, by exact file name; the picture page hands the client these addresses, and every contact's client fetches the movie from here over plain HTTP"
+    },
+    {
+      "path": "^/icq/ruffle/",
+      "action": "ruffle",
+      "note": "Ruffle's web build (the loader, its chunk and the WebAssembly), by exact file name; the user card loads it to play an animated avatar in a browser without Flash"
     },
     {
       "path": "^/icq/avatar/upload",

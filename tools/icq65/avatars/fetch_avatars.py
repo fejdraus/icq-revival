@@ -30,6 +30,16 @@
 #            FlashPlayerControl.dll through its example host (--render)
 #   placeholder  a plain frame, when neither is available
 #
+# Each avatar also gets two still pictures of its idle face, the whole stage
+# as the movie shows it, on white:
+#   <name>-still.jpg  52x64, the size and format the picture page hands the
+#                     client for a buddy picture (BART type 1). Setting an
+#                     animated avatar sets this one too, for the clients that
+#                     cannot play Flash (Miranda, ICQ 2003b, AIM).
+#   <name>-large.png  the stage fitted into 104x128, twice the gallery's size:
+#                     the user card shows it where the movie cannot play.
+# Both come from the rendered frame (--render), or else from the thumbnail.
+#
 #   python fetch_avatars.py [--render <host.exe> <FlashPlayerControl.dll>]
 #                           [--cache <dir>] [--out <dir>] [--cdx]
 #
@@ -61,6 +71,8 @@ OUT = os.path.normpath(os.path.join(HERE, '..', '..', '..', 'deploy', 'oscar-leg
 # The size the client stores a buddy picture in, and the gallery list's
 # <img_sizes>: thumbnails are made to it.
 THUMB_W, THUMB_H = 52, 64
+# The box the user card draws the avatar in: twice the gallery's size.
+LARGE_W, LARGE_H = 104, 128
 
 ICQ = 'icq'    # made by ICQ (/xtraz/img/avatar/, /xtraz2/img/avatar/)
 USER = 'user'  # user created (/xtraz/img/avatar/uc/)
@@ -424,7 +436,9 @@ def render(host, dll, swf_path):
     frame it snapshots after GotoFrame(0): the start of the movie, where the
     face stands on its `stam` (idle) loop - what a contact sees most of the
     time. The devils have a one-frame root timeline, so the host counts them
-    as finished at once and never reaches its three-second snapshot."""
+    as finished at once and never reaches its three-second snapshot.
+    The whole snapshot as an RGBA image (the host's window, with the stage
+    shown in its middle), or None."""
     from PIL import Image
     with tempfile.TemporaryDirectory() as tmp:
         try:
@@ -439,9 +453,61 @@ def render(host, dll, swf_path):
         shot = shots[0]
         img = Image.open(shot)
         img.load()
-        if not img.convert('RGBA').getchannel('A').getbbox():
+        img = img.convert('RGBA')
+        if not img.getchannel('A').getbbox():
             return None  # nothing drawn
-        return fit(img)
+        return img
+
+
+def stage_size(data):
+    """The movie's stage in pixels, from the SWF header."""
+    body = swf_body(data)
+    n = body[0] >> 3
+    b = Bits(body, 0)
+    b.u(5)
+    x0, x1, y0, y1 = (b.u(n) for _ in range(4))
+    return (x1 - x0) / 20.0, (y1 - y0) / 20.0
+
+
+def stage_of(shot, stage):
+    """The stage cut out of the host's snapshot. The player shows the whole
+    stage, scaled to fit the window and centred (Flash's showAll), so where
+    it lies follows from the two sizes."""
+    sw, sh = stage
+    scale = min(shot.width / sw, shot.height / sh)
+    w, h = sw * scale, sh * scale
+    left, top = (shot.width - w) / 2, (shot.height - h) / 2
+    return shot.crop((round(left), round(top), round(left + w), round(top + h)))
+
+
+def on_white(img):
+    from PIL import Image
+    img = img.convert('RGBA')
+    base = Image.new('RGBA', img.size, (255, 255, 255, 255))
+    base.alpha_composite(img)
+    return base.convert('RGB')
+
+
+def stills(stage_img):
+    """The two still pictures of the idle face (see the top of the file):
+    52x64 JPEG bytes for the buddy picture, the stage fitted into the card's
+    box as PNG bytes, and that box's size. Nothing is cut off: the stage keeps
+    its proportions, on white where it does not fill the 52x64 frame."""
+    from PIL import Image
+    img = on_white(stage_img)
+
+    scale = min(THUMB_W / img.width, THUMB_H / img.height)
+    size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+    frame = Image.new('RGB', (THUMB_W, THUMB_H), (255, 255, 255))
+    frame.paste(img.resize(size, Image.LANCZOS), ((THUMB_W - size[0]) // 2, (THUMB_H - size[1]) // 2))
+    small = io.BytesIO()
+    frame.save(small, 'JPEG', quality=92, optimize=True)
+
+    scale = min(LARGE_W / img.width, LARGE_H / img.height)
+    size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+    large = io.BytesIO()
+    img.resize(size, Image.LANCZOS).save(large, 'PNG', optimize=True)
+    return small.getvalue(), large.getvalue(), size
 
 
 def placeholder():
@@ -526,6 +592,10 @@ def main():
         stem = name[:-4]
         open(os.path.join(a.out, name), 'wb').write(data)
 
+        shot = None
+        if a.render:
+            shot = render(a.render[0], a.render[1], os.path.abspath(os.path.join(a.out, name)))
+
         thumb, source = None, None
         num = re.search(r'(\d{5})$', stem)
         if num and num.group(1) in THUMBS:
@@ -533,14 +603,23 @@ def main():
             gif = fetch(t_stamp, t_url, a.cache)
             if gif and gif[:4] == b'GIF8':
                 thumb, source, ext = gif, 'archive', '.gif'
-        if thumb is None and a.render:
-            png = render(a.render[0], a.render[1], os.path.abspath(os.path.join(a.out, name)))
-            if png:
-                thumb, source, ext = png, 'render', '.png'
+        if thumb is None and shot is not None:
+            thumb, source, ext = fit(shot), 'render', '.png'
         if thumb is None:
             thumb, source, ext = placeholder(), 'placeholder', '.png'
         thumb_name = stem + ext
         open(os.path.join(a.out, thumb_name), 'wb').write(thumb)
+
+        # The stills: the rendered stage when there is one, else the thumbnail.
+        from PIL import Image
+        if shot is not None:
+            still_src, still_from = stage_of(shot, stage_size(data)), 'render'
+        else:
+            still_src, still_from = Image.open(io.BytesIO(thumb)), source
+        small, large, large_size = stills(still_src)
+        still_name, large_name = stem + '-still.jpg', stem + '-large.png'
+        open(os.path.join(a.out, still_name), 'wb').write(small)
+        open(os.path.join(a.out, large_name), 'wb').write(large)
 
         en, uk = title_of(stem)
         manifest.append({
@@ -552,6 +631,10 @@ def main():
             'size': len(data),
             'thumb': thumb_name,
             'thumbSource': source,
+            'still': still_name,
+            'large': large_name,
+            'largeSize': list(large_size),
+            'stillSource': still_from,
             'source': url,
             'captured': stamp,
             'labels': info['found_labels'],
