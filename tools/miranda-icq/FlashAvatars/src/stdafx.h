@@ -29,6 +29,9 @@ of the License.
 #include <m_protosvc.h>
 #include <m_utils.h>
 #include <m_srmm_int.h>
+#include <m_message.h>
+#include <m_icolib.h>
+#include <m_imgsrvc.h>
 
 #include "version.h"
 
@@ -37,6 +40,9 @@ of the License.
 #import "flash.tlb" raw_interfaces_only no_namespace named_guids no_smart_pointers
 
 #define MODULENAME "FlashAvatars"
+
+#include "flash.h"
+#include "resource.h"
 
 struct CMPlugin : public PLUGIN<CMPlugin>
 {

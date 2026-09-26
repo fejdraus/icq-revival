@@ -60,16 +60,6 @@ CMPlugin::CMPlugin() :
 // (BART type 8) to it: {B9E03A0C-B33E-4B18-BC0B-7BB5903129AE}, "ICQ Revival:
 // Flash avatars". Open OSCAR Server: wire.CapFlashAvatarPlayer.
 
-#define PS_ICQ_ADDCAPABILITY "/IcqAddCapability"
-
-struct ICQ_CUSTOMCAP // m_icq.h of IcqOscarJ
-{
-	int cbSize;
-	char caps[0x10];
-	HANDLE hIcon;
-	char name[64];
-};
-
 static const BYTE capFlashAvatars[0x10] = {
 	0xB9, 0xE0, 0x3A, 0x0C, 0xB3, 0x3E, 0x4B, 0x18, 0xBC, 0x0B, 0x7B, 0xB5, 0x90, 0x31, 0x29, 0xAE
 };
@@ -78,9 +68,9 @@ static const BYTE capFlashAvatars[0x10] = {
 // Logging: the network log (Options - Network - Log), the debugger, and the
 // file named by the FLASHAVATARS_LOG environment variable.
 
-static HNETLIBUSER g_hNetlib;
+HNETLIBUSER g_hNetlib;
 
-static void Log(const char *fmt, ...)
+void Log(const char *fmt, ...)
 {
 	char buf[1024];
 	va_list va;
@@ -166,7 +156,7 @@ static int FaceForText(const wchar_t *text)
 static HMODULE g_hEngine;
 static bool g_bEngineTried;
 
-static IUnknown* CreateFlashObject()
+HMODULE LoadEngine()
 {
 	if (!g_bEngineTried) {
 		g_bEngineTried = true;
@@ -175,6 +165,12 @@ static IUnknown* CreateFlashObject()
 		g_hEngine = LoadLibraryExW(path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 		Log("engine %S: %s", path, g_hEngine ? "loaded" : "not found, using the registered ShockwaveFlash control");
 	}
+	return g_hEngine;
+}
+
+static IUnknown* CreateFlashObject()
+{
+	LoadEngine();
 
 	IUnknown *pUnk = nullptr;
 	HRESULT hr;
@@ -393,7 +389,7 @@ static void SetFace(FlashView *v, int face)
 
 static std::vector<CMStringA> g_downloads; // main thread only
 
-static CMStringW MovieFile(const CMStringA &url)
+CMStringW MovieFile(const CMStringA &url, const wchar_t *wszExt)
 {
 	uint8_t digest[16];
 	mir_md5_hash((const uint8_t *)url.c_str(), url.GetLength(), digest);
@@ -401,7 +397,7 @@ static CMStringW MovieFile(const CMStringA &url)
 	CMStringW ret(VARSW(L"%miranda_avatarcache%\\Flash\\"));
 	for (auto b : digest)
 		ret.AppendFormat(L"%02x", b);
-	ret.Append(L".swf");
+	ret.Append(wszExt);
 	return ret;
 }
 
@@ -432,39 +428,59 @@ static void MIR_SYSCALL DownloadDone(void *param)
 	RefreshAll();
 }
 
+// Fetches url into file (on a worker thread): http(s) only, at most 4 MB, a Flash
+// movie when bFlash (a signature FWS, CWS or ZWS), else a PNG, GIF or JPEG.
+bool DownloadFile(const CMStringA &url, const CMStringW &file, bool bFlash)
+{
+	if (_strnicmp(url, "http://", 7) && _strnicmp(url, "https://", 8))
+		return false;
+
+	MHttpRequest req(REQUEST_GET);
+	req.m_szUrl = url;
+	req.flags = NLHRF_HTTP11 | NLHRF_REDIRECT | NLHRF_NODUMP;
+	NLHR_PTR resp(Netlib_HttpTransaction(g_hNetlib, &req));
+	if (resp == nullptr) {
+		Log("download %s: no response", url.c_str());
+		return false;
+	}
+	if (resp->resultCode != 200) {
+		Log("download %s: HTTP %d", url.c_str(), resp->resultCode);
+		return false;
+	}
+	int len = resp->body.GetLength();
+	if (len < 8 || len > MAX_MOVIE_SIZE) {
+		Log("download %s: %d bytes, refused", url.c_str(), len);
+		return false;
+	}
+
+	const char *sig = resp->body.c_str();
+	bool bValid = bFlash
+		? (!memcmp(sig + 1, "WS", 2) && (sig[0] == 'F' || sig[0] == 'C' || sig[0] == 'Z'))
+		: (!memcmp(sig, "\x89PNG", 4) || !memcmp(sig, "GIF8", 4) || !memcmp(sig, "\xFF\xD8", 2));
+	if (!bValid) {
+		Log("download %s: not a %s", url.c_str(), bFlash ? "Flash movie" : "picture");
+		return false;
+	}
+
+	CreatePathToFileW(file);
+	CMStringW tmp(file + L".part");
+	bool ok = false;
+	FILE *f = _wfopen(tmp, L"wb");
+	if (f) {
+		bool written = fwrite(sig, 1, len, f) == (size_t)len;
+		fclose(f);
+		ok = written && MoveFileExW(tmp, file, MOVEFILE_REPLACE_EXISTING);
+		if (!ok)
+			DeleteFileW(tmp);
+	}
+	Log("download %s: %d bytes -> %S (%s)", url.c_str(), len, file.c_str(), ok ? "ok" : "cannot write");
+	return ok;
+}
+
 static void __cdecl DownloadThread(void *param)
 {
 	DownloadJob *job = (DownloadJob *)param;
-	job->ok = false;
-
-	MHttpRequest req(REQUEST_GET);
-	req.m_szUrl = job->url;
-	req.flags = NLHRF_HTTP11 | NLHRF_REDIRECT | NLHRF_NODUMP;
-	NLHR_PTR resp(Netlib_HttpTransaction(g_hNetlib, &req));
-	if (resp == nullptr)
-		Log("download %s: no response", job->url.c_str());
-	else if (resp->resultCode != 200)
-		Log("download %s: HTTP %d", job->url.c_str(), resp->resultCode);
-	else if (resp->body.GetLength() < 8 || resp->body.GetLength() > MAX_MOVIE_SIZE)
-		Log("download %s: %d bytes, refused", job->url.c_str(), resp->body.GetLength());
-	else {
-		const char *sig = resp->body.c_str();
-		if (memcmp(sig + 1, "WS", 2) || (sig[0] != 'F' && sig[0] != 'C' && sig[0] != 'Z'))
-			Log("download %s: not a Flash movie", job->url.c_str());
-		else {
-			CreatePathToFileW(job->file);
-			CMStringW tmp(job->file + L".part");
-			FILE *f = _wfopen(tmp, L"wb");
-			if (f) {
-				bool written = fwrite(sig, 1, resp->body.GetLength(), f) == (size_t)resp->body.GetLength();
-				fclose(f);
-				job->ok = written && MoveFileExW(tmp, job->file, MOVEFILE_REPLACE_EXISTING);
-				if (!job->ok)
-					DeleteFileW(tmp);
-			}
-			Log("download %s: %d bytes -> %S (%s)", job->url.c_str(), resp->body.GetLength(), job->file.c_str(), job->ok ? "ok" : "cannot write");
-		}
-	}
+	job->ok = DownloadFile(job->url, job->file, true);
 	CallFunctionAsync(DownloadDone, job);
 }
 
@@ -555,7 +571,7 @@ static void UpdateView(FlashView *v)
 	if (url.IsEmpty() || v->bFailed || v->pUnk)
 		return;
 
-	CMStringW file = MovieFile(url);
+	CMStringW file = MovieFile(url, L".swf");
 	if (_waccess(file, 0))
 		StartDownload(url, file);
 	else
@@ -897,6 +913,19 @@ static void UnhookAvatarControlClass()
 	}
 }
 
+void AddIcqCapability(const char *szModule, const BYTE caps[0x10], const char *szName)
+{
+	if (!ProtoServiceExists(szModule, PS_ICQ_ADDCAPABILITY))
+		return;
+
+	ICQ_CUSTOMCAP cap = {};
+	cap.cbSize = sizeof(cap);
+	memcpy(cap.caps, caps, sizeof(cap.caps));
+	strncpy_s(cap.name, szName, _TRUNCATE);
+	CallProtoService(szModule, PS_ICQ_ADDCAPABILITY, 0, (LPARAM)&cap);
+	Log("capability \"%s\" announced for account %s", szName, szModule);
+}
+
 static int OnModulesLoaded(WPARAM, LPARAM)
 {
 	NETLIBUSER nlu = {};
@@ -905,20 +934,14 @@ static int OnModulesLoaded(WPARAM, LPARAM)
 	nlu.szDescriptiveName.w = TranslateT("Flash avatars");
 	g_hNetlib = Netlib_RegisterUser(&nlu);
 
+	Tzers_ModulesLoaded();
+
 	if (!HookAvatarControlClass())
 		return 0;
 
 	// tell ICQ servers that this client plays Flash avatars
-	for (auto &pa : Accounts()) {
-		if (!ProtoServiceExists(pa->szModuleName, PS_ICQ_ADDCAPABILITY))
-			continue;
-		ICQ_CUSTOMCAP cap = {};
-		cap.cbSize = sizeof(cap);
-		memcpy(cap.caps, capFlashAvatars, sizeof(cap.caps));
-		strncpy_s(cap.name, "Flash avatars", _TRUNCATE);
-		CallProtoService(pa->szModuleName, PS_ICQ_ADDCAPABILITY, 0, (LPARAM)&cap);
-		Log("capability announced for account %s", pa->szModuleName);
-	}
+	for (auto &pa : Accounts())
+		AddIcqCapability(pa->szModuleName, capFlashAvatars, "Flash avatars");
 
 	HookEvent(ME_DB_EVENT_ADDED, OnEventAdded);
 	HookEvent(ME_DB_CONTACT_SETTINGCHANGED, OnSettingChanged);
@@ -936,6 +959,7 @@ int CMPlugin::Load()
 
 int CMPlugin::Unload()
 {
+	Tzers_Unload();
 	UnhookAvatarControlClass();
 	if (g_hNetlib)
 		Netlib_CloseHandle(g_hNetlib);

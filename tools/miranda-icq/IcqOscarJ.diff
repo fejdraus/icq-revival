@@ -1,7 +1,7 @@
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/icqoscar8.vcxproj b/icqoscar8.vcxproj
---- a/icqoscar8.vcxproj	2026-09-26 22:22:14.107057000 +0300
-+++ b/icqoscar8.vcxproj	2026-09-26 22:22:14.285591500 +0300
-@@ -25,4 +25,101 @@
+--- a/icqoscar8.vcxproj	2026-09-26 23:05:25.577306600 +0300
++++ b/icqoscar8.vcxproj	2026-09-26 23:05:25.773080300 +0300
+@@ -25,4 +25,102 @@
    <ImportGroup Label="PropertySheets">
      <Import Project="$(ProjectDir)..\..\build\vc.common\plugin.props" />
    </ImportGroup>
@@ -56,6 +56,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/icqoscar8.vcxproj b/icqo
 +    <ClCompile Include="src\icq_uploadui.cpp" />
 +    <ClCompile Include="src\icq_xstatus.cpp" />
 +    <ClCompile Include="src\icq_xtraz.cpp" />
++    <ClCompile Include="src\icq_tzer.cpp" />
 +    <ClCompile Include="src\icqosc_svcs.cpp" />
 +    <ClCompile Include="src\init.cpp" />
 +    <ClCompile Include="src\log.cpp" />
@@ -105,8 +106,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/icqoscar8.vcxproj b/icqo
  </Project>
 \ No newline at end of file
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/res/resources.rc b/res/resources.rc
---- a/res/resources.rc	2026-09-26 22:22:14.122782500 +0300
-+++ b/res/resources.rc	2026-09-26 22:22:14.301893700 +0300
+--- a/res/resources.rc	2026-09-26 23:05:25.595593800 +0300
++++ b/res/resources.rc	2026-09-26 23:05:25.789472200 +0300
 @@ -125,7 +125,7 @@
      CTEXT           "Note: The options marked with an asterisk have important side-effects or caveats that may not be initially apparent documented in the help.",IDC_STATIC,10,212,290,16
  END
@@ -127,8 +128,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/res/resources.rc b/res/r
  
  IDD_OPT_ICQPRIVACY DIALOGEX 0, 0, 310, 234
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/chan_04close.cpp b/src/chan_04close.cpp
---- a/src/chan_04close.cpp	2026-09-26 22:22:14.130023500 +0300
-+++ b/src/chan_04close.cpp	2026-09-26 22:22:14.309921400 +0300
+--- a/src/chan_04close.cpp	2026-09-26 23:05:25.601639500 +0300
++++ b/src/chan_04close.cpp	2026-09-26 23:05:25.794635300 +0300
 @@ -152,12 +152,6 @@
  			}
  		}
@@ -143,8 +144,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/chan_04close.cpp b/s
  
  	// Free allocated memory
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/dlgproc.cpp b/src/dlgproc.cpp
---- a/src/dlgproc.cpp	2026-09-26 22:22:14.135904100 +0300
-+++ b/src/dlgproc.cpp	2026-09-26 22:22:14.317951500 +0300
+--- a/src/dlgproc.cpp	2026-09-26 23:05:25.610896500 +0300
++++ b/src/dlgproc.cpp	2026-09-26 23:05:25.800668500 +0300
 @@ -216,19 +216,16 @@
  		switch (((LPNMHDR)lParam)->idFrom) {
  		case 0:
@@ -180,8 +181,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/dlgproc.cpp b/src/dl
  				for (i = 0; i < _countof(dat->hUpload); i++)
  					if (dat->hUpload[i] && ack->hProcess == dat->hUpload[i])
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_01service.cpp b/src/fam_01service.cpp
---- a/src/fam_01service.cpp	2026-09-26 22:22:14.138913500 +0300
-+++ b/src/fam_01service.cpp	2026-09-26 22:22:14.321102800 +0300
+--- a/src/fam_01service.cpp	2026-09-26 23:05:25.613905100 +0300
++++ b/src/fam_01service.cpp	2026-09-26 23:05:25.802674200 +0300
 @@ -249,6 +249,22 @@
  			pBuffer += 4;      /* warning level & user class */
  			wBufferLength -= 5 + bUinLen;
@@ -245,8 +246,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_01service.cpp b/
  	/* SNAC 3,15: Try to add unauthorised contacts to temporary list */
  	sendEntireListServ(ICQ_BUDDY_FAMILY, ICQ_USER_ADDTOTEMPLIST, BUL_ALLCONTACTS);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_02location.cpp b/src/fam_02location.cpp
---- a/src/fam_02location.cpp	2026-09-26 22:22:14.139922000 +0300
-+++ b/src/fam_02location.cpp	2026-09-26 22:22:14.393024200 +0300
+--- a/src/fam_02location.cpp	2026-09-26 23:05:25.614910100 +0300
++++ b/src/fam_02location.cpp	2026-09-26 23:05:25.876671400 +0300
 @@ -246,11 +246,11 @@
  			disposeChain(&pChain);
  		}
@@ -265,8 +266,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_02location.cpp b
  		SAFE_FREE((void**)&szMsg);
  	}
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_03buddy.cpp b/src/fam_03buddy.cpp
---- a/src/fam_03buddy.cpp	2026-09-26 22:22:14.140428500 +0300
-+++ b/src/fam_03buddy.cpp	2026-09-26 22:22:14.322105100 +0300
+--- a/src/fam_03buddy.cpp	2026-09-26 23:05:25.616911900 +0300
++++ b/src/fam_03buddy.cpp	2026-09-26 23:05:25.803674200 +0300
 @@ -244,7 +244,7 @@
  			if (wClass & CLASS_AWAY)
  				wStatus = ID_STATUS_AWAY;
@@ -286,8 +287,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_03buddy.cpp b/sr
  			wStatus = ID_STATUS_ONLINE;
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/src/fam_04message.cpp
---- a/src/fam_04message.cpp	2026-09-26 22:22:14.141435100 +0300
-+++ b/src/fam_04message.cpp	2026-09-26 22:22:14.323105700 +0300
+--- a/src/fam_04message.cpp	2026-09-26 23:05:25.617911000 +0300
++++ b/src/fam_04message.cpp	2026-09-26 23:05:25.807676400 +0300
 @@ -233,7 +233,7 @@
  				DWORD dwRecvTime;
  				char* szMsg = nullptr;
@@ -328,7 +329,44 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  			}
  
  			for (int i = 0; i < iContact; i++) {
-@@ -1412,11 +1413,11 @@
+@@ -1177,6 +1178,9 @@
+ 	if (CompareGUIDs(dwGuid1, dwGuid2, dwGuid3, dwGuid4, MGTYPE_STATUSMSGEXT)) {
+ 		nTypeID = MTYPE_STATUSMSGEXT;
+ 	}
++	else if (CompareGUIDs(dwGuid1, dwGuid2, dwGuid3, dwGuid4, MGTYPE_TZER)) {
++		nTypeID = MTYPE_TZER; // function 0, "Send Tzer"
++	}
+ 	else if (wType == MGTYPE_UNDEFINED) {
+ 		if (CompareGUIDs(dwGuid1, dwGuid2, dwGuid3, dwGuid4, PSIG_MESSAGE)) { // icq6 message ack
+ 			nTypeID = MTYPE_PLAIN;
+@@ -1287,6 +1291,9 @@
+ 	case MTYPE_SCRIPT_NOTIFY:
+ 		return 0x51;
+ 
++	case MTYPE_TZER:
++		return 0x32;
++
+ 	case MTYPE_FILEREQ:
+ 		return 0x2B;
+ 
+@@ -1309,6 +1316,16 @@
+ void packPluginTypeId(icq_packet *packet, int nTypeID)
+ {
+ 	switch (nTypeID) {
++	case MTYPE_TZER: // as ICQ 6.5 sends it
++		packLEWord(packet, 0x030);                // Length
++		packGUID(packet, MGTYPE_TZER);            // Message Type GUID
++		packLEWord(packet, 0);                    // Function ID
++		packLEDWord(packet, 9);                   // Request type string
++		packBuffer(packet, (LPBYTE)"Send Tzer", 9);
++		for (int i = 0; i < 17; i++)              // Unknown binary stuff, zeros
++			packByte(packet, 0x00);
++		break;
++
+ 	case MTYPE_SCRIPT_NOTIFY:
+ 		packLEWord(packet, 0x04f);                // Length
+ 
+@@ -1412,11 +1429,11 @@
  	}
  
  	// it is probably UTF-8 status reply
@@ -345,7 +383,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  }
  
  
-@@ -1456,8 +1457,8 @@
+@@ -1456,8 +1473,8 @@
  void CIcqProto::sendMessageTypesAck(MCONTACT hContact, int bUnicode, message_ack_params *pArgs)
  {
  	if (pArgs) {
@@ -356,7 +394,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  			|| pArgs->msgType == MTYPE_CONTACTS) {
  			if (pArgs->bType == MAT_SERVER_ADVANCED) { // Only ack message packets
  				icq_sendAdvancedMsgAck(pArgs->dwUin, pArgs->dwMsgID1, pArgs->dwMsgID2, pArgs->wCookie, (BYTE)pArgs->msgType, pArgs->bFlags);
-@@ -1516,7 +1517,7 @@
+@@ -1516,7 +1533,7 @@
  	switch (type) {
  	case MTYPE_PLAIN:    /* plain message */
  		{
@@ -365,7 +403,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  			bool bUtf8 = false;
  
  			// Check if this message is marked as UTF8 encoded
-@@ -1575,9 +1576,10 @@
+@@ -1575,9 +1592,10 @@
  				}
  			}
  
@@ -379,7 +417,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  		}
  		break;
  
-@@ -1603,10 +1605,11 @@
+@@ -1603,10 +1621,11 @@
  			SAFE_FREE(&szDataDescr);
  			SAFE_FREE(&szDataUrl);
  
@@ -395,7 +433,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  			SAFE_FREE(&szBlob);
  		}
  		break;
-@@ -1618,14 +1621,14 @@
+@@ -1618,14 +1637,14 @@
  			break;
  		}
  		{
@@ -416,7 +454,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  		}
  		break;
  
-@@ -1686,11 +1689,11 @@
+@@ -1686,11 +1705,11 @@
  					hContact = HContactFromUIN(dwUin, &bAdded);
  					sendMessageTypesAck(hContact, 0, pAckParams);
  
@@ -433,7 +471,19 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  				}
  
  				for (int i = 0; i < nContacts; i++) {
-@@ -2089,7 +2092,7 @@
+@@ -1770,6 +1789,11 @@
+ 		NetLog_Uni(bThruDC, "Received %s from %u", "Greeting Card", dwUin);
+ 		break;
+ 
++	case MTYPE_TZER:
++		NetLog_Uni(bThruDC, "Received %s from %u", "tZer", dwUin);
++		handleTzer(dwUin, dwTimestamp, szMsg);
++		break;
++
+ 	case MTYPE_SCRIPT_NOTIFY:
+ 		/* it's a xtraz notify request */
+ 		NetLog_Uni(bThruDC, "Received %s from %u", "Xtraz Notify Request", dwUin);
+@@ -2089,7 +2113,7 @@
  					break;
  
  				case MTYPE_URL:
@@ -442,7 +492,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  					break;
  
  				case MTYPE_CONTACTS:
-@@ -2156,7 +2159,7 @@
+@@ -2156,7 +2180,7 @@
  			break;
  
  		case MTYPE_URL:
@@ -451,7 +501,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  			break;
  
  		case MTYPE_AUTHOK:
-@@ -2321,7 +2324,7 @@
+@@ -2321,7 +2345,7 @@
  			break;
  
  		case MTYPE_URL:
@@ -460,7 +510,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  			break;
  
  		case MTYPE_CONTACTS:
-@@ -2391,7 +2394,7 @@
+@@ -2391,7 +2415,7 @@
  					break;
  
  				case MTYPE_URL:
@@ -470,8 +520,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  
  				case MTYPE_FILEREQ:
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_13servclist.cpp b/src/fam_13servclist.cpp
---- a/src/fam_13servclist.cpp	2026-09-26 22:22:14.145507400 +0300
-+++ b/src/fam_13servclist.cpp	2026-09-26 22:22:14.327169300 +0300
+--- a/src/fam_13servclist.cpp	2026-09-26 23:05:25.621932600 +0300
++++ b/src/fam_13servclist.cpp	2026-09-26 23:05:25.810881700 +0300
 @@ -1080,7 +1080,7 @@
  					// Set apparent mode & ignore
  					setWord(hContact, "ApparentMode", ID_STATUS_OFFLINE);
@@ -526,8 +576,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_13servclist.cpp 
  	SAFE_FREE(&szNick);
  	SAFE_FREE(&szReason);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_15icqserver.cpp b/src/fam_15icqserver.cpp
---- a/src/fam_15icqserver.cpp	2026-09-26 22:22:14.146510500 +0300
-+++ b/src/fam_15icqserver.cpp	2026-09-26 22:22:14.327169300 +0300
+--- a/src/fam_15icqserver.cpp	2026-09-26 23:05:25.623439700 +0300
++++ b/src/fam_15icqserver.cpp	2026-09-26 23:05:25.811885700 +0300
 @@ -91,7 +91,7 @@
  						}
  						else if (wSubType == META_SET_PASSWORD_REQ) {
@@ -605,8 +655,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_15icqserver.cpp 
  		DWORD64 qwMetaTime;
  		BYTE pbEmptyMetaToken[0x10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/families.h b/src/families.h
---- a/src/families.h	2026-09-26 22:22:14.147507800 +0300
-+++ b/src/families.h	2026-09-26 22:22:14.329689200 +0300
+--- a/src/families.h	2026-09-26 23:05:25.624447000 +0300
++++ b/src/families.h	2026-09-26 23:05:25.812887200 +0300
 @@ -57,6 +57,11 @@
  	WORD wTLV;
  	int dbType;
@@ -619,9 +669,20 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/families.h b/src/fam
  };
  
  /*---------* Functions *---------------*/
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/guids.h b/src/guids.h
+--- a/src/guids.h	2026-09-26 23:05:25.627447100 +0300
++++ b/src/guids.h	2026-09-26 23:05:25.819899800 +0300
+@@ -57,6 +57,7 @@
+ static const plugin_guid MGTYPE_CHAT = { MGTYPE_CHAT_s };
+ static const plugin_guid MGTYPE_SMS_MESSAGE = { MGTYPE_SMS_MESSAGE_s };
+ static const plugin_guid MGTYPE_XTRAZ_SCRIPT = { MGTYPE_XTRAZ_SCRIPT_s };
++static const plugin_guid MGTYPE_TZER = { MGTYPE_TZER_s };
+ 
+ // make GUID checks easy
+ __forceinline bool CompareGUIDs(DWORD q1, DWORD q2, DWORD q3, DWORD q4, const plugin_guid guid)
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.cpp b/src/icq_avatar.cpp
---- a/src/icq_avatar.cpp	2026-09-26 22:22:14.154230200 +0300
-+++ b/src/icq_avatar.cpp	2026-09-26 22:22:14.401567900 +0300
+--- a/src/icq_avatar.cpp	2026-09-26 23:05:25.632477700 +0300
++++ b/src/icq_avatar.cpp	2026-09-26 23:05:25.884705900 +0300
 @@ -80,8 +80,8 @@
  
  	FOLDERSGETDATA fgd = { sizeof(fgd) };
@@ -933,8 +994,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.cpp b/src
  			SAFE_FREE((void**)&pCookieData->hash);
  			SAFE_FREE((void**)&pCookieData);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.h b/src/icq_avatar.h
---- a/src/icq_avatar.h	2026-09-26 22:22:14.155230100 +0300
-+++ b/src/icq_avatar.h	2026-09-26 22:22:14.402567700 +0300
+--- a/src/icq_avatar.h	2026-09-26 23:05:25.633478800 +0300
++++ b/src/icq_avatar.h	2026-09-26 23:05:25.885705900 +0300
 @@ -37,6 +37,13 @@
  #define AVATAR_HASH_FLASH   0x08
  #define AVATAR_HASH_PHOTO   0x0C
@@ -958,9 +1019,25 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.h b/src/i
  	int      runCount;
  	void     checkRequestQueue();
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_constants.h b/src/icq_constants.h
---- a/src/icq_constants.h	2026-09-26 22:22:14.156230400 +0300
-+++ b/src/icq_constants.h	2026-09-26 22:22:14.335748000 +0300
-@@ -613,6 +613,9 @@
+--- a/src/icq_constants.h	2026-09-26 23:05:25.635476800 +0300
++++ b/src/icq_constants.h	2026-09-26 23:05:25.830305300 +0300
+@@ -244,6 +244,7 @@
+ #define MTYPE_SCRIPT_INVITATION     0x201 // Xtraz Invitation
+ #define MTYPE_SCRIPT_DATA           0x202 // Xtraz Message
+ #define MTYPE_SCRIPT_NOTIFY         0x208 // Xtraz Response
++#define MTYPE_TZER                  0x209 // tZer (ICQ 6 plugin message "Send Tzer")
+ #define MTYPE_REVERSE_REQUEST       0x401 // Reverse DC request
+ 
+ // Message Plugin Type GUIDs
+@@ -256,6 +257,7 @@
+ #define MGTYPE_CHAT_s               0xBFF720B2, 0x378ED411, 0xBD280004, 0xAC96D905
+ #define MGTYPE_SMS_MESSAGE_s        0x0e28f600, 0x11e7d311, 0xbcf30004, 0xac969dc2
+ #define MGTYPE_XTRAZ_SCRIPT_s       0x3b60b3ef, 0xd82a6c45, 0xa4e09c5a, 0x5e67e865
++#define MGTYPE_TZER_s               0x4fa6f34c, 0x09b7fd48, 0x92087e85, 0x7ae07330
+ 
+ // Message Plugin Sub-Type IDs
+ #define MGTYPE_STANDARD_SEND        0x0000
+@@ -613,6 +615,9 @@
  // Internal Constants
  #define ICQ_PROTOCOL_NAME           "ICQ"
  #define ICQ_PLUG_VERSION            PLUGIN_MAKE_VERSION(__MAJOR_VERSION, __MINOR_VERSION, __RELEASE_NUM, __BUILD_NUM)
@@ -971,8 +1048,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_constants.h b/sr
  #define DC_TYPE                     DC_NORMAL // Used for DC settings
  #define MAX_CONTACTSSEND            15
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_db.cpp b/src/icq_db.cpp
---- a/src/icq_db.cpp	2026-09-26 22:22:14.157230600 +0300
-+++ b/src/icq_db.cpp	2026-09-26 22:22:14.335748000 +0300
+--- a/src/icq_db.cpp	2026-09-26 23:05:25.636984000 +0300
++++ b/src/icq_db.cpp	2026-09-26 23:05:25.831356100 +0300
 @@ -184,7 +184,7 @@
  
  int CIcqProto::IsICQContact(MCONTACT hContact)
@@ -998,8 +1075,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_db.cpp b/src/icq
  }
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_directmsg.cpp b/src/icq_directmsg.cpp
---- a/src/icq_directmsg.cpp	2026-09-26 22:22:14.160257400 +0300
-+++ b/src/icq_directmsg.cpp	2026-09-26 22:22:14.338800700 +0300
+--- a/src/icq_directmsg.cpp	2026-09-26 23:05:25.640008200 +0300
++++ b/src/icq_directmsg.cpp	2026-09-26 23:05:25.834355500 +0300
 @@ -166,7 +166,7 @@
  					ackType = ACKTYPE_MESSAGE;
  					break;
@@ -1019,8 +1096,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_directmsg.cpp b/
  			case MTYPE_CONTACTS:
  				ackType = ACKTYPE_CONTACTS;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_filerequests.cpp b/src/icq_filerequests.cpp
---- a/src/icq_filerequests.cpp	2026-09-26 22:22:14.162267200 +0300
-+++ b/src/icq_filerequests.cpp	2026-09-26 22:22:14.341054500 +0300
+--- a/src/icq_filerequests.cpp	2026-09-26 23:05:25.643016200 +0300
++++ b/src/icq_filerequests.cpp	2026-09-26 23:05:25.836358800 +0300
 @@ -154,16 +154,12 @@
  	// Send chain event
  	wchar_t* ptszFileName = mir_utf8decodeW(pszFileName);
@@ -1044,8 +1121,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_filerequests.cpp
  }
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_firstrun.cpp b/src/icq_firstrun.cpp
---- a/src/icq_firstrun.cpp	2026-09-26 22:22:14.164266500 +0300
-+++ b/src/icq_firstrun.cpp	2026-09-26 22:22:14.343065100 +0300
+--- a/src/icq_firstrun.cpp	2026-09-26 23:05:25.645015600 +0300
++++ b/src/icq_firstrun.cpp	2026-09-26 23:05:25.837357700 +0300
 @@ -68,7 +68,7 @@
  	case WM_COMMAND:
  		switch (LOWORD(wParam)) {
@@ -1066,8 +1143,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_firstrun.cpp b/s
 +	return CreateDialogParam(g_plugin.getInst(), MAKEINTRESOURCE(IDD_ICQACCOUNT), hwndParent, icq_FirstRunDlgProc, LPARAM(this));
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_menu.cpp b/src/icq_menu.cpp
---- a/src/icq_menu.cpp	2026-09-26 22:22:14.167267500 +0300
-+++ b/src/icq_menu.cpp	2026-09-26 22:22:14.346578100 +0300
+--- a/src/icq_menu.cpp	2026-09-26 23:05:25.649523400 +0300
++++ b/src/icq_menu.cpp	2026-09-26 23:05:25.842321800 +0300
 @@ -106,7 +106,10 @@
  
  INT_PTR CIcqProto::OpenWebProfile(WPARAM hContact, LPARAM)
@@ -1094,8 +1171,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_menu.cpp b/src/i
  		Menu_ShowItem(g_hContactMenuItems[ICMI_ADD_TO_SERVLIST],
  			m_bSsiEnabled && !getWord(hContact, DBSETTING_SERVLIST_ID, 0) &&
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_opts.cpp b/src/icq_opts.cpp
---- a/src/icq_opts.cpp	2026-09-26 22:22:14.168776000 +0300
-+++ b/src/icq_opts.cpp	2026-09-26 22:22:14.347580000 +0300
+--- a/src/icq_opts.cpp	2026-09-26 23:05:25.651040600 +0300
++++ b/src/icq_opts.cpp	2026-09-26 23:05:25.843321400 +0300
 @@ -25,8 +25,6 @@
  
  #include "stdafx.h"
@@ -1144,8 +1221,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_opts.cpp b/src/i
  		}
  		break;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_packet.cpp b/src/icq_packet.cpp
---- a/src/icq_packet.cpp	2026-09-26 22:22:14.170293100 +0300
-+++ b/src/icq_packet.cpp	2026-09-26 22:22:14.347580000 +0300
+--- a/src/icq_packet.cpp	2026-09-26 23:05:25.652047500 +0300
++++ b/src/icq_packet.cpp	2026-09-26 23:05:25.843321400 +0300
 @@ -41,6 +41,8 @@
  	pPacket->pData = (BYTE*)SAFE_MALLOC(pPacket->wLen);
  }
@@ -1156,8 +1233,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_packet.cpp b/src
  {
  	init_generic_packet(pPacket, 14);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_popups.cpp b/src/icq_popups.cpp
---- a/src/icq_popups.cpp	2026-09-26 22:22:14.172055300 +0300
-+++ b/src/icq_popups.cpp	2026-09-26 22:22:14.400568100 +0300
+--- a/src/icq_popups.cpp	2026-09-26 23:05:25.653046400 +0300
++++ b/src/icq_popups.cpp	2026-09-26 23:05:25.883706300 +0300
 @@ -195,7 +195,7 @@
  int CIcqProto::ShowPopupMsg(MCONTACT hContact, const char *szTitle, const char *szMsg, BYTE bType)
  {
@@ -1177,8 +1254,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_popups.cpp b/src
  	return -1; // Failure
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/icq_proto.cpp
---- a/src/icq_proto.cpp	2026-09-26 22:22:14.173563400 +0300
-+++ b/src/icq_proto.cpp	2026-09-26 22:22:14.356130800 +0300
+--- a/src/icq_proto.cpp	2026-09-26 23:05:25.655047100 +0300
++++ b/src/icq_proto.cpp	2026-09-26 23:05:25.851976000 +0300
 @@ -75,6 +75,7 @@
  	expectedFileRecvs(10, CompareFT),
  	contactsCache(10, CompareContactsCache),
@@ -1187,7 +1264,15 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	cheekySearchId(-1),
  	m_arAvatars(5),
  	m_arFileTransfers(1)
-@@ -105,16 +106,11 @@
+@@ -89,6 +90,7 @@
+ 	memset(&m_modeMsgs, 0, sizeof(icq_mode_messages));
+ 
+ 	m_modeMsgsEvent = CreateProtoEvent(ME_ICQ_STATUSMSGREQ);
++	m_hTzerEvent = CreateProtoEvent(ME_ICQ_TZER);
+ 
+ 	// Initialize cookies
+ 	wCookieSeq = 2;
+@@ -105,16 +107,11 @@
  	db_set_resident(m_szModuleName, DBSETTING_STATUS_MOOD);
  
  	// Setup services
@@ -1204,7 +1289,17 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	// ChangeInfo API
  	CreateProtoService(PS_CHANGEINFOEX, &CIcqProto::ChangeInfoEx);
  
-@@ -161,12 +157,6 @@
+@@ -143,6 +140,9 @@
+ 	CreateProtoService(PS_ICQ_ADDCAPABILITY, &CIcqProto::IcqAddCapability);
+ 	CreateProtoService(PS_ICQ_CHECKCAPABILITY, &CIcqProto::IcqCheckCapability);
+ 
++	// tZers
++	CreateProtoService(PS_ICQ_SENDTZER, &CIcqProto::SendTzer);
++
+ 	// Reset a bunch of session specific settings
+ 	UpdateGlobalSettings();
+ 	ResetSettingsOnLoad();
+@@ -161,12 +161,6 @@
  	nlu.flags = NUF_OUTGOING | NUF_HTTPCONNS | NUF_UNICODE;
  	nlu.szDescriptiveName.w = szBuffer;
  	nlu.szSettingsModule = m_szModuleName;
@@ -1217,7 +1312,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	m_hNetlibUser = Netlib_RegisterUser(&nlu);
  
  	char szP2PModuleName[MAX_PATH];
-@@ -179,7 +169,7 @@
+@@ -179,7 +173,7 @@
  	m_hDirectNetlibUser = Netlib_RegisterUser(&nlu);
  
  	// Register custom database events
@@ -1226,7 +1321,16 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	eventType.eventType = ICQEVENTTYPE_MISSEDMESSAGE;
  	eventType.module = m_szModuleName;
  	eventType.descr = "Missed message notifications";
-@@ -317,7 +307,7 @@
+@@ -215,6 +209,8 @@
+ 	// Destroy hookable events
+ 	if (m_modeMsgsEvent)
+ 		DestroyHookableEvent(m_modeMsgsEvent);
++	if (m_hTzerEvent)
++		DestroyHookableEvent(m_hTzerEvent);
+ 
+ 	// Clean-up remaining protocol instance members
+ 	UninitContactsCache();
+@@ -317,7 +313,7 @@
  	if ((dbei.cbBlob = db_event_getBlobSize(hDbEvent)) == -1)
  		return 0;
  
@@ -1235,7 +1339,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	dbei.pBlob[dbei.cbBlob] = '\0';
  
  	if (db_event_get(hDbEvent, &dbei))
-@@ -424,10 +414,10 @@
+@@ -424,10 +420,10 @@
  ////////////////////////////////////////////////////////////////////////////////////////
  // PSR_AUTH
  
@@ -1248,7 +1352,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	return 0;
  }
  
-@@ -570,7 +560,7 @@
+@@ -570,7 +566,7 @@
  ////////////////////////////////////////////////////////////////////////////////////////
  // PS_FileResume - processes file renaming etc
  
@@ -1257,7 +1361,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  {
  	if (icqOnline() && hTransfer) {
  		basic_filetransfer *ft = (basic_filetransfer *)hTransfer;
-@@ -579,12 +569,12 @@
+@@ -579,12 +575,12 @@
  			return 1; // Invalid transfer
  
  		if (ft->ft_magic == FT_MAGIC_ICQ) {
@@ -1273,7 +1377,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  		}
  		else
  			return 1; // Failure
-@@ -606,10 +596,10 @@
+@@ -606,10 +602,10 @@
  	switch (type) {
  
  	case PFLAGNUM_1:
@@ -1287,7 +1391,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  
  		if (m_bSsiEnabled && getByte("ServerAddRemove", DEFAULT_SS_ADDSERVER))
  			nReturn |= PF1_SERVERCLIST;
-@@ -617,23 +607,23 @@
+@@ -617,23 +613,23 @@
  
  	case PFLAGNUM_2:
  		return PF2_ONLINE | PF2_SHORTAWAY | PF2_LONGAWAY | PF2_LIGHTDND | PF2_HEAVYDND |
@@ -1315,7 +1419,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  
  	case PFLAG_MAXLENOFMESSAGE:
  		return MAX_MESSAGESNACSIZE - 102;
-@@ -802,8 +792,7 @@
+@@ -802,8 +798,7 @@
  	return nullptr; // Failure
  }
  
@@ -1325,7 +1429,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  {
  	if (parent && g_plugin.getInst())
  		return CreateDialog(g_plugin.getInst(), MAKEINTRESOURCE(IDD_ICQADVANCEDSEARCH), parent, AdvancedSearchDlgProc);
-@@ -811,7 +800,7 @@
+@@ -811,7 +806,7 @@
  	return nullptr; // Failure
  }
  
@@ -1334,7 +1438,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  {
  	if (icqOnline() && IsWindow(hwndDlg)) {
  		size_t nDataLen;
-@@ -831,14 +820,15 @@
+@@ -831,14 +826,15 @@
  ////////////////////////////////////////////////////////////////////////////////////////
  // RecvContacts
  
@@ -1353,7 +1457,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  		cbBlob += mir_strlen((char*)isrList[i]->hdr.nick.w) + 2; // both trailing zeros
  		if (isrList[i]->uin)
  			cbBlob += getUINLen(isrList[i]->uin);
-@@ -846,7 +836,7 @@
+@@ -846,7 +842,7 @@
  			cbBlob += mir_strlen((char*)isrList[i]->hdr.id.w);
  	}
  	PBYTE pBlob = (PBYTE)_alloca(cbBlob), pCurBlob;
@@ -1362,7 +1466,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  		mir_strcpy((char*)pCurBlob, (char*)isrList[i]->hdr.nick.w);
  		pCurBlob += mir_strlen((char*)pCurBlob) + 1;
  		if (isrList[i]->uin) {
-@@ -860,7 +850,7 @@
+@@ -860,7 +856,7 @@
  		pCurBlob += mir_strlen((char*)pCurBlob) + 1;
  	}
  
@@ -1371,7 +1475,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	return 0;
  }
  
-@@ -868,10 +858,10 @@
+@@ -868,10 +864,10 @@
  ////////////////////////////////////////////////////////////////////////////////////////
  // RecvMsg
  
@@ -1385,7 +1489,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  
  	// stop contact from typing - some clients do not sent stop notify
  	if (CheckContactCapabilities(hContact, CAPF_TYPING))
-@@ -1219,7 +1209,7 @@
+@@ -1219,7 +1215,7 @@
  ////////////////////////////////////////////////////////////////////////////////////////
  // PS_SendMessage - sends a message
  
@@ -1394,7 +1498,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  {
  	if (hContact == NULL || pszSrc == nullptr)
  		return NULL;
-@@ -1345,13 +1335,13 @@
+@@ -1345,13 +1341,13 @@
  
  	DWORD dwUin;
  	if (getContactUid(hContact, &dwUin, nullptr)) // Invalid contact
@@ -1410,7 +1514,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  		return 0;
  	}
  
-@@ -1377,7 +1367,7 @@
+@@ -1377,7 +1373,7 @@
  	// Rate check
  	if (IsServerOverRate(ICQ_MSG_FAMILY, ICQ_MSG_SRV_SEND, RML_LIMIT)) { // rate is too high, the message will not go thru...
  		SAFE_FREE((void**)&pCookieData);
@@ -1419,7 +1523,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	}
  
  	// Select channel and send
-@@ -1391,7 +1381,7 @@
+@@ -1391,7 +1387,7 @@
  
  	// This will stop the message dialog from waiting for the real message delivery ack
  	if (pCookieData->nAckType == ACKTYPE_NONE) {
@@ -1428,7 +1532,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  		// We need to free this here since we will never see the real ack
  		// The actual cookie value will still have to be returned to the message dialog though
  		ReleaseCookie(dwCookie);
-@@ -1699,14 +1689,14 @@
+@@ -1699,14 +1695,14 @@
  
  
  ////////////////////////////////////////////////////////////////////////////////////////
@@ -1449,8 +1553,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	return 0;
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/icq_proto.h
---- a/src/icq_proto.h	2026-09-26 22:22:14.174571900 +0300
-+++ b/src/icq_proto.h	2026-09-26 22:22:14.400163300 +0300
+--- a/src/icq_proto.h	2026-09-26 23:05:25.656049500 +0300
++++ b/src/icq_proto.h	2026-09-26 23:05:25.883706300 +0300
 @@ -59,48 +59,47 @@
  
  	int      Authorize(MEVENT hDbEvent) override;
@@ -1522,7 +1626,15 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  
      //====| Events |======================================================================
  	int  __cdecl OnIdleChanged(WPARAM, LPARAM);
-@@ -381,6 +380,9 @@
+@@ -270,6 +269,7 @@
+ 	icq_mode_messages m_modeMsgs;
+ 	mir_cs m_modeMsgsMutex;
+ 	HANDLE m_modeMsgsEvent;
++	HANDLE m_hTzerEvent;   // ME_ICQ_TZER
+ 
+ 	void   handleMsgFam(BYTE *pBuffer, size_t wBufferLength, snac_header *pSnacHeader);
+ 
+@@ -381,6 +381,9 @@
  
  	void   handleAvatarOwnerHash(BYTE bFlags, BYTE *pData, size_t nDataLen);
  	void   handleAvatarContactHash(DWORD dwUIN, char *szUID, MCONTACT hContact, BYTE *pHash, size_t nHashLen);
@@ -1532,13 +1644,14 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  
  	wchar_t* GetOwnAvatarFileName();
  	void   GetFullAvatarFileName(int dwUin, const char *szUid, int dwFormat, wchar_t *pszDest, size_t cbLen);
-@@ -742,12 +744,20 @@
+@@ -742,12 +745,21 @@
  	MCONTACT AddToListByUIN(DWORD dwUin, DWORD dwFlags);
  	MCONTACT AddToListByUID(const char *szUID, DWORD dwFlags);
  
 -	void   ICQAddRecvEvent(MCONTACT hContact, WORD wType, PROTORECVEVENT* pre, size_t cbBlob, PBYTE pBlob, DWORD flags);
 +	void   ICQAddRecvEvent(MCONTACT hContact, WORD wType, const DB::EventInfo &dbei, size_t cbBlob, PBYTE pBlob, DWORD flags);
  	INT_PTR __cdecl IcqAddCapability(WPARAM wParam, LPARAM lParam);
++	INT_PTR __cdecl SendTzer(WPARAM wParam, LPARAM lParam);
  	INT_PTR __cdecl IcqCheckCapability(WPARAM wParam, LPARAM lParam);
  
  	OBJLIST<ICQ_CUSTOMCAP> CustomCapList;
@@ -1554,7 +1667,15 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  	//----| icq_uploadui.cpp |------------------------------------------------------------
  	void   ShowUploadContactsDialog(void);
  
-@@ -794,7 +804,7 @@
+@@ -771,6 +783,7 @@
+ 
+ 	//----| icq_xtraz.cpp |---------------------------------------------------------------
+ 	void   handleXtrazNotify(DWORD dwUin, DWORD dwMID, DWORD dwMID2, WORD wCookie, char *szMsg, size_t nMsgLen, BOOL bThruDC);
++	void   handleTzer(DWORD dwUin, DWORD dwTimestamp, const char *szXml);
+ 	void   handleXtrazNotifyResponse(MCONTACT hContact, WORD wCookie, char* szMsg);
+ 
+ 	void   handleXtrazInvitation(DWORD dwUin, char *szMsg, BOOL bThruDC);
+@@ -794,7 +807,7 @@
  	void   SafeReleaseFileTransfer(basic_filetransfer **ft);
  	oscar_filetransfer* FindOscarTransfer(MCONTACT hContact, DWORD dwID1, DWORD dwID2);
  
@@ -1563,7 +1684,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  	void   ReleaseOscarListener(oscar_listener **pListener);
  
  	void   OpenOscarConnection(MCONTACT hContact, oscar_filetransfer *ft, int type);
-@@ -861,7 +871,7 @@
+@@ -861,7 +874,7 @@
  	void   AddToSpammerList(DWORD dwUIN);
  	BOOL   IsOnSpammerList(DWORD dwUIN);
  
@@ -1572,7 +1693,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  
  	MCONTACT HandleFromCacheByUid(DWORD dwUin, const char *szUid);
  	MCONTACT HContactFromUIN(DWORD dwUin, int *Added);
-@@ -882,6 +892,7 @@
+@@ -882,6 +895,7 @@
  	void   writeDbInfoSettingTLVStringUtf(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
  	void   writeDbInfoSettingTLVWord(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
  	void   writeDbInfoSettingTLVByte(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
@@ -1581,8 +1702,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  	void   writeDbInfoSettingTLVDate(MCONTACT hContact, const char *szSettingYear, const char *szSettingMonth, const char *szSettingDay, oscar_tlv_chain *chain, WORD wTlv);
  	void   writeDbInfoSettingTLVBlob(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.cpp b/src/icq_server.cpp
---- a/src/icq_server.cpp	2026-09-26 22:22:14.176570300 +0300
-+++ b/src/icq_server.cpp	2026-09-26 22:22:14.358138700 +0300
+--- a/src/icq_server.cpp	2026-09-26 23:05:25.659063700 +0300
++++ b/src/icq_server.cpp	2026-09-26 23:05:25.852975100 +0300
 @@ -54,9 +54,6 @@
  	{
  		NETLIBOPENCONNECTION nloc = infoParam->nloc;
@@ -1603,8 +1724,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.cpp b/src
  		icq_LogUsingErrorCode(LOG_WARNING, GetLastError(), LPGEN("Miranda was unable to allocate a port to listen for direct peer-to-peer connections between clients. You will be able to use most of the ICQ network without problems but you may be unable to send or receive files.\n\nIf you have a firewall this may be blocking Miranda, in which case you should configure your firewall to leave some ports open and tell Miranda which ports to use in Options -> Network -> ICQ client-to-client connections."));
  		wListenPort = 0;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.h b/src/icq_server.h
---- a/src/icq_server.h	2026-09-26 22:22:14.177572600 +0300
-+++ b/src/icq_server.h	2026-09-26 22:22:14.359138600 +0300
+--- a/src/icq_server.h	2026-09-26 23:05:25.660248700 +0300
++++ b/src/icq_server.h	2026-09-26 23:05:25.853975300 +0300
 @@ -30,6 +30,14 @@
  #ifndef __ICQ_SERVER_H
  #define __ICQ_SERVER_H
@@ -1621,8 +1742,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.h b/src/i
  {
  	NETLIBOPENCONNECTION nloc;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_servlist.cpp b/src/icq_servlist.cpp
---- a/src/icq_servlist.cpp	2026-09-26 22:22:14.179082900 +0300
-+++ b/src/icq_servlist.cpp	2026-09-26 22:22:14.364367400 +0300
+--- a/src/icq_servlist.cpp	2026-09-26 23:05:25.661615000 +0300
++++ b/src/icq_servlist.cpp	2026-09-26 23:05:25.854975700 +0300
 @@ -2259,8 +2259,19 @@
  }
  
@@ -1668,9 +1789,159 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_servlist.cpp b/s
  }
  
  
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_tzer.cpp b/src/icq_tzer.cpp
+--- a/src/icq_tzer.cpp	1970-01-01 02:00:00.000000000 +0200
++++ b/src/icq_tzer.cpp	2026-09-26 23:05:25.885705900 +0300
+@@ -0,0 +1,146 @@
++// ---------------------------------------------------------------------------80
++//                ICQ plugin for Miranda Instant Messenger
++//                ________________________________________
++//
++// Copyright © 2026 ICQ Revival
++//
++// This program is free software; you can redistribute it and/or
++// modify it under the terms of the GNU General Public License
++// as published by the Free Software Foundation; either version 2
++// of the License, or (at your option) any later version.
++// -----------------------------------------------------------------------------
++//  DESCRIPTION:
++//
++//  tZers: the short animations with sound ICQ 6 sends. ICQ 6.5 sends one as
++//  an advanced message through the server (channel 2, TLV 0x2711) of type
++//  MTYPE_PLUGIN, plugin {4FA6F34C-09B7-FD48-9208-7E857AE07330}, function 0,
++//  "Send Tzer"; its body is
++//    <tzerRoot id="cantH" url="http://../canthearu.swf"
++//              thumb="http://../canthearu.png" name="Can't Hear U" freeData=""/>
++//  The name is UTF-8, in the sender's language. The receiving ICQ 6.5 plays
++//  the movie at url.
++//
++//  Here a tZer becomes a message in the history, "tZer: <name>", readable
++//  anywhere, and ME_ICQ_TZER hands the movie's address to a plugin that can
++//  play it (FlashAvatars).
++// -----------------------------------------------------------------------------
++
++#include "stdafx.h"
++
++// The value of attribute name="..." in a tag, unescaped; empty when missing.
++static CMStringA TzerAttr(const char *szXml, const char *szName)
++{
++	CMStringA key(FORMAT, " %s=\"", szName), ret;
++	const char *p = strstr(szXml, key);
++	if (p == nullptr)
++		return ret;
++	p += key.GetLength();
++	const char *e = strchr(p, '"');
++	if (e == nullptr)
++		return ret;
++
++	ret.Append(p, int(e - p));
++	ret.Replace("&quot;", "\"");
++	ret.Replace("&apos;", "'");
++	ret.Replace("&lt;", "<");
++	ret.Replace("&gt;", ">");
++	ret.Replace("&amp;", "&");
++	ret.Trim();
++	return ret;
++}
++
++static CMStringA TzerEscape(const char *str)
++{
++	CMStringA ret(str);
++	ret.Replace("&", "&amp;");
++	ret.Replace("\"", "&quot;");
++	ret.Replace("<", "&lt;");
++	ret.Replace(">", "&gt;");
++	return ret;
++}
++
++static bool IsWebUrl(const char *szUrl)
++{
++	return !_strnicmp(szUrl, "http://", 7) || !_strnicmp(szUrl, "https://", 8);
++}
++
++// What the history shows: "tZer: <name>", readable without any plugin. The
++// movie's address is not shown; ME_ICQ_TZER hands it to a plugin that plays it.
++static CMStringA TzerText(const char *szName)
++{
++	return CMStringA(FORMAT, "tZer: %s", *szName ? szName : "?");
++}
++
++void CIcqProto::handleTzer(DWORD dwUin, DWORD dwTimestamp, const char *szXml)
++{
++	if (strstr(szXml, "<tzerRoot") == nullptr) {
++		debugLogA("tZer without tzerRoot, ignored");
++		return;
++	}
++
++	CMStringA szId = TzerAttr(szXml, "id"), szName = TzerAttr(szXml, "name"),
++		szUrl = TzerAttr(szXml, "url"), szThumb = TzerAttr(szXml, "thumb");
++	if (!IsWebUrl(szUrl))
++		szUrl.Empty();
++	if (!IsWebUrl(szThumb))
++		szThumb.Empty();
++	if (szName.IsEmpty())
++		szName = szId;
++
++	int bAdded;
++	MCONTACT hContact = HContactFromUIN(dwUin, &bAdded);
++	if (hContact == INVALID_CONTACT_ID || hContact == 0)
++		return;
++
++	debugLogA("tZer %s from %u: %s", szId.c_str(), dwUin, szUrl.c_str());
++
++	CMStringA szText(TzerText(szName));
++	DB::EventInfo dbei;
++	dbei.iTimestamp = dwTimestamp;
++	dbei.pBlob = szText.GetBuffer();
++	dbei.cbBlob = szText.GetLength() + 1;
++	ProtoChainRecvMsg(hContact, dbei);
++
++	if (!szUrl.IsEmpty()) {
++		ICQ_TZER tz = { sizeof(tz), szId, szName, szUrl, szThumb, 0 };
++		NotifyEventHooks(m_hTzerEvent, hContact, (LPARAM)&tz);
++	}
++}
++
++INT_PTR __cdecl CIcqProto::SendTzer(WPARAM hContact, LPARAM lParam)
++{
++	ICQ_TZER *tz = (ICQ_TZER *)lParam;
++	if (tz == nullptr || tz->cbSize < (int)sizeof(ICQ_TZER) || tz->szUrl == nullptr || !IsWebUrl(tz->szUrl))
++		return 1;
++
++	DWORD dwUin;
++	if (!icqOnline() || getContactUid(hContact, &dwUin, nullptr) || dwUin == 0)
++		return 1; // tZers are ICQ to ICQ
++
++	const char *szId = tz->szId ? tz->szId : "";
++	const char *szName = tz->szName ? tz->szName : "";
++	const char *szThumb = (tz->szThumb && IsWebUrl(tz->szThumb)) ? tz->szThumb : "";
++
++	CMStringA szBody(FORMAT, "<tzerRoot id=\"%s\" url=\"%s\" thumb=\"%s\" name=\"%s\" freeData=\"\"/>\r\n",
++		TzerEscape(szId).c_str(), TzerEscape(tz->szUrl).c_str(), TzerEscape(szThumb).c_str(), TzerEscape(szName).c_str());
++
++	cookie_message_data *pCookieData = CreateMessageCookie(MTYPE_TZER, ACKTYPE_SERVER);
++	DWORD dwCookie = AllocateCookie(CKT_MESSAGE, 0, hContact, (void*)pCookieData);
++	icq_sendXtrazRequestServ(dwUin, dwCookie, szBody.GetBuffer(), szBody.GetLength(), pCookieData);
++	debugLogA("tZer %s sent to %u", szId, dwUin);
++
++	// our copy in the history
++	CMStringA szText(TzerText(szName));
++	DBEVENTINFO dbei = {};
++	dbei.szModule = m_szModuleName;
++	dbei.iTimestamp = time(0);
++	dbei.eventType = EVENTTYPE_MESSAGE;
++	dbei.flags = DBEF_SENT | DBEF_UTF;
++	dbei.pBlob = szText.GetBuffer();
++	dbei.cbBlob = szText.GetLength() + 1;
++	db_event_add(hContact, &dbei);
++
++	ICQ_TZER sent = { sizeof(sent), szId, szName, tz->szUrl, szThumb, 1 };
++	NotifyEventHooks(m_hTzerEvent, hContact, (LPARAM)&sent);
++	return 0;
++}
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_xtraz.cpp b/src/icq_xtraz.cpp
---- a/src/icq_xtraz.cpp	2026-09-26 22:22:14.181621700 +0300
-+++ b/src/icq_xtraz.cpp	2026-09-26 22:22:14.367367300 +0300
+--- a/src/icq_xtraz.cpp	2026-09-26 23:05:25.664121800 +0300
++++ b/src/icq_xtraz.cpp	2026-09-26 23:05:25.858980900 +0300
 @@ -328,12 +328,13 @@
  				mir_strcat(szWork, szNum);
  
@@ -1690,8 +1961,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_xtraz.cpp b/src/
  				SAFE_FREE(&szWork);
  			}
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icqosc_svcs.cpp b/src/icqosc_svcs.cpp
---- a/src/icqosc_svcs.cpp	2026-09-26 22:22:14.182623000 +0300
-+++ b/src/icqosc_svcs.cpp	2026-09-26 22:22:14.368874400 +0300
+--- a/src/icqosc_svcs.cpp	2026-09-26 23:05:25.665127800 +0300
++++ b/src/icqosc_svcs.cpp	2026-09-26 23:05:25.859488200 +0300
 @@ -73,84 +73,6 @@
  	return 0; // Success
  }
@@ -1800,8 +2071,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icqosc_svcs.cpp b/sr
  
  INT_PTR __cdecl CIcqProto::IcqAddCapability(WPARAM, LPARAM lParam)
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.cpp
---- a/src/init.cpp	2026-09-26 22:22:14.184140200 +0300
-+++ b/src/init.cpp	2026-09-26 22:22:14.371397200 +0300
+--- a/src/init.cpp	2026-09-26 23:05:25.667136800 +0300
++++ b/src/init.cpp	2026-09-26 23:05:25.861002100 +0300
 @@ -43,7 +43,7 @@
  	__COPYRIGHT,
  	__AUTHORWEB,
@@ -1831,8 +2102,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.
  	HookEvent(ME_SYSTEM_MODULEUNLOAD, ModuleLoad);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/m_icq.h b/src/m_icq.h
 --- a/src/m_icq.h	1970-01-01 02:00:00.000000000 +0200
-+++ b/src/m_icq.h	2026-09-26 22:22:14.393024200 +0300
-@@ -0,0 +1,189 @@
++++ b/src/m_icq.h	2026-09-26 23:05:25.875674200 +0300
+@@ -0,0 +1,214 @@
 +// ---------------------------------------------------------------------------80
 +//                ICQ plugin for Miranda Instant Messenger
 +//                ________________________________________
@@ -1993,6 +2264,31 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/m_icq.h b/src/m_icq.
 +//uin is the UIN of the contact requesting our status message
 +#define ME_ICQ_STATUSMSGREQ      "/StatusMsgReq"
 +
++// tZers (ICQ 6): a short animation with sound, sent as an ICQ plugin message
++// (MTYPE_PLUGIN, plugin {4FA6F34C-09B7-FD48-9208-7E857AE07330} "Send Tzer")
++// whose body is <tzerRoot id=".." url=".." thumb=".." name=".." freeData=""/>.
++// The history gets "tZer: <name>"; the movie's address comes with ME_ICQ_TZER.
++typedef struct
++{
++	int cbSize;
++	const char *szId;     // tZer id as ICQ 6 knows it (tzer.xml), e.g. "kisses"
++	const char *szName;   // title, UTF-8
++	const char *szUrl;    // the movie (.swf)
++	const char *szThumb;  // its picture (.png)
++	int bSent;            // ME_ICQ_TZER: sent by us (1) or received (0)
++} ICQ_TZER;
++
++// Send a tZer
++// wParam = (MCONTACT)hContact
++// lParam = (LPARAM)(ICQ_TZER*)
++// returns 0 on success
++#define PS_ICQ_SENDTZER "/SendTzer"
++
++// A tZer arrived from a contact or was sent to it: fired by the account
++// wParam = (MCONTACT)hContact
++// lParam = (LPARAM)(ICQ_TZER*), valid during the call
++#define ME_ICQ_TZER "/Tzer"
++
 +// Request Custom status details (messages) for specified contact
 +//wParam = hContact  // request custom status details for this contact
 +//lParam = 0
@@ -2023,8 +2319,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/m_icq.h b/src/m_icq.
 +
 +#endif // M_ICQ_H__
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/oscar_filetransfer.cpp b/src/oscar_filetransfer.cpp
---- a/src/oscar_filetransfer.cpp	2026-09-26 22:22:14.188140300 +0300
-+++ b/src/oscar_filetransfer.cpp	2026-09-26 22:22:14.375910200 +0300
+--- a/src/oscar_filetransfer.cpp	2026-09-26 23:05:25.671657100 +0300
++++ b/src/oscar_filetransfer.cpp	2026-09-26 23:05:25.863008500 +0300
 @@ -263,7 +263,7 @@
  	return dwCheck;
  }
@@ -2102,8 +2398,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/oscar_filetransfer.c
  				if (!oc.hConnection) { // proxy connection failed, we are out of possibilities
  					ProtoBroadcastAck(oc.ft->hContact, ACKTYPE_FILE, ACKRESULT_FAILED, oc.ft, 0);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/resource.h b/src/resource.h
---- a/src/resource.h	2026-09-26 22:22:14.189645600 +0300
-+++ b/src/resource.h	2026-09-26 22:22:14.377911500 +0300
+--- a/src/resource.h	2026-09-26 23:05:25.673656000 +0300
++++ b/src/resource.h	2026-09-26 23:05:25.864007800 +0300
 @@ -72,6 +72,7 @@
  #define IDC_XSTATUSRESET                1042
  #define IDC_MOODSENABLE                 1043
@@ -2113,8 +2409,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/resource.h b/src/res
  #define IDC_NICK                        1053
  #define IDC_GENDER                      1060
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/stdafx.h b/src/stdafx.h
---- a/src/stdafx.h	2026-09-26 22:22:14.190652000 +0300
-+++ b/src/stdafx.h	2026-09-26 22:22:14.379419000 +0300
+--- a/src/stdafx.h	2026-09-26 23:05:25.674656600 +0300
++++ b/src/stdafx.h	2026-09-26 23:05:25.866048400 +0300
 @@ -72,13 +72,13 @@
  #include <m_idle.h>
  #include <m_skin.h>
@@ -2139,8 +2435,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/stdafx.h b/src/stdaf
  #include "icq_constants.h"
  #include "capabilities.h"
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/userinfotab.cpp b/src/userinfotab.cpp
---- a/src/userinfotab.cpp	2026-09-26 22:22:14.194655900 +0300
-+++ b/src/userinfotab.cpp	2026-09-26 22:22:14.384437400 +0300
+--- a/src/userinfotab.cpp	2026-09-26 23:05:25.681860600 +0300
++++ b/src/userinfotab.cpp	2026-09-26 23:05:25.871671600 +0300
 @@ -190,16 +190,15 @@
  	switch (msg) {
  	case WM_INITDIALOG:
@@ -2317,8 +2613,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/userinfotab.cpp b/sr
  	return 0;
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.cpp b/src/utilities.cpp
---- a/src/utilities.cpp	2026-09-26 22:22:14.195656100 +0300
-+++ b/src/utilities.cpp	2026-09-26 22:22:14.391023500 +0300
+--- a/src/utilities.cpp	2026-09-26 23:05:25.682368400 +0300
++++ b/src/utilities.cpp	2026-09-26 23:05:25.872669600 +0300
 @@ -125,12 +125,10 @@
  		nIcqStatus = ICQ_STATUS_AWAY;
  		break;
@@ -2442,8 +2738,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.cpp b/src/
  	SetLastError(ERROR_INVALID_PARAMETER); // this must be here - NetLib does not set any error :((
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.h b/src/utilities.h
---- a/src/utilities.h	2026-09-26 22:22:14.196653600 +0300
-+++ b/src/utilities.h	2026-09-26 22:22:14.391023500 +0300
+--- a/src/utilities.h	2026-09-26 23:05:25.683378000 +0300
++++ b/src/utilities.h	2026-09-26 23:05:25.873670100 +0300
 @@ -132,4 +132,6 @@
  void   setContactExtraIcon(MCONTACT hContact, int xstatus);
  int    OnReloadIcons(WPARAM wParam, LPARAM lParam);

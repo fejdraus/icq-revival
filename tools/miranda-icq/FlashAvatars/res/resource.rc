@@ -1,0 +1,3 @@
+#include "..\src\resource.h"
+
+IDI_TZER ICON "tzer.ico"

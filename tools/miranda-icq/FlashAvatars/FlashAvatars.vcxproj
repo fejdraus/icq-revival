@@ -32,13 +32,17 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\tzer.cpp" />
     <ClCompile Include="src\stdafx.cxx">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
     <ClInclude Include="src\stdafx.h" />
+    <ClInclude Include="src\flash.h" />
+    <ClInclude Include="src\resource.h" />
     <ClInclude Include="src\version.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="res\Version.rc" />
+    <ResourceCompile Include="res\resource.rc" />
   </ItemGroup>
 </Project>
