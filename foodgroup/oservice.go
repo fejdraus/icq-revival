@@ -303,13 +303,6 @@ func (s OServiceService) SetUserInfoFields(ctx context.Context, instance *state.
 				// Without it a buddy's mood icon never changes.
 				instance.Session().SetStatusMood(id)
 				statusMsgChanged = true
-			default:
-				// ICQ avatar items (Flash avatar, big icon) set this way are
-				// relayed like the ones set through the feedbag.
-				if wire.IsRelayedAvatarBARTType(id.Type) {
-					instance.Session().SetAvatarItem(id)
-					statusMsgChanged = true
-				}
 			}
 		}
 	}
@@ -1031,8 +1024,7 @@ func instanceUserInfo(instance *state.SessionInstance) wire.TLVUserInfo {
 	return info
 }
 
-// sessionBARTIDs returns the account's buddy icon, status message and ICQ
-// avatar BART IDs.
+// sessionBARTIDs returns the account's buddy icon and status message BART IDs.
 func sessionBARTIDs(sess *state.Session) []wire.BARTID {
 	var bartIDs []wire.BARTID
 
@@ -1042,7 +1034,6 @@ func sessionBARTIDs(sess *state.Session) []wire.BARTID {
 	if status, hasStatus := sess.Status(); hasStatus {
 		bartIDs = append(bartIDs, status)
 	}
-	bartIDs = append(bartIDs, sess.AvatarItems()...)
 
 	return bartIDs
 }

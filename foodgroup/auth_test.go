@@ -2401,11 +2401,6 @@ func TestAuthService_RegisterBOSSession(t *testing.T) {
 							},
 						},
 					},
-					avatarBARTItemsParams: avatarBARTItemsParams{
-						{
-							screenName: screenName.IdentScreenName(),
-						},
-					},
 				},
 			},
 			wantSess: func(instance *state.SessionInstance) bool {
@@ -2460,11 +2455,6 @@ func TestAuthService_RegisterBOSSession(t *testing.T) {
 							result:     nil,
 						},
 					},
-					avatarBARTItemsParams: avatarBARTItemsParams{
-						{
-							screenName: screenName.IdentScreenName(),
-						},
-					},
 				},
 			},
 			wantSess: func(instance *state.SessionInstance) bool {
@@ -2509,132 +2499,12 @@ func TestAuthService_RegisterBOSSession(t *testing.T) {
 							result:     nil,
 						},
 					},
-					avatarBARTItemsParams: avatarBARTItemsParams{
-						{
-							screenName: uin.IdentScreenName(),
-						},
-					},
 				},
 			},
 			wantSess: func(instance *state.SessionInstance) bool {
 				uinMatches := fmt.Sprintf("%d", instance.UIN()) == uin.String()
 				flagsMatch := instance.Session().AllUserInfoBitmask(wire.OServiceUserFlagICQ)
 				return uinMatches && flagsMatch
-			},
-		},
-		{
-			name:   "ICQ session gets its avatar items back from the feedbag",
-			cookie: icqAuthCookie,
-			mockParams: mockParams{
-				sessionRegistryParams: sessionRegistryParams{
-					addSessionParams: addSessionParams{
-						{
-							screenName: uin,
-							result:     newTestInstance(uin),
-						},
-					},
-				},
-				userManagerParams: userManagerParams{
-					getUserParams: getUserParams{
-						{
-							screenName: uin.IdentScreenName(),
-							result: &state.User{
-								IdentScreenName:   uin.IdentScreenName(),
-								DisplayScreenName: uin,
-							},
-						},
-					},
-				},
-				accountManagerParams: accountManagerParams{
-					accountManagerConfirmStatusParams: accountManagerConfirmStatusParams{
-						{
-							screenName:    uin.IdentScreenName(),
-							confirmStatus: true,
-						},
-					},
-				},
-				bartItemManagerParams: bartItemManagerParams{
-					buddyIconMetadataParams: buddyIconMetadataParams{
-						{
-							screenName: uin.IdentScreenName(),
-						},
-					},
-					avatarBARTItemsParams: avatarBARTItemsParams{
-						{
-							screenName: uin.IdentScreenName(),
-							result: []wire.BARTID{
-								{
-									Type:     wire.BARTTypesFlashAvatar,
-									BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte{'d', 'e', 'v', 'i', 'l'}},
-								},
-								{
-									Type:     wire.BARTTypesBuddyIconBig,
-									BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte{'b', 'i', 'g'}},
-								},
-							},
-						},
-					},
-				},
-			},
-			wantSess: func(instance *state.SessionInstance) bool {
-				want := []wire.BARTID{
-					{
-						Type:     wire.BARTTypesFlashAvatar,
-						BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte{'d', 'e', 'v', 'i', 'l'}},
-					},
-					{
-						Type:     wire.BARTTypesBuddyIconBig,
-						BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte{'b', 'i', 'g'}},
-					},
-				}
-				return assert.Equal(t, want, instance.Session().AvatarItems())
-			},
-		},
-		{
-			name:    "avatar items lookup fails",
-			cookie:  icqAuthCookie,
-			wantErr: errors.New("AvatarBARTItems: boom"),
-			mockParams: mockParams{
-				sessionRegistryParams: sessionRegistryParams{
-					addSessionParams: addSessionParams{
-						{
-							screenName: uin,
-							result:     newTestInstance(uin),
-						},
-					},
-				},
-				userManagerParams: userManagerParams{
-					getUserParams: getUserParams{
-						{
-							screenName: uin.IdentScreenName(),
-							result: &state.User{
-								IdentScreenName:   uin.IdentScreenName(),
-								DisplayScreenName: uin,
-							},
-						},
-					},
-				},
-				accountManagerParams: accountManagerParams{
-					accountManagerConfirmStatusParams: accountManagerConfirmStatusParams{
-						{
-							screenName:    uin.IdentScreenName(),
-							confirmStatus: true,
-						},
-					},
-				},
-				bartItemManagerParams: bartItemManagerParams{
-					buddyIconMetadataParams: buddyIconMetadataParams{
-						{
-							screenName: uin.IdentScreenName(),
-						},
-					},
-					avatarBARTItemsParams: avatarBARTItemsParams{
-						{
-							screenName: uin.IdentScreenName(),
-							err:        errors.New("boom"),
-						},
-					},
-				},
 			},
 		},
 		{
@@ -2679,11 +2549,6 @@ func TestAuthService_RegisterBOSSession(t *testing.T) {
 			for _, params := range tc.mockParams.buddyIconMetadataParams {
 				bartItemManager.EXPECT().
 					BuddyIconMetadata(matchContext(), params.screenName).
-					Return(params.result, params.err)
-			}
-			for _, params := range tc.mockParams.avatarBARTItemsParams {
-				bartItemManager.EXPECT().
-					AvatarBARTItems(matchContext(), params.screenName).
 					Return(params.result, params.err)
 			}
 

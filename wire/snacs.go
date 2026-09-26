@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -1522,7 +1521,6 @@ const (
 	BARTTypesSuperIcon           uint16 = 0x05
 	BARTTypesRadioStation        uint16 = 0x06
 	BARTTypesSuperIconTrigger    uint16 = 0x07
-	BARTTypesFlashAvatar         uint16 = 0x08 // ICQ Flash avatar ("BuddyDevil"): an XML document naming the .swf
 	BARTTypesStatusTextLink      uint16 = 0x09
 	BARTTypesLocation            uint16 = 0x0B
 	BARTTypesBuddyIconBig        uint16 = 0x0C
@@ -1582,18 +1580,6 @@ const (
 	BARTReplyCodesNotfound    uint8 = 0x07
 )
 
-// RelayedAvatarBARTTypes lists the avatar BART item types that the server keeps
-// per session, besides the buddy icon, status text and mood, and relays to
-// buddies in the user info BART tag. They appear there in this order, after
-// the items older clients already expect.
-var RelayedAvatarBARTTypes = []uint16{BARTTypesFlashAvatar, BARTTypesBuddyIconBig}
-
-// IsRelayedAvatarBARTType reports whether itemType is one of
-// RelayedAvatarBARTTypes.
-func IsRelayedAvatarBARTType(itemType uint16) bool {
-	return slices.Contains(RelayedAvatarBARTTypes, itemType)
-}
-
 // GetClearIconHash returns an opaque value set in BARTID hash that indicates
 // the user wants to clear their buddy icon.
 func GetClearIconHash() []byte {
@@ -1610,12 +1596,6 @@ type BARTInfo struct {
 // ClearIconHash sentinel value.
 func (h BARTInfo) HasClearIconHash() bool {
 	return bytes.Equal(h.Hash, GetClearIconHash())
-}
-
-// IsCleared reports whether the item says the user removed it: no hash, an
-// all-zero hash or the clear icon sentinel.
-func (h BARTInfo) IsCleared() bool {
-	return !slices.ContainsFunc(h.Hash, func(b byte) bool { return b != 0 }) || h.HasClearIconHash()
 }
 
 // maxStatusMsgLen is the longest status message that fits in a BART item, whose

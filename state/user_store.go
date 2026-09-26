@@ -2433,62 +2433,6 @@ func (f SQLiteUserStore) BuddyIconMetadata(ctx context.Context, screenName Ident
 
 }
 
-// AvatarBARTItems returns the user's ICQ avatar items (the types listed in
-// wire.RelayedAvatarBARTTypes) from the BART items in their feedbag, in that
-// order. Items the user cleared are left out.
-func (f SQLiteUserStore) AvatarBARTItems(ctx context.Context, screenName IdentScreenName) ([]wire.BARTID, error) {
-	q := `
-		SELECT name, attributes
-		FROM feedBag
-		WHERE screenname = ? AND classID = ?
-	`
-	rows, err := f.db.QueryContext(ctx, q, screenName.String(), wire.FeedbagClassIdBart)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	byType := make(map[uint16]wire.BARTID)
-	for rows.Next() {
-		var name string
-		var attrs []byte
-		if err := rows.Scan(&name, &attrs); err != nil {
-			return nil, err
-		}
-		itemType, err := strconv.ParseUint(name, 0, 16)
-		if err != nil || !wire.IsRelayedAvatarBARTType(uint16(itemType)) {
-			continue
-		}
-		var block wire.TLVLBlock
-		if err := wire.UnmarshalBE(&block, bytes.NewBuffer(attrs)); err != nil {
-			return nil, err
-		}
-		b, hasBuf := block.Bytes(wire.FeedbagAttributesBartInfo)
-		if !hasBuf {
-			continue
-		}
-		var info wire.BARTInfo
-		if err := wire.UnmarshalBE(&info, bytes.NewBuffer(b)); err != nil {
-			return nil, err
-		}
-		if info.IsCleared() {
-			continue
-		}
-		byType[uint16(itemType)] = wire.BARTID{Type: uint16(itemType), BARTInfo: info}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	var items []wire.BARTID
-	for _, itemType := range wire.RelayedAvatarBARTTypes {
-		if item, ok := byType[itemType]; ok {
-			items = append(items, item)
-		}
-	}
-	return items, nil
-}
-
 func (f SQLiteUserStore) SetKeywords(ctx context.Context, screenName IdentScreenName, keywords [5]string) error {
 	q := `
 		WITH interests AS (SELECT CASE WHEN name = ? THEN id ELSE NULL END AS aim_keyword1,

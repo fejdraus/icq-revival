@@ -8,40 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestBARTInfo_IsCleared(t *testing.T) {
-	tests := []struct {
-		name     string
-		bartInfo BARTInfo
-		want     bool
-	}{
-		{name: "no hash", bartInfo: BARTInfo{}, want: true},
-		{name: "all-zero hash", bartInfo: BARTInfo{Hash: make([]byte, 16)}, want: true},
-		{name: "clear icon sentinel", bartInfo: BARTInfo{Hash: GetClearIconHash()}, want: true},
-		{name: "real hash", bartInfo: BARTInfo{Hash: []byte{0x00, 0x01}}, want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, tt.bartInfo.IsCleared())
-		})
-	}
-}
-
-func TestIsRelayedAvatarBARTType(t *testing.T) {
-	tests := []struct {
-		itemType uint16
-		want     bool
-	}{
-		{itemType: BARTTypesBuddyIcon, want: false},
-		{itemType: BARTTypesStatusStr, want: false},
-		{itemType: BARTTypesFlashAvatar, want: true},
-		{itemType: BARTTypesBuddyIconBig, want: true},
-		{itemType: BARTTypesMood, want: false},
-	}
-	for _, tt := range tests {
-		assert.Equal(t, tt.want, IsRelayedAvatarBARTType(tt.itemType), "type %d", tt.itemType)
-	}
-}
-
 func TestBARTInfo_HasClearIconHash(t *testing.T) {
 	tests := []struct {
 		name     string

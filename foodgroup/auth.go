@@ -178,16 +178,6 @@ func (s AuthService) RegisterBOSSession(ctx context.Context, authCookie state.Se
 		}
 	}
 
-	if len(sess.Session().AvatarItems()) == 0 {
-		items, err := s.bartItemManager.AvatarBARTItems(ctx, sess.IdentScreenName())
-		if err != nil {
-			return nil, fmt.Errorf("AvatarBARTItems: %w", err)
-		}
-		for _, item := range items {
-			sess.Session().SetAvatarItem(item)
-		}
-	}
-
 	// indicate whether the client supports/wants multiple concurrent sessions
 	sess.SetMultiConnFlag(flag)
 
