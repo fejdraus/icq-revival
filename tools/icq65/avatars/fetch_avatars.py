@@ -129,42 +129,41 @@ THUMBS = {
     '11102': ('20060525070215', 'http://c.icq.com:80/xtraz/img/avatar/avatar_11102.gif'),
 }
 
-# Titles for the gallery. The gallery list names no animated avatar, so a
-# title is the file name cleaned up (a duplicate's name where it says more,
-# the prefixes and the typos dropped), and translated where it is a word.
+# Titles for the gallery. The gallery lists name no animated avatar and the
+# file names are mostly numbers or nicknames, so each title says what the
+# avatar shows, in English and Ukrainian.
 TITLES = {
-    'avatar_10522': ('Avatar 10522', 'Аватар 10522'),
-    'avatar_10526': ('Avatar 10526', 'Аватар 10526'),
-    'avatar_10529': ('Alien', 'Прибулець'),      # also archived as alian_10529
-    'avatar_10530': ('Avatar 10530', 'Аватар 10530'),
-    'avatar_10763': ('Avatar 10763', 'Аватар 10763'),
-    'avatar_11074': ('Avatar 11074', 'Аватар 11074'),
-    'avatar_11102': ('Shark', 'Акула'),          # also archived as shark_11102
-    'avatar_11151': ('Avatar 11151', 'Аватар 11151'),
+    'avatar_10529': ('Alien', 'Прибулець'),
+    'avatar_10522': ('Dandy', 'Модник'),
+    'avatar_10526': ('Furball', 'Пухнастик'),
+    'avatar_10530': ('Punk', 'Панк'),
+    'avatar_10763': ('Devil', 'Чортик'),
+    'avatar_11074': ('Snake', 'Змійка'),
+    'avatar_11151': ('Football', 'Мʼяч'),
     'baby_10914': ('Baby', 'Малюк'),
     'avatar_boy': ('Boy', 'Хлопець'),
     'avatar_girl': ('Girl', 'Дівчина'),
-    'avatar_santa': ('Santa', 'Санта'),
-    'superboy': ('Superboy', 'Супербой'),
     'pirate': ('Pirate', 'Пірат'),
-    'robot': ('Robot', 'Робот'),
-    '2308intheend': ('In the End', 'In the End'),
-    '2308koshak': ('Koshak', 'Кошак'),
-    'bg': ('BG', 'BG'),
-    'bob': ('Bob', 'Боб'),
-    'face1': ('Face 1', 'Обличчя 1'),
+    'avatar_santa': ('Santa', 'Санта'),
+    'avatar_11102': ('Shark', 'Акула'),
+    'superboy': ('Superboy', 'Супербой'),
+    'bg': ('Doodle', 'Каракуля'),
+    'bob': ('Yellow Fox', 'Жовтий лис'),
+    'face1': ('Black Imp', 'Чорний бісик'),
+    '2308intheend': ('Bomb', 'Бомба'),
     'kitty': ('Kitty', 'Кошеня'),
-    'klex': ('Klex', 'Klex'),
-    'may18lr01': ('May 18', 'May 18'),
-    'mcshlain': ('McShlain', 'McShlain'),
-    'oran': ('Oran', 'Oran'),
-    'red': ('Red', 'Червоний'),
-    'sasuke': ('Sasuke', 'Саске'),
+    'klex': ('Blue Bunny', 'Синій кролик'),
+    '2308koshak': ('Cat in a T-shirt', 'Кіт у футболці'),
+    'may18lr01': ('Guy in Glasses', 'Хлопець в окулярах'),
+    'mcshlain': ('Redbeard', 'Рудобородий'),
+    'oran': ('Pink Blob', 'Рожевий колобок'),
+    'red': ('Red Smile', 'Червоний смайл'),
+    'sasuke': ('Ninja', 'Ніндзя'),
     'sheep': ('Sheep', 'Вівця'),
-    'silke': ('Silke', 'Silke'),
-    'smile': ('Smile', 'Усмішка'),
-    'spongy': ('Spongy', 'Spongy'),
-    'wings': ('Wings', 'Крила'),
+    'silke': ('Blonde', 'Білявка'),
+    'smile': ('Smiley', 'Смайлик'),
+    'spongy': ('Snowball', 'Сніжок'),
+    'wings': ('Winged Orb', 'Крилата куля'),
 }
 
 LABELS = ['stam', 'smile', 'sad', 'laugh', 'mad', 'cry', 'love', 'busy', 'offline']
