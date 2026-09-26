@@ -1856,10 +1856,22 @@ function animatedGallery(u) {
       while (row.length < cols) row.push('<td class="anim"></td>');
       rows.push(`<tr>${row.join('')}</tr>`);
     }
-    return `<h2>${escapeHtml(heading)}</h2>
-      <table class="gallery" cellpadding="0" cellspacing="0" border="0">${rows.join('')}</table>`;
+    return {
+      author,
+      heading,
+      count: items.length,
+      html: `<div id="grp-${author}" class="grp">
+      <table class="gallery" cellpadding="0" cellspacing="0" border="0">${rows.join('')}</table></div>`,
+    };
   };
-  return group('icq', t.picAnimIcq) + group('user', t.picAnimUser);
+  // The two groups are switched like the tabs above rather than stacked: the
+  // client's window cannot scroll, and each group fits it on its own.
+  const groups = [group('icq', t.picAnimIcq), group('user', t.picAnimUser)].filter(Boolean);
+  if (!groups.length) return '';
+  const switcher = groups.map((g, i) => `<a href="#" id="grpTab-${g.author}"${i === 0 ? ' class="on"' : ''}`
+    + ` onclick="group('${g.author}'); return false;">${escapeHtml(g.heading)} (${g.count})</a>`).join('');
+  const bodies = groups.map((g, i) => (i === 0 ? g.html : g.html.replace('class="grp"', 'class="grp" style="display:none"')));
+  return `<div class="tabs grptabs">${switcher}</div>${bodies.join('')}`;
 }
 
 function avatarPage(u, req) {

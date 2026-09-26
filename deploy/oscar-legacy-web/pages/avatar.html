@@ -37,9 +37,9 @@ td.anim img.thumb { border: 2px solid #e6e2d9; background: #fff; }
 td.anim.on img.thumb { border-color: #3c6e1f; }
 td.anim.on a { font-weight: bold; }
 .thumbcell { width: 64px; }
-/* The client's window has no scroll bar of its own, so the list scrolls in
-   its own box; fitList() sizes it to the window. */
-#animList { height: 260px; overflow-y: auto; overflow-x: hidden; border-top: 1px solid #e6e2d9; }
+/* The groups of avatars, switched like the tabs: the client's window has no
+   scroll bar, and each group fits it on its own. */
+.grptabs a { font-size: 12px; padding: 1px 9px; }
 </style>
 </head>
 <body class="compact">
@@ -149,21 +149,18 @@ function tab(which) {
   document.getElementById('pageAnimated').style.display = animated ? '' : 'none';
   document.getElementById('tabPicture').className = animated ? '' : 'on';
   document.getElementById('tabAnimated').className = animated ? 'on' : '';
-  if (animated) { fitList(); }
 }
 
-// The list takes what is left of the window below it, so every avatar can be
-// reached however the window is sized.
-function fitList() {
-  var list = document.getElementById('animList');
-  if (!list || list.offsetParent === null) { return; }
-  var top = 0;
-  for (var el = list; el; el = el.offsetParent) { top += el.offsetTop; }
-  var view = document.documentElement.clientHeight || document.body.clientHeight;
-  var h = view - top - 12;
-  list.style.height = (h < 120 ? 120 : h) + 'px';
+// Shows one group of avatars, ICQ's own or the ones users made.
+function group(which) {
+  var names = ['icq', 'user'];
+  for (var i = 0; i < names.length; i++) {
+    var body = document.getElementById('grp-' + names[i]);
+    var link = document.getElementById('grpTab-' + names[i]);
+    if (body) { body.style.display = names[i] === which ? '' : 'none'; }
+    if (link) { link.className = names[i] === which ? 'on' : ''; }
+  }
 }
-window.onresize = fitList;
 
 // The plugin object stays inert until it is handed the instance id that the
 // client puts in the address of the page it opens.
@@ -308,14 +305,14 @@ function choose(file) {
   document.getElementById('animPreview').src = img ? img.src : '';
   document.getElementById('animTitle').innerHTML = '';
   document.getElementById('animTitle').appendChild(document.createTextNode(a.title));
-  document.getElementById('animRow').style.display = ''; fitList();
+  document.getElementById('animRow').style.display = '';
   say('');
 }
 
 function cancelAnimated() {
   if (animChosen && cellOf(animChosen)) { cellOf(animChosen).className = 'anim'; }
   animChosen = '';
-  document.getElementById('animRow').style.display = 'none'; fitList();
+  document.getElementById('animRow').style.display = 'none';
   say('');
 }
 
