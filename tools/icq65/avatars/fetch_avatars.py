@@ -12,14 +12,18 @@
 #
 # The list below is every animated avatar the archive answered 200 for, under
 # /xtraz/img/avatar/ (c.icq.com, xtraz.icq.com, www.icq.com, icq.com; uc/ is
-# the "user created" folder) and c.icq.com/xtraz2/img/avatar/. Each movie is
+# the "user created" folder) and c.icq.com/xtraz2/img/avatar/, plus the
+# template devil inside ICQ's devil kit (xtraz_devcenter/devils/devils.zip).
+# A sweep of every *.icq.com and icq.net capture whose address holds ".swf",
+# "avatar" or "devil", or whose type is Flash, found no other. Each movie is
 # checked before it is kept: it has to parse, be AVM1 (the client drives it
 # with ActionScript 1/2), and carry the `face` clip, the `emotion` property
 # and the frame labels. Movies that fail are left out and said so.
 #
-# The 2007 gallery list (xtraz2/products/avatar/xml/avatarsGalery.php) names
-# no movies in its Animated_Devils category - the gallery page filled it from
-# elsewhere - so the thumbnails are:
+# The gallery lists (the 2005 page xtraz/products/avatar/english/
+# page_99_100.html and the 2007 xtraz2/products/avatar/xml/avatarsGalery.php)
+# name 24 ICQ movies and 73 user-created ones, but the archive kept only the
+# ones above, and few of their thumbnails, so the thumbnails are:
 #   archive  the static GIF ICQ.com kept next to the movie, under the same
 #            number (avatar_10526.swf -> avatar_10526.gif)
 #   render   the first seconds of the movie, drawn by our Ruffle-based
@@ -48,6 +52,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+import zipfile
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -80,6 +85,11 @@ AVATARS = [
     # The ICQ 6 folder: newer than the /xtraz/ pirate.swf (2010, 69432 bytes).
     ('pirate.swf', '20120118212050', 'http://c.icq.com/xtraz2/img/avatar/pirate.swf', ICQ),
     ('robot.swf', '20120805184253', 'http://c.icq.com/xtraz2/img/avatar/robot.swf', ICQ),
+    # The football devil ICQ shipped as the template of its devil kit
+    # (Xtraz Developer Center, "User Created Devils"): archived only inside
+    # the kit's zip, so the address names the member after '#'. The 2006 kit;
+    # the 2004 one (20060411031317) holds an older build of the same movie.
+    ('ball.swf', '20061216222045', 'http://www.icq.com:80/xtraz_devcenter/devils/devils.zip#ball.swf', ICQ),
     ('2308intheend.swf', '20060822011106', 'http://c.icq.com:80/xtraz/img/avatar/uc/2308intheend.swf', USER),
     ('2308koshak.swf', '20070202020823', 'http://c.icq.com:80/xtraz/img/avatar/uc/2308koshak.swf', USER),
     ('bg.swf', '20110904003226', 'http://c.icq.com/xtraz/img/avatar/uc/BG.swf', USER),
@@ -89,7 +99,7 @@ AVATARS = [
     ('klex.swf', '20061031024248', 'http://xtraz.icq.com:80/xtraz/img/avatar/uc/klex.swf', USER),
     ('may18lr01.swf', '20060209040011', 'http://c.icq.com:80/xtraz/img/avatar/uc/may18lr01.swf', USER),
     ('mcshlain.swf', '20101228151122', 'http://c.icq.com/xtraz/img/avatar/uc/mcshlain.swf', USER),
-    # uc/neger.swf, archived too, is left out on purpose: a racial caricature.
+    # uc/neger.swf, archived too, is left out on purpose (LEFT_OUT below).
     ('oran.swf', '20120221233446', 'http://c.icq.com/xtraz/img/avatar/uc/oran.swf', USER),
     ('red.swf', '20120805184244', 'http://c.icq.com/xtraz/img/avatar/uc/red.swf', USER),
     ('sasuke.swf', '20100618032801', 'http://xtraz.icq.com/xtraz/img/avatar/uc/sasuke.swf', USER),
@@ -98,6 +108,11 @@ AVATARS = [
     ('smile.swf', '20101102061812', 'http://c.icq.com/xtraz/img/avatar/uc/smile.swf', USER),
     ('spongy.swf', '20070319190440', 'http://c.icq.com:80/xtraz/img/avatar/uc/spongy.swf', USER),
     ('wings.swf', '20060210231239', 'http://c.icq.com:80/xtraz/img/avatar/uc/wings.swf', USER),
+]
+
+# Archived movies not fetched at all, and why; listed in the manifest.
+LEFT_OUT = [
+    ('uc/neger.swf', 'a racial caricature; left out of the gallery'),
 ]
 
 # Two movies are archived twice under different names (alian_10529 and
@@ -135,6 +150,7 @@ TITLES = {
     'superboy': ('Superboy', 'Супербой'),
     'pirate': ('Pirate', 'Пірат'),
     'robot': ('Robot', 'Робот'),
+    'ball': ('Football', 'Мʼяч'),
     '2308intheend': ('In the End', 'In the End'),
     '2308koshak': ('Koshak', 'Кошак'),
     'bg': ('BG', 'BG'),
@@ -161,6 +177,23 @@ CDX_PREFIXES = [
     'www.icq.com/xtraz/img/avatar/', 'icq.com/xtraz/img/avatar/',
     'c.icq.com/xtraz2/img/avatar/',
 ]
+
+
+def fetch_movie(stamp, url, cache):
+    """A movie: a capture of the address itself, or of a zip holding it
+    ('.../devils.zip#ball.swf')."""
+    if '#' not in url:
+        return fetch(stamp, url, cache)
+    archive, member = url.split('#', 1)
+    data = fetch(stamp, archive, cache)
+    if data is None:
+        return None
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            names = [n for n in z.namelist() if n.rsplit('/', 1)[-1] == member]
+            return z.read(names[0]) if names else None
+    except zipfile.BadZipFile:
+        return None
 
 
 def fetch(stamp, url, cache):
@@ -475,7 +508,7 @@ def main():
 
     good, dropped, seen = {}, [], {}
     for name, stamp, url, group in AVATARS:
-        data = fetch(stamp, url, a.cache)
+        data = fetch_movie(stamp, url, a.cache)
         ok, why, info = check_swf(data)
         if ok:
             movie = hashlib.sha1(swf_body(data)).hexdigest()
@@ -534,7 +567,8 @@ def main():
         json.dump({
             'note': 'Written by tools/icq65/avatars/fetch_avatars.py; do not edit by hand.',
             'avatars': manifest,
-            'dropped': [{'file': n, 'why': w} for n, w in dropped],
+            'dropped': [{'file': n, 'why': w} for n, w in dropped]
+                       + [{'file': n, 'reason': r} for n, r in LEFT_OUT],
         }, f, ensure_ascii=False, indent=1)
         f.write('\n')
     print('%d kept, %d dropped' % (len(manifest), len(dropped)))

@@ -236,6 +236,32 @@
    ]
   },
   {
+   "file": "ball.swf",
+   "title": {
+    "en": "Football",
+    "uk": "Мʼяч"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 35073,
+   "thumb": "ball.png",
+   "thumbSource": "render",
+   "source": "http://www.icq.com:80/xtraz_devcenter/devils/devils.zip#ball.swf",
+   "captured": "20061216222045",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
    "file": "avatar_girl.swf",
    "title": {
     "en": "Girl",
