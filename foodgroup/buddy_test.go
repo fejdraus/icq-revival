@@ -635,6 +635,7 @@ func TestBuddyNotifier_BroadcastBuddyArrived(t *testing.T) {
 	icon := wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("icon")}}
 	flash := wire.BARTID{Type: wire.BARTTypesFlashAvatar, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("devil")}}
 	big := wire.BARTID{Type: wire.BARTTypesBuddyIconBig, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("big")}}
+	flashStill := wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("still")}}
 	userInfoWith := func(ids ...wire.BARTID) wire.TLVUserInfo {
 		return wire.TLVUserInfo{
 			ScreenName: "me",
@@ -803,6 +804,44 @@ func TestBuddyNotifier_BroadcastBuddyArrived(t *testing.T) {
 								state.NewIdentScreenName("aim"),
 							},
 							message: arrival(userInfoWith(icon)),
+						},
+					},
+				},
+			},
+		},
+		{
+			// the still comes from the recipient's FlashAvatarStillFinder
+			name:       "a still of the Flash avatar reaches the other recipients",
+			screenName: state.NewIdentScreenName("me"),
+			userInfo:   userInfoWith(flash),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					allRelationshipsParams: allRelationshipsParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							result:     []state.Relationship{friend("icq6"), friend("miranda"), friend("aim")},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams: retrieveSessionParams{
+						{screenName: state.NewIdentScreenName("icq6"), result: newTestInstance("icq6", sessOptICQ6, sessOptFlashAvatarStill(flash, flashStill)).Session()},
+						{screenName: state.NewIdentScreenName("miranda"), result: newTestInstance("miranda", sessOptMirandaICQ, sessOptFlashAvatarStill(flash, flashStill)).Session()},
+						{screenName: state.NewIdentScreenName("aim"), result: newTestInstance("aim", sessOptAIM, sessOptFlashAvatarStill(flash, flashStill)).Session()},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNamesParams: relayToScreenNamesParams{
+						{
+							screenNames: []state.IdentScreenName{state.NewIdentScreenName("icq6")},
+							message:     arrival(userInfoWith(flash)),
+						},
+						{
+							screenNames: []state.IdentScreenName{
+								state.NewIdentScreenName("miranda"),
+								state.NewIdentScreenName("aim"),
+							},
+							message: arrival(userInfoWith(flashStill)),
 						},
 					},
 				},

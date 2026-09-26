@@ -233,6 +233,8 @@ func (s buddyNotifier) BroadcastBuddyArrived(ctx context.Context, screenName sta
 
 	// split the recipients by whether they can take the avatar items
 	var flashRecipients, plainRecipients []state.IdentScreenName
+	// what the ones that can't take them are sent, the same for all of them
+	var plainInfo wire.TLVUserInfo
 	for _, recipient := range recipients {
 		sess := s.sessionRetriever.RetrieveSession(recipient)
 		switch {
@@ -241,6 +243,9 @@ func (s buddyNotifier) BroadcastBuddyArrived(ctx context.Context, screenName sta
 		case sess.SupportsFlashAvatars():
 			flashRecipients = append(flashRecipients, recipient)
 		default:
+			if len(plainRecipients) == 0 {
+				plainInfo = sess.UserInfoFor(userInfo)
+			}
 			plainRecipients = append(plainRecipients, recipient)
 		}
 	}
@@ -248,7 +253,7 @@ func (s buddyNotifier) BroadcastBuddyArrived(ctx context.Context, screenName sta
 		s.relayBuddyArrived(ctx, flashRecipients, userInfo)
 	}
 	if len(plainRecipients) > 0 {
-		s.relayBuddyArrived(ctx, plainRecipients, userInfo.WithoutRelayedAvatarItems())
+		s.relayBuddyArrived(ctx, plainRecipients, plainInfo)
 	}
 
 	return nil

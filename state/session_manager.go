@@ -32,6 +32,9 @@ type InMemorySessionManager struct {
 	userLocksMutex        sync.Mutex
 	logger                *slog.Logger
 	maxConcurrentSessions int
+	// flashAvatarStills is handed to every new session, see
+	// SetFlashAvatarStills.
+	flashAvatarStills FlashAvatarStillFinder
 }
 
 const (
@@ -276,6 +279,7 @@ func (s *InMemorySessionManager) newSession(screenName DisplayScreenName, doMult
 	instance := sess.AddInstance()
 
 	s.mapMutex.Lock()
+	sess.SetFlashAvatarStills(s.flashAvatarStills)
 	s.store[instance.IdentScreenName()] = &sessionSlot{
 		session:      sess,
 		removed:      make(chan bool),

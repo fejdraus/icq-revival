@@ -122,6 +122,17 @@ func MakeCommonDeps() (Container, error) {
 	// Random chat picks a partner among the live sessions.
 	c.icqService.BridgeSessionLister(c.inMemorySessionManager)
 
+	// Clients that can't play Flash avatars get a still picture of a gallery
+	// avatar in its place, taken from the legacy web.
+	c.inMemorySessionManager.SetFlashAvatarStills(foodgroup.NewFlashAvatarStills(
+		c.cfg.LegacyWebURL,
+		c.sqLiteUserStore,
+		c.sqLiteUserStore,
+		c.inMemorySessionManager,
+		c.inMemorySessionManager,
+		c.logger.With("svc", "FlashAvatarStills"),
+	))
+
 	c.feedbagSvc.BridgeICBMService(c.icbmSvc)
 	c.icbmSvc.BridgeFeedbagService(c.feedbagSvc)
 	c.icqService.BridgeFeedbagService(c.feedbagSvc)

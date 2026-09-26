@@ -1,6 +1,7 @@
 package state
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/google/uuid"
@@ -145,6 +146,8 @@ func TestSession_SupportsFlashAvatars(t *testing.T) {
 		uuid.MustParse("0946134C-4C7F-11D1-8222-444553540000"),
 		{'M', 'i', 'r', 'a', 'n', 'd', 'a', 'N', 0, 0, 0x60, 0, 0, 0, 0, 0},
 	}
+	// Miranda with the FlashAvatars plugin loaded
+	mirandaFlash := append(slices.Clone(miranda), wire.CapFlashAvatarPlayer)
 	aim := [][16]byte{wire.CapChat, wire.CapFileTransfer}
 
 	icon := wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("icon")}}
@@ -171,6 +174,8 @@ func TestSession_SupportsFlashAvatars(t *testing.T) {
 	}{
 		{name: "ICQ 6", instanceCaps: [][][16]byte{icq6}, want: true},
 		{name: "Miranda", instanceCaps: [][][16]byte{miranda}},
+		{name: "Miranda with the FlashAvatars plugin", instanceCaps: [][][16]byte{mirandaFlash}, want: true},
+		{name: "ICQ 6 and Miranda with the FlashAvatars plugin", instanceCaps: [][][16]byte{icq6, mirandaFlash}, want: true},
 		{name: "AIM", instanceCaps: [][][16]byte{aim}},
 		{name: "ICQ 6 before it announced its capabilities", instanceCaps: [][][16]byte{nil}},
 		{name: "no instances"},

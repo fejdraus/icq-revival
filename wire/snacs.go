@@ -218,6 +218,11 @@ var (
 	// Together with CapICQTZers it marks an ICQ 6 client; see
 	// FlashAvatarCaps.
 	CapICQ6HTML = uuid.MustParse("0138CA7B-769A-4915-88F2-13FC00979EA8")
+	// CapFlashAvatarPlayer indicates a client other than ICQ 6 that plays
+	// ICQ 6 Flash avatars: Miranda NG with the ICQ Revival FlashAvatars
+	// plugin (tools/miranda-icq/FlashAvatars) announces it while the plugin
+	// is loaded. See HasFlashAvatarCaps.
+	CapFlashAvatarPlayer = uuid.MustParse("B9E03A0C-B33E-4B18-BC0B-7BB5903129AE")
 
 	//
 	// Unknown/Legacy UUIDs
@@ -1601,17 +1606,21 @@ func IsRelayedAvatarBARTType(itemType uint16) bool {
 	return slices.Contains(RelayedAvatarBARTTypes, itemType)
 }
 
-// FlashAvatarCaps are the capabilities a client must announce to be sent the
-// RelayedAvatarBARTTypes items. ICQ 6 announces both and renders Flash
-// avatars. Clients that don't, such as Miranda's ICQ plugin, prefer these
-// items over the buddy icon they can show and end up showing no avatar at
-// all. Miranda also announces the ICQ "devils" capability and the ICQ 6.5
-// client ID and version, so neither of those tells ICQ 6 apart.
+// FlashAvatarCaps are the capabilities by which an ICQ 6 client is told
+// apart: ICQ 6 announces both and renders Flash avatars. Clients that don't,
+// such as Miranda's ICQ plugin, prefer the RelayedAvatarBARTTypes items over
+// the buddy icon they can show and end up showing no avatar at all. Miranda
+// also announces the ICQ "devils" capability and the ICQ 6.5 client ID and
+// version, so neither of those tells ICQ 6 apart.
 var FlashAvatarCaps = [][16]byte{CapICQTZers, CapICQ6HTML}
 
-// HasFlashAvatarCaps reports whether caps contains every one of
-// FlashAvatarCaps.
+// HasFlashAvatarCaps reports whether a client with caps may be sent the
+// RelayedAvatarBARTTypes items: it announces every one of FlashAvatarCaps (ICQ
+// 6), or CapFlashAvatarPlayer (another client that plays Flash avatars).
 func HasFlashAvatarCaps(caps [][16]byte) bool {
+	if slices.Contains(caps, [16]byte(CapFlashAvatarPlayer)) {
+		return true
+	}
 	for _, want := range FlashAvatarCaps {
 		if !slices.Contains(caps, want) {
 			return false
@@ -2938,6 +2947,57 @@ func (t TLVUserInfo) WithoutRelayedAvatarItems() TLVUserInfo {
 			out.TLVList = append(out.TLVList, NewTLVBE(OServiceUserInfoBARTInfo, kept))
 			kept = nil // a repeated tag is not repeated in the copy
 		}
+	}
+	return out
+}
+
+// FlashAvatarItem returns the Flash avatar item the BART info tag of t lists
+// and reports whether it lists one that is set: a removal notice reports
+// false.
+func (t TLVUserInfo) FlashAvatarItem() (BARTID, bool) {
+	for _, id := range t.bartIDs() {
+		if id.Type == BARTTypesFlashAvatar && !id.IsCleared() {
+			return id, true
+		}
+	}
+	return BARTID{}, false
+}
+
+// HasBuddyIcon reports whether the BART info tag of t lists a buddy icon
+// (BARTTypesBuddyIcon) that is set: a cleared icon doesn't count.
+func (t TLVUserInfo) HasBuddyIcon() bool {
+	return slices.ContainsFunc(t.bartIDs(), func(id BARTID) bool {
+		return id.Type == BARTTypesBuddyIcon && !id.IsCleared()
+	})
+}
+
+// WithBuddyIcon returns a copy of t whose BART info tag lists icon as its
+// buddy icon, in place of a cleared one or first in the tag, where older
+// clients look for it. A t that lists a buddy icon that is set is returned
+// as it is, and t itself is not modified.
+func (t TLVUserInfo) WithBuddyIcon(icon BARTID) TLVUserInfo {
+	if t.HasBuddyIcon() {
+		return t
+	}
+	ids := t.bartIDs()
+	if i := slices.IndexFunc(ids, func(id BARTID) bool { return id.Type == BARTTypesBuddyIcon }); i >= 0 {
+		ids[i] = icon
+	} else {
+		ids = append([]BARTID{icon}, ids...)
+	}
+	out := t
+	out.TLVList = make(TLVList, 0, len(t.TLVList)+1)
+	replaced := false
+	for _, tlv := range t.TLVList {
+		if tlv.Tag != OServiceUserInfoBARTInfo {
+			out.TLVList = append(out.TLVList, tlv)
+		} else if !replaced {
+			out.TLVList = append(out.TLVList, NewTLVBE(OServiceUserInfoBARTInfo, ids))
+			replaced = true
+		}
+	}
+	if !replaced {
+		out.TLVList = append(out.TLVList, NewTLVBE(OServiceUserInfoBARTInfo, ids))
 	}
 	return out
 }

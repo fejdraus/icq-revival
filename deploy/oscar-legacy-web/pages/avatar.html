@@ -143,15 +143,6 @@ var animSet = -1;
 var picRead = -1;
 var animPending = '';
 var animChosen = '';
-// The still picture set after the movie (see setStill()): its transaction,
-// and its address while the answer is awaited.
-var stillSet = -1;
-var stillPending = '';
-// Whether the still has been asked for yet: until then no picture event is
-// its answer.
-var stillAsked = false;
-// The avatar the movie just set belongs to, so its still follows it.
-var animStill = '';
 
 // Both tabs have a status line; only the visible one is seen.
 function say(text) {
@@ -335,10 +326,12 @@ function cancelAnimated() {
 // The same call as the picture, with the other kind: the client is handed
 // the movie's address, uploads that address to the server as the owner's
 // BART type 8, and every contact's client fetches the movie from it.
+//
+// Nothing else is set: ICQ 6 keeps one avatar, and setting a picture (BART
+// type 1) after the movie would take the movie away again. The contacts whose
+// clients cannot play it are shown a still of the same face by the server.
 function applyAnimated() {
-  if (!animChosen || animPending || stillPending) { return; }
-  var chosen = findAvatar(animChosen);
-  animStill = chosen && chosen.still ? chosen.still : '';
+  if (!animChosen || animPending) { return; }
   transaction = transaction + 1;
   animSet = transaction;
   var sent = AVATAR_BASE + animChosen;
@@ -363,50 +356,7 @@ function animDone(data) {
   animPending = '';
   cancelAnimated();
   showAnimated(data || sent);
-  if (!animStill) { say(T.picAnimSaved); return; }
-  // The movie is in place; its still picture follows. Not from in here:
-  // this runs inside the client's own event, and may be inside the
-  // SetBartItem call that set the movie (see apply()).
-  say(T.picAnimStill);
-  stillPending = AVATAR_BASE + animStill;
-  stillAsked = false;
-  animStill = '';
-  setTimeout(setStill, 300);
-}
-
-// The still picture of the same face, as the buddy picture (BART type 1),
-// the same way the picture tab sets an uploaded one: an address the client
-// fetches and uploads itself. ICQ 6 plays the movie; Miranda, ICQ 2003b, AIM
-// and the like cannot, and show this instead. It is set after the movie and
-// never alongside it, so the two answers cannot be taken for each other.
-function setStill() {
-  if (!stillPending) { return; }
-  var sent = stillPending;
-  transaction = transaction + 1;
-  stillSet = transaction;
-  stillAsked = true;
-  try {
-    plugin.SetBartItem(transaction, BART_PICTURE, sent);
-  } catch (e) {
-    stillPending = '';
-    say(T.picAnimStillRefused);
-    return;
-  }
-  setTimeout(function () {
-    if (stillPending === sent) { stillDone(); }
-  }, 6000);
-}
-
-function stillDone() {
-  if (!stillPending || !stillAsked) { return; }
-  stillPending = '';
   say(T.picAnimSaved);
-}
-
-function stillFailed() {
-  if (!stillPending || !stillAsked) { return; }
-  stillPending = '';
-  say(T.picAnimStillRefused);
 }
 
 function readAnimated() {
@@ -444,10 +394,6 @@ function showAnimated(data) {
 <script for="plugin" event="OnBartOpSucceeded(transID, bcstrData)" language="JavaScript">
   if (transID == animRead) { showAnimated(bcstrData); }
   else if (transID == animSet) { animDone(bcstrData); }
-  else if (transID == stillSet) {
-    show(bcstrData);
-    stillDone();
-  }
   else {
     show(bcstrData);
     done();
@@ -456,8 +402,7 @@ function showAnimated(data) {
 
 <script for="plugin" event="OnBartOpFailed(transID)" language="JavaScript">
   if (transID == animRead) { showAnimated(''); }
-  else if (transID == animSet) { animPending = ''; animStill = ''; say(T.picAnimServerRefused); }
-  else if (transID == stillSet) { stillFailed(); }
+  else if (transID == animSet) { animPending = ''; say(T.picAnimServerRefused); }
   // Reading fails when there is simply no picture, which is not worth a fuss;
   // only an upload that was asked for is reported as refused.
   else if (transID != picRead && pending) { say(T.picServerRefused); }
@@ -467,14 +412,13 @@ function showAnimated(data) {
   // The one event the client always sends once the picture is in place. The
   // acknowledgement of the upload itself does not always arrive, so the status
   // is finished here rather than there. eType is the BART kind, so the
-  // animated face does not end up in the picture's frame. The still an
-  // animated avatar brings along is a picture like any other.
+  // animated face does not end up in the picture's frame.
   if (eType == BART_ANIMATED) {
     showAnimated(bcstrData);
     animDone(bcstrData);
   } else {
     show(bcstrData);
-    if (stillPending && stillAsked) { stillDone(); } else { done(); }
+    done();
   }
 </script>
 

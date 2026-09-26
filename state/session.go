@@ -115,6 +115,9 @@ type Session struct {
 	// wire.RelayedAvatarBARTTypes, keyed by type. A removed item stays as an
 	// empty removal notice, so buddies learn it is gone.
 	avatarItems map[uint16]wire.BARTID
+	// flashAvatarStills finds the stills sent in place of other users' Flash
+	// avatars when this session can't play them; nil sends none.
+	flashAvatarStills FlashAvatarStillFinder
 }
 
 // NewSession creates a new Session for a user.
@@ -860,12 +863,22 @@ func (s *Session) SupportsFlashAvatars() bool {
 }
 
 // UserInfoFor returns info as this session may be sent it: without the Flash
-// avatar and big icon items unless SupportsFlashAvatars.
+// avatar and big icon items unless SupportsFlashAvatars, and then with the
+// still picture of a Flash avatar as the buddy icon of an owner who has none
+// (see FlashAvatarStillFinder).
 func (s *Session) UserInfoFor(info wire.TLVUserInfo) wire.TLVUserInfo {
 	if s.SupportsFlashAvatars() {
 		return info
 	}
-	return info.WithoutRelayedAvatarItems()
+	return userInfoWithoutFlash(info, s.flashAvatarStillFinder())
+}
+
+// flashAvatarStillFinder returns the session's FlashAvatarStillFinder, nil
+// when it has none.
+func (s *Session) flashAvatarStillFinder() FlashAvatarStillFinder {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return s.flashAvatarStills
 }
 
 // MemberSince reports when the user became a member.
@@ -1662,12 +1675,14 @@ func (s *SessionInstance) SupportsFlashAvatars() bool {
 }
 
 // UserInfoFor returns info as this instance may be sent it: without the Flash
-// avatar and big icon items unless SupportsFlashAvatars.
+// avatar and big icon items unless SupportsFlashAvatars, and then with the
+// still picture of a Flash avatar as the buddy icon of an owner who has none
+// (see FlashAvatarStillFinder).
 func (s *SessionInstance) UserInfoFor(info wire.TLVUserInfo) wire.TLVUserInfo {
 	if s.SupportsFlashAvatars() {
 		return info
 	}
-	return info.WithoutRelayedAvatarItems()
+	return userInfoWithoutFlash(info, s.Session().flashAvatarStillFinder())
 }
 
 func (s *SessionInstance) caps() [][16]byte {

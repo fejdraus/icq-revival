@@ -462,8 +462,8 @@ const I18N = {
     picTabAnimated: 'Animated',
     picAnimLead: 'A moving face instead of a still picture. ICQ 6 plays it next to '
       + 'your name, and it changes with your mood and status. Pick one, then set it.',
-    picAnimNote: 'Your picture becomes a still of the same face, for contacts on '
-      + 'other clients or older ICQ versions, which cannot play the animation.',
+    picAnimNote: 'Contacts on other clients or older ICQ versions cannot play the '
+      + 'animation: they see a still picture of it instead, which the server provides.',
     picAnimNow: 'Now set:',
     picAnimNone: 'none',
     picAnimOther: 'one that is not on this server',
@@ -475,9 +475,6 @@ const I18N = {
     picAnimSaved: 'Set. Your contacts see it from now on.',
     picAnimRefused: 'The client refused the animation: ',
     picAnimServerRefused: 'The server did not take the animation.',
-    picAnimStill: 'Animation set. Now its still picture, for the other clients...',
-    picAnimStillRefused: 'The animation is set, but its still picture was not: '
-      + 'contacts on other clients keep seeing your old picture.',
     picReduced: (from, to) => `${from} reduced to ${to}`,
     picBytes: (n) => (n < 1024 ? `${n} bytes` : `${Math.round(n / 1024)} KB`),
     signedInAs: (u) => `Signed in as <b>${u}</b>`,
@@ -802,8 +799,8 @@ const I18N = {
     picAnimLead: 'Живе обличчя замість нерухомої картинки. ICQ 6 програє його поруч '
       + 'із вашим імʼям, і воно змінюється разом із вашим настроєм і статусом. '
       + 'Оберіть і встановіть.',
-    picAnimNote: 'Вашою картинкою стане нерухоме зображення того ж обличчя - для '
-      + 'контактів в інших клієнтах чи старіших версіях ICQ, які не програють анімацію.',
+    picAnimNote: 'Контакти в інших клієнтах чи старіших версіях ICQ не програють '
+      + 'анімацію: вони бачать її нерухоме зображення, яке дає сервер.',
     picAnimNow: 'Зараз встановлено:',
     picAnimNone: 'нічого',
     picAnimOther: 'анімація не з цього сервера',
@@ -815,9 +812,6 @@ const I18N = {
     picAnimSaved: 'Встановлено. Відтепер її бачать ваші контакти.',
     picAnimRefused: 'Клієнт не прийняв анімацію: ',
     picAnimServerRefused: 'Сервер не прийняв анімацію.',
-    picAnimStill: 'Анімацію встановлено. Тепер її нерухома картинка, для інших клієнтів...',
-    picAnimStillRefused: 'Анімацію встановлено, а її нерухому картинку - ні: '
-      + 'контакти в інших клієнтах і далі бачать вашу попередню картинку.',
     picReduced: (from, to) => `${from} стиснуто до ${to}`,
     picBytes: (n) => (n < 1024 ? `${n} байт` : `${Math.round(n / 1024)} КБ`),
     signedInAs: (u) => `Ви увійшли як <b>${u}</b>`,
@@ -2362,14 +2356,13 @@ function avatarPage(u, req) {
   // "now set", and the address it hands the client. That address is plain
   // HTTP on this service's own port whichever way the page came in: the
   // client fetches the movie with its own loader, and so does every
-  // contact's client, and none of them speaks HTTPS. `still` is the 52x64
-  // picture of the same face, set as the buddy picture alongside the movie
-  // for the clients that cannot play it; '' when the folder has none.
+  // contact's client, and none of them speaks HTTPS. The still picture of
+  // each face (<name>-still.jpg) is not the page's business: the IM server
+  // takes it from here and shows it to the clients that cannot play the movie.
   const avatars = avatarList.map((a) => ({
     file: a.file,
     title: (a.title && (a.title[u.lang] || a.title.en)) || a.file,
     thumb: a.thumb,
-    still: a.still && avatarFiles.has(String(a.still).toLowerCase()) ? a.still : '',
   }));
   const hasAnimated = avatars.length > 0;
   return avatarTemplate

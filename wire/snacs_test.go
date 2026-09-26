@@ -53,6 +53,8 @@ func TestHasFlashAvatarCaps(t *testing.T) {
 		{name: "tZers alone, as ICQ 5.1 sends", caps: [][16]byte{CapICQTZers}, want: false},
 		{name: "ICQ 6 HTML alone", caps: [][16]byte{CapICQ6HTML}, want: false},
 		{name: "devils, as Miranda sends", caps: [][16]byte{devils, CapUTF8Messages, CapXHTMLIM}, want: false},
+		{name: "Miranda with the FlashAvatars plugin", caps: [][16]byte{devils, CapUTF8Messages, CapXHTMLIM, CapFlashAvatarPlayer}, want: true},
+		{name: "Flash avatar player alone", caps: [][16]byte{CapFlashAvatarPlayer}, want: true},
 		{name: "none", want: false},
 	}
 	for _, tt := range tests {
@@ -125,6 +127,76 @@ func TestTLVUserInfo_WithoutRelayedAvatarItems(t *testing.T) {
 			before := infoCopy(tt.info)
 			assert.Equal(t, tt.wantHas, tt.info.HasRelayedAvatarItems())
 			assert.Equal(t, tt.want, tt.info.WithoutRelayedAvatarItems())
+			// the info it was made from is shared by other recipients
+			assert.Equal(t, before, tt.info)
+		})
+	}
+}
+
+func TestTLVUserInfo_WithBuddyIcon(t *testing.T) {
+	icon := BARTID{Type: BARTTypesBuddyIcon, BARTInfo: BARTInfo{Flags: BARTFlagsCustom, Hash: []byte("icon")}}
+	still := BARTID{Type: BARTTypesBuddyIcon, BARTInfo: BARTInfo{Flags: BARTFlagsCustom, Hash: []byte("still")}}
+	cleared := BARTID{Type: BARTTypesBuddyIcon, BARTInfo: BARTInfo{Hash: GetClearIconHash()}}
+	status := BARTID{Type: BARTTypesStatusStr, BARTInfo: BARTInfo{Flags: BARTFlagsData, Hash: []byte("status")}}
+	flash := BARTID{Type: BARTTypesFlashAvatar, BARTInfo: BARTInfo{Flags: BARTFlagsCustom, Hash: []byte("devil")}}
+	flashRemoved := BARTID{Type: BARTTypesFlashAvatar}
+
+	signon := NewTLVBE(OServiceUserInfoSignonTOD, uint32(1))
+	caps := NewTLVBE(OServiceUserInfoOscarCaps, [][16]byte{CapUTF8Messages})
+	infoWith := func(bart ...TLV) TLVUserInfo {
+		list := TLVList{signon}
+		list = append(list, bart...)
+		list = append(list, caps)
+		return TLVUserInfo{ScreenName: "100003", WarningLevel: 7, TLVBlock: TLVBlock{TLVList: list}}
+	}
+
+	tests := []struct {
+		name      string
+		info      TLVUserInfo
+		wantFlash *BARTID
+		wantIcon  bool
+		want      TLVUserInfo
+	}{
+		{
+			name:      "no icon: the still goes first",
+			info:      infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{status, flash})),
+			wantFlash: &flash,
+			want:      infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{still, status, flash})),
+		},
+		{
+			name:     "an icon of the owner's own stays",
+			info:     infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{icon, status})),
+			wantIcon: true,
+			want:     infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{icon, status})),
+		},
+		{
+			name: "a cleared icon is replaced",
+			info: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{cleared, status})),
+			want: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{still, status})),
+		},
+		{
+			name: "a removed Flash avatar is no Flash avatar",
+			info: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{flashRemoved})),
+			want: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{still, flashRemoved})),
+		},
+		{
+			name: "no BART tag: one is added",
+			info: infoWith(),
+			want: TLVUserInfo{ScreenName: "100003", WarningLevel: 7, TLVBlock: TLVBlock{TLVList: TLVList{signon, caps, NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{still})}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := infoCopy(tt.info)
+			gotFlash, hasFlash := tt.info.FlashAvatarItem()
+			if tt.wantFlash != nil {
+				assert.True(t, hasFlash)
+				assert.Equal(t, *tt.wantFlash, gotFlash)
+			} else {
+				assert.False(t, hasFlash)
+			}
+			assert.Equal(t, tt.wantIcon, tt.info.HasBuddyIcon())
+			assert.Equal(t, tt.want, tt.info.WithBuddyIcon(still))
 			// the info it was made from is shared by other recipients
 			assert.Equal(t, before, tt.info)
 		})
