@@ -111,6 +111,10 @@ type Session struct {
 	// statusMood is the ICQ 6 mood. It lives next to the status text and
 	// travels in and out as an item of the same 0x1D tag.
 	statusMood wire.BARTID
+	// avatarItems holds the ICQ avatar items listed in
+	// wire.RelayedAvatarBARTTypes, keyed by type. A removed item stays as an
+	// empty removal notice, so buddies learn it is gone.
+	avatarItems map[uint16]wire.BARTID
 }
 
 // NewSession creates a new Session for a user.
@@ -755,6 +759,47 @@ func (s *Session) BuddyIcon() (wire.BARTID, bool) {
 	return icon, icon.Type != 0
 }
 
+// AvatarItem returns the session's avatar item of the given type and reports
+// whether one is set. A removed item reports false.
+func (s *Session) AvatarItem(itemType uint16) (wire.BARTID, bool) {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	item, ok := s.avatarItems[itemType]
+	return item, ok && len(item.Hash) > 0
+}
+
+// AvatarItems returns the session's avatar items, including removal notices,
+// in wire.RelayedAvatarBARTTypes order.
+func (s *Session) AvatarItems() []wire.BARTID {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	var items []wire.BARTID
+	for _, itemType := range wire.RelayedAvatarBARTTypes {
+		if item, ok := s.avatarItems[itemType]; ok {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+// SetAvatarItem stores an avatar item of one of the wire.RelayedAvatarBARTTypes
+// types; other types are ignored. A cleared item (see wire.BARTInfo.IsCleared)
+// is kept as an empty removal notice of the same type.
+func (s *Session) SetAvatarItem(item wire.BARTID) {
+	if !wire.IsRelayedAvatarBARTType(item.Type) {
+		return
+	}
+	if item.IsCleared() {
+		item = wire.BARTID{Type: item.Type}
+	}
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.avatarItems == nil {
+		s.avatarItems = make(map[uint16]wire.BARTID)
+	}
+	s.avatarItems[item.Type] = item
+}
+
 // Caps returns the union of all capability UUIDs from all instances in the session.
 func (s *Session) Caps() [][16]byte {
 	s.mutex.RLock()
@@ -976,6 +1021,9 @@ func (s *Session) userInfo() wire.TLVList {
 	if mood, hasMood := s.StatusMood(); hasMood {
 		bartIDs = append(bartIDs, mood)
 	}
+	// ICQ avatar items go last, so older clients find the items they know
+	// where they always were.
+	bartIDs = append(bartIDs, s.AvatarItems()...)
 
 	if len(bartIDs) > 0 {
 		tlvs.Append(wire.NewTLVBE(wire.OServiceUserInfoBARTInfo, bartIDs))

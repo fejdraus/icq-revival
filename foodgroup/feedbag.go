@@ -428,7 +428,10 @@ func (s *FeedbagService) setBARTItem(ctx context.Context, instance *state.Sessio
 
 	itemExists := false
 
-	if bytes.Equal(bartID.Hash, wire.GetClearIconHash()) {
+	// An ICQ avatar item is also cleared by an empty or all-zero hash. The
+	// buddy icon keeps its historical behavior: only the sentinel clears it.
+	if bytes.Equal(bartID.Hash, wire.GetClearIconHash()) ||
+		(wire.IsRelayedAvatarBARTType(bartID.Type) && bartID.IsCleared()) {
 		s.logger.DebugContext(ctx, "user is clearing icon",
 			"hash", fmt.Sprintf("%x", bartID.Hash))
 		itemExists = true
@@ -441,8 +444,7 @@ func (s *FeedbagService) setBARTItem(ctx context.Context, instance *state.Sessio
 	}
 
 	if itemExists {
-		if bartID.Type == wire.BARTTypesBuddyIconSmall || bartID.Type == wire.BARTTypesBuddyIcon {
-			instance.Session().SetBuddyIcon(bartID)
+		if setSessionBARTItem(instance.Session(), bartID) {
 			// tell buddies about the icon update
 			if err := s.buddyBroadcaster.BroadcastBuddyArrived(ctx, instance.IdentScreenName(), instance.Session().TLVUserInfo()); err != nil {
 				return err
@@ -453,9 +455,7 @@ func (s *FeedbagService) setBARTItem(ctx context.Context, instance *state.Sessio
 	} else {
 		// icon doesn't exist, tell the client to upload buddy icon
 		bartID.Flags |= wire.BARTFlagsUnknown
-		if bartID.Type == wire.BARTTypesBuddyIconSmall || bartID.Type == wire.BARTTypesBuddyIcon {
-			instance.Session().SetBuddyIcon(bartID)
-		}
+		setSessionBARTItem(instance.Session(), bartID)
 		s.logger.DebugContext(ctx, "icon doesn't exist in BART store, client must upload the icon file",
 			"hash", fmt.Sprintf("%x", bartID.Hash))
 	}
@@ -470,10 +470,59 @@ func (s *FeedbagService) setBARTItem(ctx context.Context, instance *state.Sessio
 		},
 	})
 
-	if bartID.Type == wire.BARTTypesBuddyIconSmall || bartID.Type == wire.BARTTypesBuddyIcon {
+	if sessionKeepsBARTType(bartID.Type) {
 		sendUserInfoUpdateToAll(ctx, s.messageRelayer, instance)
 	}
 
+	return nil
+}
+
+// sessionKeepsBARTType reports whether the session keeps and relays BART items
+// of the given type set through the feedbag: the buddy icon and the ICQ avatar
+// items.
+func sessionKeepsBARTType(itemType uint16) bool {
+	return itemType == wire.BARTTypesBuddyIconSmall ||
+		itemType == wire.BARTTypesBuddyIcon ||
+		wire.IsRelayedAvatarBARTType(itemType)
+}
+
+// setSessionBARTItem stores bartID in the session if the session keeps items
+// of its type, and reports whether it did.
+func setSessionBARTItem(sess *state.Session, bartID wire.BARTID) bool {
+	switch {
+	case wire.IsRelayedAvatarBARTType(bartID.Type):
+		sess.SetAvatarItem(bartID)
+	case sessionKeepsBARTType(bartID.Type):
+		sess.SetBuddyIcon(bartID)
+	default:
+		return false
+	}
+	return true
+}
+
+// clearAvatarItems removes the ICQ avatar items whose feedbag BART items were
+// deleted and tells the user's buddies and other instances. Deleting the
+// buddy icon item is left alone: clients clear it with the sentinel hash.
+func (s *FeedbagService) clearAvatarItems(ctx context.Context, instance *state.SessionInstance, items []wire.FeedbagItem) error {
+	cleared := false
+	for _, item := range items {
+		if item.ClassID != wire.FeedbagClassIdBart {
+			continue
+		}
+		itemType, err := strconv.ParseUint(item.Name, 0, 16)
+		if err != nil || !wire.IsRelayedAvatarBARTType(uint16(itemType)) {
+			continue
+		}
+		instance.Session().SetAvatarItem(wire.BARTID{Type: uint16(itemType)})
+		cleared = true
+	}
+	if !cleared {
+		return nil
+	}
+	if err := s.buddyBroadcaster.BroadcastBuddyArrived(ctx, instance.IdentScreenName(), instance.Session().TLVUserInfo()); err != nil {
+		return err
+	}
+	sendUserInfoUpdateToAll(ctx, s.messageRelayer, instance)
 	return nil
 }
 
@@ -516,6 +565,10 @@ func (s *FeedbagService) DeleteItem(ctx context.Context, instance *state.Session
 		case wire.FeedbagClassIdBuddy, wire.FeedbagClassIDDeny, wire.FeedbagClassIDPermit:
 			filter = append(filter, state.NewIdentScreenName(item.Name))
 		}
+	}
+
+	if err := s.clearAvatarItems(ctx, instance, inBody.Items); err != nil {
+		return nil, err
 	}
 
 	if instance.InNotifyTxn() {

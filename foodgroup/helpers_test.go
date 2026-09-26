@@ -300,6 +300,7 @@ type bartItemManagerParams struct {
 	bartItemManagerRetrieveParams
 	bartItemManagerUpsertParams
 	buddyIconMetadataParams
+	avatarBARTItemsParams
 }
 
 // bartItemManagerRetrieveParams is the list of parameters passed at the mock
@@ -324,6 +325,14 @@ type bartItemManagerUpsertParams []struct {
 type buddyIconMetadataParams []struct {
 	screenName state.IdentScreenName
 	result     *wire.BARTID
+	err        error
+}
+
+// avatarBARTItemsParams is the list of parameters passed at the mock
+// BARTItemManager.AvatarBARTItems call site
+type avatarBARTItemsParams []struct {
+	screenName state.IdentScreenName
+	result     []wire.BARTID
 	err        error
 }
 
@@ -994,6 +1003,13 @@ func sessOptFeedbagEnabled(instance *state.SessionInstance) {
 func sessOptBuddyIcon(icon wire.BARTID) func(instance *state.SessionInstance) {
 	return func(instance *state.SessionInstance) {
 		instance.Session().SetBuddyIcon(icon)
+	}
+}
+
+// sessOptAvatarItem sets an ICQ avatar BART item on the session object.
+func sessOptAvatarItem(item wire.BARTID) func(instance *state.SessionInstance) {
+	return func(instance *state.SessionInstance) {
+		instance.Session().SetAvatarItem(item)
 	}
 }
 

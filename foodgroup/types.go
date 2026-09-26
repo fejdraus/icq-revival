@@ -106,6 +106,10 @@ type BARTItemManager interface {
 	// if the user does not have a buddy icon.
 	BuddyIconMetadata(ctx context.Context, screenName state.IdentScreenName) (*wire.BARTID, error)
 
+	// AvatarBARTItems retrieves the user's ICQ avatar items (the types in
+	// wire.RelayedAvatarBARTTypes) from their feedbag, leaving out cleared ones.
+	AvatarBARTItems(ctx context.Context, screenName state.IdentScreenName) ([]wire.BARTID, error)
+
 	// InsertBARTItem creates or updates a BART asset and blob hash.
 	InsertBARTItem(ctx context.Context, hash []byte, blob []byte, itemType uint16) error
 
