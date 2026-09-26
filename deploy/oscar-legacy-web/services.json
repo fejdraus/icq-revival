@@ -26,6 +26,7 @@
     "  legal       legal notice and privacy, with the terms of use",
     "  terms       the terms of use",
     "  download    the clients that work and the patches, from downloads below",
+    "  tzer        a tZer movie or thumbnail from the tzers folder, by exact name",
     "  stub        a \"this service is gone\" page",
     "",
     "Substitutions in target: {registerBase}, {q}, {host}, {path}."
@@ -163,6 +164,11 @@
       "path": "^/icq/download",
       "action": "download",
       "note": "the clients that work and the patches for them"
+    },
+    {
+      "path": "^/icq/tzers/",
+      "action": "tzer",
+      "note": "tZer movies and thumbnails from the tzers folder, by exact file name; ICQ 6.5 with the patch's tZers player lists them in tzer.xml"
     },
     {
       "path": "^/icq/avatar/upload",

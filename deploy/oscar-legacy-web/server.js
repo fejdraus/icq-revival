@@ -51,6 +51,39 @@ try {
   // Without the file the gallery stays as it was: the client reports a problem.
 }
 
+// tZers: the short movies with sound ICQ 6.5 plays over the message window,
+// and their thumbnails (the client has its own copies and asks only for a
+// missing one). The ICQ 6.5 patch points ConfigFiles\tzer.xml at
+// /icq/tzers/ here and lists only the tZers this folder has (the list in
+// tools/patcher/Icq65/Icq65Client.cs; the files come from
+// tools/icq65/tzers/make_tzers.py). The receiving client fetches the movie by
+// the address the sender's list gave, so it has to be reachable from anywhere.
+//
+// Only the names found in the folder are served, read once at start and again
+// on SIGHUP: a request names a file, never a path, so there is nothing to walk
+// out of the folder with.
+const TZER_DIR = path.join(__dirname, 'tzers');
+const TZER_TYPES = {
+  '.swf': 'application/x-shockwave-flash',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+};
+let tzerFiles = new Map();
+
+function loadTzers() {
+  const files = new Map();
+  try {
+    for (const name of fs.readdirSync(TZER_DIR)) {
+      const type = TZER_TYPES[path.extname(name).toLowerCase()];
+      if (!type || !/^[a-z0-9_-]+\.[a-z]+$/i.test(name)) continue;
+      files.set(name.toLowerCase(), { body: fs.readFileSync(path.join(TZER_DIR, name)), type });
+    }
+  } catch {
+    // Without the folder there are no tZers: every request is a 404.
+  }
+  tzerFiles = files;
+}
+
 let CODES = {};
 try {
   CODES = JSON.parse(fs.readFileSync(path.join(__dirname, 'icq-codes.json'), 'utf8'));
@@ -336,7 +369,8 @@ const I18N = {
     helpGoneList: [
       '<b>Xtraz</b>: the gallery, animated greetings and mini-games.',
       '<b>SMS</b> and phone calls to real phone numbers.',
-      '<b>tZers</b>.',
+      '<b>tZers</b>, except in ICQ 6.5: there the "tZers without Flash" option of '
+        + 'the patch brings back all twelve, with a player that needs no Flash.',
       '<b>Advertising</b>: the banners, the news ticker and the ad windows.',
       'The ICQ.com web services: e-mail, news, the chat directory, the web '
         + 'version of the contact list.',
@@ -655,7 +689,8 @@ const I18N = {
     helpGoneList: [
       '<b>Xtraz</b>: галерея, анімовані привітання та міні-ігри.',
       '<b>SMS</b> і дзвінки на звичайні телефони.',
-      '<b>tZers</b>.',
+      '<b>tZers</b>, крім ICQ 6.5: там опція патча «tZers without Flash» '
+        + 'повертає всі дванадцять, із програвачем, якому не потрібен Flash.',
       '<b>Реклама</b>: банери, стрічка новин і рекламні вікна.',
       'Вебслужби ICQ.com: пошта, новини, каталог чатів, веб-версія списку контактів.',
     ],
@@ -2003,6 +2038,25 @@ const ACTIONS = {
     ctx.res.end(body);
   },
 
+  // A tZer movie or thumbnail, by its exact file name: /icq/tzers/kisses.swf.
+  // Anything else under /icq/tzers/ is a 404, as the dead ICQ.com one was.
+  tzer: (ctx) => {
+    const name = ctx.path.replace(/^\/icq\/tzers\//i, '');
+    const file = /^[a-z0-9_-]+\.[a-z]+$/i.test(name) ? tzerFiles.get(name.toLowerCase()) : null;
+    if (!file || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) {
+      ctx.res.writeHead(404, { 'content-length': 0 });
+      ctx.res.end();
+      return;
+    }
+    ctx.res.writeHead(200, {
+      'content-type': file.type,
+      'content-length': file.body.length,
+      // The movies never change once published.
+      'cache-control': 'public, max-age=86400',
+    });
+    ctx.res.end(ctx.req.method === 'HEAD' ? undefined : file.body);
+  },
+
   // The ICQ 6 banner strip: the client expects an image, not a page. Serving a
   // transparent dot leaves the strip empty instead of showing a broken image.
   blank: (ctx) => {
@@ -2079,6 +2133,7 @@ async function route(req, res) {
 
 config = loadConfig();
 loadTopics();
+loadTzers();
 
 // SIGHUP reloads the config: a host can be added without restarting the service.
 // If the new file is broken we keep the old one instead of dying.
@@ -2086,7 +2141,8 @@ process.on('SIGHUP', () => {
   try {
     config = loadConfig();
     loadTopics();
-    console.log(`config reloaded: ${config.routes.length} routes`);
+    loadTzers();
+    console.log(`config reloaded: ${config.routes.length} routes, ${tzerFiles.size} tZer files`);
   } catch (err) {
     console.error(`config not reloaded, keeping the old one: ${err.message}`);
   }
