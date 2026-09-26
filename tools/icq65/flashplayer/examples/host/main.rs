@@ -514,8 +514,16 @@ fn snapshot(hwnd: HWND, path: &str) -> Option<(u32, u32, usize, usize, [u8; 4])>
         )
     };
     let (w, h) = (ds.dsBm.bmWidth as u32, ds.dsBm.bmHeight as u32);
-    let bits =
+    let raw =
         unsafe { std::slice::from_raw_parts(ds.dsBm.bmBits as *const u8, (w * h * 4) as usize) };
+    // The DLL hands out a bottom-up DIB (positive biHeight), as the client
+    // expects: turn it top-down for the PNG.
+    let stride = (w * 4) as usize;
+    let bits: Vec<u8> = if ds.dsBmih.biHeight > 0 {
+        raw.chunks_exact(stride).rev().flatten().copied().collect()
+    } else {
+        raw.to_vec()
+    };
     let mut rgba = Vec::with_capacity(bits.len());
     let (mut transparent, mut opaque) = (0, 0);
     for px in bits.chunks_exact(4) {

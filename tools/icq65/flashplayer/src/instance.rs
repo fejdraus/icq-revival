@@ -178,11 +178,17 @@ impl Drop for Surface {
 
 /// A 32bpp top-down DIB section.
 pub(crate) fn new_dib(width: u32, height: u32) -> Option<(HBITMAP, *mut u8)> {
+    new_dib_rows(width, height, true)
+}
+
+/// A 32bpp DIB section, its rows top-down or, as Windows has them by
+/// default, bottom-up.
+fn new_dib_rows(width: u32, height: u32, top_down: bool) -> Option<(HBITMAP, *mut u8)> {
     let mut info: BITMAPINFO = unsafe { std::mem::zeroed() };
     info.bmiHeader = BITMAPINFOHEADER {
         biSize: size_of::<BITMAPINFOHEADER>() as u32,
         biWidth: width as i32,
-        biHeight: -(height as i32),
+        biHeight: if top_down { -(height as i32) } else { height as i32 },
         biPlanes: 1,
         biBitCount: 32,
         biCompression: BI_RGB,
@@ -588,7 +594,9 @@ impl Instance {
         }
     }
 
-    /// Message 0x1404: a new 32bpp top-down DIB of the current frame.
+    /// Message 0x1404: a new 32bpp DIB of the current frame. Bottom-up, the
+    /// Windows default: ICQ's image class reads the bits in that order and
+    /// showed a top-down frame upside down in the contact list.
     fn snapshot_inner(&self) -> HBITMAP {
         let (w, h) = self.size();
         let frame = {
@@ -600,10 +608,16 @@ impl Instance {
             m.render()
         };
         let Some(f) = frame else { return null_mut() };
-        let Some((bmp, bits)) = new_dib(f.width, f.height) else {
+        let Some((bmp, bits)) = new_dib_rows(f.width, f.height, false) else {
             return null_mut();
         };
-        unsafe { std::ptr::copy_nonoverlapping(f.pixels.as_ptr(), bits, f.pixels.len()) };
+        let stride = f.width as usize * 4;
+        let rows = f.height as usize;
+        for (i, row) in f.pixels.chunks_exact(stride).take(rows).enumerate() {
+            unsafe {
+                std::ptr::copy_nonoverlapping(row.as_ptr(), bits.add((rows - 1 - i) * stride), stride)
+            };
+        }
         bmp
     }
 
