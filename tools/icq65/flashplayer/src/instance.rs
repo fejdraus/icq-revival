@@ -40,6 +40,8 @@ const MSG_LOADED: u32 = 0x8000 + 0x0F11; // WM_APP + 0xF11
 pub const MSG_AUDIO_STATS: u32 = 0x8000 + 0x0F12;
 
 const TICK_TIMER: usize = 0x46505431; // "FPT1", distinct from the client's 0x25D
+/// The ActiveX control's repaint-retry timer on the same hidden window.
+pub const CONTROL_TIMER: usize = 0x46505432; // "FPT2"
 const TICK_MS: u32 = 10;
 /// How long the root timeline has to stand on its last frame before a movie
 /// without animEnd counts as finished, so a nested clip there can finish.
@@ -82,6 +84,11 @@ pub struct Instance {
     pub frame: RefCell<Option<Rc<Frame>>>,
     /// Called after a new frame was rendered (control mode).
     pub on_frame: RefCell<Option<Box<dyn Fn()>>>,
+    /// Called on CONTROL_TIMER (control mode).
+    pub on_control_timer: RefCell<Option<Box<dyn Fn()>>>,
+    /// Counts frames rendered in control mode; the control compares it with
+    /// the last frame the host drew.
+    pub frame_serial: Cell<u64>,
 }
 
 /// The windows of one thread. Each window lives on the thread that created
@@ -188,7 +195,11 @@ fn new_dib_rows(width: u32, height: u32, top_down: bool) -> Option<(HBITMAP, *mu
     info.bmiHeader = BITMAPINFOHEADER {
         biSize: size_of::<BITMAPINFOHEADER>() as u32,
         biWidth: width as i32,
-        biHeight: if top_down { -(height as i32) } else { height as i32 },
+        biHeight: if top_down {
+            -(height as i32)
+        } else {
+            height as i32
+        },
         biPlanes: 1,
         biBitCount: 32,
         biCompression: BI_RGB,
@@ -244,6 +255,8 @@ impl Instance {
             display: Cell::new(crate::movie::Display::default()),
             frame: RefCell::new(None),
             on_frame: RefCell::new(None),
+            on_control_timer: RefCell::new(None),
+            frame_serial: Cell::new(0),
         }
     }
 
@@ -462,6 +475,7 @@ impl Instance {
         let Some(f) = frame else { return };
         if self.control.get() {
             *self.frame.borrow_mut() = Some(Rc::new(f));
+            self.frame_serial.set(self.frame_serial.get() + 1);
             let notify = self.on_frame.borrow();
             if let Some(cb) = notify.as_ref() {
                 cb();
@@ -494,6 +508,22 @@ impl Instance {
         }
     }
 
+    /// The current picture rendered at exactly `w`x`h` (control mode): the
+    /// last frame if it has that size, else a fresh render at that size,
+    /// which also becomes the size later frames are rendered at. None when
+    /// there is no movie or rendering failed.
+    pub fn frame_at(&self, w: u32, h: u32) -> Option<Rc<Frame>> {
+        if let Some(f) = self.frame.borrow().as_ref() {
+            if f.width == w && f.height == h {
+                return Some(f.clone());
+            }
+        }
+        self.size.set((w, h));
+        self.present();
+        let f = self.frame.borrow().clone();
+        f.filter(|f| f.width == w && f.height == h)
+    }
+
     /// New WMode/Scale; applies to the loaded movie too.
     pub fn set_display(&self, d: crate::movie::Display) {
         self.display.set(d);
@@ -524,10 +554,12 @@ impl Instance {
     }
 
     pub fn set_variable(&self, path: &str, value: &str) -> HRESULT {
-        match self.with_movie("SetVariable", |m| m.set_variable(path, value)) {
+        let hr = match self.with_movie("SetVariable", |m| m.set_variable(path, value)) {
             Some(true) => S_OK,
             _ => E_FAIL,
-        }
+        };
+        log(&format!("SetVariable({path:?}, {value:?}) -> {hr:#x}"));
+        hr
     }
 
     pub fn get_variable(&self, path: &str) -> Option<String> {
@@ -536,10 +568,12 @@ impl Instance {
     }
 
     pub fn t_goto_label(&self, target: &str, label: &str) -> HRESULT {
-        match self.with_movie("TGotoLabel", |m| m.t_goto_label(target, label)) {
+        let hr = match self.with_movie("TGotoLabel", |m| m.t_goto_label(target, label)) {
             Some(true) => S_OK,
             _ => E_FAIL,
-        }
+        };
+        log(&format!("TGotoLabel({target:?}, {label:?}) -> {hr:#x}"));
+        hr
     }
 
     pub fn t_goto_frame(&self, target: &str, frame: i32) -> HRESULT {
@@ -615,7 +649,11 @@ impl Instance {
         let rows = f.height as usize;
         for (i, row) in f.pixels.chunks_exact(stride).take(rows).enumerate() {
             unsafe {
-                std::ptr::copy_nonoverlapping(row.as_ptr(), bits.add((rows - 1 - i) * stride), stride)
+                std::ptr::copy_nonoverlapping(
+                    row.as_ptr(),
+                    bits.add((rows - 1 - i) * stride),
+                    stride,
+                )
             };
         }
         bmp
@@ -721,11 +759,17 @@ impl Instance {
     }
 
     pub fn play(&self) -> HRESULT {
+        if self.control.get() {
+            log("Play");
+        }
         self.guarded("Play", E_FAIL, || self.play_inner())
     }
 
     /// Flash's Stop: stop and rewind to the first frame.
     pub fn stop(&self) -> HRESULT {
+        if self.control.get() {
+            log("Stop");
+        }
         self.guarded("Stop", E_FAIL, || self.stop_inner())
     }
 
@@ -796,6 +840,15 @@ unsafe fn handle(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT
         WM_TIMER if wp == TICK_TIMER => {
             if let Some(i) = get(hwnd) {
                 i.tick();
+            }
+            Some(0)
+        }
+        WM_TIMER if wp == CONTROL_TIMER => {
+            if let Some(i) = get(hwnd) {
+                let cb = i.on_control_timer.borrow();
+                if let Some(cb) = cb.as_ref() {
+                    cb();
+                }
             }
             Some(0)
         }

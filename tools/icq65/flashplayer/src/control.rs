@@ -37,7 +37,9 @@ use windows_sys::Win32::Graphics::Gdi::{
     AC_SRC_ALPHA, AC_SRC_OVER, AlphaBlend, BLENDFUNCTION, CreateCompatibleDC, DeleteDC,
     DeleteObject, HBITMAP, HDC, SelectObject,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, HWND_MESSAGE};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DestroyWindow, HWND_MESSAGE, KillTimer, SetTimer,
+};
 use windows_sys::core::{GUID, HRESULT};
 
 use crate::com::{FlashObject, bstr_to_string, com_release, vcall};
@@ -101,12 +103,180 @@ fn guid_eq(a: &GUID, b: &GUID) -> bool {
     a.data1 == b.data1 && a.data2 == b.data2 && a.data3 == b.data3 && a.data4 == b.data4
 }
 
-fn px_from_himetric(v: i32) -> i32 {
-    (v as i64 * 96 / 2540) as i32
+/// Screen DPI (x, y), for HIMETRIC <-> pixels.
+fn screen_dpi() -> (i32, i32) {
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetDC, GetDeviceCaps, LOGPIXELSX, LOGPIXELSY, ReleaseDC,
+    };
+    unsafe {
+        let dc = GetDC(null_mut());
+        if dc.is_null() {
+            return (96, 96);
+        }
+        let x = GetDeviceCaps(dc, LOGPIXELSX as i32);
+        let y = GetDeviceCaps(dc, LOGPIXELSY as i32);
+        ReleaseDC(null_mut(), dc);
+        (if x > 0 { x } else { 96 }, if y > 0 { y } else { 96 })
+    }
 }
-fn himetric_from_px(v: i32) -> i32 {
-    (v as i64 * 2540 / 96) as i32
+
+fn px_from_himetric(v: i32, dpi: i32) -> i32 {
+    ((v as i64 * dpi as i64 + 1270) / 2540) as i32
 }
+fn himetric_from_px(v: i32, dpi: i32) -> i32 {
+    ((v as i64 * 2540 + dpi as i64 / 2) / dpi as i64) as i32
+}
+
+fn rect_str(r: &RECT) -> String {
+    format!(
+        "({},{})-({},{}) {}x{}",
+        r.left,
+        r.top,
+        r.right,
+        r.bottom,
+        r.right - r.left,
+        r.bottom - r.top
+    )
+}
+
+fn opt_rect_str(r: *const RECT) -> String {
+    if r.is_null() {
+        "NULL".into()
+    } else {
+        rect_str(unsafe { &*r })
+    }
+}
+
+/// Class, visibility, rectangle and styles of a window and its ancestors,
+/// for the log: where a host's InvalidateRect ends up.
+fn describe_window(hwnd: HWND) -> String {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GA_PARENT, GWL_EXSTYLE, GWL_STYLE, GetAncestor, GetClassNameW, GetWindowLongW,
+        GetWindowRect, IsWindowVisible,
+    };
+    if hwnd.is_null() {
+        return "NULL".into();
+    }
+    let mut parts = Vec::new();
+    let mut h = hwnd;
+    for _ in 0..6 {
+        if h.is_null() {
+            break;
+        }
+        let mut cls = [0u16; 64];
+        let n = unsafe { GetClassNameW(h, cls.as_mut_ptr(), 64) } as usize;
+        let mut r: RECT = unsafe { std::mem::zeroed() };
+        unsafe { GetWindowRect(h, &mut r) };
+        parts.push(format!(
+            "{h:?} \"{}\" {} {} style {:#x} ex {:#x}",
+            String::from_utf16_lossy(&cls[..n]),
+            if unsafe { IsWindowVisible(h) } != 0 {
+                "visible"
+            } else {
+                "HIDDEN"
+            },
+            rect_str(&r),
+            unsafe { GetWindowLongW(h, GWL_STYLE) } as u32,
+            unsafe { GetWindowLongW(h, GWL_EXSTYLE) } as u32
+        ));
+        h = unsafe { GetAncestor(h, GA_PARENT) };
+    }
+    parts.join(" < ")
+}
+
+/// Log the first calls of a kind fully, then every 240th.
+fn log_every(n: u32) -> bool {
+    n <= 40 || n % 240 == 0
+}
+
+/// Names of interfaces hosts ask for, for the log.
+fn iid_name(iid: &GUID) -> String {
+    const KNOWN: &[(u128, &str)] = &[
+        (0x00000000_0000_0000_C000_000000000046, "IUnknown"),
+        (0x00000112_0000_0000_C000_000000000046, "IOleObject"),
+        (0x0000010C_0000_0000_C000_000000000046, "IPersist"),
+        (
+            0x37D84F60_42CB_11CE_8135_00AA004BB851,
+            "IPersistPropertyBag",
+        ),
+        (0x7FD52380_4E07_101B_AE2D_08002B2EC713, "IPersistStreamInit"),
+        (0x00000109_0000_0000_C000_000000000046, "IPersistStream"),
+        (0x0000010A_0000_0000_C000_000000000046, "IPersistStorage"),
+        (0x0000010D_0000_0000_C000_000000000046, "IViewObject"),
+        (0x00000127_0000_0000_C000_000000000046, "IViewObject2"),
+        (0x3AF24292_0C96_11CE_A0CF_00AA00600AB8, "IViewObjectEx"),
+        (0x00000114_0000_0000_C000_000000000046, "IOleWindow"),
+        (0x00000113_0000_0000_C000_000000000046, "IOleInPlaceObject"),
+        (
+            0x1C2056CC_5EF4_101B_8BC8_00AA003E3B29,
+            "IOleInPlaceObjectWindowless",
+        ),
+        (
+            0x00000117_0000_0000_C000_000000000046,
+            "IOleInPlaceActiveObject",
+        ),
+        (0xFC4801A3_2BA9_11CF_A229_00AA003D7352, "IObjectWithSite"),
+        (0xB196B288_BAB4_101A_B69C_00AA00341D07, "IOleControl"),
+        (0x00020400_0000_0000_C000_000000000046, "IDispatch"),
+        (0xD27CDB6C_AE6D_11cf_96B8_444553540000, "IShockwaveFlash"),
+        (
+            0xB196B284_BAB4_101A_B69C_00AA00341D07,
+            "IConnectionPointContainer",
+        ),
+        (0xCF51ED10_62FE_11CF_BF86_00A0C9034836, "IQuickActivate"),
+        (0xB196B283_BAB4_101A_B69C_00AA00341D07, "IProvideClassInfo"),
+        (0xA6BC3AC0_DBAA_11CE_9DE3_00AA004BB851, "IProvideClassInfo2"),
+        (0x0000010E_0000_0000_C000_000000000046, "IDataObject"),
+        (0x00000126_0000_0000_C000_000000000046, "IRunnableObject"),
+        (0x0000011E_0000_0000_C000_000000000046, "IOleCache"),
+        (0x00000122_0000_0000_C000_000000000046, "IDropTarget"),
+        (
+            0x376BD3AA_3845_101B_84ED_08002B2EC713,
+            "IPerPropertyBrowsing",
+        ),
+        (
+            0xB196B28B_BAB4_101A_B69C_00AA00341D07,
+            "ISpecifyPropertyPages",
+        ),
+        (0x55980BA0_35AA_11CF_B671_00AA004CD6D8, "IPointerInactive"),
+        (
+            0x00000019_0000_0000_C000_000000000046,
+            "IExternalConnection",
+        ),
+        (0x0000001B_0000_0000_C000_000000000046, "IStdMarshalInfo"),
+        (0x00000003_0000_0000_C000_000000000046, "IMarshal"),
+        (0x94EA2B94_E9CC_49E0_C0FF_EE64CA8F5B90, "IAgileObject"),
+        (0x6D5140C1_7436_11CE_8034_00AA006009FA, "IServiceProvider"),
+        (0x3050F3F0_98B5_11CF_BB82_00AA00BDCE0B, "ICustomDoc"),
+    ];
+    for (v, n) in KNOWN {
+        if guid_eq(iid, &GUID::from_u128(*v)) {
+            return (*n).to_string();
+        }
+    }
+    format!(
+        "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
+        iid.data1,
+        iid.data2,
+        iid.data3,
+        iid.data4[0],
+        iid.data4[1],
+        iid.data4[2],
+        iid.data4[3],
+        iid.data4[4],
+        iid.data4[5],
+        iid.data4[6],
+        iid.data4[7]
+    )
+}
+
+static NEXT_CONTROL: AtomicU32 = AtomicU32::new(1);
+
+const ADVF_PRIMEFIRST: u32 = 2;
+const ADVF_ONLYONCE: u32 = 4;
+/// Repaint requests after a frame the host has not drawn yet.
+const RETRY_MS: u32 = 100;
+const RETRY_CAP: u32 = 100; // 10 s without a Draw
 
 /// Interface slots of the control: index i is at offset i * PTR.
 const I_UNKNOWN: usize = 0;
@@ -119,10 +289,31 @@ const I_WITHSITE: usize = 6;
 const I_CONTROL: usize = 7;
 const INTERFACES: usize = 8;
 
+/// A frame as a GDI bitmap, for AlphaBlend.
+struct GdiFrame {
+    serial: u64,
+    frame: Rc<Frame>,
+    dc: HDC,
+    bmp: HBITMAP,
+    old: *mut c_void,
+}
+
+impl Drop for GdiFrame {
+    fn drop(&mut self) {
+        unsafe {
+            SelectObject(self.dc, self.old);
+            DeleteObject(self.bmp);
+            DeleteDC(self.dc);
+        }
+    }
+}
+
 #[repr(C)]
 pub struct Control {
     vtbls: [*const usize; INTERFACES],
     refs: AtomicU32,
+    /// Number for the log.
+    id: u32,
     /// The hidden window whose Instance plays the movie.
     hwnd: Cell<HWND>,
     flash: Cell<*mut FlashObject>,
@@ -132,15 +323,32 @@ pub struct Control {
     /// Kind of `inplace_site`: 0 plain, 1 Ex, 2 windowless.
     site_kind: Cell<u8>,
     active: Cell<bool>,
+    /// Position from GetWindowContext (the host's whole client area for
+    /// boxelyRenderer), used until the host gives a real rectangle.
     pos: Cell<RECT>,
+    /// The rectangle from SetObjectRects (or DoVerb), once known.
+    obj_rect: Cell<Option<RECT>>,
     extent: Cell<SIZE>, // HIMETRIC
+    dpi: (i32, i32),
     view_sink: Cell<Unk>,
     view_aspects: Cell<u32>,
     view_advf: Cell<u32>,
     advise_holder: Cell<Unk>,
     in_draw: Cell<bool>,
-    /// GDI copy of the last frame drawn: (frame, memory DC, bitmap, old bitmap).
-    cache: RefCell<Option<(Rc<Frame>, HDC, HBITMAP, *mut c_void)>>,
+    /// GDI copies of recent frames, one per size drawn.
+    gdi: RefCell<Vec<GdiFrame>>,
+    /// Serial of the newest frame the host has drawn.
+    drawn_serial: Cell<u64>,
+    /// Repaint requests since the host last drew.
+    retries: Cell<u32>,
+    retry_armed: Cell<bool>,
+    draws: Cell<u32>,
+    notifies: Cell<u32>,
+    misc_calls: Cell<u32>,
+    last_draw_size: Cell<(i32, i32)>,
+    qi_seen: RefCell<Vec<(GUID, bool)>>,
+    /// The site's window (IOleWindow::GetWindow): where its InvalidateRect goes.
+    site_hwnd: Cell<HWND>,
 }
 
 unsafe fn ctl<'a>(this: Unk, index: usize) -> &'a Control {
@@ -156,12 +364,27 @@ impl Control {
         instance::get(self.hwnd.get())
     }
 
+    fn clog(&self, msg: &str) {
+        log(&format!("control #{}: {msg}", self.id));
+    }
+
+    /// Logs a host call that is not per-frame (first 200 per control).
+    fn call_log(&self, msg: &str) {
+        let n = self.misc_calls.get() + 1;
+        self.misc_calls.set(n);
+        if n <= 200 {
+            self.clog(msg);
+        }
+    }
+
     /// A new control with one reference, or an error.
     fn create() -> Result<*mut Control, HRESULT> {
         crate::RegisterFlashWindowClass();
+        let dpi = screen_dpi();
         let c = Box::into_raw(Box::new(Control {
             vtbls: vtables(),
             refs: AtomicU32::new(1),
+            id: NEXT_CONTROL.fetch_add(1, Ordering::Relaxed),
             hwnd: Cell::new(null_mut()),
             flash: Cell::new(null_mut()),
             client_site: Cell::new(null_mut()),
@@ -175,16 +398,27 @@ impl Control {
                 right: 0,
                 bottom: 0,
             }),
+            obj_rect: Cell::new(None),
             extent: Cell::new(SIZE {
-                cx: himetric_from_px(100),
-                cy: himetric_from_px(100),
+                cx: himetric_from_px(100, dpi.0),
+                cy: himetric_from_px(100, dpi.1),
             }),
+            dpi,
             view_sink: Cell::new(null_mut()),
             view_aspects: Cell::new(0),
             view_advf: Cell::new(0),
             advise_holder: Cell::new(null_mut()),
             in_draw: Cell::new(false),
-            cache: RefCell::new(None),
+            gdi: RefCell::new(Vec::new()),
+            drawn_serial: Cell::new(0),
+            retries: Cell::new(0),
+            retry_armed: Cell::new(false),
+            draws: Cell::new(0),
+            notifies: Cell::new(0),
+            misc_calls: Cell::new(0),
+            last_draw_size: Cell::new((0, 0)),
+            qi_seen: RefCell::new(Vec::new()),
+            site_hwnd: Cell::new(null_mut()),
         }));
         let control = unsafe { &*c };
         let class: Vec<u16> = "FlashPlayerControl".encode_utf16().chain(Some(0)).collect();
@@ -216,8 +450,12 @@ impl Control {
         control.flash.set(flash);
         let me = c as usize;
         *inst.on_frame.borrow_mut() = Some(Box::new(move || unsafe {
-            (*(me as *const Control)).frame_changed()
+            (*(me as *const Control)).notify("new frame")
         }));
+        *inst.on_control_timer.borrow_mut() = Some(Box::new(move || unsafe {
+            (*(me as *const Control)).retry()
+        }));
+        control.clog(&format!("created (screen {}x{} dpi)", dpi.0, dpi.1));
         Ok(c)
     }
 
@@ -250,21 +488,39 @@ impl Control {
         } else {
             None
         };
-        if let Some(i) = index {
+        let hr = if let Some(i) = index {
             self.refs.fetch_add(1, Ordering::Relaxed);
             unsafe { *out = self.ptr(i) };
-            return S_OK;
+            S_OK
+        } else {
+            let flash = self.flash.get();
+            if !flash.is_null()
+                && (guid_eq(iid, &IID_IDISPATCH)
+                    || guid_eq(iid, &IID_ISHOCKWAVEFLASH)
+                    || guid_eq(iid, &IID_ICONNECTIONPOINTCONTAINER))
+            {
+                unsafe { (*flash).own_query(iid, out) }
+            } else {
+                unsafe { *out = null_mut() };
+                E_NOINTERFACE
+            }
+        };
+        // Each interface once per control: what the host asks for, and misses.
+        let mut seen = self.qi_seen.borrow_mut();
+        if !seen.iter().any(|(g, _)| guid_eq(g, iid)) {
+            seen.push((*iid, hr >= 0));
+            drop(seen);
+            self.clog(&format!(
+                "QueryInterface({}) -> {}",
+                iid_name(iid),
+                if hr >= 0 {
+                    "ok".to_string()
+                } else {
+                    format!("{hr:#x}")
+                }
+            ));
         }
-        let flash = self.flash.get();
-        if !flash.is_null()
-            && (guid_eq(iid, &IID_IDISPATCH)
-                || guid_eq(iid, &IID_ISHOCKWAVEFLASH)
-                || guid_eq(iid, &IID_ICONNECTIONPOINTCONTAINER))
-        {
-            return unsafe { (*flash).own_query(iid, out) };
-        }
-        unsafe { *out = null_mut() };
-        E_NOINTERFACE
+        hr
     }
 
     fn add_ref(&self) -> u32 {
@@ -283,9 +539,15 @@ impl Control {
     }
 
     fn teardown(&self) {
+        self.clog(&format!(
+            "released: {} Draw calls, {} repaint notifications",
+            self.draws.get(),
+            self.notifies.get()
+        ));
         self.deactivate();
         if let Some(inst) = self.inst() {
             inst.on_frame.borrow_mut().take();
+            inst.on_control_timer.borrow_mut().take();
         }
         let flash = self.flash.replace(null_mut());
         if !flash.is_null() {
@@ -293,6 +555,7 @@ impl Control {
         }
         let hwnd = self.hwnd.replace(null_mut());
         if !hwnd.is_null() {
+            unsafe { KillTimer(hwnd, instance::CONTROL_TIMER) };
             // Destroys the Instance: stops the movie, releases the FlashObject.
             unsafe { DestroyWindow(hwnd) };
         }
@@ -304,65 +567,188 @@ impl Control {
         ] {
             unsafe { com_release(cell.replace(null_mut())) };
         }
-        self.drop_cache();
+        self.gdi.borrow_mut().clear();
     }
 
-    fn drop_cache(&self) {
-        if let Some((_, dc, bmp, old)) = self.cache.borrow_mut().take() {
-            unsafe {
-                SelectObject(dc, old);
-                DeleteObject(bmp);
-                DeleteDC(dc);
-            }
+    /// IOleInPlaceSiteWindowless::InvalidateRect; the HRESULT, or None when
+    /// there is no active windowless site.
+    fn invalidate(&self, rect: Option<RECT>) -> Option<HRESULT> {
+        let site = self.inplace_site.get();
+        if !self.active.get() || site.is_null() || self.site_kind.get() != 2 {
+            return None;
+        }
+        let p = rect.as_ref().map_or(null(), |r| r as *const RECT);
+        Some(unsafe { vcall!(site, 25, fn(*const RECT, i32) -> HRESULT, p, 0) })
+    }
+
+    /// When the site's window is hidden (boxelyRenderer's ActiveX frame
+    /// window can be), its InvalidateRect produces no paint: also invalidate
+    /// the nearest visible ancestor over our rectangle. Returns what was done.
+    fn invalidate_visible_ancestor(&self) -> Option<String> {
+        use windows_sys::Win32::Graphics::Gdi::{InvalidateRect, MapWindowPoints};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GA_PARENT, GetAncestor, IsWindowVisible,
+        };
+        let site = self.site_hwnd.get();
+        if site.is_null() || unsafe { IsWindowVisible(site) } != 0 {
+            return None;
+        }
+        let mut a = unsafe { GetAncestor(site, GA_PARENT) };
+        while !a.is_null() && unsafe { IsWindowVisible(a) } == 0 {
+            a = unsafe { GetAncestor(a, GA_PARENT) };
+        }
+        if a.is_null() {
+            return Some("site window hidden, no visible ancestor".into());
+        }
+        let mut r = self.obj_rect.get().unwrap_or(self.pos.get());
+        unsafe {
+            MapWindowPoints(site, a, (&mut r as *mut RECT).cast(), 2);
+            InvalidateRect(a, &r, 0);
+        }
+        Some(format!(
+            "site window hidden: invalidated visible ancestor {a:?} at {}",
+            rect_str(&r)
+        ))
+    }
+
+    /// IAdviseSink::OnViewChange on the view sink; false without a sink.
+    fn view_change(&self) -> bool {
+        let sink = self.view_sink.get();
+        if sink.is_null() {
+            return false;
+        }
+        unsafe { vcall!(sink, 4, fn(u32, i32) -> (), DVASPECT_CONTENT, -1) };
+        if self.view_advf.get() & ADVF_ONLYONCE != 0 {
+            unsafe { com_release(self.view_sink.replace(null_mut())) };
+        }
+        true
+    }
+
+    fn arm_retry(&self) {
+        if self.retry_armed.get() || self.retries.get() >= RETRY_CAP {
+            return;
+        }
+        let hwnd = self.hwnd.get();
+        if !hwnd.is_null() {
+            unsafe { SetTimer(hwnd, instance::CONTROL_TIMER, RETRY_MS, None) };
+            self.retry_armed.set(true);
         }
     }
 
-    /// The movie showed a new frame: ask the host to repaint us.
-    fn frame_changed(&self) {
+    fn disarm_retry(&self) {
+        if self.retry_armed.replace(false) {
+            unsafe { KillTimer(self.hwnd.get(), instance::CONTROL_TIMER) };
+        }
+    }
+
+    fn current_serial(&self) -> Option<u64> {
+        let inst = self.inst()?;
+        inst.frame.borrow().as_ref()?;
+        Some(inst.frame_serial.get())
+    }
+
+    /// There is a frame the host should show: tell it through every channel
+    /// a host may listen to, and keep asking (retry) until it draws it.
+    fn notify(&self, reason: &str) {
         if self.in_draw.get() {
             return;
         }
-        let site = self.inplace_site.get();
-        if self.active.get() && !site.is_null() && self.site_kind.get() == 2 {
-            // IOleInPlaceSiteWindowless::InvalidateRect(NULL, FALSE)
-            unsafe { vcall!(site, 25, fn(*const RECT, i32) -> HRESULT, null(), 0) };
+        let Some(serial) = self.current_serial() else {
             return;
+        };
+        let n = self.notifies.get() + 1;
+        self.notifies.set(n);
+        let rect = self.obj_rect.get();
+        let inv = self.invalidate(rect);
+        let vc = self.view_change();
+        let anc = self.invalidate_visible_ancestor();
+        if log_every(n) {
+            self.clog(&format!(
+                "repaint request #{n} ({reason}, frame {serial}, host drew {}): InvalidateRect({}) {}; OnViewChange {}{}",
+                self.drawn_serial.get(),
+                rect.as_ref().map_or("NULL".into(), rect_str),
+                match inv {
+                    Some(hr) => format!("-> {hr:#x}"),
+                    None if !self.active.get() => "skipped (not in-place active yet)".into(),
+                    None => "skipped (no windowless site)".into(),
+                },
+                if vc { "sent" } else { "no sink" },
+                anc.map_or(String::new(), |a| format!("; {a}"))
+            ));
         }
-        let sink = self.view_sink.get();
-        if !sink.is_null() {
-            // IAdviseSink::OnViewChange(DVASPECT_CONTENT, -1)
-            unsafe { vcall!(sink, 4, fn(u32, i32) -> (), DVASPECT_CONTENT, -1) };
+        if self.drawn_serial.get() < serial {
+            self.arm_retry();
         }
     }
 
-    fn pixel_size(&self) -> (u32, u32) {
-        let r = self.pos.get();
-        if self.active.get() && r.right > r.left && r.bottom > r.top {
-            ((r.right - r.left) as u32, (r.bottom - r.top) as u32)
-        } else {
-            let e = self.extent.get();
-            (
-                px_from_himetric(e.cx).max(1) as u32,
-                px_from_himetric(e.cy).max(1) as u32,
-            )
+    /// CONTROL_TIMER: the host has not drawn the newest frame yet.
+    fn retry(&self) {
+        let Some(serial) = self.current_serial() else {
+            self.disarm_retry();
+            return;
+        };
+        if self.drawn_serial.get() >= serial {
+            self.disarm_retry();
+            return;
         }
+        let r = self.retries.get() + 1;
+        self.retries.set(r);
+        if r > RETRY_CAP {
+            self.disarm_retry();
+            self.clog(&format!(
+                "host has not drawn frame {serial} after {RETRY_CAP} repaint requests; waiting for its next Draw"
+            ));
+            return;
+        }
+        // The whole host window, in case our rectangle is stale.
+        let inv = self.invalidate(None);
+        let vc = self.view_change();
+        let anc = self.invalidate_visible_ancestor();
+        if r <= 10 || r % 20 == 0 {
+            self.clog(&format!(
+                "retry {r}: frame {serial} not drawn yet (host drew {}): InvalidateRect(NULL) {}; OnViewChange {}{}{}",
+                self.drawn_serial.get(),
+                inv.map_or("skipped".into(), |hr| format!("-> {hr:#x}")),
+                if vc { "sent" } else { "no sink" },
+                anc.map_or(String::new(), |a| format!("; {a}")),
+                if r == 1 { format!("; site window now: {}", describe_window(self.site_hwnd.get())) } else { String::new() }
+            ));
+        }
+    }
+
+    /// The size to render at before the host draws: its rectangle, else the
+    /// extent (HIMETRIC at the screen DPI).
+    fn pixel_size(&self) -> (u32, u32) {
+        if let Some(r) = self.obj_rect.get() {
+            if r.right > r.left && r.bottom > r.top {
+                return ((r.right - r.left) as u32, (r.bottom - r.top) as u32);
+            }
+        }
+        let e = self.extent.get();
+        (
+            px_from_himetric(e.cx, self.dpi.0).max(1) as u32,
+            px_from_himetric(e.cy, self.dpi.1).max(1) as u32,
+        )
     }
 
     fn resize(&self) {
         let (w, h) = self.pixel_size();
         if let Some(inst) = self.inst() {
+            self.in_draw.set(true);
             inst.set_size(w, h);
+            self.in_draw.set(false);
         }
     }
 
     fn activate(&self, rect: *const RECT) -> HRESULT {
         let client = self.client_site.get();
         if client.is_null() {
+            self.clog("activate: no client site -> E_UNEXPECTED");
             return E_UNEXPECTED;
         }
         if self.active.get() {
             if !rect.is_null() {
-                self.pos.set(unsafe { *rect });
+                self.obj_rect.set(Some(unsafe { *rect }));
                 self.resize();
             }
             return S_OK;
@@ -374,9 +760,12 @@ impl Control {
                 vcall!(client, 0, fn(*const GUID, *mut Unk) -> HRESULT, iid, out) >= 0
                     && !out.is_null()
             };
+            let mut can_windowless = None;
             let mut s: Unk = null_mut();
             if q(&IID_IOLEINPLACESITEWINDOWLESS, &mut s) {
-                if vcall!(s, 18, fn() -> HRESULT) == S_OK {
+                let hr = vcall!(s, 18, fn() -> HRESULT);
+                can_windowless = Some(hr);
+                if hr == S_OK {
                     site = s;
                     kind = 2;
                 } else {
@@ -397,6 +786,7 @@ impl Control {
                 }
             }
             if site.is_null() {
+                self.clog("activate: the client site has no IOleInPlaceSite -> E_NOINTERFACE");
                 return E_NOINTERFACE;
             }
             let hr = match kind {
@@ -414,6 +804,7 @@ impl Control {
                 _ => {
                     if vcall!(site, 5, fn() -> HRESULT) != S_OK {
                         com_release(site);
+                        self.clog("activate: CanInPlaceActivate refused");
                         return E_FAIL;
                     }
                     vcall!(site, 6, fn() -> HRESULT)
@@ -421,12 +812,8 @@ impl Control {
             };
             if hr < 0 {
                 com_release(site);
+                self.clog(&format!("activate: OnInPlaceActivate(Ex) -> {hr:#x}"));
                 return hr;
-            }
-            if kind != 2 {
-                log(
-                    "control: host has no windowless site; frames reach it only through IAdviseSink::OnViewChange",
-                );
             }
             // GetWindowContext for the position rectangle.
             let mut frame: Unk = null_mut();
@@ -435,7 +822,7 @@ impl Control {
             let mut clip: RECT = std::mem::zeroed();
             let mut info = [0u32; 5];
             info[0] = 20; // OLEINPLACEFRAMEINFO.cb
-            let hr = vcall!(
+            let ctx_hr = vcall!(
                 site,
                 8,
                 fn(*mut Unk, *mut Unk, *mut RECT, *mut RECT, *mut u32) -> HRESULT,
@@ -447,23 +834,43 @@ impl Control {
             );
             com_release(frame);
             com_release(doc);
-            if !rect.is_null() {
-                self.pos.set(*rect);
-            } else if hr >= 0 {
+            if ctx_hr >= 0 {
                 self.pos.set(pos);
+            }
+            if !rect.is_null() {
+                self.obj_rect.set(Some(*rect));
+                self.pos.set(*rect);
             }
             self.inplace_site.set(site);
             self.site_kind.set(kind);
             self.active.set(true);
+            let mut sh: HWND = null_mut();
+            let wh = vcall!(site, 3, fn(*mut HWND) -> HRESULT, &mut sh);
+            self.site_hwnd.set(if wh >= 0 { sh } else { null_mut() });
+            self.clog(&format!(
+                "site window (IOleWindow::GetWindow -> {wh:#x}): {}",
+                describe_window(sh)
+            ));
+            self.clog(&format!(
+                "in-place active: {} site (CanWindowlessActivate {}), OnInPlaceActivate{} -> {hr:#x}, \
+                 GetWindowContext -> {ctx_hr:#x} pos {} clip {}, DoVerb rect {}",
+                ["plain", "Ex", "windowless"][kind as usize],
+                can_windowless.map_or("n/a".into(), |h| format!("{h:#x}")),
+                if kind == 0 { "" } else { "Ex" },
+                rect_str(&pos),
+                rect_str(&clip),
+                opt_rect_str(rect)
+            ));
             // IOleClientSite::ShowObject
             vcall!(client, 6, fn() -> HRESULT);
         }
         self.resize();
-        self.frame_changed();
+        self.notify("activated");
         S_OK
     }
 
     fn deactivate(&self) {
+        self.disarm_retry();
         if !self.active.replace(false) {
             return;
         }
@@ -479,6 +886,7 @@ impl Control {
             }
             com_release(site);
         }
+        self.clog("in-place deactivated");
     }
 
     /// Reads the `<param>`s Flash understands and applies them.
@@ -520,77 +928,140 @@ impl Control {
             return E_UNEXPECTED;
         };
         let mut d = inst.display.get();
-        if let Some(w) = read("WMode") {
+        let wmode = read("WMode");
+        if let Some(w) = &wmode {
             d.transparent = w.trim().eq_ignore_ascii_case("transparent");
         }
-        if let Some(s) = read("Scale").and_then(|s| crate::movie::scale_mode(&s)) {
+        let scale = read("Scale");
+        if let Some(s) = scale.as_deref().and_then(crate::movie::scale_mode) {
             d.scale = s;
         }
+        let quality = read("Quality");
         inst.set_display(d);
         let movie = read("Movie")
             .or_else(|| read("Src"))
             .filter(|m| !m.trim().is_empty());
-        let play = read("Play").is_none_or(|p| !p.trim().eq_ignore_ascii_case("false"));
-        log(&format!(
-            "control params: movie {movie:?}, transparent {}, scale {:?}, play {play}",
+        let play = read("Play");
+        let playing = play
+            .as_deref()
+            .is_none_or(|p| !p.trim().eq_ignore_ascii_case("false"));
+        self.clog(&format!(
+            "IPersistPropertyBag::Load: Movie {movie:?}, WMode {wmode:?}, Scale {scale:?}, Quality {quality:?}, Play {play:?} \
+             -> transparent {}, scale {:?}",
             d.transparent, d.scale
         ));
         if let Some(m) = movie {
             inst.load(&m);
-            if !play {
+            if !playing {
                 inst.stop_play();
             }
         }
         S_OK
     }
 
-    /// GDI bitmap of the frame (cached until the next frame).
-    fn frame_dc(&self, frame: &Rc<Frame>) -> Option<HDC> {
-        if let Some((f, dc, _, _)) = self.cache.borrow().as_ref() {
-            if Rc::ptr_eq(f, frame) {
-                return Some(*dc);
+    /// The frame at exactly `w`x`h` device pixels as a GDI bitmap: cached
+    /// per size for the current frame, else rendered now at that size.
+    /// Returns (dc, frame, serial, rendered now).
+    fn frame_for(&self, inst: &Instance, w: u32, h: u32) -> Option<(HDC, Rc<Frame>, u64, bool)> {
+        let serial_before = inst.frame_serial.get();
+        if inst.frame.borrow().is_none() {
+            return None;
+        }
+        {
+            let gdi = self.gdi.borrow();
+            if let Some(g) = gdi
+                .iter()
+                .find(|g| g.serial == serial_before && g.frame.width == w && g.frame.height == h)
+            {
+                return Some((g.dc, g.frame.clone(), g.serial, false));
             }
         }
-        self.drop_cache();
+        self.in_draw.set(true);
+        let fresh = inst.frame_at(w, h);
+        self.in_draw.set(false);
+        let serial = inst.frame_serial.get();
+        let rendered = serial != serial_before;
+        // Rendering at this size failed: fall back to the last frame, stretched.
+        let frame = match fresh {
+            Some(f) => f,
+            None => inst.frame.borrow().clone()?,
+        };
         let (bmp, bits) = crate::instance::new_dib(frame.width, frame.height)?;
-        unsafe {
+        let entry = unsafe {
             std::ptr::copy_nonoverlapping(frame.pixels.as_ptr(), bits, frame.pixels.len());
             let dc = CreateCompatibleDC(null_mut());
             let old = SelectObject(dc, bmp);
-            *self.cache.borrow_mut() = Some((frame.clone(), dc, bmp, old));
-            Some(dc)
+            GdiFrame {
+                serial,
+                frame: frame.clone(),
+                dc,
+                bmp,
+                old,
+            }
+        };
+        let dc = entry.dc;
+        let mut gdi = self.gdi.borrow_mut();
+        gdi.retain(|g| g.serial == serial);
+        gdi.push(entry);
+        while gdi.len() > 4 {
+            gdi.remove(0);
         }
+        Some((dc, frame, serial, rendered))
     }
 
     fn draw(&self, hdc: HDC, bounds: *const RECT) -> HRESULT {
+        let n = self.draws.get() + 1;
+        self.draws.set(n);
         if hdc.is_null() {
+            self.clog("Draw: hdc NULL -> E_POINTER");
             return E_POINTER;
         }
-        let r = if bounds.is_null() {
-            self.pos.get()
+        let (r, from) = if !bounds.is_null() {
+            (unsafe { *bounds }, "lprcBounds")
+        } else if let Some(r) = self.obj_rect.get() {
+            (r, "SetObjectRects")
         } else {
-            unsafe { *bounds }
+            (self.pos.get(), "GetWindowContext")
         };
         let (w, h) = (r.right - r.left, r.bottom - r.top);
         if w <= 0 || h <= 0 {
+            self.clog(&format!(
+                "Draw #{n}: empty rectangle {} ({from}), nothing drawn",
+                rect_str(&r)
+            ));
             return S_OK;
         }
+        // Render at the destination's size in device pixels, so AlphaBlend
+        // copies 1:1 and nothing is stretched.
+        let mut pts = [
+            POINT {
+                x: r.left,
+                y: r.top,
+            },
+            POINT {
+                x: r.right,
+                y: r.bottom,
+            },
+        ];
+        let (dw, dh) = unsafe {
+            if windows_sys::Win32::Graphics::Gdi::LPtoDP(hdc, pts.as_mut_ptr(), 2) != 0 {
+                ((pts[1].x - pts[0].x).abs(), (pts[1].y - pts[0].y).abs())
+            } else {
+                (w, h)
+            }
+        };
+        let (dw, dh) = if dw > 0 && dh > 0 { (dw, dh) } else { (w, h) };
         let Some(inst) = self.inst() else { return S_OK };
-        self.in_draw.set(true);
-        if inst
-            .frame
-            .borrow()
-            .as_ref()
-            .is_none_or(|f| f.width != w as u32 || f.height != h as u32)
-        {
-            // A size the movie has not been rendered at yet (a Draw into a
-            // memory DC, or before activation): render at it now.
-            inst.set_size(w as u32, h as u32);
-        }
-        self.in_draw.set(false);
-        let frame = inst.frame.borrow().clone();
-        let Some(frame) = frame else { return S_OK }; // nothing to show yet
-        let Some(src) = self.frame_dc(&frame) else {
+        let got = self.frame_for(&inst, dw as u32, dh as u32);
+        let size_changed = self.last_draw_size.replace((dw, dh)) != (dw, dh);
+        let Some((src, frame, serial, rendered)) = got else {
+            if log_every(n) || size_changed {
+                self.clog(&format!(
+                    "Draw #{n}: {} {} (device {dw}x{dh}): no frame yet, nothing drawn",
+                    from,
+                    rect_str(&r)
+                ));
+            }
             return S_OK;
         };
         let blend = BLENDFUNCTION {
@@ -599,7 +1070,7 @@ impl Control {
             SourceConstantAlpha: 255,
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
-        unsafe {
+        let ok = unsafe {
             AlphaBlend(
                 hdc,
                 r.left,
@@ -612,16 +1083,32 @@ impl Control {
                 frame.width as i32,
                 frame.height as i32,
                 blend,
-            );
+            )
+        };
+        let first_after_wait = self.drawn_serial.get() < serial && self.retries.get() > 0;
+        if serial > self.drawn_serial.get() {
+            self.drawn_serial.set(serial);
+        }
+        self.retries.set(0);
+        if log_every(n) || size_changed || first_after_wait {
+            let map = unsafe { windows_sys::Win32::Graphics::Gdi::GetMapMode(hdc) };
+            self.clog(&format!(
+                "Draw #{n}: {from} {} (device {dw}x{dh}, map mode {map}), frame {serial} {}x{} {}, AlphaBlend {}",
+                rect_str(&r),
+                frame.width,
+                frame.height,
+                if rendered { "rendered for this Draw" } else { "cached" },
+                if ok != 0 { "ok" } else { "FAILED" }
+            ));
         }
         S_OK
     }
 
     fn hit(&self, bounds: *const RECT, x: i32, y: i32) -> u32 {
-        let r = if bounds.is_null() {
-            self.pos.get()
-        } else {
+        let r = if !bounds.is_null() {
             unsafe { *bounds }
+        } else {
+            self.obj_rect.get().unwrap_or(self.pos.get())
         };
         if x < r.left || y < r.top || x >= r.right || y >= r.bottom {
             return HITRESULT_OUTSIDE;
@@ -685,9 +1172,35 @@ fn unk<const I: usize>() -> Vec<usize> {
 
 // --- IOleObject -------------------------------------------------------------
 
+unsafe extern "system" fn ole_set_host_names(
+    this: Unk,
+    app: *const u16,
+    obj: *const u16,
+) -> HRESULT {
+    g!("SetHostNames", E_FAIL, {
+        let s = |p: *const u16| -> String {
+            if p.is_null() {
+                return "NULL".into();
+            }
+            let n = (0..).take_while(|&i| unsafe { *p.add(i) } != 0).count();
+            String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(p, n) })
+        };
+        unsafe { ctl(this, I_OLEOBJECT) }.call_log(&format!(
+            "IOleObject::SetHostNames({:?}, {:?})",
+            s(app),
+            s(obj)
+        ));
+        S_OK
+    })
+}
+
 unsafe extern "system" fn ole_set_client_site(this: Unk, site: Unk) -> HRESULT {
     g!("SetClientSite", E_FAIL, {
         let c = unsafe { ctl(this, I_OLEOBJECT) };
+        c.call_log(&format!(
+            "IOleObject::SetClientSite({})",
+            if site.is_null() { "NULL" } else { "site" }
+        ));
         if site.is_null() {
             c.deactivate();
         } else {
@@ -709,12 +1222,10 @@ unsafe extern "system" fn ole_get_client_site(this: Unk, out: *mut Unk) -> HRESU
     unsafe { *out = s };
     S_OK
 }
-extern "system" fn ok2(_: Unk, _: usize, _: usize) -> HRESULT {
-    S_OK
-}
-unsafe extern "system" fn ole_close(this: Unk, _save: u32) -> HRESULT {
+unsafe extern "system" fn ole_close(this: Unk, save: u32) -> HRESULT {
     g!("Close", E_FAIL, {
         let c = unsafe { ctl(this, I_OLEOBJECT) };
+        c.call_log(&format!("IOleObject::Close({save})"));
         c.deactivate();
         let h = c.advise_holder.get();
         if !h.is_null() {
@@ -741,12 +1252,12 @@ unsafe extern "system" fn ole_do_verb(
     _msg: Unk,
     _site: Unk,
     _lindex: i32,
-    _parent: HWND,
+    parent: HWND,
     rect: *const RECT,
 ) -> HRESULT {
     g!("DoVerb", E_FAIL, {
         let c = unsafe { ctl(this, I_OLEOBJECT) };
-        match verb {
+        let hr = match verb {
             OLEIVERB_PRIMARY | OLEIVERB_SHOW | OLEIVERB_INPLACEACTIVATE | OLEIVERB_UIACTIVATE => {
                 c.activate(rect)
             }
@@ -755,7 +1266,12 @@ unsafe extern "system" fn ole_do_verb(
                 S_OK
             }
             _ => OLEOBJ_S_INVALIDVERB,
-        }
+        };
+        c.call_log(&format!(
+            "IOleObject::DoVerb({verb}, parent {parent:?}, rect {}) -> {hr:#x}",
+            opt_rect_str(rect)
+        ));
+        hr
     })
 }
 unsafe extern "system" fn ole_use_reg1(_: Unk, out: *mut Unk) -> HRESULT {
@@ -785,22 +1301,42 @@ unsafe extern "system" fn ole_set_extent(this: Unk, aspect: u32, size: *const SI
         if size.is_null() {
             return E_POINTER;
         }
+        let c = unsafe { ctl(this, I_OLEOBJECT) };
+        let e = unsafe { *size };
         if aspect != DVASPECT_CONTENT {
+            c.call_log(&format!(
+                "IOleObject::SetExtent(aspect {aspect}, {}x{}) -> E_FAIL",
+                e.cx, e.cy
+            ));
             return E_FAIL;
         }
-        let c = unsafe { ctl(this, I_OLEOBJECT) };
-        c.extent.set(unsafe { *size });
-        if !c.active.get() {
+        c.extent.set(e);
+        c.call_log(&format!(
+            "IOleObject::SetExtent({}x{} HIMETRIC = {}x{} px at {}x{} dpi)",
+            e.cx,
+            e.cy,
+            px_from_himetric(e.cx, c.dpi.0),
+            px_from_himetric(e.cy, c.dpi.1),
+            c.dpi.0,
+            c.dpi.1
+        ));
+        if c.obj_rect.get().is_none() {
             c.resize();
         }
         S_OK
     })
 }
-unsafe extern "system" fn ole_get_extent(this: Unk, _aspect: u32, size: *mut SIZE) -> HRESULT {
+unsafe extern "system" fn ole_get_extent(this: Unk, aspect: u32, size: *mut SIZE) -> HRESULT {
     if size.is_null() {
         return E_POINTER;
     }
-    unsafe { *size = ctl(this, I_OLEOBJECT).extent.get() };
+    let c = unsafe { ctl(this, I_OLEOBJECT) };
+    let e = c.extent.get();
+    unsafe { *size = e };
+    c.call_log(&format!(
+        "IOleObject::GetExtent(aspect {aspect}) -> {}x{} HIMETRIC",
+        e.cx, e.cy
+    ));
     S_OK
 }
 unsafe extern "system" fn ole_advise(this: Unk, sink: Unk, cookie: *mut u32) -> HRESULT {
@@ -817,7 +1353,9 @@ unsafe extern "system" fn ole_advise(this: Unk, sink: Unk, cookie: *mut u32) -> 
             c.advise_holder.set(h);
         }
         let h = c.advise_holder.get();
-        unsafe { vcall!(h, 3, fn(Unk, *mut u32) -> HRESULT, sink, cookie) }
+        let hr = unsafe { vcall!(h, 3, fn(Unk, *mut u32) -> HRESULT, sink, cookie) };
+        c.call_log(&format!("IOleObject::Advise -> {hr:#x}"));
+        hr
     })
 }
 unsafe extern "system" fn ole_unadvise(this: Unk, cookie: u32) -> HRESULT {
@@ -841,11 +1379,14 @@ unsafe extern "system" fn ole_enum_advise(this: Unk, out: *mut Unk) -> HRESULT {
         unsafe { vcall!(h, 5, fn(*mut Unk) -> HRESULT, out) }
     })
 }
-unsafe extern "system" fn ole_get_misc_status(_: Unk, _aspect: u32, out: *mut u32) -> HRESULT {
+unsafe extern "system" fn ole_get_misc_status(this: Unk, aspect: u32, out: *mut u32) -> HRESULT {
     if out.is_null() {
         return E_POINTER;
     }
     unsafe { *out = MISC_STATUS };
+    unsafe { ctl(this, I_OLEOBJECT) }.call_log(&format!(
+        "IOleObject::GetMiscStatus({aspect}) -> {MISC_STATUS:#x}"
+    ));
     S_OK
 }
 extern "system" fn notimpl1(_: Unk, _: usize) -> HRESULT {
@@ -857,7 +1398,7 @@ fn oleobject_vtbl() -> Vec<usize> {
     v.extend([
         ole_set_client_site as *const () as usize, // SetClientSite
         ole_get_client_site as *const () as usize, // GetClientSite
-        ok2 as *const () as usize,                 // SetHostNames(app, obj)
+        ole_set_host_names as *const () as usize,  // SetHostNames(app, obj)
         ole_close as *const () as usize,           // Close
         notimpl2 as *const () as usize,            // SetMoniker(which, pmk)
         notimpl_out3 as *const () as usize,        // GetMoniker(assign, which, ppmk)
@@ -888,6 +1429,15 @@ unsafe extern "system" fn notimpl_out_2(_: Unk, _: usize, out: *mut Unk) -> HRES
 
 // --- IPersistPropertyBag / IPersistStreamInit --------------------------------
 
+unsafe extern "system" fn pb_init_new(this: Unk) -> HRESULT {
+    unsafe { ctl(this, I_PROPBAG) }.call_log("IPersistPropertyBag::InitNew");
+    S_OK
+}
+unsafe extern "system" fn psi_init_new(this: Unk) -> HRESULT {
+    unsafe { ctl(this, I_STREAMINIT) }.call_log("IPersistStreamInit::InitNew");
+    S_OK
+}
+
 unsafe extern "system" fn pb_load(this: Unk, bag: Unk, _log: Unk) -> HRESULT {
     g!("IPersistPropertyBag::Load", E_FAIL, {
         if bag.is_null() {
@@ -900,7 +1450,7 @@ fn propbag_vtbl() -> Vec<usize> {
     let mut v = unk::<I_PROPBAG>();
     v.extend([
         get_class_id as *const () as usize, // GetClassID
-        ok0 as *const () as usize,          // InitNew
+        pb_init_new as *const () as usize,  // InitNew
         pb_load as *const () as usize,      // Load(bag, errorlog)
         notimpl3 as *const () as usize,     // Save(bag, clearDirty, saveAll)
     ]);
@@ -923,7 +1473,7 @@ fn streaminit_vtbl() -> Vec<usize> {
         notimpl1 as *const () as usize,         // Load(stream)
         notimpl2 as *const () as usize,         // Save(stream, clearDirty)
         psi_get_size_max as *const () as usize, // GetSizeMax
-        ok0 as *const () as usize,              // InitNew
+        psi_init_new as *const () as usize,     // InitNew
     ]);
     v
 }
@@ -984,6 +1534,14 @@ unsafe extern "system" fn view_set_advise(
         unsafe { com_release(c.view_sink.replace(sink)) };
         c.view_aspects.set(aspects);
         c.view_advf.set(advf);
+        c.call_log(&format!(
+            "IViewObject::SetAdvise(aspects {aspects:#x}, advf {advf:#x}, {})",
+            if sink.is_null() { "NULL" } else { "sink" }
+        ));
+        // ADVF_PRIMEFIRST: one notification right away.
+        if !sink.is_null() && advf & ADVF_PRIMEFIRST != 0 {
+            c.view_change();
+        }
         S_OK
     })
 }
@@ -1013,7 +1571,7 @@ unsafe extern "system" fn view_get_advise(
 }
 unsafe extern "system" fn view_get_extent(
     this: Unk,
-    _aspect: u32,
+    aspect: u32,
     _lindex: i32,
     _ptd: Unk,
     size: *mut SIZE,
@@ -1021,17 +1579,29 @@ unsafe extern "system" fn view_get_extent(
     if size.is_null() {
         return E_POINTER;
     }
-    unsafe { *size = ctl(this, I_VIEW).extent.get() };
+    let c = unsafe { ctl(this, I_VIEW) };
+    let e = c.extent.get();
+    unsafe { *size = e };
+    c.call_log(&format!(
+        "IViewObject2::GetExtent(aspect {aspect}) -> {}x{} HIMETRIC",
+        e.cx, e.cy
+    ));
     S_OK
 }
 unsafe extern "system" fn view_get_rect(this: Unk, aspect: u32, out: *mut RECT) -> HRESULT {
     if out.is_null() {
         return E_POINTER;
     }
+    let c = unsafe { ctl(this, I_VIEW) };
     if aspect != DVASPECT_CONTENT {
+        c.call_log(&format!(
+            "IViewObjectEx::GetRect(aspect {aspect}) -> E_NOTIMPL"
+        ));
         return E_NOTIMPL;
     }
-    unsafe { *out = ctl(this, I_VIEW).pos.get() };
+    let r = c.obj_rect.get().unwrap_or(c.pos.get());
+    unsafe { *out = r };
+    c.call_log(&format!("IViewObjectEx::GetRect -> {}", rect_str(&r)));
     S_OK
 }
 unsafe extern "system" fn view_get_view_status(this: Unk, out: *mut u32) -> HRESULT {
@@ -1040,12 +1610,14 @@ unsafe extern "system" fn view_get_view_status(this: Unk, out: *mut u32) -> HRES
     }
     let c = unsafe { ctl(this, I_VIEW) };
     let transparent = c.inst().is_none_or(|i| i.display.get().transparent);
-    unsafe { *out = if transparent { 0 } else { VIEWSTATUS_OPAQUE } };
+    let v = if transparent { 0 } else { VIEWSTATUS_OPAQUE };
+    unsafe { *out = v };
+    c.call_log(&format!("IViewObjectEx::GetViewStatus -> {v:#x}"));
     S_OK
 }
 unsafe extern "system" fn view_query_hit_point(
     this: Unk,
-    _aspect: u32,
+    aspect: u32,
     bounds: *const RECT,
     x: i32,
     y: i32,
@@ -1056,7 +1628,13 @@ unsafe extern "system" fn view_query_hit_point(
         if out.is_null() {
             return E_POINTER;
         }
-        unsafe { *out = ctl(this, I_VIEW).hit(bounds, x, y) };
+        let c = unsafe { ctl(this, I_VIEW) };
+        let r = c.hit(bounds, x, y);
+        unsafe { *out = r };
+        c.call_log(&format!(
+            "IViewObjectEx::QueryHitPoint(aspect {aspect}, {}, ({x},{y})) -> {r}",
+            opt_rect_str(bounds)
+        ));
         S_OK
     })
 }
@@ -1131,28 +1709,42 @@ unsafe extern "system" fn ipo_get_window(_: Unk, out: *mut HWND) -> HRESULT {
 }
 unsafe extern "system" fn ipo_deactivate(this: Unk) -> HRESULT {
     g!("InPlaceDeactivate", E_FAIL, {
-        unsafe { ctl(this, I_INPLACE) }.deactivate();
+        let c = unsafe { ctl(this, I_INPLACE) };
+        c.call_log("IOleInPlaceObject::InPlaceDeactivate");
+        c.deactivate();
         S_OK
     })
 }
 unsafe extern "system" fn ipo_set_object_rects(
     this: Unk,
     pos: *const RECT,
-    _clip: *const RECT,
+    clip: *const RECT,
 ) -> HRESULT {
     g!("SetObjectRects", E_FAIL, {
         if pos.is_null() {
             return E_POINTER;
         }
         let c = unsafe { ctl(this, I_INPLACE) };
-        c.pos.set(unsafe { *pos });
+        let r = unsafe { *pos };
+        let old = c.obj_rect.replace(Some(r));
+        c.pos.set(r);
+        c.call_log(&format!(
+            "IOleInPlaceObject::SetObjectRects(pos {}, clip {})",
+            rect_str(&r),
+            opt_rect_str(clip)
+        ));
+        let size = |r: &RECT| (r.right - r.left, r.bottom - r.top);
+        let resized = old.as_ref().map(size) != Some(size(&r));
         c.resize();
+        if resized {
+            c.notify("new size");
+        }
         S_OK
     })
 }
 unsafe extern "system" fn ipo_on_window_message(
-    _: Unk,
-    _msg: u32,
+    this: Unk,
+    msg: u32,
     _wp: usize,
     _lp: isize,
     result: *mut isize,
@@ -1160,6 +1752,9 @@ unsafe extern "system" fn ipo_on_window_message(
     if !result.is_null() {
         unsafe { *result = 0 };
     }
+    unsafe { ctl(this, I_INPLACE) }.call_log(&format!(
+        "IOleInPlaceObjectWindowless::OnWindowMessage({msg:#x}) -> S_FALSE"
+    ));
     S_FALSE // input is not forwarded to the movie
 }
 fn inplace_vtbl() -> Vec<usize> {
@@ -1191,6 +1786,10 @@ unsafe extern "system" fn ole_use_reg_notimpl1(_: Unk, out: *mut Unk) -> HRESULT
 unsafe extern "system" fn ows_set_site(this: Unk, site: Unk) -> HRESULT {
     g!("SetSite", E_FAIL, {
         let c = unsafe { ctl(this, I_WITHSITE) };
+        c.call_log(&format!(
+            "IObjectWithSite::SetSite({})",
+            if site.is_null() { "NULL" } else { "site" }
+        ));
         if !site.is_null() {
             unsafe { vcall!(site, 1, fn() -> u32) };
         }

@@ -330,7 +330,7 @@ pub struct Hosted {
     pub name: String,
 }
 
-fn qi(p: Unk, iid: &GUID) -> Unk {
+pub fn qi(p: Unk, iid: &GUID) -> Unk {
     let mut out: Unk = null_mut();
     let hr = unsafe { vcall!(p, 0, fn(*const GUID, *mut Unk) -> HRESULT, iid, &mut out) };
     if hr < 0 { null_mut() } else { out }
@@ -550,6 +550,33 @@ impl Hosted {
         }
     }
 
+    /// IShockwaveFlash::put_Scale (+0xC4).
+    pub fn put_scale(&self, scale: &str) -> HRESULT {
+        unsafe {
+            let w = wide(scale);
+            let b = SysAllocString(w.as_ptr());
+            let hr = vcall!(self.flash, 49, fn(*const u16) -> HRESULT, b);
+            SysFreeString(b);
+            hr
+        }
+    }
+
+    /// IOleInPlaceObject::SetObjectRects, as a host does on a move or resize.
+    pub fn set_object_rects(&self, r: RECT) -> HRESULT {
+        unsafe {
+            let ipw = qi(self.unk, &IID_IOLEINPLACEOBJECTWINDOWLESS);
+            let hr = vcall!(ipw, 7, fn(*const RECT, *const RECT) -> HRESULT, &r, &r);
+            vcall!(ipw, 2, fn() -> u32);
+            self.site.pos.set(r);
+            hr
+        }
+    }
+
+    /// IShockwaveFlash::StopPlay (+0x84): pause.
+    pub fn stop_play(&self) -> HRESULT {
+        unsafe { vcall!(self.flash, 33, fn() -> HRESULT) }
+    }
+
     pub fn play(&self) -> HRESULT {
         unsafe { vcall!(self.flash, 28, fn() -> HRESULT) } // +0x70
     }
@@ -682,8 +709,64 @@ impl Hosted {
 // The container window: paints every hosted control windowless (Draw with no
 // rectangle is not used by us; we pass the control's position like ATL does).
 
+/// One control as the container paints it.
+pub struct PaintItem {
+    pub view: Unk,
+    pub rect: RECT,
+    /// The host paints this element (boxelyRenderer skips an element whose
+    /// state flag is not set; a hidden or not-yet-shown box).
+    pub ready: bool,
+    /// Paint like boxelyRenderer's second path: a memory DC with the
+    /// viewport origin moved, Draw with the element's rectangle.
+    pub path_a: bool,
+}
+
 thread_local! {
-    static PAINT: std::cell::RefCell<Vec<(Unk, RECT)>> = const { std::cell::RefCell::new(Vec::new()) };
+    pub static PAINT: std::cell::RefCell<Vec<PaintItem>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Draw calls the container made with a frame on screen afterwards is not
+    /// known here; this counts Draw calls per item index.
+    pub static DRAWS: std::cell::RefCell<Vec<u32>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+unsafe fn draw_view(view: Unk, dc: HDC, r: &RECT) -> HRESULT {
+    unsafe {
+        vcall!(
+            view,
+            3,
+            fn(u32, i32, Unk, Unk, HDC, HDC, *const RECT, *const RECT, usize, usize) -> HRESULT,
+            1,
+            -1,
+            null_mut(),
+            null_mut(),
+            null_mut(),
+            dc,
+            r,
+            null(),
+            0,
+            0
+        )
+    }
+}
+
+/// boxelyRenderer's memory-DC path: copy the background under the element
+/// into a memory DC, move its viewport origin to (-left, -top), Draw with the
+/// element's rectangle, copy the result back.
+unsafe fn draw_path_a(view: Unk, dc: HDC, r: &RECT) {
+    unsafe {
+        let (w, h) = (r.right - r.left, r.bottom - r.top);
+        let mem = CreateCompatibleDC(dc);
+        let bmp = CreateCompatibleBitmap(dc, w, h);
+        let old = SelectObject(mem, bmp);
+        BitBlt(mem, 0, 0, w, h, dc, r.left, r.top, SRCCOPY);
+        let mut prev = POINT { x: 0, y: 0 };
+        OffsetViewportOrgEx(mem, -r.left, -r.top, &mut prev);
+        draw_view(view, mem, r);
+        SetViewportOrgEx(mem, prev.x, prev.y, null_mut());
+        BitBlt(dc, r.left, r.top, w, h, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+    }
 }
 
 thread_local! {
@@ -704,7 +787,7 @@ unsafe fn background(dc: HDC, w: i32, h: i32) -> HDC {
         SelectObject(mem, bmp);
         // Checkerboard, so transparency shows.
         let a = CreateSolidBrush(0x00C06020);
-        let b = CreateSolidBrush(0x0000E0F0);
+        let b = CreateSolidBrush(0x00A0A0A0);
         let mut y = 0;
         while y < h {
             let mut x = 0;
@@ -752,36 +835,27 @@ unsafe extern "system" fn container_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
                 SRCCOPY,
             );
             PAINT.with(|list| {
-                for (view, r) in list.borrow().iter() {
-                    if r.left < p.right && r.right > p.left && r.top < p.bottom && r.bottom > p.top
-                    {
-                        vcall!(
-                            *view,
-                            3,
-                            fn(
-                                u32,
-                                i32,
-                                Unk,
-                                Unk,
-                                HDC,
-                                HDC,
-                                *const RECT,
-                                *const RECT,
-                                usize,
-                                usize,
-                            ) -> HRESULT,
-                            1,
-                            -1,
-                            null_mut(),
-                            null_mut(),
-                            null_mut(),
-                            dc,
-                            r,
-                            null(),
-                            0,
-                            0
-                        );
+                for (i, item) in list.borrow().iter().enumerate() {
+                    let r = &item.rect;
+                    let overlaps = r.left < p.right
+                        && r.right > p.left
+                        && r.top < p.bottom
+                        && r.bottom > p.top;
+                    if !overlaps || !item.ready {
+                        continue;
                     }
+                    if item.path_a {
+                        draw_path_a(item.view, dc, r);
+                    } else {
+                        draw_view(item.view, dc, r);
+                    }
+                    DRAWS.with(|d| {
+                        let mut d = d.borrow_mut();
+                        if d.len() <= i {
+                            d.resize(i + 1, 0);
+                        }
+                        d[i] += 1;
+                    });
                 }
             });
             EndPaint(hwnd, &ps);
@@ -795,7 +869,7 @@ unsafe extern "system" fn container_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: L
     unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
 }
 
-fn container_window(w: i32, h: i32, title: &str) -> HWND {
+pub fn container_window(w: i32, h: i32, title: &str) -> HWND {
     let cls = wide("FpcAxContainer");
     unsafe {
         let wc = WNDCLASSW {
@@ -831,7 +905,7 @@ fn container_window(w: i32, h: i32, title: &str) -> HWND {
     }
 }
 
-fn save_png(path: &str, w: u32, h: u32, bgra_premul: &[u8]) {
+pub fn save_png(path: &str, w: u32, h: u32, bgra_premul: &[u8]) {
     let rgba: Vec<u8> = bgra_premul
         .chunks_exact(4)
         .flat_map(|p| {
@@ -852,7 +926,55 @@ fn save_png(path: &str, w: u32, h: u32, bgra_premul: &[u8]) {
         .unwrap();
 }
 
-fn screenshot(hwnd: HWND, path: &str) {
+/// The window's pixels as they are on screen (BGRA, alpha 255).
+pub fn grab(hwnd: HWND) -> (i32, i32, Vec<u8>) {
+    unsafe {
+        let mut rc: RECT = std::mem::zeroed();
+        GetWindowRect(hwnd, &mut rc);
+        let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
+        let screen = GetDC(null_mut());
+        let mem = CreateCompatibleDC(screen);
+        let bmp = CreateCompatibleBitmap(screen, w, h);
+        let old = SelectObject(mem, bmp);
+        BitBlt(
+            mem,
+            0,
+            0,
+            w,
+            h,
+            screen,
+            rc.left,
+            rc.top,
+            SRCCOPY | CAPTUREBLT,
+        );
+        let mut bi: BITMAPINFO = std::mem::zeroed();
+        bi.bmiHeader.biSize = size_of::<BITMAPINFOHEADER>() as u32;
+        bi.bmiHeader.biWidth = w;
+        bi.bmiHeader.biHeight = -h;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        let mut buf = vec![0u8; (w * h * 4) as usize];
+        GetDIBits(
+            mem,
+            bmp,
+            0,
+            h as u32,
+            buf.as_mut_ptr().cast(),
+            &mut bi,
+            DIB_RGB_COLORS,
+        );
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        ReleaseDC(null_mut(), screen);
+        for p in buf.chunks_exact_mut(4) {
+            p[3] = 255;
+        }
+        (w, h, buf)
+    }
+}
+
+pub fn screenshot(hwnd: HWND, path: &str) {
     unsafe {
         let mut rc: RECT = std::mem::zeroed();
         GetWindowRect(hwnd, &mut rc);
@@ -965,7 +1087,14 @@ pub fn avatars_emotions(base: &str, out: &str, names: &[String]) -> Report {
         };
         match host_control(win, rect, &params, n, i == 0) {
             Ok(h) => {
-                PAINT.with(|p| p.borrow_mut().push((h.view, rect)));
+                PAINT.with(|p| {
+                    p.borrow_mut().push(PaintItem {
+                        view: h.view,
+                        rect,
+                        ready: true,
+                        path_a: false,
+                    })
+                });
                 hosted.push(h)
             }
             Err(e) => {

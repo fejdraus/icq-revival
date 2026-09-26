@@ -72,15 +72,40 @@ directly:
      (`OnInPlaceActivateEx(ACTIVATE_WINDOWLESS)`).
   7. `IObjectWithSite::SetSite`, then
      `IOleInPlaceObjectWindowless::SetObjectRects`.
-- **Painting.** `IViewObject::Draw` puts the last frame into the host's DC,
+- **Painting.** `IViewObject::Draw` puts the frame into the host's DC,
   premultiplied, with `AlphaBlend`: transparent where the movie draws nothing
   with WMode transparent, opaque otherwise.
-  - Windowless: the rectangle comes from `SetObjectRects`.
-  - A memory DC: the rectangle is passed in, and the movie is rendered at that
-    size.
-  - On every new frame the DLL calls the site's
-    `IOleInPlaceSiteWindowless::InvalidateRect`, or `IAdviseSink::OnViewChange`.
+  - **The destination rectangle** is `lprcBounds` when the host passes one
+    (boxely's memory-DC path). Otherwise it is the `SetObjectRects`
+    rectangle (the windowless path, `lprcBounds` NULL).
+  - **Every Draw renders at its destination's size in device pixels**
+    (`LPtoDP`, so a DC that scales is handled), and AlphaBlend copies 1:1.
+    A frame is never stretched. A few sizes of the current frame are cached
+    as GDI bitmaps.
+  - **`Scale` and `ScaleMode`** (from the property bag, `put_Scale` or
+    `put_ScaleMode`) decide the fit: NoBorder fills and crops, ShowAll
+    letterboxes, ExactFit stretches, NoScale keeps the movie's pixels.
+  - **`SetExtent`** takes HIMETRIC and converts with the screen DPI.
   - `QueryHitPoint` hits where the frame has pixels.
+- **Telling the host to repaint.** On each new frame, after activation and
+  after a size change, the DLL calls:
+  - `IOleInPlaceSiteWindowless::InvalidateRect`, with its rectangle once
+    `SetObjectRects` has given one, else NULL;
+  - `IAdviseSink::OnViewChange` on the `SetAdvise` sink (`ADVF_PRIMEFIRST`
+    sends one at once, `ADVF_ONLYONCE` drops the sink after one).
+
+  Until the host has drawn the newest frame, a timer asks again every
+  100 ms, with a NULL rectangle, for up to 10 s without a Draw.
+
+  boxelyRenderer's site (ATL's `CAxHostWindow` with Boxely additions):
+  - Its `InvalidateRect` is `USER32!InvalidateRect(m_hWnd, rect, erase)` on
+    its "ActiveX frame" window. Boxely shows or hides that window
+    (`SW_SHOWNA`/`SW_HIDE`), and a hidden window gets no `WM_PAINT`.
+  - Its `OnViewChange` does nothing.
+  - So a repaint request can be lost; the avatar then stayed empty until
+    something else repainted. That is why the DLL keeps asking. When the
+    site's window (`IOleWindow::GetWindow`) is hidden, it also invalidates
+    the nearest visible ancestor over its rectangle.
 - **Driving it** (through `IShockwaveFlash` or `IDispatch`):
   - `Movie` (put through `Invoke`), `Play` (+0x70), `Stop` (+0x74), `put_Movie`
     (+0x58), `TGotoLabel` (+0xF0), `SetVariable` (+0x104).
@@ -308,6 +333,35 @@ thread fail, and reports the longest message the UI thread handled:
 - **It also tries `TGotoLabel`, `GetVariable`, `Stop` and `Play`,** then puts
   three controls into Windows' own ATL host (`atl.dll`, `AtlAxAttachControl`).
 
+`axfirst` reproduces the two field bugs in a container that paints like
+boxelyRenderer. It paints an element only while it is "ready", and it
+repaints only when the control asks.
+- **First paint:**
+  - Movies play, then stand still while the host paints no element; the
+    elements become ready without a repaint of the container's own.
+  - A modal dialog runs while the faces change.
+  - The site's window is a hidden child, like Boxely's hidden ActiveX frame.
+
+  Each time, every avatar's current frame must be on screen. The check
+  compares the screenshot with the control's own Draw, composited on the
+  background.
+- **Size:**
+  - `Draw` with rectangles unlike `SetObjectRects`, in both of boxely's
+    paths.
+  - A DC mapped from logical 49x49 to 38x49 device pixels.
+  - Sizes that change, and Scale NoBorder, ShowAll and ExactFit.
+
+  The smiley's round face must stay round, except with ExactFit.
+- **Before and after:** the build before this change fails all three first
+  paint cases and squeezes in the scaled DC; this one passes.
+
+```
+%H%\examples\host.exe %H%\FlashPlayerControl.dll axfirst W:\...\deploy\oscar-legacy-web\avatars C:\out pirate.swf smile.swf ...
+```
+
+The host is DPI aware, so its screenshots line up with window coordinates on
+a scaled display.
+
 `axreg` runs `DllRegisterServer` and `DllUnregisterServer` under a test root
 (`FLASHPLAYERCONTROL_TEST_REGROOT`), checks every key, and shows that the
 user's real registration did not change:
@@ -381,6 +435,21 @@ to that file. It always writes the same lines to the debugger
 | `WGPU_DX12_COMPILER` | Passed to wgpu (`fxc`, `dynamicdxc`) |
 
 ## Known gaps
+
+- **The field cause of the empty first paint is inferred, not seen.** It
+  comes from boxelyRenderer's code; the DLL now covers all channels and
+  keeps asking.
+- **The log tells what really happens in ICQ.** With
+  `FLASHPLAYERCONTROL_LOG` set, it records per control (`control #N`):
+  - every host call: interfaces asked for and missed, property bag values,
+    `SetExtent` (HIMETRIC, pixels, DPI), `SetObjectRects`, `DoVerb`,
+    `GetWindowContext`;
+  - the site window with its visibility and parents;
+  - each `Draw` with its rectangle, device size, mapping mode and frame;
+  - each repaint request and retry with its result.
+
+  Per-frame lines are rate-limited: the first 40 per control, then every
+  240th.
 
 - **No input reaches a Flash avatar.** `OnWindowMessage` returns S_FALSE, so
   clicks go to the host.

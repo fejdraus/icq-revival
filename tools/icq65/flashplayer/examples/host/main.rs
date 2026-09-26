@@ -54,6 +54,7 @@ macro_rules! say {
 }
 
 mod avatar;
+mod axfirst;
 mod axhost;
 mod stacks;
 
@@ -973,6 +974,9 @@ fn main() {
         return;
     }
     say!("pid {}", std::process::id());
+    // Physical pixels: window coordinates then match screenshots on a
+    // scaled display (otherwise DWM stretches this unaware process).
+    unsafe { SetProcessDPIAware() };
     unsafe { OleInitialize(null_mut()) };
     let fpc: &'static Fpc = Box::leak(Box::new(load_dll(&args[1])));
     match args[2].as_str() {
@@ -999,6 +1003,12 @@ fn main() {
         // ShockwaveFlash ActiveX control: registration under a test root.
         "axreg" => {
             let ok = axhost::registration(fpc);
+            std::process::exit(if ok { 0 } else { 1 });
+        }
+        // axfirst <base dir|url> <out> <names...>: first paint and sizes.
+        "axfirst" => {
+            axhost::register_class(&args[1]);
+            let ok = axfirst::run(&args[3], &args[4], &args[5..]);
             std::process::exit(if ok { 0 } else { 1 });
         }
         // ax <base dir|url> <out> <names...>: windowless container + ATL host.

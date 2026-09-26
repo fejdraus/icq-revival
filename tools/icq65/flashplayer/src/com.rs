@@ -431,6 +431,16 @@ unsafe extern "system" fn sf_invoke(
     excep: *mut c_void,
     arg_err: *mut u32,
 ) -> HRESULT {
+    {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static CALLS: AtomicU32 = AtomicU32::new(0);
+        let n = CALLS.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 300 || n % 1000 == 0 {
+            crate::log(&format!(
+                "IShockwaveFlash IDispatch::Invoke(dispid {dispid:#x}, flags {flags})"
+            ));
+        }
+    }
     crate::ffi_guard("sf_invoke", windows_sys::Win32::Foundation::E_FAIL, || {
         let ti = crate::typelib::interface_info();
         if ti.is_null() {
@@ -691,6 +701,7 @@ unsafe extern "system" fn get_wmode(this: Unk, out: *mut *const u16) -> HRESULT 
 unsafe extern "system" fn put_wmode(this: Unk, v: *const u16) -> HRESULT {
     crate::ffi_guard("put_wmode", E_FAIL, || {
         let v = unsafe { bstr_to_string(v) };
+        crate::log(&format!("IShockwaveFlash::put_WMode({v:?})"));
         inst(this).map_or(E_INVALIDARG, |i| {
             let mut d = i.display.get();
             d.transparent = v.trim().eq_ignore_ascii_case("transparent");
@@ -718,9 +729,46 @@ unsafe extern "system" fn get_scale(this: Unk, out: *mut *const u16) -> HRESULT 
 unsafe extern "system" fn put_scale(this: Unk, v: *const u16) -> HRESULT {
     crate::ffi_guard("put_scale", E_FAIL, || {
         let v = unsafe { bstr_to_string(v) };
+        crate::log(&format!("IShockwaveFlash::put_Scale({v:?})"));
         let Some(mode) = crate::movie::scale_mode(&v) else {
             return E_INVALIDARG;
         };
+        inst(this).map_or(E_INVALIDARG, |i| {
+            let mut d = i.display.get();
+            d.scale = mode;
+            i.set_display(d);
+            S_OK
+        })
+    })
+}
+unsafe extern "system" fn get_scale_mode(this: Unk, out: *mut i32) -> HRESULT {
+    crate::ffi_guard("get_ScaleMode", E_FAIL, || {
+        if out.is_null() {
+            return E_POINTER;
+        }
+        use ruffle_core::StageScaleMode as S;
+        let v = match inst(this).map(|i| i.display.get().scale) {
+            Some(S::NoBorder) => 1,
+            Some(S::ExactFit) => 2,
+            Some(S::NoScale) => 3,
+            _ => 0,
+        };
+        unsafe { *out = v };
+        S_OK
+    })
+}
+/// Flash's ScaleMode: 0 ShowAll, 1 NoBorder, 2 ExactFit (3 NoScale).
+unsafe extern "system" fn put_scale_mode(this: Unk, v: i32) -> HRESULT {
+    crate::ffi_guard("put_ScaleMode", E_FAIL, || {
+        use ruffle_core::StageScaleMode as S;
+        let mode = match v {
+            0 => S::ShowAll,
+            1 => S::NoBorder,
+            2 => S::ExactFit,
+            3 => S::NoScale,
+            _ => return E_INVALIDARG,
+        };
+        crate::log(&format!("IShockwaveFlash::put_ScaleMode({v})"));
         inst(this).map_or(E_INVALIDARG, |i| {
             let mut d = i.display.get();
             d.scale = mode;
@@ -891,8 +939,10 @@ fn sf_vtbl() -> *const usize {
         // put_BGColor, put_Quality2, put_SWRemote, put_FlashVars,
         // put_AllowScriptAccess, put_SeamlessTabbing, put_AllowNetworking,
         // put_AllowFullScreen: accepted and ignored (one 32-bit argument each).
+        set(13, get_scale_mode as *const () as usize);
+        set(14, put_scale_mode as *const () as usize);
         for slot in [
-            12, 14, 16, 18, 43, 45, 47, 51, 53, 55, 57, 75, 77, 79, 85, 97, 99,
+            12, 16, 18, 43, 45, 47, 51, 53, 55, 57, 75, 77, 79, 85, 97, 99,
         ] {
             set(slot, put_ignored as *const () as usize);
         }
