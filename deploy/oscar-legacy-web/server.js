@@ -70,18 +70,57 @@ const TZER_TYPES = {
 };
 let tzerFiles = new Map();
 
-function loadTzers() {
+// The files of one folder with a known type and a plain name, in memory.
+// Without the folder the map is empty and every request is a 404.
+function loadFolder(dir, types) {
   const files = new Map();
   try {
-    for (const name of fs.readdirSync(TZER_DIR)) {
-      const type = TZER_TYPES[path.extname(name).toLowerCase()];
+    for (const name of fs.readdirSync(dir)) {
+      const type = types[path.extname(name).toLowerCase()];
       if (!type || !/^[a-z0-9_-]+\.[a-z]+$/i.test(name)) continue;
-      files.set(name.toLowerCase(), { body: fs.readFileSync(path.join(TZER_DIR, name)), type });
+      files.set(name.toLowerCase(), { body: fs.readFileSync(path.join(dir, name)), type });
     }
   } catch {
-    // Without the folder there are no tZers: every request is a 404.
+    // No folder, no files.
   }
-  tzerFiles = files;
+  return files;
+}
+
+function loadTzers() {
+  tzerFiles = loadFolder(TZER_DIR, TZER_TYPES);
+}
+
+// Animated avatars: the Flash "devils" ICQ 6 shows in place of a buddy
+// picture. The picture page offers them, and picking one hands the client
+// the movie's address here (SetBartItem, BART type 8); every contact's client
+// then fetches the movie from that address itself, over plain HTTP, so like
+// the tZers it has to be reachable from anywhere. The folder and its
+// avatars.json (titles, groups, thumbnails) come from
+// tools/icq65/avatars/fetch_avatars.py. Same rules as the tZers: exact file
+// names only, read at start and on SIGHUP.
+const AVATAR_DIR = path.join(__dirname, 'avatars');
+const AVATAR_TYPES = {
+  '.swf': 'application/x-shockwave-flash',
+  '.gif': 'image/gif',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+};
+let avatarFiles = new Map();
+let avatarList = [];
+
+function loadAvatars() {
+  const files = loadFolder(AVATAR_DIR, AVATAR_TYPES);
+  let list = [];
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(AVATAR_DIR, 'avatars.json'), 'utf8'));
+    // Only the entries whose movie and thumbnail are really there.
+    list = (manifest.avatars || []).filter((a) => a && typeof a.file === 'string'
+      && files.has(a.file.toLowerCase()) && files.has(String(a.thumb || '').toLowerCase()));
+  } catch {
+    // No list, no gallery: the page shows the picture tab only.
+  }
+  avatarFiles = files;
+  avatarList = list;
 }
 
 let CODES = {};
@@ -211,6 +250,24 @@ const I18N = {
     picErrTooLarge: 'the file is larger than 16 MB',
     picErrMalformed: 'the upload is malformed',
     picErrEmpty: 'the file is empty',
+    // The animated tab: the Flash faces of ICQ 6.
+    picTabPicture: 'Picture',
+    picTabAnimated: 'Animated',
+    picAnimLead: 'A moving face instead of a still picture. ICQ 6 plays it next to '
+      + 'your name, and it changes with your mood and status. Pick one, then set it.',
+    picAnimNote: 'Contacts on other clients, or on older ICQ versions, keep seeing '
+      + 'your picture.',
+    picAnimNow: 'Now set:',
+    picAnimNone: 'none',
+    picAnimOther: 'one that is not on this server',
+    picAnimIcq: 'ICQ',
+    picAnimUser: 'User created',
+    picAnimChosen: 'Chosen:',
+    picAnimSet: 'Use this animation',
+    picAnimSetting: 'Setting the animation...',
+    picAnimSaved: 'Set. Your contacts see it from now on.',
+    picAnimRefused: 'The client refused the animation: ',
+    picAnimServerRefused: 'The server did not take the animation.',
     picReduced: (from, to) => `${from} reduced to ${to}`,
     picBytes: (n) => (n < 1024 ? `${n} bytes` : `${Math.round(n / 1024)} KB`),
     signedInAs: (u) => `Signed in as <b>${u}</b>`,
@@ -529,6 +586,24 @@ const I18N = {
     picErrTooLarge: 'файл більший за 16 МБ',
     picErrMalformed: 'завантаження пошкоджене',
     picErrEmpty: 'файл порожній',
+    picTabPicture: 'Картинка',
+    picTabAnimated: 'Анімація',
+    picAnimLead: 'Живе обличчя замість нерухомої картинки. ICQ 6 програє його поруч '
+      + 'із вашим імʼям, і воно змінюється разом із вашим настроєм і статусом. '
+      + 'Оберіть і встановіть.',
+    picAnimNote: 'Контакти в інших клієнтах чи старіших версіях ICQ і далі бачать '
+      + 'вашу картинку.',
+    picAnimNow: 'Зараз встановлено:',
+    picAnimNone: 'нічого',
+    picAnimOther: 'анімація не з цього сервера',
+    picAnimIcq: 'ICQ',
+    picAnimUser: 'Створені користувачами',
+    picAnimChosen: 'Обрано:',
+    picAnimSet: 'Встановити цю анімацію',
+    picAnimSetting: 'Встановлюємо анімацію...',
+    picAnimSaved: 'Встановлено. Відтепер її бачать ваші контакти.',
+    picAnimRefused: 'Клієнт не прийняв анімацію: ',
+    picAnimServerRefused: 'Сервер не прийняв анімацію.',
     picReduced: (from, to) => `${from} стиснуто до ${to}`,
     picBytes: (n) => (n < 1024 ? `${n} байт` : `${Math.round(n / 1024)} КБ`),
     signedInAs: (u) => `Ви увійшли як <b>${u}</b>`,
@@ -983,6 +1058,26 @@ function mapUrl(reqUrl) {
 function redirect(res, url) {
   res.writeHead(302, { location: url, 'content-length': 0 });
   res.end();
+}
+
+// One file of a folder loaded by loadFolder, by its exact name after the
+// prefix. The name is looked up, never joined to a path, so a request cannot
+// walk out of the folder; anything else is a 404.
+function serveFolderFile(ctx, prefix, files) {
+  const name = ctx.path.replace(prefix, '');
+  const file = /^[a-z0-9_-]+\.[a-z]+$/i.test(name) ? files.get(name.toLowerCase()) : null;
+  if (!file || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) {
+    ctx.res.writeHead(404, { 'content-length': 0 });
+    ctx.res.end();
+    return;
+  }
+  ctx.res.writeHead(200, {
+    'content-type': file.type,
+    'content-length': file.body.length,
+    // The files never change once published.
+    'cache-control': 'public, max-age=86400',
+  });
+  ctx.res.end(ctx.req.method === 'HEAD' ? undefined : file.body);
 }
 
 function formatDuration(seconds, t) {
@@ -1732,17 +1827,65 @@ const avatarTemplate = fs.readFileSync(path.join(__dirname, 'pages', 'avatar.htm
 // than markup built here because of its script: the plugin object and the
 // handlers for its events. {{KEY}} is a text from the dictionary, escaped;
 // {{STRINGS}} hands the script the messages it shows; the rest is the shell.
-function avatarPage(u) {
+// JSON inside a script: "</" would end the script early.
+function scriptJson(value) {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
+// The animated tab: the thumbnails in a table, ICQ's own first, then the
+// ones users made. A thumbnail is a link that picks the movie; the page's
+// script does the rest. Empty when the server has no avatars, and the page
+// then shows no tabs at all.
+function animatedGallery(u) {
+  const t = u.t;
+  const cols = 6;
+  const group = (author, heading) => {
+    const items = avatarList.filter((a) => a.author === author);
+    if (!items.length) return '';
+    const cells = items.map((a) => {
+      const stem = a.file.replace(/\.[a-z]+$/i, '');
+      const title = (a.title && (a.title[u.lang] || a.title.en)) || stem;
+      return `<td class="anim" id="av-${escapeHtml(stem)}" valign="top" align="center">`
+        + `<a href="#" onclick="choose('${escapeHtml(a.file)}'); return false;">`
+        + `<img class="thumb" src="/icq/avatars/${escapeHtml(a.thumb)}" width="52" height="64" alt="" border="0"><br>`
+        + `${escapeHtml(title)}</a></td>`;
+    });
+    const rows = [];
+    for (let i = 0; i < cells.length; i += cols) {
+      const row = cells.slice(i, i + cols);
+      while (row.length < cols) row.push('<td class="anim"></td>');
+      rows.push(`<tr>${row.join('')}</tr>`);
+    }
+    return `<h2>${escapeHtml(heading)}</h2>
+      <table class="gallery" cellpadding="0" cellspacing="0" border="0">${rows.join('')}</table>`;
+  };
+  return group('icq', t.picAnimIcq) + group('user', t.picAnimUser);
+}
+
+function avatarPage(u, req) {
   const t = u.t;
   const keys = Object.keys(t).filter((k) => k.startsWith('pic') && typeof t[k] === 'string');
   const strings = {};
   for (const k of keys) strings[k] = t[k];
+  // What the script needs to know about each movie: the title it shows as
+  // "now set", and the address it hands the client. That address is plain
+  // HTTP on this service's own port whichever way the page came in: the
+  // client fetches the movie with its own loader, and so does every
+  // contact's client, and none of them speaks HTTPS.
+  const avatars = avatarList.map((a) => ({
+    file: a.file,
+    title: (a.title && (a.title[u.lang] || a.title.en)) || a.file,
+  }));
+  const hasAnimated = avatars.length > 0;
   return avatarTemplate
     .replace('{{STYLE}}', () => SHARED_STYLE)
     .replace('{{HEADER}}', () => header(escapeHtml(t.picTitle), escapeHtml(t.picSub)))
     .replace('{{FOOTER}}', () => footer({ langs: langSwitch(u.lang, u.selfUrl) }))
-    // JSON inside a script: "</" would end the script early.
-    .replace('{{STRINGS}}', () => JSON.stringify(strings).replace(/</g, '\\u003c'))
+    .replace('{{TABS_STYLE}}', () => (hasAnimated ? '' : 'display:none'))
+    .replace('{{ANIMATED}}', () => animatedGallery(u))
+    .replace('{{STRINGS}}', () => scriptJson(strings))
+    .replace('{{AVATARS}}', () => scriptJson(avatars))
+    .replace('{{AVATAR_BASE}}', () => scriptJson(`${plainBase(req)}/icq/avatars/`))
     .replace(/\{\{LANG\}\}/g, () => u.lang)
     .replace(/\{\{(pic[A-Za-z]+)\}\}/g, (m, k) => (typeof t[k] === 'string' ? escapeHtml(t[k]) : m));
 }
@@ -1867,7 +2010,7 @@ function uploadReply(url, error, note, clientUrl) {
 }
 
 const ACTIONS = {
-  avatarpage: (ctx) => send(ctx.res, 200, avatarPage(ctx.u)),
+  avatarpage: (ctx) => send(ctx.res, 200, avatarPage(ctx.u, ctx.req)),
 
   // Receives a picture from the page and keeps it just long enough for the
   // client to fetch it. The client does not take image data: SetBartItem is
@@ -2040,21 +2183,44 @@ const ACTIONS = {
 
   // A tZer movie or thumbnail, by its exact file name: /icq/tzers/kisses.swf.
   // Anything else under /icq/tzers/ is a 404, as the dead ICQ.com one was.
-  tzer: (ctx) => {
-    const name = ctx.path.replace(/^\/icq\/tzers\//i, '');
-    const file = /^[a-z0-9_-]+\.[a-z]+$/i.test(name) ? tzerFiles.get(name.toLowerCase()) : null;
-    if (!file || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) {
-      ctx.res.writeHead(404, { 'content-length': 0 });
-      ctx.res.end();
-      return;
-    }
+  tzer: (ctx) => serveFolderFile(ctx, /^\/icq\/tzers\//i, tzerFiles),
+
+  // An animated avatar or its thumbnail, the same way: /icq/avatars/pirate.swf.
+  avatarfiles: (ctx) => serveFolderFile(ctx, /^\/icq\/avatars\//i, avatarFiles),
+
+  // The list the original avatar gallery loaded first
+  // (xtraz.icq.com/xtraz2/products/avatar/xml/avatarsGalery.php), in its 2007
+  // form, with our movies in the Animated_Devils category it kept empty. In
+  // case the client or an old Xtra still asks for it.
+  avatargallery: (ctx) => {
+    const base = `${plainBase(ctx.req)}/icq/avatars/`;
+    const esc = (s) => escapeHtml(s);
+    const sub = (author, name) => {
+      const imgs = avatarList.filter((a) => a.author === author).map((a) => `
+      <img>
+        <url>${esc(base + a.file)}</url>
+        <thumb_url>${esc(base + a.thumb)}</thumb_url>
+      </img>`).join('');
+      return `
+    <sub name="${name}">${imgs}
+    </sub>`;
+    };
+    const body = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<avatar>
+  <category name="Animated_Devils" web="0" id="">
+    <img_sizes>
+      <width>52</width>
+      <height>64</height>
+    </img_sizes>${sub('icq', 'ICQ_Devils')}${sub('user', 'User_Created')}
+  </category>
+</avatar>
+`, 'utf8');
     ctx.res.writeHead(200, {
-      'content-type': file.type,
-      'content-length': file.body.length,
-      // The movies never change once published.
-      'cache-control': 'public, max-age=86400',
+      'content-type': 'text/xml; charset=utf-8',
+      'content-length': body.length,
+      'cache-control': 'no-store',
     });
-    ctx.res.end(ctx.req.method === 'HEAD' ? undefined : file.body);
+    ctx.res.end(body);
   },
 
   // The ICQ 6 banner strip: the client expects an image, not a page. Serving a
@@ -2134,6 +2300,7 @@ async function route(req, res) {
 config = loadConfig();
 loadTopics();
 loadTzers();
+loadAvatars();
 
 // SIGHUP reloads the config: a host can be added without restarting the service.
 // If the new file is broken we keep the old one instead of dying.
@@ -2142,7 +2309,9 @@ process.on('SIGHUP', () => {
     config = loadConfig();
     loadTopics();
     loadTzers();
-    console.log(`config reloaded: ${config.routes.length} routes, ${tzerFiles.size} tZer files`);
+    loadAvatars();
+    console.log(`config reloaded: ${config.routes.length} routes, ${tzerFiles.size} tZer files, `
+      + `${avatarList.length} animated avatars`);
   } catch (err) {
     console.error(`config not reloaded, keeping the old one: ${err.message}`);
   }

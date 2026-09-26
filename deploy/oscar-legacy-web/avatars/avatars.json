@@ -1,0 +1,829 @@
+{
+ "note": "Written by tools/icq65/avatars/fetch_avatars.py; do not edit by hand.",
+ "avatars": [
+  {
+   "file": "avatar_10529.swf",
+   "title": {
+    "en": "Alien",
+    "uk": "Прибулець"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 14215,
+   "thumb": "avatar_10529.gif",
+   "thumbSource": "archive",
+   "source": "http://c.icq.com/xtraz/img/avatar/avatar_10529.swf",
+   "captured": "20120819175814",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "avatar_10522.swf",
+   "title": {
+    "en": "Avatar 10522",
+    "uk": "Аватар 10522"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 22247,
+   "thumb": "avatar_10522.gif",
+   "thumbSource": "archive",
+   "source": "http://xtraz.icq.com:80/xtraz/img/avatar/avatar_10522.swf",
+   "captured": "20060209030456",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "avatar_10526.swf",
+   "title": {
+    "en": "Avatar 10526",
+    "uk": "Аватар 10526"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 22690,
+   "thumb": "avatar_10526.gif",
+   "thumbSource": "archive",
+   "source": "http://xtraz.icq.com:80/xtraz/img/avatar/avatar_10526.swf",
+   "captured": "20070129083425",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "avatar_10530.swf",
+   "title": {
+    "en": "Avatar 10530",
+    "uk": "Аватар 10530"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 11571,
+   "thumb": "avatar_10530.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/avatar_10530.swf",
+   "captured": "20060209031449",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "avatar_10763.swf",
+   "title": {
+    "en": "Avatar 10763",
+    "uk": "Аватар 10763"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 11755,
+   "thumb": "avatar_10763.gif",
+   "thumbSource": "archive",
+   "source": "http://c.icq.com/xtraz/img/avatar/avatar_10763.swf",
+   "captured": "20120819175806",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "avatar_11074.swf",
+   "title": {
+    "en": "Avatar 11074",
+    "uk": "Аватар 11074"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 22867,
+   "thumb": "avatar_11074.gif",
+   "thumbSource": "archive",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/avatar_11074.swf",
+   "captured": "20060209040122",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "avatar_11151.swf",
+   "title": {
+    "en": "Avatar 11151",
+    "uk": "Аватар 11151"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 30614,
+   "thumb": "avatar_11151.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/avatar_11151.swf",
+   "captured": "20101228151107",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "baby_10914.swf",
+   "title": {
+    "en": "Baby",
+    "uk": "Малюк"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 25270,
+   "thumb": "baby_10914.gif",
+   "thumbSource": "archive",
+   "source": "http://xtraz.icq.com:80/xtraz/img/avatar/baby_10914.swf",
+   "captured": "20050104000120",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "avatar_boy.swf",
+   "title": {
+    "en": "Boy",
+    "uk": "Хлопець"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 70573,
+   "thumb": "avatar_boy.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/avatar_boy.swf",
+   "captured": "20100603053006",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "avatar_girl.swf",
+   "title": {
+    "en": "Girl",
+    "uk": "Дівчина"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 43103,
+   "thumb": "avatar_girl.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/avatar_girl.swf",
+   "captured": "20101221224508",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "pirate.swf",
+   "title": {
+    "en": "Pirate",
+    "uk": "Пірат"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 69218,
+   "thumb": "pirate.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz2/img/avatar/pirate.swf",
+   "captured": "20120118212050",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "avatar_santa.swf",
+   "title": {
+    "en": "Santa",
+    "uk": "Санта"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 43119,
+   "thumb": "avatar_santa.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/avatar_santa.swf",
+   "captured": "20060209040412",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "avatar_11102.swf",
+   "title": {
+    "en": "Shark",
+    "uk": "Акула"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 31699,
+   "thumb": "avatar_11102.gif",
+   "thumbSource": "archive",
+   "source": "http://c.icq.com/xtraz/img/avatar/avatar_11102.swf",
+   "captured": "20100930223659",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "superboy.swf",
+   "title": {
+    "en": "Superboy",
+    "uk": "Супербой"
+   },
+   "category": "Animated_Devils",
+   "sub": "ICQ_Devils",
+   "author": "icq",
+   "size": 83386,
+   "thumb": "superboy.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/superboy.swf",
+   "captured": "20100820035220",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "bg.swf",
+   "title": {
+    "en": "BG",
+    "uk": "BG"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 23401,
+   "thumb": "bg.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/uc/BG.swf",
+   "captured": "20110904003226",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "bob.swf",
+   "title": {
+    "en": "Bob",
+    "uk": "Боб"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 33585,
+   "thumb": "bob.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/uc/bob.swf",
+   "captured": "20100820035159",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "face1.swf",
+   "title": {
+    "en": "Face 1",
+    "uk": "Обличчя 1"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 22581,
+   "thumb": "face1.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/uc/face1.swf",
+   "captured": "20070220110701",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "2308intheend.swf",
+   "title": {
+    "en": "In the End",
+    "uk": "In the End"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 77729,
+   "thumb": "2308intheend.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/uc/2308intheend.swf",
+   "captured": "20060822011106",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "kitty.swf",
+   "title": {
+    "en": "Kitty",
+    "uk": "Кошеня"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 89164,
+   "thumb": "kitty.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/uc/kitty.swf",
+   "captured": "20070319190551",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "klex.swf",
+   "title": {
+    "en": "Klex",
+    "uk": "Klex"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 97209,
+   "thumb": "klex.png",
+   "thumbSource": "render",
+   "source": "http://xtraz.icq.com:80/xtraz/img/avatar/uc/klex.swf",
+   "captured": "20061031024248",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "2308koshak.swf",
+   "title": {
+    "en": "Koshak",
+    "uk": "Кошак"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 358824,
+   "thumb": "2308koshak.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/uc/2308koshak.swf",
+   "captured": "20070202020823",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "may18lr01.swf",
+   "title": {
+    "en": "May 18",
+    "uk": "May 18"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 33000,
+   "thumb": "may18lr01.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/uc/may18lr01.swf",
+   "captured": "20060209040011",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "mcshlain.swf",
+   "title": {
+    "en": "McShlain",
+    "uk": "McShlain"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 38422,
+   "thumb": "mcshlain.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/uc/mcshlain.swf",
+   "captured": "20101228151122",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "oran.swf",
+   "title": {
+    "en": "Oran",
+    "uk": "Oran"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 26434,
+   "thumb": "oran.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/uc/oran.swf",
+   "captured": "20120221233446",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "red.swf",
+   "title": {
+    "en": "Red",
+    "uk": "Червоний"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 12326,
+   "thumb": "red.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/uc/red.swf",
+   "captured": "20120805184244",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "sasuke.swf",
+   "title": {
+    "en": "Sasuke",
+    "uk": "Саске"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 136675,
+   "thumb": "sasuke.png",
+   "thumbSource": "render",
+   "source": "http://xtraz.icq.com/xtraz/img/avatar/uc/sasuke.swf",
+   "captured": "20100618032801",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "sheep.swf",
+   "title": {
+    "en": "Sheep",
+    "uk": "Вівця"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 65038,
+   "thumb": "sheep.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/uc/sheep.swf",
+   "captured": "20101207052643",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "silke.swf",
+   "title": {
+    "en": "Silke",
+    "uk": "Silke"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 82777,
+   "thumb": "silke.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/uc/silke.swf",
+   "captured": "20060715223311",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "smile.swf",
+   "title": {
+    "en": "Smile",
+    "uk": "Усмішка"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 7918,
+   "thumb": "smile.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com/xtraz/img/avatar/uc/smile.swf",
+   "captured": "20101102061812",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "spongy.swf",
+   "title": {
+    "en": "Spongy",
+    "uk": "Spongy"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 16817,
+   "thumb": "spongy.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/uc/spongy.swf",
+   "captured": "20070319190440",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  },
+  {
+   "file": "wings.swf",
+   "title": {
+    "en": "Wings",
+    "uk": "Крила"
+   },
+   "category": "Animated_Devils",
+   "sub": "User_Created",
+   "author": "user",
+   "size": 42765,
+   "thumb": "wings.png",
+   "thumbSource": "render",
+   "source": "http://c.icq.com:80/xtraz/img/avatar/uc/wings.swf",
+   "captured": "20060210231239",
+   "labels": [
+    "stam",
+    "smile",
+    "sad",
+    "laugh",
+    "mad",
+    "cry",
+    "love",
+    "busy",
+    "offline"
+   ]
+  }
+ ],
+ "dropped": [
+  {
+   "file": "alian_10529.swf",
+   "why": "the same movie as avatar_10529.swf"
+  },
+  {
+   "file": "shark_11102.swf",
+   "why": "the same movie as avatar_11102.swf"
+  },
+  {
+   "file": "robot.swf",
+   "why": "no the face clip, no the emotion property"
+  },
+  {
+   "file": "uc/neger.swf",
+   "reason": "a racial caricature; left out of the gallery"
+  }
+ ]
+}

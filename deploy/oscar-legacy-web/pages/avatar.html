@@ -21,12 +21,34 @@
    picture will actually look. */
 .shot { width: 85px; height: 106px; border: 1px solid #cfe3d5; background: #fbfdfb; }
 .shotcell { width: 96px; }
+/* The two tabs: the same pills as the language switch. */
+.tabs { margin: 0 0 8px; }
+.tabs a {
+  display: inline-block; padding: 2px 11px; margin-right: 5px;
+  font-size: 13px; text-decoration: none; color: #1a1a1a;
+  border: 1px solid #9a9a9a; border-radius: 9px; background: #f2f0ea;
+}
+.tabs a.on { color: #fff; background: #3c6e1f; border-color: #35601a; }
+/* The animated faces: a table of thumbnails at the size the client stores. */
+table.gallery { width: 100%; }
+td.anim { width: 16%; padding: 4px 2px 6px; font-size: 12px; line-height: 1.25; }
+td.anim a { text-decoration: none; color: #1a1a1a; }
+td.anim img.thumb { border: 2px solid #e6e2d9; background: #fff; }
+td.anim.on img.thumb { border-color: #3c6e1f; }
+td.anim.on a { font-weight: bold; }
+.thumbcell { width: 64px; }
 </style>
 </head>
 <body class="compact">
 <main class="window">
   {{HEADER}}
   <div class="body">
+    <div class="tabs" style="{{TABS_STYLE}}">
+      <a href="#" id="tabPicture" class="on" onclick="tab('picture'); return false;">{{picTabPicture}}</a><a
+         href="#" id="tabAnimated" onclick="tab('animated'); return false;">{{picTabAnimated}}</a>
+    </div>
+
+    <div id="pagePicture">
     <p>{{picLead}}</p>
 
     <div class="panel">
@@ -53,6 +75,29 @@
     </div>
 
     <div class="hint" id="status"></div>
+    </div>
+
+    <div id="pageAnimated" style="display:none">
+      <p>{{picAnimLead}}</p>
+
+      <div class="panel" id="animNowRow">{{picAnimNow}} <b id="animNow">{{picAnimNone}}</b></div>
+
+      <div class="soft" id="animRow" style="display:none">
+        <table cellpadding="0" cellspacing="0" border="0"><tr>
+          <td class="thumbcell" valign="middle"><img id="animPreview" src="" width="52" height="64" alt=""></td>
+          <td valign="middle">{{picAnimChosen}} <b id="animTitle"></b></td>
+        </tr></table>
+        <div class="actions">
+          <button type="button" class="primary" onclick="applyAnimated()">{{picAnimSet}}</button>
+          <button type="button" onclick="cancelAnimated()">{{picCancel}}</button>
+        </div>
+      </div>
+      <div class="hint" id="animStatus"></div>
+
+      {{ANIMATED}}
+
+      <p><span class="dim">{{picAnimNote}}</span></p>
+    </div>
   </div>
   {{FOOTER}}
 </main>
@@ -63,20 +108,46 @@
 // The messages, in the language the page was opened in.
 var T = {{STRINGS}};
 
+// The animated faces this server has ({file, title}), and the plain HTTP
+// address they are served from.
+var AVATARS = {{AVATARS}};
+var AVATAR_BASE = {{AVATAR_BASE}};
+
 // The picture is a BART item; the type library lists the kinds as
 // sbICQDevi1z = 1 and sbICQExtras = 8. ICQ 6 calls this picture a "devil".
+// The animated face is the other one: an address the client wraps in
+// <DOCUMENT><RESSET TYPE="ICQ_EXTRAS"><URL>...</URL></RESSET></DOCUMENT> and
+// uploads as BART type 8.
 var BART_PICTURE = 1;
+var BART_ANIMATED = 8;
 var transaction = 0;
 var pending = '';
 var waiting = false;
+// The transactions of the animated tab, so their answers are not taken for
+// the picture's.
+var animRead = -1;
+var animSet = -1;
+var animPending = '';
+var animChosen = '';
 
+// Both tabs have a status line; only the visible one is seen.
 function say(text) {
   document.getElementById('status').innerHTML = text;
+  document.getElementById('animStatus').innerHTML = text;
+}
+
+function tab(which) {
+  var animated = which === 'animated';
+  document.getElementById('pagePicture').style.display = animated ? 'none' : '';
+  document.getElementById('pageAnimated').style.display = animated ? '' : 'none';
+  document.getElementById('tabPicture').className = animated ? '' : 'on';
+  document.getElementById('tabAnimated').className = animated ? 'on' : '';
 }
 
 // The plugin object stays inert until it is handed the instance id that the
 // client puts in the address of the page it opens.
 function connect() {
+  if (AVATARS.length && /[?&]tab=animated/.test(window.location.search)) { tab('animated'); }
   var m = /[?&]id=([^&]*)/.exec(window.location.search);
   if (!m) { say(T.picOnlyInIcq); return; }
   try {
@@ -86,6 +157,7 @@ function connect() {
     return;
   }
   refresh();
+  if (AVATARS.length) { readAnimated(); }
 }
 
 // The page cannot read the file itself - this window blocks every way of doing
@@ -188,24 +260,129 @@ function show(source) {
   if (!source) { return; }
   document.getElementById('current').src = source;
 }
+
+// ------------------------------------------------------------ animated faces
+
+function findAvatar(file) {
+  for (var i = 0; i < AVATARS.length; i++) {
+    if (AVATARS[i].file.toLowerCase() === String(file).toLowerCase()) { return AVATARS[i]; }
+  }
+  return null;
+}
+
+function cellOf(file) {
+  return document.getElementById('av-' + String(file).replace(/\.[a-z]+$/i, ''));
+}
+
+// A thumbnail was clicked: it becomes the one the button sets. Nothing
+// reaches the client yet.
+function choose(file) {
+  var a = findAvatar(file);
+  if (!a) { return; }
+  if (animChosen && cellOf(animChosen)) { cellOf(animChosen).className = 'anim'; }
+  animChosen = a.file;
+  if (cellOf(a.file)) { cellOf(a.file).className = 'anim on'; }
+  var img = cellOf(a.file) ? cellOf(a.file).getElementsByTagName('img')[0] : null;
+  document.getElementById('animPreview').src = img ? img.src : '';
+  document.getElementById('animTitle').innerHTML = '';
+  document.getElementById('animTitle').appendChild(document.createTextNode(a.title));
+  document.getElementById('animRow').style.display = '';
+  say('');
+}
+
+function cancelAnimated() {
+  if (animChosen && cellOf(animChosen)) { cellOf(animChosen).className = 'anim'; }
+  animChosen = '';
+  document.getElementById('animRow').style.display = 'none';
+  say('');
+}
+
+// The same call as the picture, with the other kind: the client is handed
+// the movie's address, uploads that address to the server as the owner's
+// BART type 8, and every contact's client fetches the movie from it.
+function applyAnimated() {
+  if (!animChosen) { return; }
+  transaction = transaction + 1;
+  animSet = transaction;
+  var sent = AVATAR_BASE + animChosen;
+  animPending = sent;
+  // Said before the call: the events may fire from inside it (see apply()).
+  say(T.picAnimSetting);
+  try {
+    plugin.SetBartItem(transaction, BART_ANIMATED, sent);
+  } catch (e) {
+    animPending = '';
+    say(T.picAnimRefused + e.message);
+    return;
+  }
+  setTimeout(function () {
+    if (animPending === sent) { animDone(sent); }
+  }, 6000);
+}
+
+function animDone(data) {
+  if (!animPending) { return; }
+  var sent = animPending;
+  animPending = '';
+  cancelAnimated();
+  showAnimated(data || sent);
+  say(T.picAnimSaved);
+}
+
+function readAnimated() {
+  transaction = transaction + 1;
+  animRead = transaction;
+  try {
+    plugin.GetBartItem(transaction, BART_ANIMATED, plugin.OwnerInfo.ScreenName);
+  } catch (e) {
+    // Only the "now set" line depends on it.
+  }
+}
+
+// What the client reports for the animated face: our address, or the XML it
+// wraps it in. One of ours is named; anything else is said to be from
+// elsewhere.
+function showAnimated(data) {
+  var text = T.picAnimNone;
+  if (data) {
+    var m = /\/icq\/avatars\/([A-Za-z0-9_-]+\.swf)/.exec(String(data));
+    var a = m ? findAvatar(m[1]) : null;
+    text = a ? a.title : T.picAnimOther;
+  }
+  var now = document.getElementById('animNow');
+  now.innerHTML = '';
+  now.appendChild(document.createTextNode(text));
+}
 </script>
 
 <script for="plugin" event="OnBartOpSucceeded(transID, bcstrData)" language="JavaScript">
-  show(bcstrData);
-  done();
+  if (transID == animRead) { showAnimated(bcstrData); }
+  else if (transID == animSet) { animDone(bcstrData); }
+  else {
+    show(bcstrData);
+    done();
+  }
 </script>
 
 <script for="plugin" event="OnBartOpFailed(transID)" language="JavaScript">
+  if (transID == animRead) { showAnimated(''); }
+  else if (transID == animSet) { animPending = ''; say(T.picAnimServerRefused); }
   // Also fires when there is simply no picture yet, which is not worth a fuss.
-  say(document.getElementById('current').src ? T.picServerRefused : '');
+  else { say(document.getElementById('current').src ? T.picServerRefused : ''); }
 </script>
 
 <script for="plugin" event="OnOwnerBartItemChange(eType, bcstrData)" language="JavaScript">
   // The one event the client always sends once the picture is in place. The
   // acknowledgement of the upload itself does not always arrive, so the status
-  // is finished here rather than there.
-  show(bcstrData);
-  done();
+  // is finished here rather than there. eType is the BART kind, so the
+  // animated face does not end up in the picture's frame.
+  if (eType == BART_ANIMATED) {
+    showAnimated(bcstrData);
+    animDone(bcstrData);
+  } else {
+    show(bcstrData);
+    done();
+  }
 </script>
 
 <!-- Connected last, once the handlers above are in place. -->
