@@ -625,6 +625,7 @@ namespace IcqRevival.Patch
             "akitaka", "laugh", "duh", "beback", "likeu", "sorry",
         };
         const string FlashTypeLib = @"Software\Classes\TypeLib\{D27CDB6B-AE6D-11CF-96B8-444553540000}\1.0\0\win32";
+        const string FlashClass = @"Software\Classes\CLSID\{D27CDB6E-AE6D-11cf-96B8-444553540000}\InprocServer32";
 
         // Our DLL to put in: next to the patch unless given.
         public string PlayerSource;
@@ -690,10 +691,31 @@ namespace IcqRevival.Patch
             catch { return null; }
         }
 
+        // The DLL the ShockwaveFlash control class is registered to for this
+        // user, as the 32-bit client sees it, or null. The player registers
+        // that class too, so ICQ's own Flash gadgets - the animated avatars -
+        // create it.
+        static string RegisteredFlashClass()
+        {
+            try
+            {
+                using (var root = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.CurrentUser, Microsoft.Win32.RegistryView.Registry32))
+                using (var key = root.OpenSubKey(FlashClass))
+                {
+                    return key == null ? null : key.GetValue("") as string;
+                }
+            }
+            catch { return null; }
+        }
+
+        // Both registrations - the type library and the control class - point
+        // at the client's player.
         bool TypeLibIsOurs()
         {
             string dll = RegisteredTypeLib();
-            return !string.IsNullOrEmpty(dll) && SameFile(dll, At(PlayerFile));
+            string cls = RegisteredFlashClass();
+            return !string.IsNullOrEmpty(dll) && SameFile(dll, At(PlayerFile))
+                && !string.IsNullOrEmpty(cls) && SameFile(cls, At(PlayerFile));
         }
 
         string TypeLibState()
@@ -763,7 +785,9 @@ namespace IcqRevival.Patch
         string UnregisterPlayer()
         {
             string path = At(PlayerFile);
-            if (!IsOurPlayer(path) || !TypeLibIsOurs()) return null;
+            string dll = RegisteredTypeLib(), cls = RegisteredFlashClass();
+            bool ours = (!string.IsNullOrEmpty(dll) && SameFile(dll, path)) || (!string.IsNullOrEmpty(cls) && SameFile(cls, path));
+            if (!IsOurPlayer(path) || !ours) return null;
             int code = Regsvr32(path, true);
             return code == 0 ? null : "the Flash type library could not be unregistered (regsvr32 exit code " + code + ")";
         }

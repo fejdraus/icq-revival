@@ -5,10 +5,12 @@
 
 mod audio;
 mod com;
+mod control;
 mod fetch;
 mod gpu;
 mod instance;
 mod movie;
+mod registry;
 mod typelib;
 
 use std::ffi::c_void;
@@ -36,7 +38,7 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 /// This DLL's module handle.
-fn module() -> HMODULE {
+pub(crate) fn module() -> HMODULE {
     let mut h: HMODULE = null_mut();
     unsafe {
         GetModuleHandleExW(
@@ -75,6 +77,18 @@ pub(crate) fn ffi_guard<T>(what: &str, default: T, f: impl FnOnce() -> T) -> T {
 pub(crate) fn install_panic_hook() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
+        // Never unload: the DLL's GPU and audio threads live as long as the
+        // process (COM may otherwise free an in-process server it thinks is
+        // unused).
+        let mut h: HMODULE = null_mut();
+        unsafe {
+            GetModuleHandleExW(
+                windows_sys::Win32::System::LibraryLoader::GET_MODULE_HANDLE_EX_FLAG_PIN
+                    | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                module as *const c_void as *const u16,
+                &mut h,
+            )
+        };
         std::panic::set_hook(Box::new(|info| {
             let thread = std::thread::current();
             log(&format!(
@@ -253,7 +267,16 @@ pub extern "system" fn DllRegisterServer() -> HRESULT {
     crate::ffi_guard(
         "DllRegisterServer",
         windows_sys::Win32::Foundation::E_FAIL,
-        || typelib::register(),
+        || {
+            let dll = module_path();
+            let (_, real) = registry::root();
+            // The type library first, as before; the control class next to it.
+            let tlb = if real { typelib::register() } else { S_OK };
+            if tlb < 0 {
+                return tlb;
+            }
+            registry::register(&dll)
+        },
     )
 }
 
@@ -262,6 +285,37 @@ pub extern "system" fn DllUnregisterServer() -> HRESULT {
     crate::ffi_guard(
         "DllUnregisterServer",
         windows_sys::Win32::Foundation::E_FAIL,
-        || typelib::unregister(),
+        || {
+            let dll = module_path();
+            let (_, real) = registry::root();
+            let class = registry::unregister(&dll);
+            let tlb = if real { typelib::unregister() } else { S_OK };
+            if class < 0 { class } else { tlb }
+        },
     )
+}
+
+/// COM entry point: the ShockwaveFlash control's class factory.
+#[unsafe(no_mangle)]
+pub unsafe extern "system" fn DllGetClassObject(
+    clsid: *const windows_sys::core::GUID,
+    iid: *const windows_sys::core::GUID,
+    out: *mut *mut c_void,
+) -> HRESULT {
+    crate::ffi_guard(
+        "DllGetClassObject",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if clsid.is_null() || iid.is_null() {
+                return E_POINTER;
+            }
+            control::get_class_object(unsafe { &*clsid }, unsafe { &*iid }, out)
+        },
+    )
+}
+
+/// Never: the DLL keeps threads for the life of the process.
+#[unsafe(no_mangle)]
+pub extern "system" fn DllCanUnloadNow() -> HRESULT {
+    windows_sys::Win32::Foundation::S_FALSE
 }

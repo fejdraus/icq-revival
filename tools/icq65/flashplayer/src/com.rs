@@ -14,7 +14,8 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows_sys::Win32::Foundation::{
-    E_INVALIDARG, E_NOINTERFACE, E_NOTIMPL, E_POINTER, HWND, S_OK, SysAllocString, SysStringLen,
+    E_FAIL, E_INVALIDARG, E_NOINTERFACE, E_NOTIMPL, E_POINTER, HWND, S_OK, SysAllocString,
+    SysStringLen,
 };
 use windows_sys::core::{GUID, HRESULT};
 
@@ -98,6 +99,11 @@ pub struct FlashObject {
     sink: Cell<Unk>,
     cookie: Cell<u32>,
     loop_: Cell<bool>,
+    /// The ActiveX control this object is part of (its controlling IUnknown,
+    /// not AddRef'd), or null for the FlashPlayerControl window's object.
+    /// When set, QueryInterface/AddRef/Release on this object's interfaces go
+    /// to the control, so all of them share one COM identity.
+    outer: Cell<Unk>,
 }
 
 const PTR: usize = size_of::<usize>();
@@ -114,6 +120,7 @@ impl FlashObject {
             sink: Cell::new(null_mut()),
             cookie: Cell::new(0),
             loop_: Cell::new(true),
+            outer: Cell::new(null_mut()),
         }))
     }
 
@@ -156,6 +163,67 @@ impl FlashObject {
 
     fn add_ref(&self) -> u32 {
         self.refs.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    pub fn set_outer(&self, outer: Unk) {
+        self.outer.set(outer);
+    }
+
+    /// QueryInterface as clients see it (delegates to the control, if any).
+    unsafe fn public_query(&self, iid: &GUID, out: *mut Unk) -> HRESULT {
+        let outer = self.outer.get();
+        if outer.is_null() {
+            unsafe { self.query(iid, out) }
+        } else {
+            unsafe { vcall!(outer, 0, fn(*const GUID, *mut Unk) -> HRESULT, iid, out) }
+        }
+    }
+
+    fn public_add_ref(&self) -> u32 {
+        let outer = self.outer.get();
+        if outer.is_null() {
+            self.add_ref()
+        } else {
+            unsafe { vcall!(outer, 1, fn() -> u32) }
+        }
+    }
+
+    unsafe fn public_release(this: *const FlashObject) -> u32 {
+        let outer = unsafe { (*this).outer.get() };
+        if outer.is_null() {
+            unsafe { FlashObject::release(this) }
+        } else {
+            unsafe { vcall!(outer, 2, fn() -> u32) }
+        }
+    }
+
+    /// One of this object's own interfaces (IShockwaveFlash, IDispatch,
+    /// IConnectionPointContainer, IConnectionPoint), counted on the public
+    /// identity. The control's QueryInterface uses this.
+    pub unsafe fn own_query(&self, iid: &GUID, out: *mut Unk) -> HRESULT {
+        let outer = self.outer.get();
+        if outer.is_null() {
+            return unsafe { self.query(iid, out) };
+        }
+        if out.is_null() {
+            return E_POINTER;
+        }
+        let base = self.base() as *mut u8;
+        let p = if guid_eq(iid, &IID_IDISPATCH) || guid_eq(iid, &IID_ISHOCKWAVEFLASH) {
+            base
+        } else if guid_eq(iid, &IID_ICONNECTIONPOINTCONTAINER) {
+            unsafe { base.add(PTR) }
+        } else if guid_eq(iid, &IID_ICONNECTIONPOINT) {
+            unsafe { base.add(2 * PTR) }
+        } else {
+            unsafe { *out = null_mut() };
+            return E_NOINTERFACE;
+        };
+        unsafe {
+            vcall!(outer, 1, fn() -> u32);
+            *out = p as Unk;
+        }
+        S_OK
     }
 
     /// Drops one reference; frees the object at zero.
@@ -271,17 +339,17 @@ unsafe extern "system" fn sf_query(this: Unk, iid: *const GUID, out: *mut Unk) -
         if iid.is_null() {
             return E_POINTER;
         }
-        unsafe { FlashObject::from_sf(this).query(&*iid, out) }
+        unsafe { FlashObject::from_sf(this).public_query(&*iid, out) }
     })
 }
 unsafe extern "system" fn sf_addref(this: Unk) -> u32 {
     crate::ffi_guard("sf_addref", 0, || unsafe {
-        FlashObject::from_sf(this).add_ref()
+        FlashObject::from_sf(this).public_add_ref()
     })
 }
 unsafe extern "system" fn sf_release(this: Unk) -> u32 {
     crate::ffi_guard("sf_release", 0, || unsafe {
-        FlashObject::release(FlashObject::from_sf(this))
+        FlashObject::public_release(FlashObject::from_sf(this))
     })
 }
 
@@ -610,13 +678,113 @@ unsafe extern "system" fn flash_version(_this: Unk, out: *mut i32) -> HRESULT {
         },
     )
 }
-unsafe extern "system" fn get_wmode(_this: Unk, out: *mut *const u16) -> HRESULT {
-    crate::ffi_guard("get_wmode", windows_sys::Win32::Foundation::E_FAIL, || {
+unsafe extern "system" fn get_wmode(this: Unk, out: *mut *const u16) -> HRESULT {
+    crate::ffi_guard("get_wmode", E_FAIL, || {
         if out.is_null() {
             return E_POINTER;
         }
-        unsafe { *out = bstr("transparent") };
+        let t = inst(this).is_none_or(|i| i.display.get().transparent);
+        unsafe { *out = bstr(if t { "transparent" } else { "opaque" }) };
         S_OK
+    })
+}
+unsafe extern "system" fn put_wmode(this: Unk, v: *const u16) -> HRESULT {
+    crate::ffi_guard("put_wmode", E_FAIL, || {
+        let v = unsafe { bstr_to_string(v) };
+        inst(this).map_or(E_INVALIDARG, |i| {
+            let mut d = i.display.get();
+            d.transparent = v.trim().eq_ignore_ascii_case("transparent");
+            i.set_display(d);
+            S_OK
+        })
+    })
+}
+unsafe extern "system" fn get_scale(this: Unk, out: *mut *const u16) -> HRESULT {
+    crate::ffi_guard("get_scale", E_FAIL, || {
+        if out.is_null() {
+            return E_POINTER;
+        }
+        use ruffle_core::StageScaleMode as S;
+        let name = match inst(this).map(|i| i.display.get().scale) {
+            Some(S::NoBorder) => "NoBorder",
+            Some(S::ExactFit) => "ExactFit",
+            Some(S::NoScale) => "NoScale",
+            _ => "ShowAll",
+        };
+        unsafe { *out = bstr(name) };
+        S_OK
+    })
+}
+unsafe extern "system" fn put_scale(this: Unk, v: *const u16) -> HRESULT {
+    crate::ffi_guard("put_scale", E_FAIL, || {
+        let v = unsafe { bstr_to_string(v) };
+        let Some(mode) = crate::movie::scale_mode(&v) else {
+            return E_INVALIDARG;
+        };
+        inst(this).map_or(E_INVALIDARG, |i| {
+            let mut d = i.display.get();
+            d.scale = mode;
+            i.set_display(d);
+            S_OK
+        })
+    })
+}
+/// Property setters a host may call that change nothing here.
+extern "system" fn put_ignored(_this: Unk, _v: usize) -> HRESULT {
+    S_OK
+}
+unsafe extern "system" fn set_variable(this: Unk, name: *const u16, value: *const u16) -> HRESULT {
+    crate::ffi_guard("SetVariable", E_FAIL, || {
+        let (name, value) = unsafe { (bstr_to_string(name), bstr_to_string(value)) };
+        inst(this).map_or(E_INVALIDARG, |i| i.set_variable(&name, &value))
+    })
+}
+unsafe extern "system" fn get_variable(
+    this: Unk,
+    name: *const u16,
+    out: *mut *const u16,
+) -> HRESULT {
+    crate::ffi_guard("GetVariable", E_FAIL, || {
+        if out.is_null() {
+            return E_POINTER;
+        }
+        unsafe { *out = std::ptr::null() };
+        let name = unsafe { bstr_to_string(name) };
+        match inst(this).and_then(|i| i.get_variable(&name)) {
+            Some(v) => {
+                unsafe { *out = bstr(&v) };
+                S_OK
+            }
+            None => E_FAIL,
+        }
+    })
+}
+unsafe extern "system" fn t_goto_label(
+    this: Unk,
+    target: *const u16,
+    label: *const u16,
+) -> HRESULT {
+    crate::ffi_guard("TGotoLabel", E_FAIL, || {
+        let (target, label) = unsafe { (bstr_to_string(target), bstr_to_string(label)) };
+        inst(this).map_or(E_INVALIDARG, |i| i.t_goto_label(&target, &label))
+    })
+}
+unsafe extern "system" fn t_goto_frame(this: Unk, target: *const u16, frame: i32) -> HRESULT {
+    crate::ffi_guard("TGotoFrame", E_FAIL, || {
+        let target = unsafe { bstr_to_string(target) };
+        inst(this).map_or(E_INVALIDARG, |i| i.t_goto_frame(&target, frame))
+    })
+}
+unsafe extern "system" fn t_play(this: Unk, target: *const u16) -> HRESULT {
+    crate::ffi_guard("TPlay", E_FAIL, || {
+        let target = unsafe { bstr_to_string(target) };
+        inst(this).map_or(E_INVALIDARG, |i| i.t_play(&target, true))
+    })
+}
+unsafe extern "system" fn t_stop_play(this: Unk, target: *const u16) -> HRESULT {
+    crate::ffi_guard("TStopPlay", E_FAIL, || {
+        let target = unsafe { bstr_to_string(target) };
+        inst(this).map_or(E_INVALIDARG, |i| i.t_play(&target, false))
     })
 }
 unsafe extern "system" fn load_movie(this: Unk, _layer: i32, url: *const u16) -> HRESULT {
@@ -709,6 +877,25 @@ fn sf_vtbl() -> *const usize {
         set(38, frame_loaded as *const () as usize);
         set(39, flash_version as *const () as usize);
         set(40, get_wmode as *const () as usize);
+        set(41, put_wmode as *const () as usize);
+        set(48, get_scale as *const () as usize);
+        set(49, put_scale as *const () as usize);
+        set(59, t_goto_frame as *const () as usize);
+        set(60, t_goto_label as *const () as usize); // +0xF0
+        set(63, t_play as *const () as usize);
+        set(64, t_stop_play as *const () as usize);
+        set(65, set_variable as *const () as usize); // +0x104
+        set(66, get_variable as *const () as usize);
+        // put_Quality, put_ScaleMode, put_AlignMode, put_BackgroundColor,
+        // put_SAlign, put_Menu, put_Base, put_DeviceFont, put_EmbedMovie,
+        // put_BGColor, put_Quality2, put_SWRemote, put_FlashVars,
+        // put_AllowScriptAccess, put_SeamlessTabbing, put_AllowNetworking,
+        // put_AllowFullScreen: accepted and ignored (one 32-bit argument each).
+        for slot in [
+            12, 14, 16, 18, 43, 45, 47, 51, 53, 55, 57, 75, 77, 79, 85, 97, 99,
+        ] {
+            set(slot, put_ignored as *const () as usize);
+        }
         set(58, load_movie as *const () as usize);
         v
     })
@@ -740,17 +927,17 @@ unsafe extern "system" fn cpc_query(this: Unk, iid: *const GUID, out: *mut Unk) 
         if iid.is_null() {
             return E_POINTER;
         }
-        unsafe { FlashObject::from_cpc(this).query(&*iid, out) }
+        unsafe { FlashObject::from_cpc(this).public_query(&*iid, out) }
     })
 }
 unsafe extern "system" fn cpc_addref(this: Unk) -> u32 {
     crate::ffi_guard("cpc_addref", 0, || unsafe {
-        FlashObject::from_cpc(this).add_ref()
+        FlashObject::from_cpc(this).public_add_ref()
     })
 }
 unsafe extern "system" fn cpc_release(this: Unk) -> u32 {
     crate::ffi_guard("cpc_release", 0, || unsafe {
-        FlashObject::release(FlashObject::from_cpc(this))
+        FlashObject::public_release(FlashObject::from_cpc(this))
     })
 }
 unsafe extern "system" fn cpc_enum(_this: Unk, out: *mut Unk) -> HRESULT {
@@ -770,7 +957,7 @@ unsafe extern "system" fn cpc_find(this: Unk, iid: *const GUID, out: *mut Unk) -
         if !guid_eq(unsafe { &*iid }, &DIID_ISHOCKWAVEFLASHEVENTS) {
             return CONNECT_E_NOCONNECTION;
         }
-        unsafe { FlashObject::from_cpc(this).query(&IID_ICONNECTIONPOINT, out) }
+        unsafe { FlashObject::from_cpc(this).own_query(&IID_ICONNECTIONPOINT, out) }
     })
 }
 
@@ -805,17 +992,17 @@ unsafe extern "system" fn cp_query(this: Unk, iid: *const GUID, out: *mut Unk) -
         if iid.is_null() {
             return E_POINTER;
         }
-        unsafe { FlashObject::from_cp(this).query(&*iid, out) }
+        unsafe { FlashObject::from_cp(this).public_query(&*iid, out) }
     })
 }
 unsafe extern "system" fn cp_addref(this: Unk) -> u32 {
     crate::ffi_guard("cp_addref", 0, || unsafe {
-        FlashObject::from_cp(this).add_ref()
+        FlashObject::from_cp(this).public_add_ref()
     })
 }
 unsafe extern "system" fn cp_release(this: Unk) -> u32 {
     crate::ffi_guard("cp_release", 0, || unsafe {
-        FlashObject::release(FlashObject::from_cp(this))
+        FlashObject::public_release(FlashObject::from_cp(this))
     })
 }
 unsafe extern "system" fn cp_get_interface(_this: Unk, out: *mut GUID) -> HRESULT {
@@ -835,7 +1022,7 @@ unsafe extern "system" fn cp_get_container(this: Unk, out: *mut Unk) -> HRESULT 
     crate::ffi_guard(
         "cp_get_container",
         windows_sys::Win32::Foundation::E_FAIL,
-        || unsafe { FlashObject::from_cp(this).query(&IID_ICONNECTIONPOINTCONTAINER, out) },
+        || unsafe { FlashObject::from_cp(this).own_query(&IID_ICONNECTIONPOINTCONTAINER, out) },
     )
 }
 unsafe extern "system" fn cp_advise(this: Unk, sink: Unk, cookie: *mut u32) -> HRESULT {

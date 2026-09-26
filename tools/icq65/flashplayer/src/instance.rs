@@ -69,7 +69,19 @@ pub struct Instance {
     surface: RefCell<Option<Surface>>,
     /// Created without owner or parent: the client's offscreen snapshot
     /// service (Flash avatars). Its movies play without sound.
-    muted: bool,
+    muted: Cell<bool>,
+    /// Part of the ShockwaveFlash ActiveX control (control.rs) instead of a
+    /// layered FlashPlayerControl window: frames are kept for
+    /// IViewObject::Draw, the size comes from the host, and movies loop.
+    control: Cell<bool>,
+    /// The host's size in pixels (control mode).
+    size: Cell<(u32, u32)>,
+    /// WMode/Scale for the next movie.
+    pub display: Cell<crate::movie::Display>,
+    /// The last rendered frame (control mode).
+    pub frame: RefCell<Option<Rc<Frame>>>,
+    /// Called after a new frame was rendered (control mode).
+    pub on_frame: RefCell<Option<Box<dyn Fn()>>>,
 }
 
 /// The windows of one thread. Each window lives on the thread that created
@@ -165,7 +177,7 @@ impl Drop for Surface {
 }
 
 /// A 32bpp top-down DIB section.
-fn new_dib(width: u32, height: u32) -> Option<(HBITMAP, *mut u8)> {
+pub(crate) fn new_dib(width: u32, height: u32) -> Option<(HBITMAP, *mut u8)> {
     let mut info: BITMAPINFO = unsafe { std::mem::zeroed() };
     info.bmiHeader = BITMAPINFOHEADER {
         biSize: size_of::<BITMAPINFOHEADER>() as u32,
@@ -218,7 +230,14 @@ impl Instance {
             last_tick: Cell::new(None),
             fs: Rc::new(RefCell::new(VecDeque::new())),
             surface: RefCell::new(None),
-            muted: unsafe { GetWindow(hwnd, GW_OWNER).is_null() && GetParent(hwnd).is_null() },
+            muted: Cell::new(unsafe {
+                GetWindow(hwnd, GW_OWNER).is_null() && GetParent(hwnd).is_null()
+            }),
+            control: Cell::new(false),
+            size: Cell::new((0, 0)),
+            display: Cell::new(crate::movie::Display::default()),
+            frame: RefCell::new(None),
+            on_frame: RefCell::new(None),
         }
     }
 
@@ -333,8 +352,16 @@ impl Instance {
             }
         };
         let url = crate::fetch::movie_url(&self.url.borrow());
-        let (w, h) = client_size(self.hwnd);
-        let movie = match Movie::new(&data, &url, w, h, self.fs.clone(), self.muted) {
+        let (w, h) = self.size();
+        let movie = match Movie::new(
+            &data,
+            &url,
+            w,
+            h,
+            self.fs.clone(),
+            self.muted.get(),
+            self.display.get(),
+        ) {
             Ok(m) => m,
             Err(e) => {
                 log(&format!("cannot play {url}: {e}"));
@@ -416,7 +443,7 @@ impl Instance {
         if self.destroyed.get() {
             return;
         }
-        let (w, h) = client_size(self.hwnd);
+        let (w, h) = self.size();
         if w == 0 || h == 0 {
             return;
         }
@@ -426,8 +453,101 @@ impl Instance {
             m.resize(w, h);
             m.render()
         };
-        if let Some(f) = frame {
+        let Some(f) = frame else { return };
+        if self.control.get() {
+            *self.frame.borrow_mut() = Some(Rc::new(f));
+            let notify = self.on_frame.borrow();
+            if let Some(cb) = notify.as_ref() {
+                cb();
+            }
+        } else {
             self.show(&f);
+        }
+    }
+
+    /// The size to render at: the host's (control) or the window's client area.
+    fn size(&self) -> (u32, u32) {
+        if self.control.get() {
+            self.size.get()
+        } else {
+            client_size(self.hwnd)
+        }
+    }
+
+    /// Makes this the engine of a ShockwaveFlash ActiveX control.
+    pub fn set_control_mode(&self) {
+        self.control.set(true);
+        self.muted.set(false);
+    }
+
+    /// The host's new size in pixels (control mode); re-renders.
+    pub fn set_size(&self, w: u32, h: u32) {
+        if self.size.get() != (w, h) {
+            self.size.set((w, h));
+            self.present();
+        }
+    }
+
+    /// New WMode/Scale; applies to the loaded movie too.
+    pub fn set_display(&self, d: crate::movie::Display) {
+        self.display.set(d);
+        let applied = self.guarded("display", false, || {
+            let movie = self.movie.borrow();
+            let Some(m) = movie.as_ref() else {
+                return false;
+            };
+            m.set_display(d);
+            true
+        });
+        if applied {
+            self.present();
+        }
+    }
+
+    /// Runs `f` on the loaded movie (guarded); None without a movie.
+    fn with_movie<R>(&self, what: &str, f: impl FnOnce(&Movie) -> R) -> Option<R> {
+        let r = self.guarded(what, None, || {
+            let movie = self.movie.borrow();
+            movie.as_ref().map(f)
+        });
+        // Variables and gotos change the picture: show it now.
+        if r.is_some() {
+            self.present();
+        }
+        r
+    }
+
+    pub fn set_variable(&self, path: &str, value: &str) -> HRESULT {
+        match self.with_movie("SetVariable", |m| m.set_variable(path, value)) {
+            Some(true) => S_OK,
+            _ => E_FAIL,
+        }
+    }
+
+    pub fn get_variable(&self, path: &str) -> Option<String> {
+        self.with_movie("GetVariable", |m| m.get_variable(path))
+            .flatten()
+    }
+
+    pub fn t_goto_label(&self, target: &str, label: &str) -> HRESULT {
+        match self.with_movie("TGotoLabel", |m| m.t_goto_label(target, label)) {
+            Some(true) => S_OK,
+            _ => E_FAIL,
+        }
+    }
+
+    pub fn t_goto_frame(&self, target: &str, frame: i32) -> HRESULT {
+        let frame = frame.clamp(0, u16::MAX as i32) as u16;
+        match self.with_movie("TGotoFrame", |m| m.t_goto_frame(target, frame)) {
+            Some(true) => S_OK,
+            _ => E_FAIL,
+        }
+    }
+
+    pub fn t_play(&self, target: &str, play: bool) -> HRESULT {
+        match self.with_movie("TPlay", |m| m.t_play(target, play)) {
+            Some(true) => S_OK,
+            _ => E_FAIL,
         }
     }
 
@@ -470,7 +590,7 @@ impl Instance {
 
     /// Message 0x1404: a new 32bpp top-down DIB of the current frame.
     fn snapshot_inner(&self) -> HBITMAP {
-        let (w, h) = client_size(self.hwnd);
+        let (w, h) = self.size();
         let frame = {
             let mut movie = self.movie.borrow_mut();
             let Some(m) = movie.as_mut() else {
@@ -500,12 +620,12 @@ impl Instance {
             // The root timeline reached its last frame: a tZer is a one-shot,
             // so stop there instead of looping (Flash with Loop=false).
             let (frame, playing) = m.root_state();
-            if playing && m.total_frames > 1 && frame >= m.total_frames {
+            if !self.control.get() && playing && m.total_frames > 1 && frame >= m.total_frames {
                 m.stop_root();
             }
             // The end of a movie that sends no animEnd: its root timeline
             // stands on the last frame for a moment.
-            if !self.ended.get() && self.want_play.get() {
+            if !self.control.get() && !self.ended.get() && self.want_play.get() {
                 let (frame, root_playing) = m.root_state();
                 if root_playing || m.total_frames == 0 || frame < m.total_frames {
                     self.idle_since.set(None);
@@ -578,7 +698,7 @@ impl Instance {
         if !bmp.is_null() {
             return bmp;
         }
-        let (w, h) = client_size(self.hwnd);
+        let (w, h) = self.size();
         new_dib(w.max(1), h.max(1)).map_or(null_mut(), |(b, _)| b)
     }
 

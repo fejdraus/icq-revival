@@ -5,11 +5,12 @@ message window, through `FlashPlayerControl.dll`. The original is Softanics
 Flash Player Control, a wrapper around the Adobe Flash ActiveX control, which no
 longer exists. This folder builds a drop-in replacement that plays the same SWF
 movies with [Ruffle](https://github.com/ruffle-rs/ruffle), the open-source Flash
-emulator. The client needs no changes beyond this DLL and a per-user type
-library registration.
+emulator. The same DLL is also the ShockwaveFlash ActiveX control that ICQ's
+Boxely UI embeds for animated (Flash) avatars. The client needs no changes
+beyond this DLL and its per-user registration.
 
-This is a prototype. It plays tZers; it does not cover everything the original
-DLL exported.
+This is a prototype. It plays tZers and Flash avatars; it does not cover
+everything the original DLL or Adobe's control offered.
 
 ## What the client expects
 
@@ -21,7 +22,8 @@ These facts come from a static analysis of `MCore.dll`, `MUIMessage.dll` and
   `UnregisterFlashWindowClass`, `FPC_LoadMovieW`, `FPC_Play`, `FPC_Stop`
   (stop and rewind), `FPC_StopPlay` (pause), `FPC_IsPlaying`,
   `FPC_UpdateWindow` and `FPCSetEventListener`. The DLL also exports
-  `DllRegisterServer` and `DllUnregisterServer`.
+  `DllRegisterServer`, `DllUnregisterServer`, `DllGetClassObject` and
+  `DllCanUnloadNow`.
 - **Window class** `FlashPlayerControl` (`CS_GLOBALCLASS | CS_DBLCLKS`). The
   client creates it as a layered popup (exstyle `0x08080080`, style
   `0x90000000`), subclasses it, sizes it, then calls `FPC_UpdateWindow`. Frames
@@ -45,6 +47,73 @@ These facts come from a static analysis of `MCore.dll`, `MUIMessage.dll` and
   carries a compatible library as resource `TYPELIB #1`, built from
   `typelib/flash.idl`. `DllRegisterServer` registers it for the current user
   (`RegisterTypeLibForUser`, HKCU only), and `DllUnregisterServer` removes it.
+
+### Flash avatars: the ShockwaveFlash ActiveX control
+
+Animated avatars (BART type 8) are shown by the "devil" gadget of the Boxely
+UI (`boxelyRenderer.dll`, `MUIUtils` `MCFlashPlayerImpl`, `MUICoreLib`
+`MCDevilImpl`). It does not use FlashPlayerControl's window; it hosts Flash
+directly:
+
+- **Creation.** `CLSIDFromString("{D27CDB6E-AE6D-11cf-96B8-444553540000}")`
+  or the ProgID `ShockwaveFlash.ShockwaveFlash`, then
+  `CoGetClassObject`/`CoCreateInstance`. The DLL provides the class factory
+  (`IClassFactory2`, licence always verified) and registers the class for the
+  user.
+- **Activation order.**
+  1. `IOleObject::GetMiscStatus`. The DLL reports Flash's `0x20191`, which
+     includes `OLEMISC_SETCLIENTSITEFIRST`.
+  2. `IPersistPropertyBag::Load` with the `<param>`s: `Movie`, `WMode`
+     (`transparent` for the ICQ box), `Scale` (`NoBorder`), `Play`, `Quality`.
+  3. `SetClientSite`.
+  4. `IViewObjectEx`, `IOleObject::Advise`, `IViewObject::SetAdvise`.
+  5. `SetHostNames`, then `SetExtent` (HIMETRIC).
+  6. `DoVerb(OLEIVERB_INPLACEACTIVATE)`: windowless when the site allows it
+     (`OnInPlaceActivateEx(ACTIVATE_WINDOWLESS)`).
+  7. `IObjectWithSite::SetSite`, then
+     `IOleInPlaceObjectWindowless::SetObjectRects`.
+- **Painting.** `IViewObject::Draw` puts the last frame into the host's DC,
+  premultiplied, with `AlphaBlend`: transparent where the movie draws nothing
+  with WMode transparent, opaque otherwise.
+  - Windowless: the rectangle comes from `SetObjectRects`.
+  - A memory DC: the rectangle is passed in, and the movie is rendered at that
+    size.
+  - On every new frame the DLL calls the site's
+    `IOleInPlaceSiteWindowless::InvalidateRect`, or `IAdviseSink::OnViewChange`.
+  - `QueryHitPoint` hits where the frame has pixels.
+- **Driving it** (through `IShockwaveFlash` or `IDispatch`):
+  - `Movie` (put through `Invoke`), `Play` (+0x70), `Stop` (+0x74), `put_Movie`
+    (+0x58), `TGotoLabel` (+0xF0), `SetVariable` (+0x104).
+  - The devil calls `SetVariable("face.emotion", "stam")`, then
+    `SetVariable("face.emotion", e)` for smile, sad, laugh, mad, cry and love,
+    or offline, busy and stam for a status. In the avatar SWFs `face` has
+    `addProperty("emotion", ...)`, and its setter does
+    `gotoAndPlay(label)`.
+  - Also implemented: `GetVariable`, `TGotoFrame`, `TPlay`, `TStopPlay`, and
+    `WMode`/`Scale` get/put. The other property setters are accepted and
+    ignored.
+
+The control is the same engine as a tZer window. Each control creates a
+hidden message-only window of class `FlashPlayerControl` on its thread, with
+the same player, timer, loading and `IShockwaveFlash`. The window's
+`IShockwaveFlash` object delegates its `IUnknown` to the control (COM
+aggregation), so every interface has one identity. Unlike tZers, avatars loop
+(Flash's default), and they keep their sound.
+
+**SetVariable and friends in Ruffle.** At the pinned commit `ruffle_core` has
+no public SetVariable (its `avm1` module is private). The DLL does not patch
+Ruffle. It builds a few bytes of AVM1 code, for example `Push path; Push value;
+SetVariable`, into a stand-in `SwfMovie`, and queues them on the root clip with
+the public `UpdateContext::action_queue` (`ActionType::Normal`) inside
+`Player::update`. That runs them exactly like a frame script, so paths and
+`addProperty` setters behave as in Flash:
+- **GetVariable** ends with `getURL("FSCommand:<private name>", value)`; the
+  DLL's fscommand provider catches the value.
+- **TGotoLabel, TGotoFrame, TPlay and TStopPlay** use `SetTarget2` plus the
+  matching action.
+- **ActionScript 3 movies** are not supported: these calls return `E_FAIL`.
+
+### tZer windows: end of movie
 
 `FPC_IsPlaying` returns `VARIANT_TRUE` from `FPC_Play` (also while the movie
 still loads) until the movie has finished, and `VARIANT_FALSE` from then on.
@@ -111,6 +180,9 @@ then the thread may exit. Its COM apartment is unknown. So:
 - `src/com.rs` implements `IShockwaveFlash` and the connection point by hand.
 - `src/typelib.rs` loads the embedded type library and handles its
   registration.
+- `src/control.rs` is the ShockwaveFlash ActiveX control and its class
+  factory.
+- `src/registry.rs` registers the control class and ProgIDs for the user.
 - `src/fetch.rs` reads local paths, `file:` URLs and `http(s)` URLs (WinINet)
   on a background thread.
 
@@ -212,11 +284,38 @@ thread replays a tZer. The host also checks that exports called from the wrong
 thread fail, and reports the longest message the UI thread handled:
 
 ```
-%H%\examples\host.exe %H%\FlashPlayerControl.dll avatars http://127.0.0.1:8766 C:\out mixed 3 2 spawn C:\path\kisses.swf pirate.swf robot.swf ...
+%H%\examples\host.exe %H%\FlashPlayerControl.dll avatars http://127.0.0.1:8766 C:\out mixed 3 2 spawn C:\path\kisses.swf pirate.swf smile.swf ...
 ```
 
 (Serve the avatar SWFs, for example `deploy/oscar-legacy-web/avatars`, with
 `python -m http.server 8766`.)
+
+`ax` tests the ShockwaveFlash control:
+- **It creates the control through COM without the registry.** It registers
+  the DLL's class factory for the process (`CoRegisterClassObject`), then
+  calls `CoCreateInstance` by CLSID.
+- **It hosts every named avatar at once in a windowless container** that
+  follows the Boxely activation order above. Its site implements
+  `IOleClientSite`, `IOleInPlaceSiteWindowless` and `IAdviseSink`, and its
+  property bag holds WMode transparent and Scale NoBorder.
+- **It drives the controls like the devil gadget:** it sets `Movie` through
+  `IDispatch`, calls `Play`, and sends each emotion through
+  `SetVariable("face.emotion", ...)`.
+- **It captures every avatar through `IViewObject::Draw`** into
+  `sheet-avatars-x-emotions.png` (a row per avatar, a column per emotion) and
+  screenshots the windowless painting.
+- **It measures the load:** frames per second, and how busy the UI thread is.
+- **It also tries `TGotoLabel`, `GetVariable`, `Stop` and `Play`,** then puts
+  three controls into Windows' own ATL host (`atl.dll`, `AtlAxAttachControl`).
+
+`axreg` runs `DllRegisterServer` and `DllUnregisterServer` under a test root
+(`FLASHPLAYERCONTROL_TEST_REGROOT`), checks every key, and shows that the
+user's real registration did not change:
+
+```
+%H%\examples\host.exe %H%\FlashPlayerControl.dll ax W:\...\deploy\oscar-legacy-web\avatars C:\out pirate.swf smile.swf ...
+%H%\examples\host.exe %H%\FlashPlayerControl.dll axreg
+```
 
 If a run hangs, `host.exe dumpstacks <pid> <symbol path>` attaches from outside
 and prints every thread's stack and the owner of the loader lock. Build with
@@ -246,7 +345,19 @@ Use a copy of the ICQ 6.5 folder, not the installed one.
 
    The registration stores the DLL's full path. If you move the folder,
    register again.
-3. Start `ICQ.exe` from the copy and send or receive a tZer.
+3. Start `ICQ.exe` from the copy and send or receive a tZer. With a Flash
+   avatar set (on the server, BART type 8), the avatar in the contact list and
+   the message window plays and changes with emotions.
+
+`regsvr32` registers two things for the user:
+- the type library;
+- the ShockwaveFlash control class (under `HKCU\Software\Classes`, which a
+  32-bit `regsvr32` puts in the 32-bit view: `CLSID\{D27CDB6E-...}` with
+  `InprocServer32` = this DLL and `ThreadingModel` = Apartment, plus the
+  ProgIDs `ShockwaveFlash.ShockwaveFlash`, `.9` and `.10`).
+
+`/u` removes the class only when it is registered to this DLL, and the
+ProgIDs only when they point at it.
 
 To undo the registration:
 
@@ -265,10 +376,25 @@ to that file. It always writes the same lines to the debugger
 |----------|--------|
 | `FLASHPLAYERCONTROL_LOG` | Appends log lines to this file |
 | `FLASHPLAYERCONTROL_BACKEND` | Devices to try, in order: `vulkan`, `warp`, `gl`, `dx12` (hardware DX12), `fail` (behave as if the adapter request failed), or `none` (no renderer). Default `vulkan,warp,gl`, with `gl` only when there is a hardware GPU |
+| `FLASHPLAYERCONTROL_TEST_REGROOT` | Test only: register the control class under this HKCU key instead of `Software\Classes`, and leave the type library alone |
 | `FLASHPLAYERCONTROL_TEST_PANIC` | Test only: render number *n* and every later render panic, to exercise the failure handling |
 | `WGPU_DX12_COMPILER` | Passed to wgpu (`fxc`, `dynamicdxc`) |
 
 ## Known gaps
+
+- **No input reaches a Flash avatar.** `OnWindowMessage` returns S_FALSE, so
+  clicks go to the host.
+- **Windowed hosts get no window.** A host that cannot activate the control
+  windowless gets no window of its own; it hears about new frames only
+  through `IAdviseSink::OnViewChange` and must call `Draw` itself.
+- **Missing interfaces:** `IQuickActivate`, `IPersistStreamInit::Load`/`Save`
+  and property-bag `Save` are not implemented.
+- **Many avatars cost CPU.** Each one renders every frame it changes and
+  reads it back from the GPU. With 31 avatars (87x109) animating at 24 fps,
+  the UI thread was busy 63% on the test machine (about 0.7 ms per frame).
+  On WARP it managed 10.6 fps per avatar at 98%.
+- **`GetVariable` of an undefined variable** returns an empty string, not
+  NULL.
 
 - **Windows 10 or newer only.** Rust's `i686-pc-windows-msvc` target and wgpu
   need it, so Windows XP and 7 are not supported.

@@ -54,6 +54,7 @@ macro_rules! say {
 }
 
 mod avatar;
+mod axhost;
 mod stacks;
 
 // ---------------------------------------------------------------------------
@@ -404,6 +405,15 @@ thread_local! {
     static SLOWEST: std::cell::Cell<(u128, u32)> = const { std::cell::Cell::new((0, 0)) };
 }
 
+thread_local! {
+    /// Total time spent in DispatchMessage on this thread, microseconds.
+    static BUSY_US: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+}
+
+fn busy_us() -> u128 {
+    BUSY_US.with(|b| b.get())
+}
+
 fn slowest_dispatch() -> String {
     let (us, msg) = SLOWEST.with(|s| s.get());
     format!("{:.1} ms (message {msg:#x})", us as f64 / 1000.0)
@@ -412,11 +422,16 @@ fn slowest_dispatch() -> String {
 fn pump_once() {
     unsafe {
         let mut msg: MSG = std::mem::zeroed();
-        while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+        // Bounded, so a flood of messages cannot keep the caller here forever.
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_millis(200)
+            && PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0
+        {
             TranslateMessage(&msg);
             let t = Instant::now();
             DispatchMessageW(&msg);
             let us = t.elapsed().as_micros();
+            BUSY_US.with(|b| b.set(b.get() + us));
             SLOWEST.with(|s| {
                 if us > s.get().0 {
                     s.set((us, msg.message))
@@ -972,6 +987,20 @@ fn main() {
             };
             let ok = avatar::run_all(fpc, plan);
             std::process::exit(if ok { 0 } else { 1 });
+        }
+        // ShockwaveFlash ActiveX control: registration under a test root.
+        "axreg" => {
+            let ok = axhost::registration(fpc);
+            std::process::exit(if ok { 0 } else { 1 });
+        }
+        // ax <base dir|url> <out> <names...>: windowless container + ATL host.
+        "ax" => {
+            axhost::register_class(&args[1]);
+            let names = args[5..].to_vec();
+            let r = axhost::avatars_emotions(&args[3], &args[4], &names);
+            let atl = axhost::atl_host(&args[3], &args[4], &names[..names.len().min(3)]);
+            say!("result: container ok {}, ATL host ok {atl}", r.ok);
+            std::process::exit(if r.ok && atl { 0 } else { 1 });
         }
         m => panic!("unknown mode {m}"),
     }
