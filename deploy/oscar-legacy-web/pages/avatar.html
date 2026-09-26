@@ -127,6 +127,9 @@ var waiting = false;
 // the picture's.
 var animRead = -1;
 var animSet = -1;
+// The transaction that reads the current picture: its failure only means
+// there is none (an animated face may stand in its place), not a refusal.
+var picRead = -1;
 var animPending = '';
 var animChosen = '';
 
@@ -241,6 +244,7 @@ function cancel() {
 
 function refresh() {
   transaction = transaction + 1;
+  picRead = transaction;
   try {
     plugin.GetBartItem(transaction, BART_PICTURE, plugin.OwnerInfo.ScreenName);
   } catch (e) {
@@ -367,8 +371,9 @@ function showAnimated(data) {
 <script for="plugin" event="OnBartOpFailed(transID)" language="JavaScript">
   if (transID == animRead) { showAnimated(''); }
   else if (transID == animSet) { animPending = ''; say(T.picAnimServerRefused); }
-  // Also fires when there is simply no picture yet, which is not worth a fuss.
-  else { say(document.getElementById('current').src ? T.picServerRefused : ''); }
+  // Reading fails when there is simply no picture, which is not worth a fuss;
+  // only an upload that was asked for is reported as refused.
+  else if (transID != picRead && pending) { say(T.picServerRefused); }
 </script>
 
 <script for="plugin" event="OnOwnerBartItemChange(eType, bcstrData)" language="JavaScript">
