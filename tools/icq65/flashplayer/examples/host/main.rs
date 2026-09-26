@@ -602,7 +602,12 @@ fn audio_stats(hwnd: HWND) -> [u64; 3] {
 
 fn play(fpc: &Fpc, movie: &str, out: &str) {
     let _ = std::fs::create_dir_all(out);
-    say!("FPCIsFlashInstalled -> {}", (fpc.FPCIsFlashInstalled)());
+    let t = Instant::now();
+    let installed = (fpc.FPCIsFlashInstalled)();
+    say!(
+        "FPCIsFlashInstalled -> {installed} ({} ms on the UI thread)",
+        t.elapsed().as_millis()
+    );
     say!(
         "RegisterFlashWindowClass -> {}",
         (fpc.RegisterFlashWindowClass)()

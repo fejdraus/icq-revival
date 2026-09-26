@@ -205,29 +205,46 @@ impl Movie {
 
     /// Renders the current frame and reads it back from the GPU.
     pub fn render(&self) -> Option<Frame> {
+        // Test only: FLASHPLAYERCONTROL_TEST_PANIC=<n> makes the n-th render
+        // (and every one after it) panic, as a failing GPU would.
+        static RENDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if let Some(at) = std::env::var("FLASHPLAYERCONTROL_TEST_PANIC")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            if n >= at {
+                panic!("FLASHPLAYERCONTROL_TEST_PANIC: render {n}");
+            }
+        }
         self.with(|p| {
             p.render();
             let renderer = <dyn Any>::downcast_mut::<Renderer>(p.renderer_mut())?;
-            let target = renderer.target();
-            let info = target.buffer.as_ref()?;
-            let (buffer, dims) = info.buffer.inner();
-            let (width, height) = (target.size.width, target.size.height);
-            let row = width as usize * 4;
-            let pixels = capture_image(renderer.device(), buffer, dims, None, |rgba, padded| {
-                let mut out = Vec::with_capacity(row * height as usize);
-                for line in rgba.chunks(padded as usize).take(height as usize) {
-                    for px in line[..row].chunks_exact(4) {
-                        // RGBA (already premultiplied) -> BGRA
-                        out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
-                    }
-                }
-                out
-            });
-            Some(Frame {
-                width,
-                height,
-                pixels,
-            })
+            read_back(renderer)
         })
     }
+}
+
+/// Reads the last submitted frame of `renderer` back from the GPU.
+pub fn read_back(renderer: &Renderer) -> Option<Frame> {
+    let target = renderer.target();
+    let info = target.buffer.as_ref()?;
+    let (buffer, dims) = info.buffer.inner();
+    let (width, height) = (target.size.width, target.size.height);
+    let row = width as usize * 4;
+    let pixels = capture_image(renderer.device(), buffer, dims, None, |rgba, padded| {
+        let mut out = Vec::with_capacity(row * height as usize);
+        for line in rgba.chunks(padded as usize).take(height as usize) {
+            for px in line[..row].chunks_exact(4) {
+                // RGBA (already premultiplied) -> BGRA
+                out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+            }
+        }
+        out
+    });
+    Some(Frame {
+        width,
+        height,
+        pixels,
+    })
 }

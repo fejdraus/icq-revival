@@ -96,10 +96,16 @@ then the thread may exit. Its COM apartment is unknown. So:
 - `src/movie.rs` wraps the Ruffle player. It renders offscreen with
   `ruffle_render_wgpu` into a texture, reads the pixels back, and converts them
   from premultiplied RGBA to BGRA.
-- `src/gpu.rs` opens the shared device on its own thread. It tries the graphics
-  APIs in the order Vulkan, DX12, GL. An API only counts once Ruffle's shaders,
-  including the multisampled ones, build on it; on failure the next one is
-  tried.
+- `src/gpu.rs` opens the shared device on its own thread. It tries, in order:
+  1. Vulkan.
+  2. WARP: DX12 on Windows' software rasterizer, the only renderer a virtual
+     machine without a GPU has.
+  3. OpenGL, only when DXGI lists a hardware GPU. Without one, OpenGL would be
+     Windows' GDI OpenGL 1.1, which cannot run Ruffle.
+
+  A device counts only when Ruffle's shaders build on it, including the
+  multisampled ones, and when two 256x256 test frames read back right.
+  Otherwise the next option is tried.
 - `src/audio.rs` sends sound to the default output device through cpal
   (WASAPI) from its own thread, mixing all players.
 - `src/com.rs` implements `IShockwaveFlash` and the connection point by hand.
@@ -110,6 +116,36 @@ then the thread may exit. Its COM apartment is unknown. So:
 
 Ruffle is pinned to tag `nightly-2026-09-26`, commit
 `5455c72da5472a24cc293a7b13643709e9469587`.
+
+`vendor/wgpu-hal` is wgpu-hal 30.0.1 with one fix (see `[patch.crates-io]` in
+`Cargo.toml`). Its DX12 backend aligned pipeline-state-stream subobjects to 8
+bytes. D3D12 aligns them to pointer size, which is 4 on 32-bit, so every DX12
+pipeline in this x86 DLL failed with `E_INVALIDARG`, WARP included. Drop the
+patch once wgpu fixes `RenderPipelineStateStream::add_object`.
+
+## When something fails
+
+No failure may crash the client:
+
+- **Panics are caught.** Every export, COM method, the window procedure and
+  every thread of the DLL catch panics, so an unwinding panic never reaches
+  the client, where it would abort the process. Panics are logged with their
+  source location. The release profile keeps `panic = "unwind"`.
+- **wgpu errors are logged, not raised.** wgpu's own error handler (which
+  panics) is replaced by one that logs.
+- **A failing movie stops.** A movie whose playing or drawing panics stops its
+  timer, leaks its player, and counts as ended (`FPC_IsPlaying` false). The
+  window stays valid.
+- **`0x1404` always returns a bitmap.** When nothing can be drawn it is a
+  fully transparent one of the window's size.
+- **No renderer at all:**
+  - Loads end without events, and `FPC_IsPlaying` turns false.
+  - `FPCIsFlashInstalled` returns FALSE, so the client shows static pictures
+    and hides tZers.
+  - `FPCIsFlashInstalled` runs on the UI thread and waits at most 250 ms for
+    the probe. An undecided probe counts as TRUE: saying TRUE and failing
+    later is harmless (see the points above), but a wrong FALSE would hide
+    tZers and Flash avatars on a working machine.
 
 ## Build
 
@@ -228,17 +264,22 @@ to that file. It always writes the same lines to the debugger
 | Variable | Effect |
 |----------|--------|
 | `FLASHPLAYERCONTROL_LOG` | Appends log lines to this file |
-| `FLASHPLAYERCONTROL_BACKEND` | Order of graphics APIs, for example `gl` or `dx12,vulkan` (default `vulkan,dx12,gl`) |
+| `FLASHPLAYERCONTROL_BACKEND` | Devices to try, in order: `vulkan`, `warp`, `gl`, `dx12` (hardware DX12), `fail` (behave as if the adapter request failed), or `none` (no renderer). Default `vulkan,warp,gl`, with `gl` only when there is a hardware GPU |
+| `FLASHPLAYERCONTROL_TEST_PANIC` | Test only: render number *n* and every later render panic, to exercise the failure handling |
 | `WGPU_DX12_COMPILER` | Passed to wgpu (`fxc`, `dynamicdxc`) |
 
 ## Known gaps
 
 - **Windows 10 or newer only.** Rust's `i686-pc-windows-msvc` target and wgpu
   need it, so Windows XP and 7 are not supported.
-- **DX12 does not work in the 32-bit build** on the test machine. Pipeline
-  creation fails with `E_INVALIDARG` from the FXC shader path. The DLL falls
-  back to Vulkan or OpenGL on its own, but a machine with neither cannot play
-  tZers.
+- **Hardware DX12 is not used.** With the patched wgpu-hal it builds its
+  pipelines on the test machine (AMD, 32-bit), but its test frames read back
+  empty, and a forced run failed to map the readback buffer. So it is not in
+  the default order. When forced, the probe rejects it, and WARP after it
+  then took 12.7 s instead of 1.1 s.
+- **WARP is slow.** Opening it takes about 1.1 s on its own thread. Rendering
+  in software can hold up the window's thread: up to 2.9 s once, while three
+  avatar snapshots ran next to a tZer.
 - **Slow first load.** The first movie per process waits 0.2 to 1.6 s while the
   GPU device starts. The wait happens on the load thread, not the UI thread.
   Later movies reuse the device.

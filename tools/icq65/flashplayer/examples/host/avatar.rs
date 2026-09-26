@@ -185,6 +185,12 @@ pub struct Plan {
 /// Runs all jobs; the UI thread meanwhile pumps messages and replays a tZer.
 pub fn run_all(fpc: &'static Fpc, plan: Plan) -> bool {
     let _ = std::fs::create_dir_all(&plan.out);
+    let t = Instant::now();
+    let installed = (fpc.FPCIsFlashInstalled)();
+    say!(
+        "FPCIsFlashInstalled -> {installed} ({} ms on the UI thread)",
+        t.elapsed().as_millis()
+    );
     (fpc.RegisterFlashWindowClass)();
     let tzer = plan.tzer.as_ref().map(|swf| {
         let owner = crate::create_owner(100, 100, 800, 600);

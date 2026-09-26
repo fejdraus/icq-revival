@@ -267,30 +267,42 @@ pub unsafe fn bstr_to_string(b: *const u16) -> String {
 // IUnknown / IDispatch for the IShockwaveFlash pointer
 
 unsafe extern "system" fn sf_query(this: Unk, iid: *const GUID, out: *mut Unk) -> HRESULT {
-    if iid.is_null() {
-        return E_POINTER;
-    }
-    unsafe { FlashObject::from_sf(this).query(&*iid, out) }
+    crate::ffi_guard("sf_query", windows_sys::Win32::Foundation::E_FAIL, || {
+        if iid.is_null() {
+            return E_POINTER;
+        }
+        unsafe { FlashObject::from_sf(this).query(&*iid, out) }
+    })
 }
 unsafe extern "system" fn sf_addref(this: Unk) -> u32 {
-    unsafe { FlashObject::from_sf(this).add_ref() }
+    crate::ffi_guard("sf_addref", 0, || unsafe {
+        FlashObject::from_sf(this).add_ref()
+    })
 }
 unsafe extern "system" fn sf_release(this: Unk) -> u32 {
-    unsafe { FlashObject::release(FlashObject::from_sf(this)) }
+    crate::ffi_guard("sf_release", 0, || unsafe {
+        FlashObject::release(FlashObject::from_sf(this))
+    })
 }
 
 unsafe extern "system" fn sf_get_type_info_count(_this: Unk, n: *mut u32) -> HRESULT {
-    if n.is_null() {
-        return E_POINTER;
-    }
-    unsafe {
-        *n = if crate::typelib::interface_info().is_null() {
-            0
-        } else {
-            1
-        }
-    };
-    S_OK
+    crate::ffi_guard(
+        "sf_get_type_info_count",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if n.is_null() {
+                return E_POINTER;
+            }
+            unsafe {
+                *n = if crate::typelib::interface_info().is_null() {
+                    0
+                } else {
+                    1
+                }
+            };
+            S_OK
+        },
+    )
 }
 unsafe extern "system" fn sf_get_type_info(
     _this: Unk,
@@ -298,19 +310,25 @@ unsafe extern "system" fn sf_get_type_info(
     _lcid: u32,
     out: *mut Unk,
 ) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    unsafe { *out = null_mut() };
-    let ti = crate::typelib::dispatch_info();
-    if index != 0 || ti.is_null() {
-        return 0x8002000Bu32 as i32; // DISP_E_BADINDEX
-    }
-    unsafe {
-        com_addref(ti);
-        *out = ti;
-    }
-    S_OK
+    crate::ffi_guard(
+        "sf_get_type_info",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if out.is_null() {
+                return E_POINTER;
+            }
+            unsafe { *out = null_mut() };
+            let ti = crate::typelib::dispatch_info();
+            if index != 0 || ti.is_null() {
+                return 0x8002000Bu32 as i32; // DISP_E_BADINDEX
+            }
+            unsafe {
+                com_addref(ti);
+                *out = ti;
+            }
+            S_OK
+        },
+    )
 }
 unsafe extern "system" fn sf_get_ids_of_names(
     _this: Unk,
@@ -320,11 +338,19 @@ unsafe extern "system" fn sf_get_ids_of_names(
     _lcid: u32,
     ids: *mut i32,
 ) -> HRESULT {
-    let ti = crate::typelib::interface_info();
-    if ti.is_null() {
-        return E_NOTIMPL;
-    }
-    unsafe { windows_sys::Win32::System::Ole::DispGetIDsOfNames(ti.cast(), names, count, ids) }
+    crate::ffi_guard(
+        "sf_get_ids_of_names",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            let ti = crate::typelib::interface_info();
+            if ti.is_null() {
+                return E_NOTIMPL;
+            }
+            unsafe {
+                windows_sys::Win32::System::Ole::DispGetIDsOfNames(ti.cast(), names, count, ids)
+            }
+        },
+    )
 }
 unsafe extern "system" fn sf_invoke(
     this: Unk,
@@ -337,22 +363,24 @@ unsafe extern "system" fn sf_invoke(
     excep: *mut c_void,
     arg_err: *mut u32,
 ) -> HRESULT {
-    let ti = crate::typelib::interface_info();
-    if ti.is_null() {
-        return E_NOTIMPL;
-    }
-    unsafe {
-        windows_sys::Win32::System::Ole::DispInvoke(
-            this,
-            ti.cast(),
-            dispid,
-            flags,
-            params.cast(),
-            result.cast(),
-            excep.cast(),
-            arg_err,
-        )
-    }
+    crate::ffi_guard("sf_invoke", windows_sys::Win32::Foundation::E_FAIL, || {
+        let ti = crate::typelib::interface_info();
+        if ti.is_null() {
+            return E_NOTIMPL;
+        }
+        unsafe {
+            windows_sys::Win32::System::Ole::DispInvoke(
+                this,
+                ti.cast(),
+                dispid,
+                flags,
+                params.cast(),
+                result.cast(),
+                excep.cast(),
+                arg_err,
+            )
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -376,141 +404,226 @@ macro_rules! guard {
 }
 
 unsafe extern "system" fn get_ready_state(this: Unk, out: *mut i32) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    let v = inst(this).map_or(0, |i| i.ready_state.get());
-    unsafe { *out = v };
-    S_OK
+    crate::ffi_guard(
+        "get_ready_state",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if out.is_null() {
+                return E_POINTER;
+            }
+            let v = inst(this).map_or(0, |i| i.ready_state.get());
+            unsafe { *out = v };
+            S_OK
+        },
+    )
 }
 unsafe extern "system" fn get_total_frames(this: Unk, out: *mut i32) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    let v = inst(this).map_or(0, |i| i.total_frames());
-    unsafe { *out = v };
-    S_OK
+    crate::ffi_guard(
+        "get_total_frames",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if out.is_null() {
+                return E_POINTER;
+            }
+            let v = inst(this).map_or(0, |i| i.total_frames());
+            unsafe { *out = v };
+            S_OK
+        },
+    )
 }
 unsafe extern "system" fn get_playing(this: Unk, out: *mut i16) -> HRESULT {
-    unsafe { is_playing(this, out) }
+    crate::ffi_guard(
+        "get_playing",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || unsafe { is_playing(this, out) },
+    )
 }
 unsafe extern "system" fn put_playing(this: Unk, v: usize) -> HRESULT {
-    if v as i16 != VARIANT_FALSE {
-        play(this)
-    } else {
-        stop_play(this)
-    }
+    crate::ffi_guard(
+        "put_playing",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if v as i16 != VARIANT_FALSE {
+                play(this)
+            } else {
+                stop_play(this)
+            }
+        },
+    )
 }
 unsafe extern "system" fn get_loop(this: Unk, out: *mut i16) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    let l = unsafe { FlashObject::from_sf(this) }.loop_.get();
-    unsafe { *out = if l { VARIANT_TRUE } else { VARIANT_FALSE } };
-    S_OK
+    crate::ffi_guard("get_loop", windows_sys::Win32::Foundation::E_FAIL, || {
+        if out.is_null() {
+            return E_POINTER;
+        }
+        let l = unsafe { FlashObject::from_sf(this) }.loop_.get();
+        unsafe { *out = if l { VARIANT_TRUE } else { VARIANT_FALSE } };
+        S_OK
+    })
 }
 unsafe extern "system" fn put_loop(this: Unk, v: usize) -> HRESULT {
-    unsafe { FlashObject::from_sf(this) }
-        .loop_
-        .set(v as i16 != 0);
-    S_OK
+    crate::ffi_guard("put_loop", windows_sys::Win32::Foundation::E_FAIL, || {
+        unsafe { FlashObject::from_sf(this) }
+            .loop_
+            .set(v as i16 != 0);
+        S_OK
+    })
 }
 unsafe extern "system" fn get_movie(this: Unk, out: *mut *const u16) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    let url = inst(this)
-        .map(|i| i.url.borrow().clone())
-        .unwrap_or_default();
-    unsafe { *out = bstr(&url) };
-    S_OK
+    crate::ffi_guard("get_movie", windows_sys::Win32::Foundation::E_FAIL, || {
+        if out.is_null() {
+            return E_POINTER;
+        }
+        let url = inst(this)
+            .map(|i| i.url.borrow().clone())
+            .unwrap_or_default();
+        unsafe { *out = bstr(&url) };
+        S_OK
+    })
 }
 unsafe extern "system" fn put_movie(this: Unk, url: *const u16) -> HRESULT {
-    unsafe { load_movie(this, 0, url) }
+    crate::ffi_guard(
+        "put_movie",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || unsafe { load_movie(this, 0, url) },
+    )
 }
 unsafe extern "system" fn get_frame_num(this: Unk, out: *mut i32) -> HRESULT {
-    unsafe { current_frame(this, out) }
+    crate::ffi_guard(
+        "get_frame_num",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || unsafe { current_frame(this, out) },
+    )
 }
 unsafe extern "system" fn put_frame_num(this: Unk, frame: i32) -> HRESULT {
-    goto_frame(this, frame)
+    crate::ffi_guard(
+        "put_frame_num",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || goto_frame(this, frame),
+    )
 }
 extern "system" fn play(this: Unk) -> HRESULT {
-    guard!(inst(this).map_or(E_INVALIDARG, |i| i.play()))
+    crate::ffi_guard("play", windows_sys::Win32::Foundation::E_FAIL, || {
+        guard!(inst(this).map_or(E_INVALIDARG, |i| i.play()))
+    })
 }
 extern "system" fn stop(this: Unk) -> HRESULT {
-    guard!(inst(this).map_or(E_INVALIDARG, |i| i.stop()))
+    crate::ffi_guard("stop", windows_sys::Win32::Foundation::E_FAIL, || {
+        guard!(inst(this).map_or(E_INVALIDARG, |i| i.stop()))
+    })
 }
 extern "system" fn rewind(this: Unk) -> HRESULT {
-    guard!(inst(this).map_or(E_INVALIDARG, |i| i.goto_frame(0)))
+    crate::ffi_guard("rewind", windows_sys::Win32::Foundation::E_FAIL, || {
+        guard!(inst(this).map_or(E_INVALIDARG, |i| i.goto_frame(0)))
+    })
 }
 extern "system" fn stop_play(this: Unk) -> HRESULT {
-    guard!(inst(this).map_or(E_INVALIDARG, |i| i.stop_play()))
+    crate::ffi_guard("stop_play", windows_sys::Win32::Foundation::E_FAIL, || {
+        guard!(inst(this).map_or(E_INVALIDARG, |i| i.stop_play()))
+    })
 }
 extern "system" fn goto_frame(this: Unk, frame: i32) -> HRESULT {
-    guard!(inst(this).map_or(E_INVALIDARG, |i| i.goto_frame(frame)))
+    crate::ffi_guard("goto_frame", windows_sys::Win32::Foundation::E_FAIL, || {
+        guard!(inst(this).map_or(E_INVALIDARG, |i| i.goto_frame(frame)))
+    })
 }
 extern "system" fn back(this: Unk) -> HRESULT {
-    guard!(inst(this).map_or(E_INVALIDARG, |i| {
-        let f = i.current_frame();
-        i.goto_frame((f - 1).max(0))
-    }))
+    crate::ffi_guard("back", windows_sys::Win32::Foundation::E_FAIL, || {
+        guard!(inst(this).map_or(E_INVALIDARG, |i| {
+            let f = i.current_frame();
+            i.goto_frame((f - 1).max(0))
+        }))
+    })
 }
 extern "system" fn forward(this: Unk) -> HRESULT {
-    guard!(inst(this).map_or(E_INVALIDARG, |i| {
-        let f = i.current_frame();
-        i.goto_frame(f + 1)
-    }))
+    crate::ffi_guard("forward", windows_sys::Win32::Foundation::E_FAIL, || {
+        guard!(inst(this).map_or(E_INVALIDARG, |i| {
+            let f = i.current_frame();
+            i.goto_frame(f + 1)
+        }))
+    })
 }
 unsafe extern "system" fn current_frame(this: Unk, out: *mut i32) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    let v = inst(this).map_or(0, |i| i.current_frame());
-    unsafe { *out = v };
-    S_OK
+    crate::ffi_guard(
+        "current_frame",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if out.is_null() {
+                return E_POINTER;
+            }
+            let v = inst(this).map_or(0, |i| i.current_frame());
+            unsafe { *out = v };
+            S_OK
+        },
+    )
 }
 unsafe extern "system" fn is_playing(this: Unk, out: *mut i16) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    let v = inst(this).is_some_and(|i| i.is_playing());
-    unsafe { *out = if v { VARIANT_TRUE } else { VARIANT_FALSE } };
-    S_OK
+    crate::ffi_guard("is_playing", windows_sys::Win32::Foundation::E_FAIL, || {
+        if out.is_null() {
+            return E_POINTER;
+        }
+        let v = inst(this).is_some_and(|i| i.is_playing());
+        unsafe { *out = if v { VARIANT_TRUE } else { VARIANT_FALSE } };
+        S_OK
+    })
 }
 unsafe extern "system" fn percent_loaded(this: Unk, out: *mut i32) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    let v = inst(this).map_or(0, |i| if i.ready_state.get() == 4 { 100 } else { 0 });
-    unsafe { *out = v };
-    S_OK
+    crate::ffi_guard(
+        "percent_loaded",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if out.is_null() {
+                return E_POINTER;
+            }
+            let v = inst(this).map_or(0, |i| if i.ready_state.get() == 4 { 100 } else { 0 });
+            unsafe { *out = v };
+            S_OK
+        },
+    )
 }
 unsafe extern "system" fn frame_loaded(this: Unk, frame: i32, out: *mut i16) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    let v = inst(this)
-        .is_some_and(|i| i.ready_state.get() == 4 && frame >= 0 && frame < i.total_frames());
-    unsafe { *out = if v { VARIANT_TRUE } else { VARIANT_FALSE } };
-    S_OK
+    crate::ffi_guard(
+        "frame_loaded",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if out.is_null() {
+                return E_POINTER;
+            }
+            let v = inst(this).is_some_and(|i| {
+                i.ready_state.get() == 4 && frame >= 0 && frame < i.total_frames()
+            });
+            unsafe { *out = if v { VARIANT_TRUE } else { VARIANT_FALSE } };
+            S_OK
+        },
+    )
 }
 unsafe extern "system" fn flash_version(_this: Unk, out: *mut i32) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    unsafe { *out = 0x000A0000 }; // reports Flash 10
-    S_OK
+    crate::ffi_guard(
+        "flash_version",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if out.is_null() {
+                return E_POINTER;
+            }
+            unsafe { *out = 0x000A0000 }; // reports Flash 10
+            S_OK
+        },
+    )
 }
 unsafe extern "system" fn get_wmode(_this: Unk, out: *mut *const u16) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    unsafe { *out = bstr("transparent") };
-    S_OK
+    crate::ffi_guard("get_wmode", windows_sys::Win32::Foundation::E_FAIL, || {
+        if out.is_null() {
+            return E_POINTER;
+        }
+        unsafe { *out = bstr("transparent") };
+        S_OK
+    })
 }
 unsafe extern "system" fn load_movie(this: Unk, _layer: i32, url: *const u16) -> HRESULT {
-    let url = unsafe { bstr_to_string(url) };
-    guard!(inst(this).map_or(E_INVALIDARG, |i| i.load(&url)))
+    crate::ffi_guard("load_movie", windows_sys::Win32::Foundation::E_FAIL, || {
+        let url = unsafe { bstr_to_string(url) };
+        guard!(inst(this).map_or(E_INVALIDARG, |i| i.load(&url)))
+    })
 }
 
 // Stubs for everything else, by number of 32-bit stack arguments.
@@ -623,32 +736,42 @@ static CPC_VTBL: CpcVtbl = CpcVtbl {
 };
 
 unsafe extern "system" fn cpc_query(this: Unk, iid: *const GUID, out: *mut Unk) -> HRESULT {
-    if iid.is_null() {
-        return E_POINTER;
-    }
-    unsafe { FlashObject::from_cpc(this).query(&*iid, out) }
+    crate::ffi_guard("cpc_query", windows_sys::Win32::Foundation::E_FAIL, || {
+        if iid.is_null() {
+            return E_POINTER;
+        }
+        unsafe { FlashObject::from_cpc(this).query(&*iid, out) }
+    })
 }
 unsafe extern "system" fn cpc_addref(this: Unk) -> u32 {
-    unsafe { FlashObject::from_cpc(this).add_ref() }
+    crate::ffi_guard("cpc_addref", 0, || unsafe {
+        FlashObject::from_cpc(this).add_ref()
+    })
 }
 unsafe extern "system" fn cpc_release(this: Unk) -> u32 {
-    unsafe { FlashObject::release(FlashObject::from_cpc(this)) }
+    crate::ffi_guard("cpc_release", 0, || unsafe {
+        FlashObject::release(FlashObject::from_cpc(this))
+    })
 }
 unsafe extern "system" fn cpc_enum(_this: Unk, out: *mut Unk) -> HRESULT {
-    if !out.is_null() {
-        unsafe { *out = null_mut() };
-    }
-    E_NOTIMPL
+    crate::ffi_guard("cpc_enum", windows_sys::Win32::Foundation::E_FAIL, || {
+        if !out.is_null() {
+            unsafe { *out = null_mut() };
+        }
+        E_NOTIMPL
+    })
 }
 unsafe extern "system" fn cpc_find(this: Unk, iid: *const GUID, out: *mut Unk) -> HRESULT {
-    if iid.is_null() || out.is_null() {
-        return E_POINTER;
-    }
-    unsafe { *out = null_mut() };
-    if !guid_eq(unsafe { &*iid }, &DIID_ISHOCKWAVEFLASHEVENTS) {
-        return CONNECT_E_NOCONNECTION;
-    }
-    unsafe { FlashObject::from_cpc(this).query(&IID_ICONNECTIONPOINT, out) }
+    crate::ffi_guard("cpc_find", windows_sys::Win32::Foundation::E_FAIL, || {
+        if iid.is_null() || out.is_null() {
+            return E_POINTER;
+        }
+        unsafe { *out = null_mut() };
+        if !guid_eq(unsafe { &*iid }, &DIID_ISHOCKWAVEFLASHEVENTS) {
+            return CONNECT_E_NOCONNECTION;
+        }
+        unsafe { FlashObject::from_cpc(this).query(&IID_ICONNECTIONPOINT, out) }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -678,79 +801,105 @@ static CP_VTBL: CpVtbl = CpVtbl {
 };
 
 unsafe extern "system" fn cp_query(this: Unk, iid: *const GUID, out: *mut Unk) -> HRESULT {
-    if iid.is_null() {
-        return E_POINTER;
-    }
-    unsafe { FlashObject::from_cp(this).query(&*iid, out) }
+    crate::ffi_guard("cp_query", windows_sys::Win32::Foundation::E_FAIL, || {
+        if iid.is_null() {
+            return E_POINTER;
+        }
+        unsafe { FlashObject::from_cp(this).query(&*iid, out) }
+    })
 }
 unsafe extern "system" fn cp_addref(this: Unk) -> u32 {
-    unsafe { FlashObject::from_cp(this).add_ref() }
+    crate::ffi_guard("cp_addref", 0, || unsafe {
+        FlashObject::from_cp(this).add_ref()
+    })
 }
 unsafe extern "system" fn cp_release(this: Unk) -> u32 {
-    unsafe { FlashObject::release(FlashObject::from_cp(this)) }
+    crate::ffi_guard("cp_release", 0, || unsafe {
+        FlashObject::release(FlashObject::from_cp(this))
+    })
 }
 unsafe extern "system" fn cp_get_interface(_this: Unk, out: *mut GUID) -> HRESULT {
-    if out.is_null() {
-        return E_POINTER;
-    }
-    unsafe { *out = DIID_ISHOCKWAVEFLASHEVENTS };
-    S_OK
+    crate::ffi_guard(
+        "cp_get_interface",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            if out.is_null() {
+                return E_POINTER;
+            }
+            unsafe { *out = DIID_ISHOCKWAVEFLASHEVENTS };
+            S_OK
+        },
+    )
 }
 unsafe extern "system" fn cp_get_container(this: Unk, out: *mut Unk) -> HRESULT {
-    unsafe { FlashObject::from_cp(this).query(&IID_ICONNECTIONPOINTCONTAINER, out) }
+    crate::ffi_guard(
+        "cp_get_container",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || unsafe { FlashObject::from_cp(this).query(&IID_ICONNECTIONPOINTCONTAINER, out) },
+    )
 }
 unsafe extern "system" fn cp_advise(this: Unk, sink: Unk, cookie: *mut u32) -> HRESULT {
-    if sink.is_null() || cookie.is_null() {
-        return E_POINTER;
-    }
-    let obj = unsafe { FlashObject::from_cp(this) };
-    if !obj.sink.get().is_null() {
-        return CONNECT_E_ADVISELIMIT;
-    }
-    // Prefer the event interface itself, then plain IDispatch.
-    let mut disp: Unk = null_mut();
-    let mut hr = unsafe {
-        vcall!(
-            sink,
-            0,
-            fn(*const GUID, *mut Unk) -> HRESULT,
-            &DIID_ISHOCKWAVEFLASHEVENTS,
-            &mut disp
-        )
-    };
-    if hr < 0 || disp.is_null() {
-        hr = unsafe {
+    crate::ffi_guard("cp_advise", windows_sys::Win32::Foundation::E_FAIL, || {
+        if sink.is_null() || cookie.is_null() {
+            return E_POINTER;
+        }
+        let obj = unsafe { FlashObject::from_cp(this) };
+        if !obj.sink.get().is_null() {
+            return CONNECT_E_ADVISELIMIT;
+        }
+        // Prefer the event interface itself, then plain IDispatch.
+        let mut disp: Unk = null_mut();
+        let mut hr = unsafe {
             vcall!(
                 sink,
                 0,
                 fn(*const GUID, *mut Unk) -> HRESULT,
-                &IID_IDISPATCH,
+                &DIID_ISHOCKWAVEFLASHEVENTS,
                 &mut disp
             )
         };
-    }
-    if hr < 0 || disp.is_null() {
-        return CONNECT_E_CANNOTCONNECT;
-    }
-    obj.sink.set(disp);
-    let c = obj.cookie.get().wrapping_add(1).max(1);
-    obj.cookie.set(c);
-    unsafe { *cookie = c };
-    S_OK
+        if hr < 0 || disp.is_null() {
+            hr = unsafe {
+                vcall!(
+                    sink,
+                    0,
+                    fn(*const GUID, *mut Unk) -> HRESULT,
+                    &IID_IDISPATCH,
+                    &mut disp
+                )
+            };
+        }
+        if hr < 0 || disp.is_null() {
+            return CONNECT_E_CANNOTCONNECT;
+        }
+        obj.sink.set(disp);
+        let c = obj.cookie.get().wrapping_add(1).max(1);
+        obj.cookie.set(c);
+        unsafe { *cookie = c };
+        S_OK
+    })
 }
 unsafe extern "system" fn cp_unadvise(this: Unk, cookie: u32) -> HRESULT {
-    let obj = unsafe { FlashObject::from_cp(this) };
-    if obj.sink.get().is_null() || cookie != obj.cookie.get() {
-        return CONNECT_E_NOCONNECTION;
-    }
-    obj.drop_sink();
-    S_OK
+    crate::ffi_guard(
+        "cp_unadvise",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            let obj = unsafe { FlashObject::from_cp(this) };
+            if obj.sink.get().is_null() || cookie != obj.cookie.get() {
+                return CONNECT_E_NOCONNECTION;
+            }
+            obj.drop_sink();
+            S_OK
+        },
+    )
 }
 unsafe extern "system" fn cp_enum(_this: Unk, out: *mut Unk) -> HRESULT {
-    if !out.is_null() {
-        unsafe { *out = null_mut() };
-    }
-    E_NOTIMPL
+    crate::ffi_guard("cp_enum", windows_sys::Win32::Foundation::E_FAIL, || {
+        if !out.is_null() {
+            unsafe { *out = null_mut() };
+        }
+        E_NOTIMPL
+    })
 }
 
 #[cfg(test)]

@@ -54,7 +54,7 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Starts the audio thread (once). Returns immediately.
 pub fn start() {
-    let mut s = STATE.lock().unwrap();
+    let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     if !matches!(*s, State::NotStarted) {
         return;
     }
@@ -62,10 +62,25 @@ pub fn start() {
     drop(s);
     let spawned = std::thread::Builder::new()
         .name("FlashPlayerControl audio".into())
-        .spawn(audio_thread);
+        .spawn(|| {
+            crate::install_panic_hook();
+            if std::panic::catch_unwind(audio_thread).is_err() {
+                log("no sound: the audio thread failed");
+                let mut s = STATE.lock().unwrap_or_else(|e| e.into_inner());
+                if matches!(*s, State::Starting) {
+                    *s = State::Failed;
+                }
+                drop(s);
+                CHANGED.notify_all();
+                // Stay alive: a thread exit runs TLS destructors under the loader lock.
+                loop {
+                    std::thread::park();
+                }
+            }
+        });
     if let Err(e) = spawned {
         log(&format!("no sound: cannot start audio thread: {e}"));
-        *STATE.lock().unwrap() = State::Failed;
+        *STATE.lock().unwrap_or_else(|e| e.into_inner()) = State::Failed;
         CHANGED.notify_all();
     }
 }
@@ -73,14 +88,14 @@ pub fn start() {
 /// Waits (up to `timeout`) until the audio thread has opened the device.
 pub fn wait(timeout: Duration) {
     start();
-    let s = STATE.lock().unwrap();
+    let s = STATE.lock().unwrap_or_else(|e| e.into_inner());
     let _ = CHANGED
         .wait_timeout_while(s, timeout, |s| matches!(s, State::Starting))
-        .unwrap();
+        .unwrap_or_else(|e| e.into_inner());
 }
 
 fn output() -> Option<Arc<Output>> {
-    match &*STATE.lock().unwrap() {
+    match &*STATE.lock().unwrap_or_else(|e| e.into_inner()) {
         State::Ready(o) => Some(o.clone()),
         _ => None,
     }
@@ -98,13 +113,13 @@ fn audio_thread() {
     let (tx, rx) = channel::<bool>();
     let stream = match open(tx) {
         Ok((stream, output)) => {
-            *STATE.lock().unwrap() = State::Ready(output);
+            *STATE.lock().unwrap_or_else(|e| e.into_inner()) = State::Ready(output);
             CHANGED.notify_all();
             stream
         }
         Err(e) => {
             log(&format!("no sound: {e}"));
-            *STATE.lock().unwrap() = State::Failed;
+            *STATE.lock().unwrap_or_else(|e| e.into_inner()) = State::Failed;
             CHANGED.notify_all();
             loop {
                 std::thread::park();
@@ -146,15 +161,21 @@ fn open(tx: Sender<bool>) -> Result<(cpal::Stream, Arc<Output>), String> {
     let mut mix_into = move |len: usize| -> Vec<f32> {
         sum.clear();
         sum.resize(len, 0.0);
-        if let Ok(voices) = v.lock() {
-            for voice in voices.iter().filter(|v| v.active.load(Ordering::Relaxed)) {
-                scratch.clear();
-                scratch.resize(len, 0.0);
-                voice.mixer.mix::<f32>(&mut scratch);
-                for (s, x) in sum.iter_mut().zip(&scratch) {
-                    *s += *x;
+        let mixed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Ok(voices) = v.lock() {
+                for voice in voices.iter().filter(|v| v.active.load(Ordering::Relaxed)) {
+                    scratch.clear();
+                    scratch.resize(len, 0.0);
+                    voice.mixer.mix::<f32>(&mut scratch);
+                    for (s, x) in sum.iter_mut().zip(&scratch) {
+                        *s += *x;
+                    }
                 }
             }
+        }));
+        if mixed.is_err() {
+            sum.clear();
+            sum.resize(len, 0.0); // silence rather than a dead audio thread
         }
         let audible = sum.iter().filter(|s| **s != 0.0).count();
         SAMPLES_MIXED.fetch_add(len as u64, Ordering::Relaxed);
@@ -230,7 +251,7 @@ impl MixerBackend {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let active = Arc::new(AtomicBool::new(true));
         let first = {
-            let mut voices = output.voices.lock().unwrap();
+            let mut voices = output.voices.lock().unwrap_or_else(|e| e.into_inner());
             voices.push(Voice {
                 id,
                 mixer: mixer.proxy(),
@@ -239,7 +260,11 @@ impl MixerBackend {
             voices.len() == 1
         };
         if first {
-            let _ = output.commands.lock().unwrap().send(true);
+            let _ = output
+                .commands
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .send(true);
         }
         Self {
             mixer,
@@ -253,12 +278,17 @@ impl MixerBackend {
 impl Drop for MixerBackend {
     fn drop(&mut self) {
         let empty = {
-            let mut voices = self.output.voices.lock().unwrap();
+            let mut voices = self.output.voices.lock().unwrap_or_else(|e| e.into_inner());
             voices.retain(|v| v.id != self.id);
             voices.is_empty()
         };
         if empty {
-            let _ = self.output.commands.lock().unwrap().send(false);
+            let _ = self
+                .output
+                .commands
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .send(false);
         }
     }
 }

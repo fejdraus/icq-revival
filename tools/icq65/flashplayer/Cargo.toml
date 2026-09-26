@@ -55,3 +55,13 @@ strip = true
 inherits = "release"
 debug = "line-tables-only"
 strip = false
+
+# wgpu-hal 30.0.1 with one fix: DX12 pipeline state streams used 8-byte
+# subobject alignment, which is wrong on 32-bit (pointer size, 4 bytes), so
+# every DX12 pipeline - WARP included - failed with E_INVALIDARG in this x86
+# DLL. See vendor/wgpu-hal/src/dx12/pipeline_desc.rs, add_object.
+[patch.crates-io]
+wgpu-hal = { path = "vendor/wgpu-hal" }
+
+[workspace]
+exclude = ["vendor/wgpu-hal"]

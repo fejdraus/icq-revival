@@ -112,7 +112,7 @@ pub fn lookup(hwnd: HWND) -> Result<Rc<Instance>, HRESULT> {
     }
     let owner = OWNERS
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .iter()
         .find(|(h, _)| *h == hwnd as usize)
         .map(|(_, t)| *t);
@@ -264,7 +264,10 @@ impl Instance {
         log(&format!("load {url}"));
         let generation = self.load_gen.get().wrapping_add(1);
         self.load_gen.set(generation);
-        self.movie.borrow_mut().take();
+        let old = self.movie.borrow_mut().take();
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(old))).is_err() {
+            log("releasing a player failed");
+        }
         self.fs.borrow_mut().clear();
         *self.url.borrow_mut() = url.to_owned();
         self.ready_state.set(1);
@@ -279,17 +282,25 @@ impl Instance {
         let spawned = std::thread::Builder::new()
             .name("FlashPlayerControl load".into())
             .spawn(move || {
-                let mut result = crate::fetch::fetch(&url);
-                if result.is_ok() {
-                    if let Err(e) = crate::gpu::wait(Duration::from_secs(60)) {
-                        result = Err(e);
+                crate::install_panic_hook();
+                let result = std::panic::catch_unwind(|| {
+                    let mut result = crate::fetch::fetch(&url);
+                    if result.is_ok() {
+                        if let Err(e) = crate::gpu::wait(Duration::from_secs(60)) {
+                            result = Err(e);
+                        }
+                        crate::audio::wait(Duration::from_secs(10));
                     }
-                    crate::audio::wait(Duration::from_secs(10));
-                }
+                    result
+                })
+                .unwrap_or_else(|_| Err("panic while loading".into()));
                 if let Err(e) = &result {
                     log(&format!("load failed: {url}: {e}"));
                 }
-                LOADS.lock().unwrap().push((hwnd, generation, result));
+                LOADS
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push((hwnd, generation, result));
                 unsafe { PostMessageW(hwnd as HWND, MSG_LOADED, generation as usize, 0) };
             });
         if spawned.is_err() {
@@ -300,9 +311,9 @@ impl Instance {
         S_OK
     }
 
-    fn on_loaded(&self, generation: u32) {
+    fn on_loaded_inner(&self, generation: u32) {
         let result = {
-            let mut loads = LOADS.lock().unwrap();
+            let mut loads = LOADS.lock().unwrap_or_else(|e| e.into_inner());
             let pos = loads
                 .iter()
                 .position(|(h, g, _)| *h == self.hwnd as usize && *g == generation);
@@ -352,7 +363,7 @@ impl Instance {
         self.com().fire_ready_state(4);
     }
 
-    pub fn play(&self) -> HRESULT {
+    fn play_inner(&self) -> HRESULT {
         self.want_play.set(true);
         self.ended.set(false);
         self.idle_since.set(None);
@@ -369,7 +380,7 @@ impl Instance {
     }
 
     /// Flash's Stop: stop and rewind to the first frame.
-    pub fn stop(&self) -> HRESULT {
+    fn stop_inner(&self) -> HRESULT {
         self.want_play.set(false);
         if let Some(m) = self.movie.borrow().as_ref() {
             m.pause();
@@ -380,7 +391,7 @@ impl Instance {
     }
 
     /// Flash's StopPlay: pause where we are.
-    pub fn stop_play(&self) -> HRESULT {
+    fn stop_play_inner(&self) -> HRESULT {
         self.want_play.set(false);
         if let Some(m) = self.movie.borrow().as_ref() {
             m.pause();
@@ -389,7 +400,7 @@ impl Instance {
     }
 
     /// Flash's GotoFrame: `frame` is 0-based; the movie stops there.
-    pub fn goto_frame(&self, frame: i32) -> HRESULT {
+    fn goto_frame_inner(&self, frame: i32) -> HRESULT {
         if let Some(m) = self.movie.borrow().as_ref() {
             self.want_play.set(false);
             m.goto_frame((frame.max(0) + 1).min(u16::MAX as i32) as u16);
@@ -401,7 +412,7 @@ impl Instance {
     }
 
     /// Renders the current frame and puts it on the layered window.
-    pub fn present(&self) {
+    fn present_inner(&self) {
         if self.destroyed.get() {
             return;
         }
@@ -458,7 +469,7 @@ impl Instance {
     }
 
     /// Message 0x1404: a new 32bpp top-down DIB of the current frame.
-    fn snapshot(&self) -> HBITMAP {
+    fn snapshot_inner(&self) -> HBITMAP {
         let (w, h) = client_size(self.hwnd);
         let frame = {
             let mut movie = self.movie.borrow_mut();
@@ -476,7 +487,7 @@ impl Instance {
         bmp
     }
 
-    fn tick(&self) {
+    fn tick_inner(&self) {
         let now = Instant::now();
         let dt = self
             .last_tick
@@ -530,11 +541,78 @@ impl Instance {
         }
     }
 
+    /// Runs `f`; if it panics, the movie is taken out of service: its timer
+    /// stops, the player is leaked (dropping a player whose renderer just
+    /// failed could fail again), and the movie counts as ended. The window
+    /// stays usable and shows nothing new.
+    fn guarded<R>(&self, what: &str, default: R, f: impl FnOnce() -> R) -> R {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+            Ok(v) => v,
+            Err(_) => {
+                log(&format!("{what} failed; this movie stops"));
+                unsafe { KillTimer(self.hwnd, TICK_TIMER) };
+                if let Ok(mut m) = self.movie.try_borrow_mut() {
+                    std::mem::forget(m.take());
+                }
+                self.loading.set(false);
+                self.ended.set(true);
+                default
+            }
+        }
+    }
+
+    fn tick(&self) {
+        self.guarded("playing", (), || self.tick_inner())
+    }
+
+    /// Renders the current frame and puts it on the layered window.
+    pub fn present(&self) {
+        self.guarded("drawing", (), || self.present_inner())
+    }
+
+    /// Message 0x1404: a new 32bpp top-down DIB of the current frame. Never
+    /// null: when nothing can be drawn it is a fully transparent bitmap of
+    /// the window's size, so a caller that does not check gets a valid one.
+    fn snapshot(&self) -> HBITMAP {
+        let bmp = self.guarded("snapshot", null_mut(), || self.snapshot_inner());
+        if !bmp.is_null() {
+            return bmp;
+        }
+        let (w, h) = client_size(self.hwnd);
+        new_dib(w.max(1), h.max(1)).map_or(null_mut(), |(b, _)| b)
+    }
+
+    fn on_loaded(&self, generation: u32) {
+        self.guarded("loading", (), || self.on_loaded_inner(generation))
+    }
+
+    pub fn play(&self) -> HRESULT {
+        self.guarded("Play", E_FAIL, || self.play_inner())
+    }
+
+    /// Flash's Stop: stop and rewind to the first frame.
+    pub fn stop(&self) -> HRESULT {
+        self.guarded("Stop", E_FAIL, || self.stop_inner())
+    }
+
+    /// Flash's StopPlay: pause where we are.
+    pub fn stop_play(&self) -> HRESULT {
+        self.guarded("StopPlay", E_FAIL, || self.stop_play_inner())
+    }
+
+    /// Flash's GotoFrame: `frame` is 0-based; the movie stops there.
+    pub fn goto_frame(&self, frame: i32) -> HRESULT {
+        self.guarded("GotoFrame", E_FAIL, || self.goto_frame_inner(frame))
+    }
+
     fn destroy(&self) {
         self.destroyed.set(true);
         unsafe { KillTimer(self.hwnd, TICK_TIMER) };
         self.load_gen.set(self.load_gen.get().wrapping_add(1));
-        self.movie.borrow_mut().take();
+        let old = self.movie.borrow_mut().take();
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(old))).is_err() {
+            log("releasing a player failed");
+        }
         self.surface.borrow_mut().take();
         let com = self.com();
         com.hwnd.set(null_mut());
@@ -563,7 +641,7 @@ unsafe fn handle(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT
             INSTANCES.with(|m| m.0.borrow_mut().insert(hwnd as usize, inst));
             OWNERS
                 .lock()
-                .unwrap()
+                .unwrap_or_else(|e| e.into_inner())
                 .push((hwnd as usize, unsafe { GetCurrentThreadId() }));
             // Start opening the GPU device and sound output in the background.
             crate::gpu::start();
@@ -571,7 +649,10 @@ unsafe fn handle(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT
             None
         }
         WM_NCDESTROY => {
-            OWNERS.lock().unwrap().retain(|(h, _)| *h != hwnd as usize);
+            OWNERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|(h, _)| *h != hwnd as usize);
             let inst = INSTANCES.with(|m| m.0.borrow_mut().remove(&(hwnd as usize)));
             if let Some(i) = inst {
                 i.destroy();
