@@ -83,7 +83,14 @@ td.anim.on a { font-weight: bold; }
     <div id="pageAnimated" style="display:none">
       <p>{{picAnimLead}}</p>
 
-      <div class="panel" id="animNowRow">{{picAnimNow}} <b id="animNow">{{picAnimNone}}</b></div>
+      <!-- The same frame as the picture tab's: what is set now, as contacts
+           see it. -->
+      <div class="panel" id="animNowRow">
+        <table cellpadding="0" cellspacing="0" border="0"><tr>
+          <td class="shotcell" valign="middle"><img id="animCurrent" class="shot" src="" alt=""></td>
+          <td valign="middle"><b>{{picAnimNow}} <span id="animNow">{{picAnimNone}}</span></b><br><span class="dim">{{picCurrentNote}}</span></td>
+        </tr></table>
+      </div>
 
       <div class="soft" id="animRow" style="display:none">
         <table cellpadding="0" cellspacing="0" border="0"><tr>
@@ -363,14 +370,20 @@ function readAnimated() {
 // elsewhere.
 function showAnimated(data) {
   var text = T.picAnimNone;
+  var a = null;
   if (data) {
     var m = /\/icq\/avatars\/([A-Za-z0-9_-]+\.swf)/.exec(String(data));
-    var a = m ? findAvatar(m[1]) : null;
+    a = m ? findAvatar(m[1]) : null;
     text = a ? a.title : T.picAnimOther;
   }
   var now = document.getElementById('animNow');
   now.innerHTML = '';
   now.appendChild(document.createTextNode(text));
+  // The same preview the picture tab has: the avatar's thumbnail, or an
+  // empty frame when none of ours is set.
+  var shot = document.getElementById('animCurrent');
+  if (a && a.thumb) { shot.src = '/icq/avatars/' + a.thumb; }
+  else { shot.removeAttribute('src'); }
 }
 </script>
 

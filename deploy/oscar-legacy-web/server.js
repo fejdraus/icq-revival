@@ -1887,6 +1887,7 @@ function avatarPage(u, req) {
   const avatars = avatarList.map((a) => ({
     file: a.file,
     title: (a.title && (a.title[u.lang] || a.title.en)) || a.file,
+    thumb: a.thumb,
   }));
   const hasAnimated = avatars.length > 0;
   return avatarTemplate
