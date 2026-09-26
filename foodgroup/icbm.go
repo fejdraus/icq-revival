@@ -177,7 +177,19 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 		TLVRestBlock: wire.TLVRestBlock{},
 	}
 
-	for _, tlv := range inBody.TLVList {
+	relayTLVs := inBody.TLVList
+	if text, isTzer := tzerText(inBody, recipSess); isTzer {
+		// a tZer the recipient can't play arrives as a message saying so
+		frags, err := textFragments(text)
+		if err != nil {
+			return nil, fmt.Errorf("textFragments: %w", err)
+		}
+		clientIM.ChannelID = wire.ICBMChannelIM
+		clientIM.Append(wire.NewTLVBE(wire.ICBMTLVAOLIMData, frags))
+		relayTLVs = nil
+	}
+
+	for _, tlv := range relayTLVs {
 		if tlv.Tag == wire.ICBMTLVRequestHostAck {
 			// Exclude this TLV, because its presence breaks chat invitations
 			// on macOS client v4.0.9.
