@@ -1,0 +1,41 @@
+[package]
+name = "flashplayercontrol"
+version = "0.1.0"
+edition = "2024"
+description = "Drop-in FlashPlayerControl.dll for ICQ 6.5 that plays tZers with Ruffle"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+# The client loads the DLL by this exact name.
+name = "FlashPlayerControl"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Ruffle pinned to the nightly-2026-09-26 tag.
+ruffle_core = { git = "https://github.com/ruffle-rs/ruffle", rev = "5455c72da5472a24cc293a7b13643709e9469587", features = ["audio", "mp3", "nellymoser", "lzma", "default_font"] }
+ruffle_render_wgpu = { git = "https://github.com/ruffle-rs/ruffle", rev = "5455c72da5472a24cc293a7b13643709e9469587" }
+cpal = "0.16"
+futures = "0.3"
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Networking_WinInet",
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_SystemServices",
+    "Win32_System_Variant",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+embed-resource = "3"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[profile.release]
+debug = false
+strip = true

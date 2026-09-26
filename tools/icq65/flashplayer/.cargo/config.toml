@@ -1,0 +1,7 @@
+# ICQ 6.5 is a 32-bit program, so the DLL (and the test host) are 32-bit.
+[build]
+target = "i686-pc-windows-msvc"
+
+[target.i686-pc-windows-msvc]
+# Link the C runtime statically: the ICQ folder has no VC++ 2015+ runtime.
+rustflags = ["-C", "target-feature=+crt-static"]

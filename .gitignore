@@ -25,3 +25,6 @@ tools/patcher/**/obj/
 # Build output of the native client patches (tools\patcher-cpp\Build.ps1)
 tools/patcher-cpp/obj/
 tools/patcher-cpp/out/
+
+# Build output of the ICQ 6.5 FlashPlayerControl.dll replacement (Rust)
+tools/icq65/flashplayer/target/
