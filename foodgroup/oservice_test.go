@@ -1943,7 +1943,7 @@ func TestOServiceService_SetUserInfoFields(t *testing.T) {
 			// ICQ avatar items sent in the 0x1D tag are kept and relayed like
 			// the ones set through the feedbag.
 			name:     "set a Flash avatar",
-			instance: newTestInstance("100003"),
+			instance: newTestInstance("100003", sessOptICQ6),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -1997,7 +1997,7 @@ func TestOServiceService_SetUserInfoFields(t *testing.T) {
 		},
 		{
 			name:     "clear a big buddy icon",
-			instance: newTestInstance("100003", sessOptAvatarItem(wire.BARTID{Type: wire.BARTTypesBuddyIconBig, BARTInfo: wire.BARTInfo{Hash: []byte("big")}})),
+			instance: newTestInstance("100003", sessOptICQ6, sessOptAvatarItem(wire.BARTID{Type: wire.BARTTypesBuddyIconBig, BARTInfo: wire.BARTInfo{Hash: []byte("big")}})),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					RequestID: 1234,
@@ -4475,6 +4475,29 @@ func TestSessionUserInfo(t *testing.T) {
 		icqInfo := sessionUserInfo(newTestInstance("100003", sessOptUserInfoFlag(wire.OServiceUserFlagICQ)), false)
 		assert.True(t, icqInfo.HasTag(wire.OServiceUserInfoICQDC))
 	})
+
+	t.Run("the own Flash avatar and big icon are listed to ICQ 6 only", func(t *testing.T) {
+		icon := bartIconForTest("icon")
+		flash := bartFlashForTest("devil")
+		big := wire.BARTID{Type: wire.BARTTypesBuddyIconBig, BARTInfo: wire.BARTInfo{Hash: []byte("big")}}
+		avatars := []func(*state.SessionInstance){sessOptBuddyIcon(icon), sessOptAvatarItem(flash), sessOptAvatarItem(big)}
+
+		tests := []struct {
+			name   string
+			client func(*state.SessionInstance)
+			want   []wire.BARTID
+		}{
+			{name: "ICQ 6", client: sessOptICQ6, want: []wire.BARTID{icon, flash, big}},
+			{name: "Miranda", client: sessOptMirandaICQ, want: []wire.BARTID{icon}},
+			{name: "AIM", client: sessOptAIM, want: []wire.BARTID{icon}},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				instance := newTestInstance("100003", append(avatars, tt.client)...)
+				assert.Equal(t, tt.want, userInfoBARTIDs(t, sessionUserInfo(instance, false)))
+			})
+		}
+	})
 }
 
 func TestInstanceUserInfo(t *testing.T) {
@@ -4488,7 +4511,7 @@ func TestInstanceUserInfo(t *testing.T) {
 
 		// The account is neither away nor idle, since the second connection is
 		// available, but this connection reports its own state.
-		got := instanceUserInfo(instance)
+		got := instanceUserInfo(instance, instance)
 
 		assert.True(t, got.IsAway())
 		idle, ok := got.Uint16BE(wire.OServiceUserInfoIdleTime)
@@ -4504,7 +4527,7 @@ func TestInstanceUserInfo(t *testing.T) {
 		require.True(t, ok)
 		assert.Len(t, b, 16)
 
-		gotSecond := instanceUserInfo(second)
+		gotSecond := instanceUserInfo(second, instance)
 		assert.False(t, gotSecond.IsAway())
 		assert.False(t, gotSecond.HasTag(wire.OServiceUserInfoIdleTime))
 		num, ok = gotSecond.Bytes(wire.OServiceUserInfoMyInstanceNum)
@@ -4517,10 +4540,21 @@ func TestInstanceUserInfo(t *testing.T) {
 		instance := newTestInstance("me", sessOptBuddyIcon(icon))
 		second := instance.Session().AddInstance()
 
-		first := instanceUserInfo(instance)
+		first := instanceUserInfo(instance, instance)
 		assert.True(t, first.HasTag(wire.OServiceUserInfoBARTInfo))
-		other := instanceUserInfo(second)
+		other := instanceUserInfo(second, instance)
 		assert.True(t, other.HasTag(wire.OServiceUserInfoBARTInfo))
+	})
+
+	t.Run("the Flash avatar is listed only to an ICQ 6 recipient", func(t *testing.T) {
+		flash := wire.BARTID{Type: wire.BARTTypesFlashAvatar, BARTInfo: wire.BARTInfo{Hash: []byte{0xBB}}}
+		icq6 := newTestInstance("me", sessOptAvatarItem(flash), sessOptICQ6)
+		miranda := icq6.Session().AddInstance()
+		miranda.SetCaps([][16]byte{wire.CapUTF8Messages})
+
+		// the item goes by who reads the block, not whose block it is
+		assert.Equal(t, []wire.BARTID{flash}, userInfoBARTIDs(t, instanceUserInfo(miranda, icq6)))
+		assert.Empty(t, userInfoBARTIDs(t, instanceUserInfo(icq6, miranda)))
 	})
 }
 
@@ -4530,9 +4564,10 @@ func TestSessionBARTIDs(t *testing.T) {
 	flash := wire.BARTID{Type: wire.BARTTypesFlashAvatar, BARTInfo: wire.BARTInfo{Hash: []byte{0xBB}}}
 
 	tests := []struct {
-		name    string
-		options []func(*state.SessionInstance)
-		want    []wire.BARTID
+		name            string
+		options         []func(*state.SessionInstance)
+		withAvatarItems bool
+		want            []wire.BARTID
 	}{
 		{
 			name: "neither",
@@ -4556,18 +4591,38 @@ func TestSessionBARTIDs(t *testing.T) {
 		},
 		{
 			// ICQ avatar items follow the items older clients know.
-			name:    "icon, status message and Flash avatar",
+			name:            "icon, status message and Flash avatar",
+			options:         []func(*state.SessionInstance){sessOptAvatarItem(flash), sessOptBuddyIcon(icon), sessOptStatus(status)},
+			withAvatarItems: true,
+			want:            []wire.BARTID{icon, status, flash},
+		},
+		{
+			// A client that can't show them gets the list it had before they
+			// were relayed.
+			name:    "Flash avatar left out",
 			options: []func(*state.SessionInstance){sessOptAvatarItem(flash), sessOptBuddyIcon(icon), sessOptStatus(status)},
-			want:    []wire.BARTID{icon, status, flash},
+			want:    []wire.BARTID{icon, status},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			instance := newTestInstance("me", tt.options...)
-			assert.Equal(t, tt.want, sessionBARTIDs(instance.Session()))
+			assert.Equal(t, tt.want, sessionBARTIDs(instance.Session(), tt.withAvatarItems))
 		})
 	}
+}
+
+// userInfoBARTIDs decodes the BART info tag of info, nil when it has none.
+func userInfoBARTIDs(t *testing.T, info wire.TLVUserInfo) []wire.BARTID {
+	t.Helper()
+	b, ok := info.Bytes(wire.OServiceUserInfoBARTInfo)
+	if !ok {
+		return nil
+	}
+	var ids []wire.BARTID
+	require.NoError(t, wire.UnmarshalBE(&ids, bytes.NewReader(b)))
+	return ids
 }
 
 func TestAppendExternalIP(t *testing.T) {

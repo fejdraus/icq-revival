@@ -42,6 +42,105 @@ func TestIsRelayedAvatarBARTType(t *testing.T) {
 	}
 }
 
+func TestHasFlashAvatarCaps(t *testing.T) {
+	devils := uuid.MustParse("0946134C-4C7F-11D1-8222-444553540000")
+	tests := []struct {
+		name string
+		caps [][16]byte
+		want bool
+	}{
+		{name: "ICQ 6", caps: [][16]byte{CapUTF8Messages, CapICQTZers, CapICQ6HTML}, want: true},
+		{name: "tZers alone, as ICQ 5.1 sends", caps: [][16]byte{CapICQTZers}, want: false},
+		{name: "ICQ 6 HTML alone", caps: [][16]byte{CapICQ6HTML}, want: false},
+		{name: "devils, as Miranda sends", caps: [][16]byte{devils, CapUTF8Messages, CapXHTMLIM}, want: false},
+		{name: "none", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, HasFlashAvatarCaps(tt.caps))
+		})
+	}
+}
+
+func TestTLVUserInfo_WithoutRelayedAvatarItems(t *testing.T) {
+	icon := BARTID{Type: BARTTypesBuddyIcon, BARTInfo: BARTInfo{Flags: BARTFlagsCustom, Hash: []byte("icon")}}
+	status := BARTID{Type: BARTTypesStatusStr, BARTInfo: BARTInfo{Flags: BARTFlagsData, Hash: []byte("status")}}
+	mood := BARTID{Type: BARTTypesMood, BARTInfo: BARTInfo{Flags: BARTFlagsData, Hash: []byte("icqmood1")}}
+	flash := BARTID{Type: BARTTypesFlashAvatar, BARTInfo: BARTInfo{Flags: BARTFlagsCustom, Hash: []byte("devil")}}
+	big := BARTID{Type: BARTTypesBuddyIconBig, BARTInfo: BARTInfo{Flags: BARTFlagsCustom, Hash: []byte("big")}}
+	flashRemoved := BARTID{Type: BARTTypesFlashAvatar}
+
+	signon := NewTLVBE(OServiceUserInfoSignonTOD, uint32(1))
+	caps := NewTLVBE(OServiceUserInfoOscarCaps, [][16]byte{CapUTF8Messages})
+	infoWith := func(bart ...TLV) TLVUserInfo {
+		list := TLVList{signon}
+		list = append(list, bart...)
+		list = append(list, caps)
+		return TLVUserInfo{ScreenName: "100003", WarningLevel: 7, TLVBlock: TLVBlock{TLVList: list}}
+	}
+
+	tests := []struct {
+		name    string
+		info    TLVUserInfo
+		wantHas bool
+		want    TLVUserInfo
+	}{
+		{
+			// what the tag held before the ICQ avatar items were relayed
+			name:    "icon, status, mood and both avatar items: the first three stay",
+			info:    infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{icon, status, mood, flash, big})),
+			wantHas: true,
+			want:    infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{icon, status, mood})),
+		},
+		{
+			name:    "a removal notice goes too",
+			info:    infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{icon, flashRemoved})),
+			wantHas: true,
+			want:    infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{icon})),
+		},
+		{
+			name:    "only avatar items: the tag is dropped",
+			info:    infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{flash, big})),
+			wantHas: true,
+			want:    TLVUserInfo{ScreenName: "100003", WarningLevel: 7, TLVBlock: TLVBlock{TLVList: TLVList{signon, caps}}},
+		},
+		{
+			name: "no avatar items: unchanged",
+			info: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{icon, status})),
+			want: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{icon, status})),
+		},
+		{
+			name: "no BART tag: unchanged",
+			info: infoWith(),
+			want: infoWith(),
+		},
+		{
+			name: "malformed BART tag: unchanged",
+			info: infoWith(TLV{Tag: OServiceUserInfoBARTInfo, Value: []byte{0x00, 0x08, 0x00}}),
+			want: infoWith(TLV{Tag: OServiceUserInfoBARTInfo, Value: []byte{0x00, 0x08, 0x00}}),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := infoCopy(tt.info)
+			assert.Equal(t, tt.wantHas, tt.info.HasRelayedAvatarItems())
+			assert.Equal(t, tt.want, tt.info.WithoutRelayedAvatarItems())
+			// the info it was made from is shared by other recipients
+			assert.Equal(t, before, tt.info)
+		})
+	}
+}
+
+// infoCopy returns a deep copy of info's TLV list.
+func infoCopy(info TLVUserInfo) TLVUserInfo {
+	out := info
+	out.TLVList = make(TLVList, len(info.TLVList))
+	for i, tlv := range info.TLVList {
+		out.TLVList[i] = TLV{Tag: tlv.Tag, Value: bytes.Clone(tlv.Value)}
+	}
+	return out
+}
+
 func TestBARTInfo_HasClearIconHash(t *testing.T) {
 	tests := []struct {
 		name     string

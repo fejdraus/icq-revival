@@ -231,7 +231,7 @@ func (s LocateService) UserInfoQuery(ctx context.Context, instance *state.Sessio
 			RequestID: inFrame.RequestID,
 		},
 		Body: wire.SNAC_0x02_0x06_LocateUserInfoReply{
-			TLVUserInfo: lookupSess.TLVUserInfo(),
+			TLVUserInfo: instance.UserInfoFor(lookupSess.TLVUserInfo()),
 			LocateInfo: wire.TLVRestBlock{
 				TLVList: list,
 			},

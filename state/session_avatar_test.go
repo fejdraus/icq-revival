@@ -3,6 +3,7 @@ package state
 import (
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/mk6i/open-oscar-server/wire"
@@ -132,4 +133,77 @@ func TestSession_TLVUserInfo_AvatarItems(t *testing.T) {
 			assert.Equal(t, want.Value, blob)
 		})
 	}
+}
+
+func TestSession_SupportsFlashAvatars(t *testing.T) {
+	icq6 := [][16]byte{wire.CapUTF8Messages, wire.CapICQTZers, wire.CapICQ6HTML}
+	// Miranda's ICQ plugin: the ICQ "devils" capability, none of
+	// wire.FlashAvatarCaps
+	miranda := [][16]byte{
+		wire.CapUTF8Messages,
+		wire.CapXHTMLIM,
+		uuid.MustParse("0946134C-4C7F-11D1-8222-444553540000"),
+		{'M', 'i', 'r', 'a', 'n', 'd', 'a', 'N', 0, 0, 0x60, 0, 0, 0, 0, 0},
+	}
+	aim := [][16]byte{wire.CapChat, wire.CapFileTransfer}
+
+	icon := wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("icon")}}
+	flash := wire.BARTID{Type: wire.BARTTypesFlashAvatar, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("devil")}}
+	info := wire.TLVUserInfo{
+		ScreenName: "100003",
+		TLVBlock: wire.TLVBlock{
+			TLVList: wire.TLVList{wire.NewTLVBE(wire.OServiceUserInfoBARTInfo, []wire.BARTID{icon, flash})},
+		},
+	}
+	plainInfo := wire.TLVUserInfo{
+		ScreenName: "100003",
+		TLVBlock: wire.TLVBlock{
+			TLVList: wire.TLVList{wire.NewTLVBE(wire.OServiceUserInfoBARTInfo, []wire.BARTID{icon})},
+		},
+	}
+
+	tests := []struct {
+		name string
+		// instanceCaps holds the capabilities of each of the session's
+		// instances
+		instanceCaps [][][16]byte
+		want         bool
+	}{
+		{name: "ICQ 6", instanceCaps: [][][16]byte{icq6}, want: true},
+		{name: "Miranda", instanceCaps: [][][16]byte{miranda}},
+		{name: "AIM", instanceCaps: [][][16]byte{aim}},
+		{name: "ICQ 6 before it announced its capabilities", instanceCaps: [][][16]byte{nil}},
+		{name: "no instances"},
+		{name: "ICQ 6 on two connections", instanceCaps: [][][16]byte{icq6, icq6}, want: true},
+		// a relayed message reaches every instance, Miranda's too
+		{name: "ICQ 6 and Miranda on one account", instanceCaps: [][][16]byte{icq6, miranda}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sess := NewSession()
+			for _, caps := range tt.instanceCaps {
+				sess.AddInstance().SetCaps(caps)
+			}
+			assert.Equal(t, tt.want, sess.SupportsFlashAvatars())
+
+			want := plainInfo
+			if tt.want {
+				want = info
+			}
+			assert.Equal(t, want, sess.UserInfoFor(info))
+		})
+	}
+
+	t.Run("an instance goes by its own capabilities", func(t *testing.T) {
+		sess := NewSession()
+		icq6Instance := sess.AddInstance()
+		icq6Instance.SetCaps(icq6)
+		mirandaInstance := sess.AddInstance()
+		mirandaInstance.SetCaps(miranda)
+
+		assert.True(t, icq6Instance.SupportsFlashAvatars())
+		assert.Equal(t, info, icq6Instance.UserInfoFor(info))
+		assert.False(t, mirandaInstance.SupportsFlashAvatars())
+		assert.Equal(t, plainInfo, mirandaInstance.UserInfoFor(info))
+	})
 }

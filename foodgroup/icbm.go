@@ -173,7 +173,7 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 	clientIM := wire.SNAC_0x04_0x07_ICBMChannelMsgToClient{
 		Cookie:       inBody.Cookie,
 		ChannelID:    inBody.ChannelID,
-		TLVUserInfo:  instance.Session().TLVUserInfo(),
+		TLVUserInfo:  recipSess.UserInfoFor(instance.Session().TLVUserInfo()),
 		TLVRestBlock: wire.TLVRestBlock{},
 	}
 

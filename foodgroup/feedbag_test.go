@@ -1804,7 +1804,7 @@ func TestFeedbagService_UpsertItem(t *testing.T) {
 		},
 		{
 			name:     "add Flash avatar hash to feedbag, item already in BART store, notify buddies",
-			instance: newTestInstance("me"),
+			instance: newTestInstance("me", sessOptICQ6),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					FoodGroup: wire.Feedbag,
@@ -1970,7 +1970,7 @@ func TestFeedbagService_UpsertItem(t *testing.T) {
 		},
 		{
 			name:     "add big icon hash to feedbag, item not in BART store, instruct client to upload it",
-			instance: newTestInstance("me"),
+			instance: newTestInstance("me", sessOptICQ6),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					FoodGroup: wire.Feedbag,
@@ -2117,7 +2117,7 @@ func TestFeedbagService_UpsertItem(t *testing.T) {
 		},
 		{
 			name:     "clear Flash avatar with an all-zero hash, notify buddies",
-			instance: newTestInstance("me"),
+			instance: newTestInstance("me", sessOptICQ6),
 			inputSNAC: wire.SNACMessage{
 				Frame: wire.SNACFrame{
 					FoodGroup: wire.Feedbag,
@@ -3376,7 +3376,7 @@ func TestFeedbagService_DeleteItem(t *testing.T) {
 		},
 		{
 			name: "delete Flash avatar item, notify buddies of its removal",
-			instance: newTestInstance("me", sessOptAvatarItem(wire.BARTID{
+			instance: newTestInstance("me", sessOptICQ6, sessOptAvatarItem(wire.BARTID{
 				Type:     wire.BARTTypesFlashAvatar,
 				BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("devil")},
 			})),

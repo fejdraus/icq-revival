@@ -842,6 +842,32 @@ func (s *Session) HasCap(cap [16]byte) bool {
 	return false
 }
 
+// SupportsFlashAvatars reports whether the user info sent to this session may
+// carry the Flash avatar and big icon items (see wire.FlashAvatarCaps). Every
+// instance must support them, since a message relayed to the session reaches
+// all of its instances; a session without instances doesn't.
+func (s *Session) SupportsFlashAvatars() bool {
+	instances := s.Instances()
+	if len(instances) == 0 {
+		return false
+	}
+	for _, instance := range instances {
+		if !instance.SupportsFlashAvatars() {
+			return false
+		}
+	}
+	return true
+}
+
+// UserInfoFor returns info as this session may be sent it: without the Flash
+// avatar and big icon items unless SupportsFlashAvatars.
+func (s *Session) UserInfoFor(info wire.TLVUserInfo) wire.TLVUserInfo {
+	if s.SupportsFlashAvatars() {
+		return info
+	}
+	return info.WithoutRelayedAvatarItems()
+}
+
 // MemberSince reports when the user became a member.
 func (s *Session) MemberSince() time.Time {
 	s.mutex.RLock()
@@ -1628,6 +1654,22 @@ func (s *SessionInstance) ICQDCInfo() wire.ICQDCInfo {
 }
 
 // caps retrieves instance capabilities.
+// SupportsFlashAvatars reports whether this instance's client announced
+// wire.FlashAvatarCaps, which marks an ICQ 6 client that can render the Flash
+// avatar and big icon items.
+func (s *SessionInstance) SupportsFlashAvatars() bool {
+	return wire.HasFlashAvatarCaps(s.caps())
+}
+
+// UserInfoFor returns info as this instance may be sent it: without the Flash
+// avatar and big icon items unless SupportsFlashAvatars.
+func (s *SessionInstance) UserInfoFor(info wire.TLVUserInfo) wire.TLVUserInfo {
+	if s.SupportsFlashAvatars() {
+		return info
+	}
+	return info.WithoutRelayedAvatarItems()
+}
+
 func (s *SessionInstance) caps() [][16]byte {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()

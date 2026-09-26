@@ -211,6 +211,13 @@ var (
 	// CapXtrazScript is the UUID for the ICQ Xtraz/Tzer.
 	// Xtraz enables extended status (XStatus), greeting cards, and chat invitations.
 	CapXtrazScript = uuid.MustParse("3B60B3EF-D82A-6C45-A4E0-9C5A5E67E865")
+	// CapICQTZers indicates the client plays tZers, the ICQ 5.1+ animated
+	// messages. ICQ 6 announces it next to CapICQ6HTML.
+	CapICQTZers = uuid.MustParse("B2EC8F16-7C6F-451B-BD79-DC58497888B9")
+	// CapICQ6HTML indicates the client takes the ICQ 6 HTML message format.
+	// Together with CapICQTZers it marks an ICQ 6 client; see
+	// FlashAvatarCaps.
+	CapICQ6HTML = uuid.MustParse("0138CA7B-769A-4915-88F2-13FC00979EA8")
 
 	//
 	// Unknown/Legacy UUIDs
@@ -1594,6 +1601,25 @@ func IsRelayedAvatarBARTType(itemType uint16) bool {
 	return slices.Contains(RelayedAvatarBARTTypes, itemType)
 }
 
+// FlashAvatarCaps are the capabilities a client must announce to be sent the
+// RelayedAvatarBARTTypes items. ICQ 6 announces both and renders Flash
+// avatars. Clients that don't, such as Miranda's ICQ plugin, prefer these
+// items over the buddy icon they can show and end up showing no avatar at
+// all. Miranda also announces the ICQ "devils" capability and the ICQ 6.5
+// client ID and version, so neither of those tells ICQ 6 apart.
+var FlashAvatarCaps = [][16]byte{CapICQTZers, CapICQ6HTML}
+
+// HasFlashAvatarCaps reports whether caps contains every one of
+// FlashAvatarCaps.
+func HasFlashAvatarCaps(caps [][16]byte) bool {
+	for _, want := range FlashAvatarCaps {
+		if !slices.Contains(caps, want) {
+			return false
+		}
+	}
+	return true
+}
+
 // GetClearIconHash returns an opaque value set in BARTID hash that indicates
 // the user wants to clear their buddy icon.
 func GetClearIconHash() []byte {
@@ -2882,6 +2908,52 @@ func (t TLVUserInfo) IsAway() bool {
 func (t TLVUserInfo) IsInvisible() bool {
 	mask, _ := t.Uint32BE(OServiceUserInfoStatus)
 	return mask&OServiceUserStatusInvisible == OServiceUserStatusInvisible
+}
+
+// HasRelayedAvatarItems reports whether the BART info tag of t lists any of
+// the RelayedAvatarBARTTypes items, removal notices included.
+func (t TLVUserInfo) HasRelayedAvatarItems() bool {
+	return slices.ContainsFunc(t.bartIDs(), func(id BARTID) bool {
+		return IsRelayedAvatarBARTType(id.Type)
+	})
+}
+
+// WithoutRelayedAvatarItems returns a copy of t whose BART info tag leaves out
+// the RelayedAvatarBARTTypes items, for a recipient that can't show them: it
+// then lists exactly the buddy icon, status text and mood. The tag is dropped
+// when nothing is left in it, and t itself is not modified.
+func (t TLVUserInfo) WithoutRelayedAvatarItems() TLVUserInfo {
+	if !t.HasRelayedAvatarItems() {
+		return t
+	}
+	kept := slices.DeleteFunc(t.bartIDs(), func(id BARTID) bool {
+		return IsRelayedAvatarBARTType(id.Type)
+	})
+	out := t
+	out.TLVList = make(TLVList, 0, len(t.TLVList))
+	for _, tlv := range t.TLVList {
+		if tlv.Tag != OServiceUserInfoBARTInfo {
+			out.TLVList = append(out.TLVList, tlv)
+		} else if len(kept) > 0 {
+			out.TLVList = append(out.TLVList, NewTLVBE(OServiceUserInfoBARTInfo, kept))
+			kept = nil // a repeated tag is not repeated in the copy
+		}
+	}
+	return out
+}
+
+// bartIDs decodes the BART info tag of t. A missing or malformed tag yields
+// nothing.
+func (t TLVUserInfo) bartIDs() []BARTID {
+	b, ok := t.Bytes(OServiceUserInfoBARTInfo)
+	if !ok {
+		return nil
+	}
+	var ids []BARTID
+	if err := UnmarshalBE(&ids, bytes.NewReader(b)); err != nil {
+		return nil
+	}
+	return ids
 }
 
 type FeedbagItem struct {

@@ -2179,6 +2179,148 @@ func TestICBMService_ChannelMsgToHost(t *testing.T) {
 			expectOutput: nil,
 			wantErr:      nil,
 		},
+		{
+			name: "sender's Flash avatar is listed to an ICQ 6 recipient",
+			instance: newTestInstance("sender-screen-name",
+				sessOptBuddyIcon(bartIconForTest("icon")), sessOptAvatarItem(bartFlashForTest("devil"))),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					relationshipParams: relationshipParams{
+						{
+							me:   state.NewIdentScreenName("sender-screen-name"),
+							them: state.NewIdentScreenName("recipient-screen-name"),
+							result: state.Relationship{
+								User: state.NewIdentScreenName("recipient-screen-name"),
+							},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams{
+						{
+							screenName: state.NewIdentScreenName("recipient-screen-name"),
+							result:     newTestInstance("recipient-screen-name", sessOptSignonComplete, sessOptICQ6).Session(),
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNameActiveOnlyParams: relayToScreenNameActiveOnlyParams{
+						{
+							screenName: state.NewIdentScreenName("recipient-screen-name"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.ICBM,
+									SubGroup:  wire.ICBMChannelMsgToClient,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: wire.SNAC_0x04_0x07_ICBMChannelMsgToClient{
+									ChannelID: wire.ICBMChannelIM,
+									TLVUserInfo: newTestInstance("sender-screen-name",
+										sessOptBuddyIcon(bartIconForTest("icon")), sessOptAvatarItem(bartFlashForTest("devil"))).Session().TLVUserInfo(),
+									TLVRestBlock: wire.TLVRestBlock{
+										TLVList: wire.TLVList{
+											{
+												Tag:   wire.ICBMTLVData,
+												Value: []byte{1, 2, 3, 4},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x04_0x06_ICBMChannelMsgToHost{
+					ChannelID:  wire.ICBMChannelIM,
+					ScreenName: "recipient-screen-name",
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							{
+								Tag:   wire.ICBMTLVData,
+								Value: []byte{1, 2, 3, 4},
+							},
+						},
+					},
+				},
+			},
+			expectOutput: nil,
+		},
+		{
+			name: "sender's Flash avatar is left out for a Miranda recipient",
+			instance: newTestInstance("sender-screen-name",
+				sessOptBuddyIcon(bartIconForTest("icon")), sessOptAvatarItem(bartFlashForTest("devil"))),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					relationshipParams: relationshipParams{
+						{
+							me:   state.NewIdentScreenName("sender-screen-name"),
+							them: state.NewIdentScreenName("recipient-screen-name"),
+							result: state.Relationship{
+								User: state.NewIdentScreenName("recipient-screen-name"),
+							},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams{
+						{
+							screenName: state.NewIdentScreenName("recipient-screen-name"),
+							result:     newTestInstance("recipient-screen-name", sessOptSignonComplete, sessOptMirandaICQ).Session(),
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNameActiveOnlyParams: relayToScreenNameActiveOnlyParams{
+						{
+							screenName: state.NewIdentScreenName("recipient-screen-name"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.ICBM,
+									SubGroup:  wire.ICBMChannelMsgToClient,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: wire.SNAC_0x04_0x07_ICBMChannelMsgToClient{
+									ChannelID: wire.ICBMChannelIM,
+									TLVUserInfo: newTestInstance("sender-screen-name",
+										sessOptBuddyIcon(bartIconForTest("icon"))).Session().TLVUserInfo(),
+									TLVRestBlock: wire.TLVRestBlock{
+										TLVList: wire.TLVList{
+											{
+												Tag:   wire.ICBMTLVData,
+												Value: []byte{1, 2, 3, 4},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x04_0x06_ICBMChannelMsgToHost{
+					ChannelID:  wire.ICBMChannelIM,
+					ScreenName: "recipient-screen-name",
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							{
+								Tag:   wire.ICBMTLVData,
+								Value: []byte{1, 2, 3, 4},
+							},
+						},
+					},
+				},
+			},
+			expectOutput: nil,
+		},
 	}
 
 	for _, tc := range cases {

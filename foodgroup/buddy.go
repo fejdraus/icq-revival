@@ -205,6 +205,9 @@ type buddyNotifier struct {
 // While updates are sent via the wire.BuddyArrived SNAC, the message is not
 // only used to indicate the user coming online. It can also notify changes to
 // buddy icons, warning levels, invisibility status, etc.
+//
+// A user info that lists Flash avatar or big icon items reaches the recipients
+// that can't show them without those items (see state.Session.UserInfoFor).
 func (s buddyNotifier) BroadcastBuddyArrived(ctx context.Context, screenName state.IdentScreenName, userInfo wire.TLVUserInfo) error {
 	if userInfo.IsInvisible() {
 		return nil
@@ -223,6 +226,36 @@ func (s buddyNotifier) BroadcastBuddyArrived(ctx context.Context, screenName sta
 		recipients = append(recipients, user.User)
 	}
 
+	if !userInfo.HasRelayedAvatarItems() {
+		s.relayBuddyArrived(ctx, recipients, userInfo)
+		return nil
+	}
+
+	// split the recipients by whether they can take the avatar items
+	var flashRecipients, plainRecipients []state.IdentScreenName
+	for _, recipient := range recipients {
+		sess := s.sessionRetriever.RetrieveSession(recipient)
+		switch {
+		case sess == nil:
+			continue // offline
+		case sess.SupportsFlashAvatars():
+			flashRecipients = append(flashRecipients, recipient)
+		default:
+			plainRecipients = append(plainRecipients, recipient)
+		}
+	}
+	if len(flashRecipients) > 0 {
+		s.relayBuddyArrived(ctx, flashRecipients, userInfo)
+	}
+	if len(plainRecipients) > 0 {
+		s.relayBuddyArrived(ctx, plainRecipients, userInfo.WithoutRelayedAvatarItems())
+	}
+
+	return nil
+}
+
+// relayBuddyArrived sends userInfo as a buddy arrival to recipients.
+func (s buddyNotifier) relayBuddyArrived(ctx context.Context, recipients []state.IdentScreenName, userInfo wire.TLVUserInfo) {
 	s.messageRelayer.RelayToScreenNames(ctx, recipients, wire.SNACMessage{
 		Frame: wire.SNACFrame{
 			FoodGroup: wire.Buddy,
@@ -233,8 +266,6 @@ func (s buddyNotifier) BroadcastBuddyArrived(ctx context.Context, screenName sta
 			TLVUserInfo: userInfo,
 		},
 	})
-
-	return nil
 }
 
 func (s buddyNotifier) BroadcastBuddyDeparted(ctx context.Context, screenName state.IdentScreenName) error {
@@ -320,10 +351,10 @@ func (s buddyNotifier) BroadcastVisibility(
 		if !relationship.YouBlock {
 			if relationship.IsOnTheirList {
 				// tell them you're online
-				s.unicastBuddyArrived(ctx, yourTLVInfo, theirSess.IdentScreenName())
+				s.unicastBuddyArrived(ctx, theirSess.UserInfoFor(yourTLVInfo), theirSess.IdentScreenName())
 			}
 			if relationship.IsOnYourList {
-				theirInfo := theirSess.TLVUserInfo()
+				theirInfo := you.Session().UserInfoFor(theirSess.TLVUserInfo())
 				// tell you they're online
 				s.unicastBuddyArrived(ctx, theirInfo, you.IdentScreenName())
 			}

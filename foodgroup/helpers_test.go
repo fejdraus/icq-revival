@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
@@ -1011,6 +1012,37 @@ func sessOptAvatarItem(item wire.BARTID) func(instance *state.SessionInstance) {
 	return func(instance *state.SessionInstance) {
 		instance.Session().SetAvatarItem(item)
 	}
+}
+
+// sessOptICQ6 makes the instance an ICQ 6 client, one that may be sent Flash
+// avatar and big icon items: it announces wire.FlashAvatarCaps.
+func sessOptICQ6(instance *state.SessionInstance) {
+	instance.SetCaps([][16]byte{wire.CapICQTZers, wire.CapICQ6HTML, wire.CapUTF8Messages})
+}
+
+// sessOptMirandaICQ makes the instance Miranda's ICQ plugin, with the
+// capabilities it announces: the ICQ "devils" one among them, but none of
+// wire.FlashAvatarCaps.
+func sessOptMirandaICQ(instance *state.SessionInstance) {
+	instance.SetCaps([][16]byte{
+		wire.CapUnknownICQLite, // typing notifications
+		wire.CapICQCh2Extended,
+		wire.CapUTF8Messages,
+		wire.CapShortCaps,
+		uuid.MustParse("1A093C6C-D7FD-4EC5-9D51-A6474E34F5A0"), // Xtraz
+		uuid.MustParse("0946134C-4C7F-11D1-8222-444553540000"), // ICQ devils
+		wire.CapFileTransfer,
+		wire.CapSupportICQ,
+		wire.CapBuddyListTransfer,
+		wire.CapRouteFinder,
+		wire.CapXHTMLIM,
+		{'M', 'i', 'r', 'a', 'n', 'd', 'a', 'N', 0, 0, 0x60, 0, 0, 0, 0, 0}, // signature and version
+	})
+}
+
+// sessOptAIM makes the instance an AIM client.
+func sessOptAIM(instance *state.SessionInstance) {
+	instance.SetCaps([][16]byte{wire.CapChat, wire.CapFileTransfer, wire.CapAvatarService})
 }
 
 // sessOptStatus sets the status message BART item on the session object.

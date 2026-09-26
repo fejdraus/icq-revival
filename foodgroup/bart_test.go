@@ -422,7 +422,7 @@ func TestBARTService_UpsertItem(t *testing.T) {
 		},
 		{
 			name: "awaiting upload of a Flash avatar, not yet in the BART store",
-			instance: newTestInstance("100003", sessOptBuddyIcon(wire.BARTID{
+			instance: newTestInstance("100003", sessOptICQ6, sessOptBuddyIcon(wire.BARTID{
 				Type: wire.BARTTypesBuddyIcon,
 				BARTInfo: wire.BARTInfo{
 					Flags: wire.BARTFlagsCustom,

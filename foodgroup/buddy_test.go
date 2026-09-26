@@ -1,7 +1,9 @@
 package foodgroup
 
 import (
+	"bytes"
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -630,6 +632,37 @@ func TestBuddyService_DelTempBuddies(t *testing.T) {
 }
 
 func TestBuddyNotifier_BroadcastBuddyArrived(t *testing.T) {
+	icon := wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("icon")}}
+	flash := wire.BARTID{Type: wire.BARTTypesFlashAvatar, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("devil")}}
+	big := wire.BARTID{Type: wire.BARTTypesBuddyIconBig, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("big")}}
+	userInfoWith := func(ids ...wire.BARTID) wire.TLVUserInfo {
+		return wire.TLVUserInfo{
+			ScreenName: "me",
+			TLVBlock: wire.TLVBlock{
+				TLVList: wire.TLVList{wire.NewTLVBE(wire.OServiceUserInfoBARTInfo, ids)},
+			},
+		}
+	}
+	arrival := func(info wire.TLVUserInfo) wire.SNACMessage {
+		return wire.SNACMessage{
+			Frame: wire.SNACFrame{
+				FoodGroup: wire.Buddy,
+				SubGroup:  wire.BuddyArrived,
+				RequestID: wire.ReqIDFromServer,
+			},
+			Body: wire.SNAC_0x03_0x0B_BuddyArrived{
+				TLVUserInfo: info,
+			},
+		}
+	}
+	friend := func(screenName string) state.Relationship {
+		return state.Relationship{
+			User:          state.NewIdentScreenName(screenName),
+			IsOnYourList:  true,
+			IsOnTheirList: true,
+		}
+	}
+
 	cases := []struct {
 		// name is the unit test name
 		name string
@@ -733,6 +766,102 @@ func TestBuddyNotifier_BroadcastBuddyArrived(t *testing.T) {
 				},
 			},
 		},
+		{
+			// Miranda prefers the Flash avatar to the icon, can't play it and
+			// shows no avatar at all, so only ICQ 6 gets the ICQ avatar items.
+			name:       "Flash avatar and big icon reach ICQ 6 recipients only",
+			screenName: state.NewIdentScreenName("me"),
+			userInfo:   userInfoWith(icon, flash, big),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					allRelationshipsParams: allRelationshipsParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							result: []state.Relationship{
+								friend("icq6"), friend("miranda"), friend("aim"), friend("offline"),
+							},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams: retrieveSessionParams{
+						{screenName: state.NewIdentScreenName("icq6"), result: newTestInstance("icq6", sessOptICQ6).Session()},
+						{screenName: state.NewIdentScreenName("miranda"), result: newTestInstance("miranda", sessOptMirandaICQ).Session()},
+						{screenName: state.NewIdentScreenName("aim"), result: newTestInstance("aim", sessOptAIM).Session()},
+						{screenName: state.NewIdentScreenName("offline"), result: nil},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNamesParams: relayToScreenNamesParams{
+						{
+							screenNames: []state.IdentScreenName{state.NewIdentScreenName("icq6")},
+							message:     arrival(userInfoWith(icon, flash, big)),
+						},
+						{
+							screenNames: []state.IdentScreenName{
+								state.NewIdentScreenName("miranda"),
+								state.NewIdentScreenName("aim"),
+							},
+							message: arrival(userInfoWith(icon)),
+						},
+					},
+				},
+			},
+		},
+		{
+			name:       "only a Flash avatar, no ICQ 6 recipient: the BART tag is dropped",
+			screenName: state.NewIdentScreenName("me"),
+			userInfo:   userInfoWith(flash),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					allRelationshipsParams: allRelationshipsParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							result:     []state.Relationship{friend("miranda")},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams: retrieveSessionParams{
+						{screenName: state.NewIdentScreenName("miranda"), result: newTestInstance("miranda", sessOptMirandaICQ).Session()},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNamesParams: relayToScreenNamesParams{
+						{
+							screenNames: []state.IdentScreenName{state.NewIdentScreenName("miranda")},
+							message:     arrival(wire.TLVUserInfo{ScreenName: "me", TLVBlock: wire.TLVBlock{TLVList: wire.TLVList{}}}),
+						},
+					},
+				},
+			},
+		},
+		{
+			name:       "no ICQ avatar items: sent to everyone as it is",
+			screenName: state.NewIdentScreenName("me"),
+			userInfo:   userInfoWith(icon),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					allRelationshipsParams: allRelationshipsParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							result:     []state.Relationship{friend("icq6"), friend("miranda")},
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNamesParams: relayToScreenNamesParams{
+						{
+							screenNames: []state.IdentScreenName{
+								state.NewIdentScreenName("icq6"),
+								state.NewIdentScreenName("miranda"),
+							},
+							message: arrival(userInfoWith(icon)),
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -748,10 +877,17 @@ func TestBuddyNotifier_BroadcastBuddyArrived(t *testing.T) {
 				messageRelayer.EXPECT().
 					RelayToScreenNames(matchContext(), params.screenNames, params.message)
 			}
+			sessionRetriever := newMockSessionRetriever(t)
+			for _, params := range tc.mockParams.retrieveSessionParams {
+				sessionRetriever.EXPECT().
+					RetrieveSession(params.screenName).
+					Return(params.result)
+			}
 
 			svc := buddyNotifier{
 				relationshipFetcher: relationshipFetcher,
 				messageRelayer:      messageRelayer,
+				sessionRetriever:    sessionRetriever,
 			}
 
 			err := svc.BroadcastBuddyArrived(context.Background(), tc.screenName, tc.userInfo)
@@ -1248,6 +1384,61 @@ func Test_buddyNotifier_BroadcastVisibility(t *testing.T) {
 			},
 			doSendDepartures: false,
 		},
+		{
+			// Everyone has a static icon and a Flash avatar; only the ICQ 6
+			// side is told about the Flash avatar, whichever way the arrival
+			// goes.
+			name: "Flash avatar goes to ICQ 6 only",
+			instance: newTestInstance("me", sessOptMirandaICQ,
+				sessOptBuddyIcon(bartIconForTest("my icon")), sessOptAvatarItem(bartFlashForTest("my devil"))),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					allRelationshipsParams: allRelationshipsParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							result: []state.Relationship{
+								{User: state.NewIdentScreenName("icq6"), IsOnYourList: true, IsOnTheirList: true},
+								{User: state.NewIdentScreenName("aim"), IsOnYourList: true, IsOnTheirList: true},
+							},
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNameParams: relayToScreenNameParams{
+						{
+							screenName: state.NewIdentScreenName("icq6"),
+							message:    newBuddyArrivedNotifBART("me", wire.BARTTypesBuddyIcon, wire.BARTTypesFlashAvatar),
+						},
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message:    newBuddyArrivedNotifBART("icq6", wire.BARTTypesBuddyIcon),
+						},
+						{
+							screenName: state.NewIdentScreenName("aim"),
+							message:    newBuddyArrivedNotifBART("me", wire.BARTTypesBuddyIcon),
+						},
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message:    newBuddyArrivedNotifBART("aim", wire.BARTTypesBuddyIcon),
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams: retrieveSessionParams{
+						{
+							screenName: state.NewIdentScreenName("icq6"),
+							result: newTestInstance("icq6", sessOptICQ6,
+								sessOptBuddyIcon(bartIconForTest("icq6 icon")), sessOptAvatarItem(bartFlashForTest("icq6 devil"))).Session(),
+						},
+						{
+							screenName: state.NewIdentScreenName("aim"),
+							result: newTestInstance("aim", sessOptAIM,
+								sessOptBuddyIcon(bartIconForTest("aim icon")), sessOptAvatarItem(bartFlashForTest("aim devil"))).Session(),
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -1300,6 +1491,44 @@ func newBuddyDepartedNotif(screenName state.DisplayScreenName) wire.SNACMessage 
 			return snac.ScreenName == screenName.String()
 		},
 	}
+}
+
+// newBuddyArrivedNotifBART matches a buddy arrival for screenName whose user
+// info lists BART items of exactly bartTypes, in that order.
+func newBuddyArrivedNotifBART(screenName state.DisplayScreenName, bartTypes ...uint16) wire.SNACMessage {
+	return wire.SNACMessage{
+		Frame: wire.SNACFrame{
+			FoodGroup: wire.Buddy,
+			SubGroup:  wire.BuddyArrived,
+			RequestID: wire.ReqIDFromServer,
+		},
+		Body: func(val any) bool {
+			snac, ok := val.(wire.SNAC_0x03_0x0B_BuddyArrived)
+			if !ok || snac.ScreenName != screenName.String() {
+				return false
+			}
+			b, _ := snac.Bytes(wire.OServiceUserInfoBARTInfo)
+			var ids []wire.BARTID
+			if err := wire.UnmarshalBE(&ids, bytes.NewReader(b)); err != nil {
+				return false
+			}
+			var got []uint16
+			for _, id := range ids {
+				got = append(got, id.Type)
+			}
+			return slices.Equal(got, bartTypes)
+		},
+	}
+}
+
+// bartIconForTest returns a buddy icon item with the given hash.
+func bartIconForTest(hash string) wire.BARTID {
+	return wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte(hash)}}
+}
+
+// bartFlashForTest returns a Flash avatar item with the given hash.
+func bartFlashForTest(hash string) wire.BARTID {
+	return wire.BARTID{Type: wire.BARTTypesFlashAvatar, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte(hash)}}
 }
 
 func newBuddyArrivedNotif(screenName state.DisplayScreenName) wire.SNACMessage {

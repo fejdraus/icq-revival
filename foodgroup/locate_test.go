@@ -298,6 +298,102 @@ func TestLocateService_UserInfoQuery(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "ICQ 6 requester, expect the Flash avatar listed",
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					relationshipParams: relationshipParams{
+						{
+							me:   state.NewIdentScreenName("user_screen_name"),
+							them: state.NewIdentScreenName("requested-user"),
+							result: state.Relationship{
+								User:          state.NewIdentScreenName("requested-user"),
+								IsOnYourList:  true,
+								IsOnTheirList: true,
+							},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams: retrieveSessionParams{
+						{
+							screenName: state.NewIdentScreenName("requested-user"),
+							result: newTestInstance("requested-user", sessOptCannedSignonTime,
+								sessOptBuddyIcon(bartIconForTest("icon")), sessOptAvatarItem(bartFlashForTest("devil"))).Session(),
+						},
+					},
+				},
+			},
+			instance: newTestInstance("user_screen_name", sessOptICQ6),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x02_0x05_LocateUserInfoQuery{
+					ScreenName: "requested-user",
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.Locate,
+					SubGroup:  wire.LocateUserInfoReply,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x02_0x06_LocateUserInfoReply{
+					TLVUserInfo: newTestInstance("requested-user", sessOptCannedSignonTime,
+						sessOptBuddyIcon(bartIconForTest("icon")), sessOptAvatarItem(bartFlashForTest("devil"))).Session().TLVUserInfo(),
+					LocateInfo: wire.TLVRestBlock{},
+				},
+			},
+		},
+		{
+			name: "Miranda requester, expect the Flash avatar left out",
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					relationshipParams: relationshipParams{
+						{
+							me:   state.NewIdentScreenName("user_screen_name"),
+							them: state.NewIdentScreenName("requested-user"),
+							result: state.Relationship{
+								User:          state.NewIdentScreenName("requested-user"),
+								IsOnYourList:  true,
+								IsOnTheirList: true,
+							},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams: retrieveSessionParams{
+						{
+							screenName: state.NewIdentScreenName("requested-user"),
+							result: newTestInstance("requested-user", sessOptCannedSignonTime,
+								sessOptBuddyIcon(bartIconForTest("icon")), sessOptAvatarItem(bartFlashForTest("devil"))).Session(),
+						},
+					},
+				},
+			},
+			instance: newTestInstance("user_screen_name", sessOptMirandaICQ),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x02_0x05_LocateUserInfoQuery{
+					ScreenName: "requested-user",
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.Locate,
+					SubGroup:  wire.LocateUserInfoReply,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x02_0x06_LocateUserInfoReply{
+					TLVUserInfo: newTestInstance("requested-user", sessOptCannedSignonTime,
+						sessOptBuddyIcon(bartIconForTest("icon"))).Session().TLVUserInfo(),
+					LocateInfo: wire.TLVRestBlock{},
+				},
+			},
+		},
 	}
 
 	for _, tc := range cases {

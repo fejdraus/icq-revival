@@ -243,7 +243,7 @@ func (s OServiceService) UserInfoQuery(ctx context.Context, instance *state.Sess
 
 	if multiInstance {
 		for _, cur := range instance.Session().Instances() {
-			userInfo = append(userInfo, instanceUserInfo(cur))
+			userInfo = append(userInfo, instanceUserInfo(cur, instance))
 		}
 	}
 
@@ -951,7 +951,7 @@ func sessionUserInfo(instance *state.SessionInstance, multiInstance bool) wire.T
 		info.Append(wire.NewTLVBE(wire.OServiceUserInfoOscarCaps, caps))
 	}
 
-	if bartIDs := sessionBARTIDs(sess); len(bartIDs) > 0 {
+	if bartIDs := sessionBARTIDs(sess, instance.SupportsFlashAvatars()); len(bartIDs) > 0 {
 		info.Append(wire.NewTLVBE(wire.OServiceUserInfoBARTInfo, bartIDs))
 	}
 
@@ -991,8 +991,9 @@ func sessionUserInfo(instance *state.SessionInstance, multiInstance bool) wire.T
 }
 
 // instanceUserInfo builds the user info block that describes a single
-// connection within the session.
-func instanceUserInfo(instance *state.SessionInstance) wire.TLVUserInfo {
+// connection within the session, as sent to recipient, one of the session's
+// instances.
+func instanceUserInfo(instance *state.SessionInstance, recipient *state.SessionInstance) wire.TLVUserInfo {
 	sess := instance.Session()
 
 	info := wire.TLVUserInfo{
@@ -1009,7 +1010,7 @@ func instanceUserInfo(instance *state.SessionInstance) wire.TLVUserInfo {
 	}
 
 	// the buddy icon and status message are shared by every instance
-	if bartIDs := sessionBARTIDs(sess); len(bartIDs) > 0 {
+	if bartIDs := sessionBARTIDs(sess, recipient.SupportsFlashAvatars()); len(bartIDs) > 0 {
 		info.Append(wire.NewTLVBE(wire.OServiceUserInfoBARTInfo, bartIDs))
 	}
 
@@ -1031,9 +1032,11 @@ func instanceUserInfo(instance *state.SessionInstance) wire.TLVUserInfo {
 	return info
 }
 
-// sessionBARTIDs returns the account's buddy icon, status message and ICQ
-// avatar BART IDs.
-func sessionBARTIDs(sess *state.Session) []wire.BARTID {
+// sessionBARTIDs returns the account's buddy icon and status message BART
+// IDs, followed by its ICQ avatar items (Flash avatar, big icon) when
+// withAvatarItems is set: only an ICQ 6 client may be sent those, see
+// state.SessionInstance.SupportsFlashAvatars.
+func sessionBARTIDs(sess *state.Session, withAvatarItems bool) []wire.BARTID {
 	var bartIDs []wire.BARTID
 
 	if icon, hasIcon := sess.BuddyIcon(); hasIcon {
@@ -1042,7 +1045,9 @@ func sessionBARTIDs(sess *state.Session) []wire.BARTID {
 	if status, hasStatus := sess.Status(); hasStatus {
 		bartIDs = append(bartIDs, status)
 	}
-	bartIDs = append(bartIDs, sess.AvatarItems()...)
+	if withAvatarItems {
+		bartIDs = append(bartIDs, sess.AvatarItems()...)
+	}
 
 	return bartIDs
 }
