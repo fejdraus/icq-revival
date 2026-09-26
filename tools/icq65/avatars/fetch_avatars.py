@@ -85,11 +85,8 @@ AVATARS = [
     # The ICQ 6 folder: newer than the /xtraz/ pirate.swf (2010, 69432 bytes).
     ('pirate.swf', '20120118212050', 'http://c.icq.com/xtraz2/img/avatar/pirate.swf', ICQ),
     ('robot.swf', '20120805184253', 'http://c.icq.com/xtraz2/img/avatar/robot.swf', ICQ),
-    # The football devil ICQ shipped as the template of its devil kit
-    # (Xtraz Developer Center, "User Created Devils"): archived only inside
-    # the kit's zip, so the address names the member after '#'. The 2006 kit;
-    # the 2004 one (20060411031317) holds an older build of the same movie.
-    ('ball.swf', '20061216222045', 'http://www.icq.com:80/xtraz_devcenter/devils/devils.zip#ball.swf', ICQ),
+    # The football devil of ICQ's devil kit (devils.zip#ball.swf) is left out:
+    # it is avatar_11151 in another build (LEFT_OUT below).
     ('2308intheend.swf', '20060822011106', 'http://c.icq.com:80/xtraz/img/avatar/uc/2308intheend.swf', USER),
     ('2308koshak.swf', '20070202020823', 'http://c.icq.com:80/xtraz/img/avatar/uc/2308koshak.swf', USER),
     ('bg.swf', '20110904003226', 'http://c.icq.com/xtraz/img/avatar/uc/BG.swf', USER),
@@ -113,6 +110,7 @@ AVATARS = [
 # Archived movies not fetched at all, and why; listed in the manifest.
 LEFT_OUT = [
     ('uc/neger.swf', 'a racial caricature; left out of the gallery'),
+    ('devils.zip#ball.swf', "the devil kit's football: the same avatar as avatar_11151, another build"),
 ]
 
 # Two movies are archived twice under different names (alian_10529 and
@@ -150,7 +148,6 @@ TITLES = {
     'superboy': ('Superboy', 'Супербой'),
     'pirate': ('Pirate', 'Пірат'),
     'robot': ('Robot', 'Робот'),
-    'ball': ('Football', 'Мʼяч'),
     '2308intheend': ('In the End', 'In the End'),
     '2308koshak': ('Koshak', 'Кошак'),
     'bg': ('BG', 'BG'),
