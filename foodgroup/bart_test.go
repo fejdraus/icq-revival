@@ -420,6 +420,152 @@ func TestBARTService_UpsertItem(t *testing.T) {
 				assert.Equal(t, want, have)
 			},
 		},
+		{
+			name: "awaiting upload of a Flash avatar, not yet in the BART store",
+			instance: newTestInstance("100003", sessOptBuddyIcon(wire.BARTID{
+				Type: wire.BARTTypesBuddyIcon,
+				BARTInfo: wire.BARTInfo{
+					Flags: wire.BARTFlagsCustom,
+					Hash:  []byte("static icon"),
+				},
+			}), sessOptAvatarItem(wire.BARTID{
+				Type: wire.BARTTypesFlashAvatar,
+				BARTInfo: wire.BARTInfo{
+					Flags: wire.BARTFlagsCustom | wire.BARTFlagsUnknown,
+					Hash:  itemHash,
+				},
+			})),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x02_BARTUploadQuery{
+					Type: wire.BARTTypesFlashAvatar,
+					Data: itemData,
+				},
+			},
+			mockParams: mockParams{
+				bartItemManagerParams: bartItemManagerParams{
+					bartItemManagerUpsertParams: bartItemManagerUpsertParams{
+						{
+							itemHash: itemHash,
+							payload:  itemData,
+							bartType: wire.BARTTypesFlashAvatar,
+						},
+					},
+				},
+				buddyBroadcasterParams: buddyBroadcasterParams{
+					broadcastBuddyArrivedParams: broadcastBuddyArrivedParams{
+						{
+							screenName: state.DisplayScreenName("100003"),
+							bodyMatcher: func(tlvInfo wire.TLVUserInfo) bool {
+								bartID, exists := tlvInfo.Bytes(wire.OServiceUserInfoBARTInfo)
+								return exists && bytes.Contains(bartID, itemHash)
+							},
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToSelfParams: relayToSelfParams{
+						{
+							screenName: state.NewIdentScreenName("100003"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.OService,
+									SubGroup:  wire.OServiceUserInfoUpdate,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: func(val any) bool {
+									snac, ok := val.(wire.SNAC_0x01_0x0F_OServiceUserInfoUpdate)
+									if !ok {
+										return false
+									}
+									bartID, exists := snac.UserInfo[0].Bytes(wire.OServiceUserInfoBARTInfo)
+									return exists && bytes.Contains(bartID, itemHash)
+								},
+							},
+						},
+					},
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.BART,
+					SubGroup:  wire.BARTUploadReply,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x03_BARTUploadReply{
+					Code: wire.BARTReplyCodesSuccess,
+					ID: wire.BARTID{
+						Type: wire.BARTTypesFlashAvatar,
+						BARTInfo: wire.BARTInfo{
+							Flags: wire.BARTFlagsCustom,
+							Hash:  itemHash,
+						},
+					},
+				},
+			},
+			instanceMatch: func(instance *state.SessionInstance) {
+				have, ok := instance.Session().AvatarItem(wire.BARTTypesFlashAvatar)
+				assert.True(t, ok)
+				assert.Equal(t, wire.BARTFlagsCustom, have.Flags)
+				// the buddy icon is untouched
+				icon, _ := instance.Session().BuddyIcon()
+				assert.Equal(t, []byte("static icon"), icon.Hash)
+			},
+		},
+		{
+			name: "Flash avatar upload is not taken for a buddy icon with the same hash",
+			instance: newTestInstance("100003", sessOptBuddyIcon(wire.BARTID{
+				Type: wire.BARTTypesBuddyIcon,
+				BARTInfo: wire.BARTInfo{
+					Flags: wire.BARTFlagsCustom | wire.BARTFlagsUnknown,
+					Hash:  itemHash,
+				},
+			})),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x02_BARTUploadQuery{
+					Type: wire.BARTTypesFlashAvatar,
+					Data: itemData,
+				},
+			},
+			mockParams: mockParams{
+				bartItemManagerParams: bartItemManagerParams{
+					bartItemManagerUpsertParams: bartItemManagerUpsertParams{
+						{
+							itemHash: itemHash,
+							payload:  itemData,
+							bartType: wire.BARTTypesFlashAvatar,
+						},
+					},
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.BART,
+					SubGroup:  wire.BARTUploadReply,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x03_BARTUploadReply{
+					Code: wire.BARTReplyCodesSuccess,
+					ID: wire.BARTID{
+						Type: wire.BARTTypesFlashAvatar,
+						BARTInfo: wire.BARTInfo{
+							Flags: wire.BARTFlagsCustom,
+							Hash:  itemHash,
+						},
+					},
+				},
+			},
+			instanceMatch: func(instance *state.SessionInstance) {
+				icon, _ := instance.Session().BuddyIcon()
+				assert.Equal(t, wire.BARTFlagsCustom|wire.BARTFlagsUnknown, icon.Flags)
+				assert.Empty(t, instance.Session().AvatarItems())
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -596,6 +742,46 @@ func TestBARTService_RetrieveItem(t *testing.T) {
 			},
 			expectOutput: wire.SNACMessage{},
 			expectErr:    assert.AnError,
+		},
+		{
+			name:     "retrieve unknown Flash avatar returns no data",
+			instance: newTestInstance("100003"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x04_BARTDownloadQuery{
+					ScreenName: "100003",
+					Command:    1,
+					BARTID: wire.BARTID{
+						Type:     wire.BARTTypesFlashAvatar,
+						BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+					},
+				},
+			},
+			mockParams: mockParams{
+				bartItemManagerParams: bartItemManagerParams{
+					bartItemManagerRetrieveParams: bartItemManagerRetrieveParams{
+						{
+							itemHash: []byte("some hash"),
+						},
+					},
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.BART,
+					SubGroup:  wire.BARTDownloadReply,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x05_BARTDownloadReply{
+					ScreenName: "100003",
+					BARTID: wire.BARTID{
+						Type:     wire.BARTTypesFlashAvatar,
+						BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+					},
+				},
+			},
 		},
 	}
 
@@ -967,6 +1153,162 @@ func TestBARTService_RetrieveItemV2(t *testing.T) {
 							},
 						},
 						Data: blankGIF,
+					},
+				},
+			},
+		},
+		{
+			name:     "retrieve a Flash avatar",
+			instance: newTestInstance("100003"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x06_BARTDownload2Query{
+					ScreenName: "100003",
+					IDs: []wire.BARTID{
+						{
+							Type:     wire.BARTTypesFlashAvatar,
+							BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+						},
+					},
+				},
+			},
+			mockParams: mockParams{
+				bartItemManagerParams: bartItemManagerParams{
+					bartItemManagerRetrieveParams: bartItemManagerRetrieveParams{
+						{
+							itemHash: []byte("some hash"),
+							result:   []byte(`<DOCUMENT><RESSET TYPE="ICQ_EXTRAS"><URL>http://example.com/devil.swf</URL></RESSET></DOCUMENT>`),
+						},
+					},
+				},
+			},
+			expectOutput: []wire.SNACMessage{
+				{
+					Frame: wire.SNACFrame{
+						FoodGroup: wire.BART,
+						SubGroup:  wire.BARTDownload2Reply,
+						RequestID: 1234,
+					},
+					Body: wire.SNAC_0x10_0x07_BARTDownload2Reply{
+						ScreenName: "100003",
+						ReplyID: wire.BartQueryReplyID{
+							QueryID: wire.BARTID{
+								Type:     wire.BARTTypesFlashAvatar,
+								BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+							},
+							Code: wire.BARTReplyCodesSuccess,
+							ReplyID: wire.BARTID{
+								Type:     wire.BARTTypesFlashAvatar,
+								BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+							},
+						},
+						Data: []byte(`<DOCUMENT><RESSET TYPE="ICQ_EXTRAS"><URL>http://example.com/devil.swf</URL></RESSET></DOCUMENT>`),
+					},
+				},
+			},
+		},
+		{
+			name:     "retrieve a big buddy icon",
+			instance: newTestInstance("100003"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x06_BARTDownload2Query{
+					ScreenName: "100003",
+					IDs: []wire.BARTID{
+						{
+							Type:     wire.BARTTypesBuddyIconBig,
+							BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+						},
+					},
+				},
+			},
+			mockParams: mockParams{
+				bartItemManagerParams: bartItemManagerParams{
+					bartItemManagerRetrieveParams: bartItemManagerRetrieveParams{
+						{
+							itemHash: []byte("some hash"),
+							result:   []byte("jpeg"),
+						},
+					},
+				},
+			},
+			expectOutput: []wire.SNACMessage{
+				{
+					Frame: wire.SNACFrame{
+						FoodGroup: wire.BART,
+						SubGroup:  wire.BARTDownload2Reply,
+						RequestID: 1234,
+					},
+					Body: wire.SNAC_0x10_0x07_BARTDownload2Reply{
+						ScreenName: "100003",
+						ReplyID: wire.BartQueryReplyID{
+							QueryID: wire.BARTID{
+								Type:     wire.BARTTypesBuddyIconBig,
+								BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+							},
+							Code: wire.BARTReplyCodesSuccess,
+							ReplyID: wire.BARTID{
+								Type:     wire.BARTTypesBuddyIconBig,
+								BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+							},
+						},
+						Data: []byte("jpeg"),
+					},
+				},
+			},
+		},
+		{
+			name:     "unknown hash is answered with not found",
+			instance: newTestInstance("100003"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x10_0x06_BARTDownload2Query{
+					ScreenName: "100003",
+					IDs: []wire.BARTID{
+						{
+							Type:     wire.BARTTypesFlashAvatar,
+							BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+						},
+					},
+				},
+			},
+			mockParams: mockParams{
+				bartItemManagerParams: bartItemManagerParams{
+					bartItemManagerRetrieveParams: bartItemManagerRetrieveParams{
+						{
+							itemHash: []byte("some hash"),
+							result:   nil,
+						},
+					},
+				},
+			},
+			expectOutput: []wire.SNACMessage{
+				{
+					Frame: wire.SNACFrame{
+						FoodGroup: wire.BART,
+						SubGroup:  wire.BARTDownload2Reply,
+						RequestID: 1234,
+					},
+					Body: wire.SNAC_0x10_0x07_BARTDownload2Reply{
+						ScreenName: "100003",
+						ReplyID: wire.BartQueryReplyID{
+							QueryID: wire.BARTID{
+								Type:     wire.BARTTypesFlashAvatar,
+								BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+							},
+							Code: wire.BARTReplyCodesNotfound,
+							ReplyID: wire.BARTID{
+								Type:     wire.BARTTypesFlashAvatar,
+								BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("some hash")},
+							},
+						},
+						Data: nil,
 					},
 				},
 			},

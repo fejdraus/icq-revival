@@ -1803,6 +1803,464 @@ func TestFeedbagService_UpsertItem(t *testing.T) {
 			},
 		},
 		{
+			name:     "add Flash avatar hash to feedbag, item already in BART store, notify buddies",
+			instance: newTestInstance("me"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.Feedbag,
+					SubGroup:  wire.FeedbagInsertItem,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x13_0x08_FeedbagInsertItem{
+					Items: []wire.FeedbagItem{
+						{
+							Name:    fmt.Sprintf("%d", wire.BARTTypesFlashAvatar),
+							ClassID: wire.FeedbagClassIdBart,
+							TLVLBlock: wire.TLVLBlock{
+								TLVList: wire.TLVList{
+									wire.NewTLVBE(wire.FeedbagAttributesBartInfo, wire.BARTInfo{
+										Flags: wire.BARTFlagsCustom,
+										Hash:  []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+									}),
+								},
+							},
+						},
+					},
+				},
+			},
+			mockParams: mockParams{
+				bartItemManagerParams: bartItemManagerParams{
+					bartItemManagerRetrieveParams: bartItemManagerRetrieveParams{
+						{
+							itemHash: []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+							result:   []byte{'i', 'c', 'o', 'n', 'd', 'a', 't', 'a'},
+							err:      nil,
+						},
+					},
+				},
+				feedbagManagerParams: feedbagManagerParams{
+					feedbagUpsertParams: feedbagUpsertParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							items: []wire.FeedbagItem{
+								{
+									Name:    fmt.Sprintf("%d", wire.BARTTypesFlashAvatar),
+									ClassID: wire.FeedbagClassIdBart,
+									TLVLBlock: wire.TLVLBlock{
+										TLVList: wire.TLVList{
+											wire.NewTLVBE(wire.FeedbagAttributesBartInfo, wire.BARTInfo{
+												Flags: wire.BARTFlagsCustom,
+												Hash:  []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+											}),
+										},
+									},
+								},
+							},
+						},
+					},
+					adjacentUsersParams: adjacentUsersParams{},
+					feedbagParams:       feedbagParams{},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToOtherInstancesParams: relayToOtherInstancesParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.Feedbag,
+									SubGroup:  wire.FeedbagInsertItem,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: wire.SNAC_0x13_0x09_FeedbagUpdateItem{
+									Items: []wire.FeedbagItem{
+										{
+											Name:    fmt.Sprintf("%d", wire.BARTTypesFlashAvatar),
+											ClassID: wire.FeedbagClassIdBart,
+											TLVLBlock: wire.TLVLBlock{
+												TLVList: wire.TLVList{
+													wire.NewTLVBE(wire.FeedbagAttributesBartInfo, wire.BARTInfo{
+														Flags: wire.BARTFlagsCustom,
+														Hash:  []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+													}),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					relayToSelfParams: relayToSelfParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.OService,
+									SubGroup:  wire.OServiceUserInfoUpdate,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: func(val any) bool {
+									snac, ok := val.(wire.SNAC_0x01_0x0F_OServiceUserInfoUpdate)
+									if !ok {
+										return false
+									}
+									bartID, exists := snac.UserInfo[0].Bytes(wire.OServiceUserInfoBARTInfo)
+									return assert.True(t, exists) &&
+										assert.Equal(t, "me", snac.UserInfo[0].ScreenName) &&
+										assert.True(t, bytes.Contains(bartID, []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'}), "user info BART hash doesn't match")
+								},
+							},
+						},
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.OService,
+									SubGroup:  wire.OServiceBartReply,
+								},
+								Body: wire.SNAC_0x01_0x21_OServiceBARTReply{
+									BARTID: wire.BARTID{
+										Type: wire.BARTTypesFlashAvatar,
+										BARTInfo: wire.BARTInfo{
+											Flags: wire.BARTFlagsCustom | wire.BARTFlagsKnown,
+											Hash:  []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+										},
+									},
+								},
+							},
+						},
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.Feedbag,
+									SubGroup:  wire.FeedbagStatus,
+									RequestID: 1234,
+								},
+								Body: wire.SNAC_0x13_0x0E_FeedbagStatus{
+									Results: []uint16{0x0000},
+								},
+							},
+						},
+					},
+				},
+				buddyBroadcasterParams: buddyBroadcasterParams{
+					broadcastBuddyArrivedParams: broadcastBuddyArrivedParams{
+						{
+							screenName: state.DisplayScreenName("me"),
+						},
+					},
+				},
+			},
+			expectOutput: nil,
+			instanceMatch: func(instance *state.SessionInstance) {
+				have, ok := instance.Session().AvatarItem(wire.BARTTypesFlashAvatar)
+				assert.True(t, ok)
+				want := wire.BARTID{
+					Type: wire.BARTTypesFlashAvatar,
+					BARTInfo: wire.BARTInfo{
+						Flags: wire.BARTFlagsCustom,
+						Hash:  []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+					},
+				}
+				assert.Equal(t, want, have)
+				_, hasIcon := instance.Session().BuddyIcon()
+				assert.False(t, hasIcon, "the buddy icon must stay untouched")
+			},
+		},
+		{
+			name:     "add big icon hash to feedbag, item not in BART store, instruct client to upload it",
+			instance: newTestInstance("me"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.Feedbag,
+					SubGroup:  wire.FeedbagInsertItem,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x13_0x08_FeedbagInsertItem{
+					Items: []wire.FeedbagItem{
+						{
+							Name:    fmt.Sprintf("%d", wire.BARTTypesBuddyIconBig),
+							ClassID: wire.FeedbagClassIdBart,
+							TLVLBlock: wire.TLVLBlock{
+								TLVList: wire.TLVList{
+									wire.NewTLVBE(wire.FeedbagAttributesBartInfo, wire.BARTInfo{
+										Flags: wire.BARTFlagsCustom,
+										Hash:  []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+									}),
+								},
+							},
+						},
+					},
+				},
+			},
+			mockParams: mockParams{
+				bartItemManagerParams: bartItemManagerParams{
+					bartItemManagerRetrieveParams: bartItemManagerRetrieveParams{
+						{
+							itemHash: []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+							result:   []byte{}, // icon doesn't exist
+						},
+					},
+				},
+				feedbagManagerParams: feedbagManagerParams{
+					feedbagUpsertParams: feedbagUpsertParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							items: []wire.FeedbagItem{
+								{
+									Name:    fmt.Sprintf("%d", wire.BARTTypesBuddyIconBig),
+									ClassID: wire.FeedbagClassIdBart,
+									TLVLBlock: wire.TLVLBlock{
+										TLVList: wire.TLVList{
+											wire.NewTLVBE(wire.FeedbagAttributesBartInfo, wire.BARTInfo{
+												Flags: wire.BARTFlagsCustom,
+												Hash:  []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+											}),
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToOtherInstancesParams: relayToOtherInstancesParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.Feedbag,
+									SubGroup:  wire.FeedbagInsertItem,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: wire.SNAC_0x13_0x09_FeedbagUpdateItem{
+									Items: []wire.FeedbagItem{
+										{
+											Name:    fmt.Sprintf("%d", wire.BARTTypesBuddyIconBig),
+											ClassID: wire.FeedbagClassIdBart,
+											TLVLBlock: wire.TLVLBlock{
+												TLVList: wire.TLVList{
+													wire.NewTLVBE(wire.FeedbagAttributesBartInfo, wire.BARTInfo{
+														Flags: wire.BARTFlagsCustom,
+														Hash:  []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+													}),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					relayToSelfParams: relayToSelfParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.OService,
+									SubGroup:  wire.OServiceUserInfoUpdate,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: func(val any) bool {
+									snac, ok := val.(wire.SNAC_0x01_0x0F_OServiceUserInfoUpdate)
+									if !ok {
+										return false
+									}
+									bartID, exists := snac.UserInfo[0].Bytes(wire.OServiceUserInfoBARTInfo)
+									return assert.True(t, exists) &&
+										assert.Equal(t, "me", snac.UserInfo[0].ScreenName) &&
+										assert.True(t, bytes.Contains(bartID, []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'}), "user info BART hash doesn't match")
+								},
+							},
+						},
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.OService,
+									SubGroup:  wire.OServiceBartReply,
+								},
+								Body: wire.SNAC_0x01_0x21_OServiceBARTReply{
+									BARTID: wire.BARTID{
+										Type: wire.BARTTypesBuddyIconBig,
+										BARTInfo: wire.BARTInfo{
+											Flags: wire.BARTFlagsCustom | wire.BARTFlagsUnknown,
+											Hash:  []byte{'t', 'h', 'e', 'h', 'a', 's', 'h'},
+										},
+									},
+								},
+							},
+						},
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.Feedbag,
+									SubGroup:  wire.FeedbagStatus,
+									RequestID: 1234,
+								},
+								Body: wire.SNAC_0x13_0x0E_FeedbagStatus{
+									Results: []uint16{0x0000},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectOutput: nil,
+			instanceMatch: func(instance *state.SessionInstance) {
+				have, ok := instance.Session().AvatarItem(wire.BARTTypesBuddyIconBig)
+				assert.True(t, ok)
+				assert.Equal(t, wire.BARTFlagsCustom|wire.BARTFlagsUnknown, have.Flags)
+			},
+		},
+		{
+			name:     "clear Flash avatar with an all-zero hash, notify buddies",
+			instance: newTestInstance("me"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.Feedbag,
+					SubGroup:  wire.FeedbagInsertItem,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x13_0x08_FeedbagInsertItem{
+					Items: []wire.FeedbagItem{
+						{
+							Name:    fmt.Sprintf("%d", wire.BARTTypesFlashAvatar),
+							ClassID: wire.FeedbagClassIdBart,
+							TLVLBlock: wire.TLVLBlock{
+								TLVList: wire.TLVList{
+									wire.NewTLVBE(wire.FeedbagAttributesBartInfo, wire.BARTInfo{
+										Flags: wire.BARTFlagsKnown,
+										Hash:  make([]byte, 16),
+									}),
+								},
+							},
+						},
+					},
+				},
+			},
+			mockParams: mockParams{
+				feedbagManagerParams: feedbagManagerParams{
+					feedbagUpsertParams: feedbagUpsertParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							items: []wire.FeedbagItem{
+								{
+									Name:    fmt.Sprintf("%d", wire.BARTTypesFlashAvatar),
+									ClassID: wire.FeedbagClassIdBart,
+									TLVLBlock: wire.TLVLBlock{
+										TLVList: wire.TLVList{
+											wire.NewTLVBE(wire.FeedbagAttributesBartInfo, wire.BARTInfo{
+												Flags: wire.BARTFlagsKnown,
+												Hash:  make([]byte, 16),
+											}),
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				buddyBroadcasterParams: buddyBroadcasterParams{
+					broadcastBuddyArrivedParams: broadcastBuddyArrivedParams{
+						{
+							screenName: state.DisplayScreenName("me"),
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToOtherInstancesParams: relayToOtherInstancesParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.Feedbag,
+									SubGroup:  wire.FeedbagInsertItem,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: wire.SNAC_0x13_0x09_FeedbagUpdateItem{
+									Items: []wire.FeedbagItem{
+										{
+											Name:    fmt.Sprintf("%d", wire.BARTTypesFlashAvatar),
+											ClassID: wire.FeedbagClassIdBart,
+											TLVLBlock: wire.TLVLBlock{
+												TLVList: wire.TLVList{
+													wire.NewTLVBE(wire.FeedbagAttributesBartInfo, wire.BARTInfo{
+														Hash: make([]byte, 16),
+													}),
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					relayToSelfParams: relayToSelfParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.OService,
+									SubGroup:  wire.OServiceUserInfoUpdate,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: func(val any) bool {
+									snac, ok := val.(wire.SNAC_0x01_0x0F_OServiceUserInfoUpdate)
+									if !ok {
+										return false
+									}
+									bartID, exists := snac.UserInfo[0].Bytes(wire.OServiceUserInfoBARTInfo)
+									return assert.True(t, exists) &&
+										assert.Equal(t, "me", snac.UserInfo[0].ScreenName) &&
+										assert.True(t, bytes.Contains(bartID, []byte{0x00, 0x08, 0x00, 0x00}), "user info BART hash doesn't match")
+								},
+							},
+						},
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.OService,
+									SubGroup:  wire.OServiceBartReply,
+								},
+								Body: wire.SNAC_0x01_0x21_OServiceBARTReply{
+									BARTID: wire.BARTID{
+										Type: wire.BARTTypesFlashAvatar,
+										BARTInfo: wire.BARTInfo{
+											Flags: wire.BARTFlagsKnown,
+											Hash:  make([]byte, 16),
+										},
+									},
+								},
+							},
+						},
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.Feedbag,
+									SubGroup:  wire.FeedbagStatus,
+									RequestID: 1234,
+								},
+								Body: wire.SNAC_0x13_0x0E_FeedbagStatus{
+									Results: []uint16{0x0000},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectOutput: nil,
+			instanceMatch: func(instance *state.SessionInstance) {
+				_, ok := instance.Session().AvatarItem(wire.BARTTypesFlashAvatar)
+				assert.False(t, ok)
+				assert.Equal(t, []wire.BARTID{{Type: wire.BARTTypesFlashAvatar}}, instance.Session().AvatarItems())
+			},
+		},
+		{
 			name:     "add non-icon to feedbag, icon doesn't exist in BART store, don't broadcast change",
 			instance: newTestInstance("me"),
 			inputSNAC: wire.SNACMessage{
@@ -2916,6 +3374,182 @@ func TestFeedbagService_DeleteItem(t *testing.T) {
 				assert.True(t, instance.InNotifyTxn())
 			},
 		},
+		{
+			name: "delete Flash avatar item, notify buddies of its removal",
+			instance: newTestInstance("me", sessOptAvatarItem(wire.BARTID{
+				Type:     wire.BARTTypesFlashAvatar,
+				BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("devil")},
+			})),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.Feedbag,
+					SubGroup:  wire.FeedbagDeleteItem,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x13_0x0A_FeedbagDeleteItem{
+					Items: []wire.FeedbagItem{
+						{ClassID: wire.FeedbagClassIdBart, Name: "8"},
+					},
+				},
+			},
+			mockParams: mockParams{
+				feedbagManagerParams: feedbagManagerParams{
+					feedbagDeleteParams: feedbagDeleteParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							items: []wire.FeedbagItem{
+								{ClassID: wire.FeedbagClassIdBart, Name: "8"},
+							},
+						},
+					},
+				},
+				buddyBroadcasterParams: buddyBroadcasterParams{
+					broadcastBuddyArrivedParams: broadcastBuddyArrivedParams{
+						{
+							screenName: state.DisplayScreenName("me"),
+							bodyMatcher: func(info wire.TLVUserInfo) bool {
+								b, ok := info.Bytes(wire.OServiceUserInfoBARTInfo)
+								return ok && bytes.Equal(b, []byte{0x00, 0x08, 0x00, 0x00})
+							},
+						},
+					},
+					broadcastVisibilityParams: broadcastVisibilityParams{
+						{
+							from: state.NewIdentScreenName("me"),
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToOtherInstancesParams: relayToOtherInstancesParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.Feedbag,
+									SubGroup:  wire.FeedbagDeleteItem,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: wire.SNAC_0x13_0x0A_FeedbagDeleteItem{
+									Items: []wire.FeedbagItem{
+										{ClassID: wire.FeedbagClassIdBart, Name: "8"},
+									},
+								},
+							},
+						},
+					},
+					relayToSelfParams: relayToSelfParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.Feedbag,
+									SubGroup:  wire.FeedbagStatus,
+									RequestID: 1234,
+								},
+								Body: wire.SNAC_0x13_0x0E_FeedbagStatus{
+									Results: []uint16{0x0000},
+								},
+							},
+						},
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.OService,
+									SubGroup:  wire.OServiceUserInfoUpdate,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: func(val any) bool {
+									snac, ok := val.(wire.SNAC_0x01_0x0F_OServiceUserInfoUpdate)
+									if !ok {
+										return false
+									}
+									b, ok := snac.UserInfo[0].Bytes(wire.OServiceUserInfoBARTInfo)
+									return ok && bytes.Equal(b, []byte{0x00, 0x08, 0x00, 0x00})
+								},
+							},
+						},
+					},
+				},
+			},
+			expectOutput: nil,
+			checkInstance: func(t *testing.T, instance *state.SessionInstance) {
+				assert.Equal(t, []wire.BARTID{{Type: wire.BARTTypesFlashAvatar}}, instance.Session().AvatarItems())
+			},
+		},
+		{
+			name:     "delete buddy icon item, nothing is broadcast about it",
+			instance: newTestInstance("me"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.Feedbag,
+					SubGroup:  wire.FeedbagDeleteItem,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x13_0x0A_FeedbagDeleteItem{
+					Items: []wire.FeedbagItem{
+						{ClassID: wire.FeedbagClassIdBart, Name: "1"},
+					},
+				},
+			},
+			mockParams: mockParams{
+				feedbagManagerParams: feedbagManagerParams{
+					feedbagDeleteParams: feedbagDeleteParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							items: []wire.FeedbagItem{
+								{ClassID: wire.FeedbagClassIdBart, Name: "1"},
+							},
+						},
+					},
+				},
+				buddyBroadcasterParams: buddyBroadcasterParams{
+					broadcastVisibilityParams: broadcastVisibilityParams{
+						{
+							from: state.NewIdentScreenName("me"),
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToOtherInstancesParams: relayToOtherInstancesParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.Feedbag,
+									SubGroup:  wire.FeedbagDeleteItem,
+									RequestID: wire.ReqIDFromServer,
+								},
+								Body: wire.SNAC_0x13_0x0A_FeedbagDeleteItem{
+									Items: []wire.FeedbagItem{
+										{ClassID: wire.FeedbagClassIdBart, Name: "1"},
+									},
+								},
+							},
+						},
+					},
+					relayToSelfParams: relayToSelfParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.Feedbag,
+									SubGroup:  wire.FeedbagStatus,
+									RequestID: 1234,
+								},
+								Body: wire.SNAC_0x13_0x0E_FeedbagStatus{
+									Results: []uint16{0x0000},
+								},
+							},
+						},
+					},
+				},
+			},
+			expectOutput: nil,
+			checkInstance: func(t *testing.T, instance *state.SessionInstance) {
+				assert.Empty(t, instance.Session().AvatarItems())
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -2938,8 +3572,21 @@ func TestFeedbagService_DeleteItem(t *testing.T) {
 					RelayToOtherInstances(mock.Anything, mock.Anything, params.message)
 			}
 			for _, params := range tc.mockParams.relayToSelfParams {
-				messageRelayer.EXPECT().
-					RelayToSelf(mock.Anything, mock.Anything, params.message)
+				if matcherFn, ok := params.message.Body.(func(val any) bool); ok {
+					messageRelayer.EXPECT().
+						RelayToSelf(mock.Anything, mock.Anything, mock.MatchedBy(func(message wire.SNACMessage) bool {
+							return params.message.Frame == message.Frame &&
+								matcherFn(message.Body)
+						}))
+				} else {
+					messageRelayer.EXPECT().
+						RelayToSelf(mock.Anything, mock.Anything, params.message)
+				}
+			}
+			for _, params := range tc.mockParams.broadcastBuddyArrivedParams {
+				buddyUpdateBroadcast.EXPECT().
+					BroadcastBuddyArrived(mock.Anything, state.NewIdentScreenName(params.screenName.String()), mock.MatchedBy(params.bodyMatcher)).
+					Return(params.err)
 			}
 
 			svc := FeedbagService{

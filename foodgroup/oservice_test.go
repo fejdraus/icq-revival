@@ -1940,6 +1940,110 @@ func TestOServiceService_SetUserInfoFields(t *testing.T) {
 			},
 		},
 		{
+			// ICQ avatar items sent in the 0x1D tag are kept and relayed like
+			// the ones set through the feedbag.
+			name:     "set a Flash avatar",
+			instance: newTestInstance("100003"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x01_0x1E_OServiceSetUserInfoFields{
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.OServiceUserInfoBARTInfo, []wire.BARTID{
+								{
+									Type: wire.BARTTypesFlashAvatar,
+									BARTInfo: wire.BARTInfo{
+										Flags: wire.BARTFlagsCustom,
+										Hash:  []byte("devil"),
+									},
+								},
+							}),
+						},
+					},
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.OService,
+					SubGroup:  wire.OServiceUserInfoUpdate,
+					// Pushes are unsolicited, so they carry the server request ID.
+					RequestID: wire.ReqIDFromServer,
+				},
+				Body: func(val any) bool {
+					snac, ok := val.(wire.SNAC_0x01_0x0F_OServiceUserInfoUpdate)
+					if !ok || len(snac.UserInfo) == 0 {
+						return false
+					}
+					b, hasBART := snac.UserInfo[0].Bytes(wire.OServiceUserInfoBARTInfo)
+					return hasBART && bytes.Contains(b, []byte("devil"))
+				},
+			},
+			mockParams: mockParams{
+				buddyBroadcasterParams: buddyBroadcasterParams{
+					broadcastBuddyArrivedParams: broadcastBuddyArrivedParams{
+						{
+							screenName: state.DisplayScreenName("100003"),
+						},
+					},
+				},
+			},
+			checkSession: func(t *testing.T, session *state.Session) {
+				item, ok := session.AvatarItem(wire.BARTTypesFlashAvatar)
+				assert.True(t, ok)
+				assert.Equal(t, []byte("devil"), item.Hash)
+			},
+		},
+		{
+			name:     "clear a big buddy icon",
+			instance: newTestInstance("100003", sessOptAvatarItem(wire.BARTID{Type: wire.BARTTypesBuddyIconBig, BARTInfo: wire.BARTInfo{Hash: []byte("big")}})),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x01_0x1E_OServiceSetUserInfoFields{
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.OServiceUserInfoBARTInfo, []wire.BARTID{
+								{Type: wire.BARTTypesBuddyIconBig},
+							}),
+						},
+					},
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.OService,
+					SubGroup:  wire.OServiceUserInfoUpdate,
+					// Pushes are unsolicited, so they carry the server request ID.
+					RequestID: wire.ReqIDFromServer,
+				},
+				Body: func(val any) bool {
+					snac, ok := val.(wire.SNAC_0x01_0x0F_OServiceUserInfoUpdate)
+					if !ok || len(snac.UserInfo) == 0 {
+						return false
+					}
+					b, hasBART := snac.UserInfo[0].Bytes(wire.OServiceUserInfoBARTInfo)
+					return hasBART && bytes.Equal(b, []byte{0x00, 0x0C, 0x00, 0x00})
+				},
+			},
+			mockParams: mockParams{
+				buddyBroadcasterParams: buddyBroadcasterParams{
+					broadcastBuddyArrivedParams: broadcastBuddyArrivedParams{
+						{
+							screenName: state.DisplayScreenName("100003"),
+						},
+					},
+				},
+			},
+			checkSession: func(t *testing.T, session *state.Session) {
+				_, ok := session.AvatarItem(wire.BARTTypesBuddyIconBig)
+				assert.False(t, ok)
+				assert.Equal(t, []wire.BARTID{{Type: wire.BARTTypesBuddyIconBig}}, session.AvatarItems())
+			},
+		},
+		{
 			// A buddy icon reference travels in the same TLV, and only the BART
 			// service stores those. Nothing changed here, so buddies hear nothing.
 			name:     "ignore a BART item that is not a status message",
@@ -4423,6 +4527,7 @@ func TestInstanceUserInfo(t *testing.T) {
 func TestSessionBARTIDs(t *testing.T) {
 	icon := wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Hash: []byte{0xAA}}}
 	status := newTestStatusBARTID(t, "out to lunch")
+	flash := wire.BARTID{Type: wire.BARTTypesFlashAvatar, BARTInfo: wire.BARTInfo{Hash: []byte{0xBB}}}
 
 	tests := []struct {
 		name    string
@@ -4448,6 +4553,12 @@ func TestSessionBARTIDs(t *testing.T) {
 			name:    "both",
 			options: []func(*state.SessionInstance){sessOptBuddyIcon(icon), sessOptStatus(status)},
 			want:    []wire.BARTID{icon, status},
+		},
+		{
+			// ICQ avatar items follow the items older clients know.
+			name:    "icon, status message and Flash avatar",
+			options: []func(*state.SessionInstance){sessOptAvatarItem(flash), sessOptBuddyIcon(icon), sessOptStatus(status)},
+			want:    []wire.BARTID{icon, status, flash},
 		},
 	}
 

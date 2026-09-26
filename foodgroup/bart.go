@@ -57,11 +57,19 @@ func (s BARTService) UpsertItem(ctx context.Context, instance *state.SessionInst
 
 	s.logger.DebugContext(ctx, "successfully uploaded BART item", "hash", fmt.Sprintf("%x", hash))
 
-	bartID, hasIcon := instance.Session().BuddyIcon()
-	if hasIcon && bytes.Equal(hash, bartID.Hash) {
+	// the session item this upload completes, if any: an ICQ avatar item of
+	// the uploaded type, otherwise the buddy icon
+	var bartID wire.BARTID
+	var hasItem bool
+	if wire.IsRelayedAvatarBARTType(inBody.Type) {
+		bartID, hasItem = instance.Session().AvatarItem(inBody.Type)
+	} else {
+		bartID, hasItem = instance.Session().BuddyIcon()
+	}
+	if hasItem && bytes.Equal(hash, bartID.Hash) {
 		// unset unknown flag
 		bartID.Flags &^= wire.BARTFlagsUnknown
-		instance.Session().SetBuddyIcon(bartID)
+		setSessionBARTItem(instance.Session(), bartID)
 
 		sendUserInfoUpdateToAll(ctx, s.messageRelayer, instance)
 
@@ -105,7 +113,8 @@ func (s BARTService) RetrieveItem(ctx context.Context, inFrame wire.SNACFrame, i
 		}
 	}
 
-	// todo... how to reply if requested item doesn't exist
+	// This reply has no result code: an item that doesn't exist comes back
+	// with no data.
 	return wire.SNACMessage{
 		Frame: wire.SNACFrame{
 			FoodGroup: wire.BART,
@@ -136,6 +145,11 @@ func (s BARTService) RetrieveItemV2(ctx context.Context, inFrame wire.SNACFrame,
 			}
 		}
 
+		code := wire.BARTReplyCodesSuccess
+		if len(item) == 0 {
+			code = wire.BARTReplyCodesNotfound
+		}
+
 		result = append(result, wire.SNACMessage{
 			Frame: wire.SNACFrame{
 				FoodGroup: wire.BART,
@@ -146,7 +160,7 @@ func (s BARTService) RetrieveItemV2(ctx context.Context, inFrame wire.SNACFrame,
 				ScreenName: inBody.ScreenName,
 				ReplyID: wire.BartQueryReplyID{
 					QueryID: id,
-					Code:    0x00, // found
+					Code:    code,
 					ReplyID: wire.BARTID{
 						Type:     id.Type,
 						BARTInfo: id.BARTInfo,

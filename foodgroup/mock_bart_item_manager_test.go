@@ -48,6 +48,74 @@ func (_m *mockBARTItemManager) EXPECT() *mockBARTItemManager_Expecter {
 	return &mockBARTItemManager_Expecter{mock: &_m.Mock}
 }
 
+// AvatarBARTItems provides a mock function for the type mockBARTItemManager
+func (_mock *mockBARTItemManager) AvatarBARTItems(ctx context.Context, screenName state.IdentScreenName) ([]wire.BARTID, error) {
+	ret := _mock.Called(ctx, screenName)
+
+	if len(ret) == 0 {
+		panic("no return value specified for AvatarBARTItems")
+	}
+
+	var r0 []wire.BARTID
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, state.IdentScreenName) ([]wire.BARTID, error)); ok {
+		return returnFunc(ctx, screenName)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, state.IdentScreenName) []wire.BARTID); ok {
+		r0 = returnFunc(ctx, screenName)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]wire.BARTID)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, state.IdentScreenName) error); ok {
+		r1 = returnFunc(ctx, screenName)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// mockBARTItemManager_AvatarBARTItems_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AvatarBARTItems'
+type mockBARTItemManager_AvatarBARTItems_Call struct {
+	*mock.Call
+}
+
+// AvatarBARTItems is a helper method to define mock.On call
+//   - ctx context.Context
+//   - screenName state.IdentScreenName
+func (_e *mockBARTItemManager_Expecter) AvatarBARTItems(ctx any, screenName any) *mockBARTItemManager_AvatarBARTItems_Call {
+	return &mockBARTItemManager_AvatarBARTItems_Call{Call: _e.mock.On("AvatarBARTItems", ctx, screenName)}
+}
+
+func (_c *mockBARTItemManager_AvatarBARTItems_Call) Run(run func(ctx context.Context, screenName state.IdentScreenName)) *mockBARTItemManager_AvatarBARTItems_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 state.IdentScreenName
+		if args[1] != nil {
+			arg1 = args[1].(state.IdentScreenName)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *mockBARTItemManager_AvatarBARTItems_Call) Return(bARTIDs []wire.BARTID, err error) *mockBARTItemManager_AvatarBARTItems_Call {
+	_c.Call.Return(bARTIDs, err)
+	return _c
+}
+
+func (_c *mockBARTItemManager_AvatarBARTItems_Call) RunAndReturn(run func(ctx context.Context, screenName state.IdentScreenName) ([]wire.BARTID, error)) *mockBARTItemManager_AvatarBARTItems_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // BARTItem provides a mock function for the type mockBARTItemManager
 func (_mock *mockBARTItemManager) BARTItem(ctx context.Context, hash []byte) ([]byte, error) {
 	ret := _mock.Called(ctx, hash)
