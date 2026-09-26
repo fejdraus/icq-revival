@@ -260,6 +260,22 @@ cargo build --release
 The output is `target\i686-pc-windows-msvc\release\FlashPlayerControl.dll`
 (about 15 MB). The first build compiles Ruffle and takes a few minutes.
 
+Miranda NG plays ICQ 6 Flash avatars with this DLL too
+(`tools\miranda-icq\FlashAvatars`, which loads it from Miranda's `Libs`
+folder without registration). For `miranda64.exe` build the same source for
+64 bits; `.cargo/config.toml` links the C runtime statically there as well:
+
+```
+cargo build --release --lib --target x86_64-pc-windows-msvc
+```
+
+The output is `target\x86_64-pc-windows-msvc\release\FlashPlayerControl.dll`.
+The `vendor/wgpu-hal` fix aligns pipeline subobjects to pointer size, which is
+8 bytes there, as upstream did, so it is right for both. Registration is per
+bitness: `DllRegisterServer` of the 64-bit DLL, run by the 64-bit `regsvr32`,
+writes the 64-bit view of the HKCU classes. ICQ 6.5 needs only the 32-bit
+one, Miranda neither.
+
 `typelib\flash.tlb` is checked in. After you edit `typelib\flash.idl`,
 rebuild it with MIDL:
 

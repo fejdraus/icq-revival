@@ -5,3 +5,7 @@ target = "i686-pc-windows-msvc"
 [target.i686-pc-windows-msvc]
 # Link the C runtime statically: the ICQ folder has no VC++ 2015+ runtime.
 rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.x86_64-pc-windows-msvc]
+# The 64-bit build, for miranda64.exe (FlashAvatars plugin): the same.
+rustflags = ["-C", "target-feature=+crt-static"]

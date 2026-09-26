@@ -1,6 +1,6 @@
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/icqoscar8.vcxproj b/icqoscar8.vcxproj
---- a/icqoscar8.vcxproj	2026-09-22 23:33:29.191985800 +0300
-+++ b/icqoscar8.vcxproj	2026-09-22 23:33:29.445675600 +0300
+--- a/icqoscar8.vcxproj	2026-09-26 22:22:14.107057000 +0300
++++ b/icqoscar8.vcxproj	2026-09-26 22:22:14.285591500 +0300
 @@ -25,4 +25,101 @@
    <ImportGroup Label="PropertySheets">
      <Import Project="$(ProjectDir)..\..\build\vc.common\plugin.props" />
@@ -105,8 +105,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/icqoscar8.vcxproj b/icqo
  </Project>
 \ No newline at end of file
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/res/resources.rc b/res/resources.rc
---- a/res/resources.rc	2026-09-22 23:33:29.247678600 +0300
-+++ b/res/resources.rc	2026-09-22 23:33:29.462802100 +0300
+--- a/res/resources.rc	2026-09-26 22:22:14.122782500 +0300
++++ b/res/resources.rc	2026-09-26 22:22:14.301893700 +0300
 @@ -125,7 +125,7 @@
      CTEXT           "Note: The options marked with an asterisk have important side-effects or caveats that may not be initially apparent documented in the help.",IDC_STATIC,10,212,290,16
  END
@@ -127,8 +127,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/res/resources.rc b/res/r
  
  IDD_OPT_ICQPRIVACY DIALOGEX 0, 0, 310, 234
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/chan_04close.cpp b/src/chan_04close.cpp
---- a/src/chan_04close.cpp	2026-09-22 23:33:29.257260700 +0300
-+++ b/src/chan_04close.cpp	2026-09-22 23:33:29.469813600 +0300
+--- a/src/chan_04close.cpp	2026-09-26 22:22:14.130023500 +0300
++++ b/src/chan_04close.cpp	2026-09-26 22:22:14.309921400 +0300
 @@ -152,12 +152,6 @@
  			}
  		}
@@ -143,8 +143,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/chan_04close.cpp b/s
  
  	// Free allocated memory
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/dlgproc.cpp b/src/dlgproc.cpp
---- a/src/dlgproc.cpp	2026-09-22 23:33:29.266268900 +0300
-+++ b/src/dlgproc.cpp	2026-09-22 23:33:29.478813500 +0300
+--- a/src/dlgproc.cpp	2026-09-26 22:22:14.135904100 +0300
++++ b/src/dlgproc.cpp	2026-09-26 22:22:14.317951500 +0300
 @@ -216,19 +216,16 @@
  		switch (((LPNMHDR)lParam)->idFrom) {
  		case 0:
@@ -180,9 +180,32 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/dlgproc.cpp b/src/dl
  				for (i = 0; i < _countof(dat->hUpload); i++)
  					if (dat->hUpload[i] && ack->hProcess == dat->hUpload[i])
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_01service.cpp b/src/fam_01service.cpp
---- a/src/fam_01service.cpp	2026-09-22 23:33:29.268270500 +0300
-+++ b/src/fam_01service.cpp	2026-09-22 23:33:29.481899900 +0300
-@@ -358,8 +358,6 @@
+--- a/src/fam_01service.cpp	2026-09-26 22:22:14.138913500 +0300
++++ b/src/fam_01service.cpp	2026-09-26 22:22:14.321102800 +0300
+@@ -249,6 +249,22 @@
+ 			pBuffer += 4;      /* warning level & user class */
+ 			wBufferLength -= 5 + bUinLen;
+ 
++			// Our own Flash avatar: the BART tag of the self info lists it. The
++			// picture comes with the session data (ICQ_SERVER_EXTSTATUS) instead.
++			// Not in the reply during login: the server sends the Flash items only to
++			// clients that announced a capability for them (FlashAvatars plugin), and
++			// the capabilities go out after it. handleServUINSettings() asks again.
++			if (m_bAvatarsEnabled && wBufferLength > 4 && pSnacHeader->dwRef != ICQ_CLIENT_REQINFO << 0x10) {
++				BYTE *pTlvs = pBuffer;
++				oscar_tlv_chain *bartChain = readIntoTLVChain(&pTlvs, wBufferLength, 0);
++				if (bartChain) {
++					oscar_tlv *pBart = bartChain->getTLV(0x1D, 1);
++					if (pBart && pBart->wLen >= 4)
++						handleFlashAvatarHash(m_dwLocalUIN, nullptr, NULL, pBart->pData, pBart->wLen);
++					disposeChain(&bartChain);
++				}
++			}
++
+ 			// This is during the login sequence
+ 			if (pSnacHeader->dwRef == ICQ_CLIENT_REQINFO << 0x10) {
+ 				// TLV(x01) User type?
+@@ -358,8 +374,6 @@
  
  			// establish connection
  			NETLIBOPENCONNECTION nloc = { 0 };
@@ -191,9 +214,39 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_01service.cpp b/
  			nloc.szHost = pServer;
  			nloc.wPort = wPort;
  
+@@ -399,6 +413,13 @@
+ 				// skip photo item
+ 				debugLogA("Photo item recognized");
+ 			}
++			else if (itemType == AVATAR_HASH_FLASH) {
++				// our Flash avatar: never the picture this plugin uploads (type 1),
++				// it only shows (see handleFlashAvatarHash); Miranda cannot upload one
++				debugLogA("Flash avatar item recognized");
++				if (m_bAvatarsEnabled && itemLen + 4 <= wBufferLength && (itemFlags & 0x40) == 0)
++					handleFlashAvatarHash(m_dwLocalUIN, nullptr, NULL, pBuffer, itemLen + 4);
++			}
+ 			else if ((itemType == AVATAR_HASH_STATIC || itemType == AVATAR_HASH_FLASH) && (itemLen >= 0x10)) {
+ 				debugLogA("Avatar item recognized");
+ 
+@@ -671,6 +692,15 @@
+ {
+ 	setUserInfo();
+ 
++	// our info again, now that the server knows our capabilities: it lists our
++	// Flash avatar then, if a plugin announced that we can show one
++	if (m_bAvatarsEnabled) {
++		icq_packet packet;
++		serverPacketInit(&packet, 10);
++		packFNACHeader(&packet, ICQ_SERVICE_FAMILY, ICQ_CLIENT_REQINFO, 0, (ICQ_CLIENT_REQINFO << 0x10) | 1);
++		sendServPacket(&packet);
++	}
++
+ 	/* SNAC 3,4: Tell server who's on our list (deprecated) */
+ 	/* SNAC 3,15: Try to add unauthorised contacts to temporary list */
+ 	sendEntireListServ(ICQ_BUDDY_FAMILY, ICQ_USER_ADDTOTEMPLIST, BUL_ALLCONTACTS);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_02location.cpp b/src/fam_02location.cpp
---- a/src/fam_02location.cpp	2026-09-22 23:33:29.269270700 +0300
-+++ b/src/fam_02location.cpp	2026-09-22 23:33:29.548069300 +0300
+--- a/src/fam_02location.cpp	2026-09-26 22:22:14.139922000 +0300
++++ b/src/fam_02location.cpp	2026-09-26 22:22:14.393024200 +0300
 @@ -246,11 +246,11 @@
  			disposeChain(&pChain);
  		}
@@ -212,8 +265,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_02location.cpp b
  		SAFE_FREE((void**)&szMsg);
  	}
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_03buddy.cpp b/src/fam_03buddy.cpp
---- a/src/fam_03buddy.cpp	2026-09-22 23:33:29.270269600 +0300
-+++ b/src/fam_03buddy.cpp	2026-09-22 23:33:29.482909700 +0300
+--- a/src/fam_03buddy.cpp	2026-09-26 22:22:14.140428500 +0300
++++ b/src/fam_03buddy.cpp	2026-09-26 22:22:14.322105100 +0300
 @@ -244,7 +244,7 @@
  			if (wClass & CLASS_AWAY)
  				wStatus = ID_STATUS_AWAY;
@@ -233,8 +286,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_03buddy.cpp b/sr
  			wStatus = ID_STATUS_ONLINE;
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/src/fam_04message.cpp
---- a/src/fam_04message.cpp	2026-09-22 23:33:29.271269400 +0300
-+++ b/src/fam_04message.cpp	2026-09-22 23:33:29.484910400 +0300
+--- a/src/fam_04message.cpp	2026-09-26 22:22:14.141435100 +0300
++++ b/src/fam_04message.cpp	2026-09-26 22:22:14.323105700 +0300
 @@ -233,7 +233,7 @@
  				DWORD dwRecvTime;
  				char* szMsg = nullptr;
@@ -417,8 +470,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  
  				case MTYPE_FILEREQ:
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_13servclist.cpp b/src/fam_13servclist.cpp
---- a/src/fam_13servclist.cpp	2026-09-22 23:33:29.275269700 +0300
-+++ b/src/fam_13servclist.cpp	2026-09-22 23:33:29.487909300 +0300
+--- a/src/fam_13servclist.cpp	2026-09-26 22:22:14.145507400 +0300
++++ b/src/fam_13servclist.cpp	2026-09-26 22:22:14.327169300 +0300
 @@ -1080,7 +1080,7 @@
  					// Set apparent mode & ignore
  					setWord(hContact, "ApparentMode", ID_STATUS_OFFLINE);
@@ -428,7 +481,27 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_13servclist.cpp 
  					debugLogA("Ignore-contact (%s)", szRecordName);
  				}
  				else { // failed to add or other error
-@@ -1391,17 +1391,17 @@
+@@ -1119,6 +1119,19 @@
+ 					setWord(DBSETTING_SERVLIST_PHOTO, wItemId);
+ 					debugLogA("SSI %s item recognized", "Photo");
+ 				}
++				else if (!mir_strcmp(szRecordName, "8")) {
++					// our Flash avatar (set by ICQ 6): keep its id apart, or updating our
++					// picture would overwrite this item with it; show it (handleFlashAvatarHash)
++					debugLogA("SSI %s item recognized", "Flash avatar");
++					if (getWord(DBSETTING_SERVLIST_AVATAR, 0) == wItemId)
++						delSetting(DBSETTING_SERVLIST_AVATAR);
++					oscar_tlv *pHashTLV = pChain->getTLV(SSI_TLV_AVATARHASH, 1);
++					if (m_bAvatarsEnabled && pHashTLV && pHashTLV->wLen >= 2 && pHashTLV->pData[1] == 0x10 && pHashTLV->wLen >= 0x12) {
++						BYTE item[0x14] = { 0, AVATAR_HASH_FLASH, pHashTLV->pData[0], 0x10 };
++						memcpy(item + 4, pHashTLV->pData + 2, 0x10);
++						handleFlashAvatarHash(m_dwLocalUIN, nullptr, NULL, item, sizeof(item));
++					}
++				}
+ 				else {
+ 					setWord(DBSETTING_SERVLIST_AVATAR, wItemId);
+ 					debugLogA("SSI %s item recognized", "Avatar");
+@@ -1391,17 +1404,17 @@
  	else
  		szNick = null_strdup(szUid);
  
@@ -453,8 +526,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_13servclist.cpp 
  	SAFE_FREE(&szNick);
  	SAFE_FREE(&szReason);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_15icqserver.cpp b/src/fam_15icqserver.cpp
---- a/src/fam_15icqserver.cpp	2026-09-22 23:33:29.277789900 +0300
-+++ b/src/fam_15icqserver.cpp	2026-09-22 23:33:29.488910100 +0300
+--- a/src/fam_15icqserver.cpp	2026-09-26 22:22:14.146510500 +0300
++++ b/src/fam_15icqserver.cpp	2026-09-26 22:22:14.327169300 +0300
 @@ -91,7 +91,7 @@
  						}
  						else if (wSubType == META_SET_PASSWORD_REQ) {
@@ -532,8 +605,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_15icqserver.cpp 
  		DWORD64 qwMetaTime;
  		BYTE pbEmptyMetaToken[0x10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/families.h b/src/families.h
---- a/src/families.h	2026-09-22 23:33:29.279283900 +0300
-+++ b/src/families.h	2026-09-22 23:33:29.490910700 +0300
+--- a/src/families.h	2026-09-26 22:22:14.147507800 +0300
++++ b/src/families.h	2026-09-26 22:22:14.329689200 +0300
 @@ -57,6 +57,11 @@
  	WORD wTLV;
  	int dbType;
@@ -547,8 +620,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/families.h b/src/fam
  
  /*---------* Functions *---------------*/
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.cpp b/src/icq_avatar.cpp
---- a/src/icq_avatar.cpp	2026-09-22 23:33:29.287878900 +0300
-+++ b/src/icq_avatar.cpp	2026-09-22 23:33:29.496916900 +0300
+--- a/src/icq_avatar.cpp	2026-09-26 22:22:14.154230200 +0300
++++ b/src/icq_avatar.cpp	2026-09-26 22:22:14.401567900 +0300
 @@ -80,8 +80,8 @@
  
  	FOLDERSGETDATA fgd = { sizeof(fgd) };
@@ -560,9 +633,333 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.cpp b/src
  
  	// fill the destination
  	mir_wstrncpy(pszDest, szPath, cbLen - 1);
+@@ -361,9 +361,27 @@
+ 	size_t cbAvatarHash = 0;
+ 	BYTE emptyItem[0x10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+ 
+-	if (!m_bAvatarsEnabled || nHashLen < 4)
++	if (!m_bAvatarsEnabled || nHashLen < 4 || IsContactDeleted(hContact))
+ 		return; // only if enabled
+ 
++	// the Flash avatar is kept apart from the picture, see handleFlashAvatarHash()
++	handleFlashAvatarHash(dwUIN, szUID, hContact, pHash, nHashLen);
++
++	// With a Flash avatar the picture (type 1) is its still, kept current by
++	// the server, while a big icon (type 12) may be left over from an earlier
++	// avatar: then the picture wins over the big icon.
++	bool bFlash = false, bStatic = false;
++	for (size_t n = nHashLen, len; n >= 4; n -= len + 4) {
++		const BYTE *p = pHash + (nHashLen - n);
++		len = p[3];
++		if (len + 4 > n)
++			break;
++		if (p[0] == 0 && p[1] == AVATAR_HASH_FLASH && len == 0x10 && memcmp(p + 4, emptyItem, 0x10))
++			bFlash = true;
++		if (p[0] == 0 && p[1] == AVATAR_HASH_STATIC && (len == 0x05 || len == 0x10) && memcmp(p + 4, emptyItem, len))
++			bStatic = true;
++	}
++
+ 	while (nHashLen >= 4) { // parse online message items one by one
+ 		WORD itemType = pHash[0] << 8 | pHash[1];
+ 		size_t itemLen = pHash[3];
+@@ -372,7 +390,10 @@
+ 		if (itemLen + 4 > nHashLen)
+ 			itemLen = nHashLen - 4;
+ 
+-		if (itemLen && memcmp(pHash + 4, emptyItem, itemLen > 0x10 ? 0x10 : itemLen)) {
++		if (itemType == AVATAR_HASH_FLASH) {
++			// not a picture: the avatar service cannot draw it
++		}
++		else if (itemLen && memcmp(pHash + 4, emptyItem, itemLen > 0x10 ? 0x10 : itemLen)) {
+ 			// Item types
+ 			// 0000: AIM mini avatar
+ 			// 0001: AIM/ICQ avatar ID/hash (len 5 or 16 bytes)
+@@ -392,18 +413,13 @@
+ 				cbAvatarHash = itemLen + 4;
+ 				avatarType = itemType;
+ 			}
+-			else if (itemType == AVATAR_HASH_FLASH && itemLen == 0x10 && (avatarType == -1 || avatarType == AVATAR_HASH_MINI || avatarType == AVATAR_HASH_STATIC)) { // flash avatar
+-				pAvatarHash = pHash;
+-				cbAvatarHash = itemLen + 4;
+-				avatarType = itemType;
+-			}
+-			else if (itemType == AVATAR_HASH_PHOTO && itemLen == 0x10) { // big avatar (ICQ 6+)
++			else if (itemType == AVATAR_HASH_PHOTO && itemLen == 0x10 && !(bFlash && bStatic)) { // big avatar (ICQ 6+)
+ 				pAvatarHash = pHash;
+ 				cbAvatarHash = itemLen + 4;
+ 				avatarType = itemType;
+ 			}
+ 		}
+-		else if ((itemLen == 0) && (itemType == AVATAR_HASH_MINI || itemType == AVATAR_HASH_STATIC || itemType == AVATAR_HASH_FLASH || itemType == AVATAR_HASH_PHOTO))
++		else if ((itemLen == 0) && (itemType == AVATAR_HASH_MINI || itemType == AVATAR_HASH_STATIC || itemType == AVATAR_HASH_PHOTO))
+ 			// empty item - indicating that avatar of that type was removed
+ 			avatarInfoPresent = TRUE;
+ 
+@@ -520,6 +536,131 @@
+ 	}
+ }
+ 
++// ICQ 6 animated ("Flash") avatars. A BART item of type 8 names a small XML
++// document on the avatar server, <DOCUMENT><RESSET><URL>movie.swf</URL>...,
++// not a picture. It is kept apart from the picture (types 1 and 12), which
++// stays the contact's avatar for the avatar service: the address of the movie
++// goes to the contact's "FlashAvatarUrl" setting, where the FlashAvatars
++// plugin (tools/miranda-icq/FlashAvatars) picks it up and plays it over the
++// picture. "FlashAvatarHash" holds the BART item the address came from.
++void CIcqProto::handleFlashAvatarHash(DWORD dwUIN, char *szUID, MCONTACT hContact, const BYTE *pHash, size_t nHashLen)
++{
++	static const BYTE emptyItem[0x10] = {};
++	const BYTE *pItem = nullptr;
++
++	while (nHashLen >= 4) {
++		WORD itemType = pHash[0] << 8 | pHash[1];
++		size_t itemLen = pHash[3];
++		if (itemLen + 4 > nHashLen)
++			itemLen = nHashLen - 4;
++
++		if (itemType == AVATAR_HASH_FLASH && itemLen == 0x10 && memcmp(pHash + 4, emptyItem, 0x10))
++			pItem = pHash;
++
++		pHash += itemLen + 4;
++		nHashLen -= itemLen + 4;
++	}
++
++	DBVARIANT dbv = { DBVT_DELETED };
++	if (pItem == nullptr) { // none, or removed
++		if (!getSetting(hContact, "FlashAvatarHash", &dbv)) {
++			db_free(&dbv);
++			debugLogA("%s has removed Flash avatar.", strUID(dwUIN, szUID));
++			delSetting(hContact, "FlashAvatarHash");
++			delSetting(hContact, "FlashAvatarUrl");
++		}
++		return;
++	}
++
++	bool bKnown = false;
++	if (!getSetting(hContact, "FlashAvatarHash", &dbv)) {
++		bKnown = dbv.type == DBVT_BLOB && dbv.cpbVal == 0x14 && !memcmp(dbv.pbVal, pItem, 0x14);
++		db_free(&dbv);
++	}
++	if (bKnown) {
++		ptrA szUrl(getStringA(hContact, "FlashAvatarUrl"));
++		if (szUrl != nullptr)
++			return; // we have its movie already
++	}
++
++	debugLogA("%s has published a Flash avatar.", strUID(dwUIN, szUID));
++	setSettingBlob(hContact, "FlashAvatarHash", pItem, 0x14);
++
++	wchar_t tszFile[MAX_PATH * 2];
++	GetAvatarFileName(dwUIN, szUID, tszFile, MAX_PATH * 2);
++	mir_wstrcat(tszFile, L"_flash");
++	GetAvatarData(hContact, dwUIN, szUID, pItem, 0x14, tszFile);
++}
++
++// The Flash avatar document arrived: keep the movie's address.
++void CIcqProto::storeFlashAvatar(MCONTACT hContact, const BYTE *pHash, size_t cbHash, const BYTE *pData, size_t cbData)
++{
++	if (IsContactDeleted(hContact))
++		return;
++
++	DBVARIANT dbv = { DBVT_DELETED };
++	if (getSetting(hContact, "FlashAvatarHash", &dbv))
++		return; // removed meanwhile
++
++	bool bCurrent = dbv.type == DBVT_BLOB && dbv.cpbVal == cbHash && !memcmp(dbv.pbVal, pHash, cbHash);
++	db_free(&dbv);
++	if (!bCurrent) {
++		debugLogA("Flash avatar document is outdated, ignored.");
++		return;
++	}
++
++	CMStringA doc((const char *)pData, (int)cbData), url;
++	CMStringA lower(doc);
++	lower.MakeLower();
++	int iStart = lower.Find("<url>");
++	int iEnd = (iStart == -1) ? -1 : lower.Find("</url>", iStart);
++	if (iEnd != -1) {
++		url = doc.Mid(iStart + 5, iEnd - iStart - 5);
++		url.Replace("&amp;", "&");
++		url.Trim();
++	}
++
++	if (url.IsEmpty() || (_strnicmp(url, "http://", 7) && _strnicmp(url, "https://", 8))) {
++		debugLogA("Flash avatar document has no movie address.");
++		delSetting(hContact, "FlashAvatarUrl");
++		return;
++	}
++
++	debugLogA("Flash avatar movie: %s", url.c_str());
++	setString(hContact, "FlashAvatarUrl", url);
++}
++
++// Queues a request for the contact's current picture (AvatarHash); the avatar
++// connection sends it once it has handled the packets at hand.
++void CIcqProto::requestCurrentAvatar(MCONTACT hContact)
++{
++	DWORD dwUin;
++	uid_str szUid;
++	DBVARIANT dbv = { DBVT_DELETED };
++	if (IsContactDeleted(hContact) || getContactUid(hContact, &dwUin, &szUid) || getSetting(hContact, "AvatarHash", &dbv))
++		return;
++
++	if (dbv.type == DBVT_BLOB && dbv.cpbVal >= 4) {
++		wchar_t tszFile[MAX_PATH * 2 + 4];
++		GetAvatarFileName(dwUin, szUid, tszFile, MAX_PATH * 2);
++
++		avatars_request *ar = new avatars_request(ART_GET);
++		ar->hContact = hContact;
++		ar->dwUin = dwUin;
++		if (!dwUin)
++			mir_strcpy(ar->szUid, szUid);
++		ar->hash = (BYTE*)SAFE_MALLOC(dbv.cpbVal);
++		memcpy(ar->hash, dbv.pbVal, dbv.cpbVal);
++		ar->hashlen = dbv.cpbVal;
++		ar->szFile = null_strdup(tszFile);
++
++		debugLogA("Avatars: %s changed the picture meanwhile, requesting the new one.", strUID(dwUin, szUid));
++		mir_cslock l(m_avatarsMutex);
++		m_arAvatars.insert(ar);
++	}
++	db_free(&dbv);
++}
++
+ // request avatar data from server
+ int CIcqProto::GetAvatarData(MCONTACT hContact, DWORD dwUin, const char *szUid, const BYTE *hash, size_t hashlen, const wchar_t *file)
+ {
+@@ -561,7 +702,7 @@
+ 	// check if any request for this user is not already in the queue
+ 	auto T = m_arAvatars.rev_iter();
+ 	for (auto &ar : T) {
+-		if (ar->hContact == hContact) { // we found it, return error
++		if (ar->hContact == hContact && (ar->type != ART_GET || IsFlashAvatarHash(ar->hash, ar->hashlen) == IsFlashAvatarHash(hash, hashlen))) { // we found it, return error
+ 			if (ar->type == ART_BLOCK && GetTickCount() > ar->timeOut) { // remove timeouted block
+ 				delete ar;
+ 				m_arAvatars.remove(T.indexOf(&ar));
+@@ -728,9 +869,12 @@
+ 
+ 	mir_cslockfull alck(ppro->m_avatarsMutex);
+ 
++	bool bFlash = IsFlashAvatarHash(hash, hashlen);
++
+ 	for (int i = 0; i < runCount;) { // look for timeouted requests
+ 		if (runTime[i] < dwNow) { // found outdated, remove
+ 			runContact[i] = runContact[runCount - 1];
++			runFlash[i] = runFlash[runCount - 1];
+ 			runTime[i] = runTime[runCount - 1];
+ 			runCount--;
+ 		}
+@@ -738,7 +882,7 @@
+ 	}
+ 
+ 	for (int i = 0; i < runCount; i++) {
+-		if (runContact[i] == hContact) {
++		if (runContact[i] == hContact && runFlash[i] == bFlash) {
+ 			ppro->debugLogA("Ignoring duplicate get %s image request.", strUID(dwUin, szUid));
+ 			return -1; // Success: request ignored
+ 		}
+@@ -759,6 +903,7 @@
+ 
+ 		if (bSendNow) {
+ 			runContact[runCount] = hContact;
++			runFlash[runCount] = bFlash;
+ 			runTime[runCount] = GetTickCount() + 30000; // 30sec to complete request
+ 			runCount++;
+ 
+@@ -1142,9 +1287,11 @@
+ 			{
+ 				// remove from active request list
+ 				mir_cslock l(ppro->m_avatarsMutex);
++				bool bFlash = IsFlashAvatarHash(pCookieData->hash, pCookieData->hashlen);
+ 				for (int i = 0; i < runCount; i++) { // look for our record
+-					if (runContact[i] == pCookieData->hContact) { // found, remove
++					if (runContact[i] == pCookieData->hContact && runFlash[i] == bFlash) { // found, remove
+ 						runContact[i] = runContact[runCount - 1];
++						runFlash[i] = runFlash[runCount - 1];
+ 						runTime[i] = runTime[runCount - 1];
+ 						runCount--;
+ 						break;
+@@ -1152,6 +1299,7 @@
+ 				}
+ 			}
+ 
++			bool bRefetch = false; // the contact's picture changed while this one was on its way
+ 			PROTO_AVATAR_INFORMATION ai = { 0 };
+ 			ai.format = PA_FORMAT_JPEG; // this is for error only
+ 			ai.hContact = pCookieData->hContact;
+@@ -1188,7 +1336,15 @@
+ 				ppro->debugLogA("Avatar reply broken, trying to do my best.");
+ 			}
+ 
+-			if (datalen > 4) { // store to file...
++			if (IsFlashAvatarHash(pCookieData->hash, pCookieData->hashlen)) {
++				// the Flash avatar document: not a picture, nothing for the avatar service
++				ppro->debugLogA("Received Flash avatar document (%d bytes).", datalen);
++				ppro->storeFlashAvatar(pCookieData->hContact, pCookieData->hash, pCookieData->hashlen, pBuffer, datalen);
++			}
++			else if (pCookieData->hContact && ppro->IsContactDeleted(pCookieData->hContact)) {
++				ppro->debugLogA("Avatar of a deleted contact ignored.");
++			}
++			else if (datalen > 4) { // store to file...
+ 				int aValid = 1;
+ 
+ 				if (pCookieData->hashlen == 0x14 && pCookieData->hash[3] == 0x10 && ppro->getByte("StrictAvatarCheck", DEFAULT_AVATARS_CHECK)) { // check only standard hashes
+@@ -1227,9 +1383,15 @@
+ 						else { // contact's avatar set hash
+ 							DBVARIANT dbv = { DBVT_DELETED };
+ 							if (!ppro->getSetting(pCookieData->hContact, "AvatarHash", &dbv)) {
+-								if (ppro->setSettingBlob(pCookieData->hContact, "AvatarSaved", dbv.pbVal, dbv.cpbVal))
++								// Save the hash of the picture received, not the current one: the
++								// contact may have changed it while this one was on its way (a
++								// request for the new one is dropped while this one runs), and
++								// saving the current hash would pass the old picture off as new.
++								if (ppro->setSettingBlob(pCookieData->hContact, "AvatarSaved", pCookieData->hash, (int)pCookieData->hashlen))
+ 									ppro->debugLogA("Failed to set file hash.");
+ 
++								if (dbv.cpbVal != pCookieData->hashlen || memcmp(dbv.pbVal, pCookieData->hash, dbv.cpbVal))
++									bRefetch = true;
+ 								db_free(&dbv);
+ 							}
+ 							else {
+@@ -1263,6 +1425,10 @@
+ 				ppro->debugLogA("Received empty avatar, nothing written (error 0x%x).", bResult);
+ 				ppro->ProtoBroadcastAck(pCookieData->hContact, ACKTYPE_AVATAR, ACKRESULT_FAILED, (HANDLE)&ai, 0);
+ 			}
++
++			if (bRefetch)
++				ppro->requestCurrentAvatar(pCookieData->hContact);
++
+ 			SAFE_FREE(&pCookieData->szFile);
+ 			SAFE_FREE((void**)&pCookieData->hash);
+ 			SAFE_FREE((void**)&pCookieData);
+diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.h b/src/icq_avatar.h
+--- a/src/icq_avatar.h	2026-09-26 22:22:14.155230100 +0300
++++ b/src/icq_avatar.h	2026-09-26 22:22:14.402567700 +0300
+@@ -37,6 +37,13 @@
+ #define AVATAR_HASH_FLASH   0x08
+ #define AVATAR_HASH_PHOTO   0x0C
+ 
++// A request for the Flash avatar document (BART type 8) rather than a picture.
++// hash is the BART ID as sent: type (2 bytes, big endian), flags, length, data.
++__inline bool IsFlashAvatarHash(const BYTE *hash, size_t hashlen)
++{
++	return hash && hashlen >= 2 && hash[0] == 0 && hash[1] == AVATAR_HASH_FLASH;
++}
++
+ struct CIcqProto;
+ 
+ class avatars_server_connection : public MZeroedObject
+@@ -68,6 +75,7 @@
+ 	mir_cs m_ratesMutex;
+ 
+ 	MCONTACT runContact[4];
++	bool     runFlash[4]; // a contact may have a picture and a Flash avatar request running at once
+ 	DWORD    runTime[4];
+ 	int      runCount;
+ 	void     checkRequestQueue();
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_constants.h b/src/icq_constants.h
---- a/src/icq_constants.h	2026-09-22 23:33:29.291878600 +0300
-+++ b/src/icq_constants.h	2026-09-22 23:33:29.499919300 +0300
+--- a/src/icq_constants.h	2026-09-26 22:22:14.156230400 +0300
++++ b/src/icq_constants.h	2026-09-26 22:22:14.335748000 +0300
 @@ -613,6 +613,9 @@
  // Internal Constants
  #define ICQ_PROTOCOL_NAME           "ICQ"
@@ -574,8 +971,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_constants.h b/sr
  #define DC_TYPE                     DC_NORMAL // Used for DC settings
  #define MAX_CONTACTSSEND            15
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_db.cpp b/src/icq_db.cpp
---- a/src/icq_db.cpp	2026-09-22 23:33:29.292877700 +0300
-+++ b/src/icq_db.cpp	2026-09-22 23:33:29.500915100 +0300
+--- a/src/icq_db.cpp	2026-09-26 22:22:14.157230600 +0300
++++ b/src/icq_db.cpp	2026-09-26 22:22:14.335748000 +0300
 @@ -184,7 +184,7 @@
  
  int CIcqProto::IsICQContact(MCONTACT hContact)
@@ -601,8 +998,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_db.cpp b/src/icq
  }
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_directmsg.cpp b/src/icq_directmsg.cpp
---- a/src/icq_directmsg.cpp	2026-09-22 23:33:29.295878500 +0300
-+++ b/src/icq_directmsg.cpp	2026-09-22 23:33:29.503916600 +0300
+--- a/src/icq_directmsg.cpp	2026-09-26 22:22:14.160257400 +0300
++++ b/src/icq_directmsg.cpp	2026-09-26 22:22:14.338800700 +0300
 @@ -166,7 +166,7 @@
  					ackType = ACKTYPE_MESSAGE;
  					break;
@@ -622,8 +1019,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_directmsg.cpp b/
  			case MTYPE_CONTACTS:
  				ackType = ACKTYPE_CONTACTS;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_filerequests.cpp b/src/icq_filerequests.cpp
---- a/src/icq_filerequests.cpp	2026-09-22 23:33:29.299886700 +0300
-+++ b/src/icq_filerequests.cpp	2026-09-22 23:33:29.507914900 +0300
+--- a/src/icq_filerequests.cpp	2026-09-26 22:22:14.162267200 +0300
++++ b/src/icq_filerequests.cpp	2026-09-26 22:22:14.341054500 +0300
 @@ -154,16 +154,12 @@
  	// Send chain event
  	wchar_t* ptszFileName = mir_utf8decodeW(pszFileName);
@@ -647,8 +1044,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_filerequests.cpp
  }
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_firstrun.cpp b/src/icq_firstrun.cpp
---- a/src/icq_firstrun.cpp	2026-09-22 23:33:29.301886100 +0300
-+++ b/src/icq_firstrun.cpp	2026-09-22 23:33:29.509913700 +0300
+--- a/src/icq_firstrun.cpp	2026-09-26 22:22:14.164266500 +0300
++++ b/src/icq_firstrun.cpp	2026-09-26 22:22:14.343065100 +0300
 @@ -68,7 +68,7 @@
  	case WM_COMMAND:
  		switch (LOWORD(wParam)) {
@@ -669,8 +1066,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_firstrun.cpp b/s
 +	return CreateDialogParam(g_plugin.getInst(), MAKEINTRESOURCE(IDD_ICQACCOUNT), hwndParent, icq_FirstRunDlgProc, LPARAM(this));
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_menu.cpp b/src/icq_menu.cpp
---- a/src/icq_menu.cpp	2026-09-22 23:33:29.306886800 +0300
-+++ b/src/icq_menu.cpp	2026-09-22 23:33:29.513427900 +0300
+--- a/src/icq_menu.cpp	2026-09-26 22:22:14.167267500 +0300
++++ b/src/icq_menu.cpp	2026-09-26 22:22:14.346578100 +0300
 @@ -106,7 +106,10 @@
  
  INT_PTR CIcqProto::OpenWebProfile(WPARAM hContact, LPARAM)
@@ -697,8 +1094,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_menu.cpp b/src/i
  		Menu_ShowItem(g_hContactMenuItems[ICMI_ADD_TO_SERVLIST],
  			m_bSsiEnabled && !getWord(hContact, DBSETTING_SERVLIST_ID, 0) &&
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_opts.cpp b/src/icq_opts.cpp
---- a/src/icq_opts.cpp	2026-09-22 23:33:29.307886500 +0300
-+++ b/src/icq_opts.cpp	2026-09-22 23:33:29.513935600 +0300
+--- a/src/icq_opts.cpp	2026-09-26 22:22:14.168776000 +0300
++++ b/src/icq_opts.cpp	2026-09-26 22:22:14.347580000 +0300
 @@ -25,8 +25,6 @@
  
  #include "stdafx.h"
@@ -747,8 +1144,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_opts.cpp b/src/i
  		}
  		break;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_packet.cpp b/src/icq_packet.cpp
---- a/src/icq_packet.cpp	2026-09-22 23:33:29.308886700 +0300
-+++ b/src/icq_packet.cpp	2026-09-22 23:33:29.514941200 +0300
+--- a/src/icq_packet.cpp	2026-09-26 22:22:14.170293100 +0300
++++ b/src/icq_packet.cpp	2026-09-26 22:22:14.347580000 +0300
 @@ -41,6 +41,8 @@
  	pPacket->pData = (BYTE*)SAFE_MALLOC(pPacket->wLen);
  }
@@ -759,8 +1156,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_packet.cpp b/src
  {
  	init_generic_packet(pPacket, 14);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_popups.cpp b/src/icq_popups.cpp
---- a/src/icq_popups.cpp	2026-09-22 23:33:29.311393600 +0300
-+++ b/src/icq_popups.cpp	2026-09-22 23:33:29.549079300 +0300
+--- a/src/icq_popups.cpp	2026-09-26 22:22:14.172055300 +0300
++++ b/src/icq_popups.cpp	2026-09-26 22:22:14.400568100 +0300
 @@ -195,7 +195,7 @@
  int CIcqProto::ShowPopupMsg(MCONTACT hContact, const char *szTitle, const char *szMsg, BYTE bType)
  {
@@ -780,9 +1177,17 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_popups.cpp b/src
  	return -1; // Failure
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/icq_proto.cpp
---- a/src/icq_proto.cpp	2026-09-22 23:33:29.313909400 +0300
-+++ b/src/icq_proto.cpp	2026-09-22 23:33:29.516949200 +0300
-@@ -105,16 +105,11 @@
+--- a/src/icq_proto.cpp	2026-09-26 22:22:14.173563400 +0300
++++ b/src/icq_proto.cpp	2026-09-26 22:22:14.356130800 +0300
+@@ -75,6 +75,7 @@
+ 	expectedFileRecvs(10, CompareFT),
+ 	contactsCache(10, CompareContactsCache),
+ 	CustomCapList(1),
++	m_arDeletedContacts(5, PtrKeySortT),
+ 	cheekySearchId(-1),
+ 	m_arAvatars(5),
+ 	m_arFileTransfers(1)
+@@ -105,16 +106,11 @@
  	db_set_resident(m_szModuleName, DBSETTING_STATUS_MOOD);
  
  	// Setup services
@@ -799,7 +1204,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	// ChangeInfo API
  	CreateProtoService(PS_CHANGEINFOEX, &CIcqProto::ChangeInfoEx);
  
-@@ -161,12 +156,6 @@
+@@ -161,12 +157,6 @@
  	nlu.flags = NUF_OUTGOING | NUF_HTTPCONNS | NUF_UNICODE;
  	nlu.szDescriptiveName.w = szBuffer;
  	nlu.szSettingsModule = m_szModuleName;
@@ -812,7 +1217,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	m_hNetlibUser = Netlib_RegisterUser(&nlu);
  
  	char szP2PModuleName[MAX_PATH];
-@@ -179,7 +168,7 @@
+@@ -179,7 +169,7 @@
  	m_hDirectNetlibUser = Netlib_RegisterUser(&nlu);
  
  	// Register custom database events
@@ -821,7 +1226,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	eventType.eventType = ICQEVENTTYPE_MISSEDMESSAGE;
  	eventType.module = m_szModuleName;
  	eventType.descr = "Missed message notifications";
-@@ -317,7 +306,7 @@
+@@ -317,7 +307,7 @@
  	if ((dbei.cbBlob = db_event_getBlobSize(hDbEvent)) == -1)
  		return 0;
  
@@ -830,7 +1235,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	dbei.pBlob[dbei.cbBlob] = '\0';
  
  	if (db_event_get(hDbEvent, &dbei))
-@@ -424,10 +413,10 @@
+@@ -424,10 +414,10 @@
  ////////////////////////////////////////////////////////////////////////////////////////
  // PSR_AUTH
  
@@ -843,7 +1248,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	return 0;
  }
  
-@@ -570,7 +559,7 @@
+@@ -570,7 +560,7 @@
  ////////////////////////////////////////////////////////////////////////////////////////
  // PS_FileResume - processes file renaming etc
  
@@ -852,7 +1257,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  {
  	if (icqOnline() && hTransfer) {
  		basic_filetransfer *ft = (basic_filetransfer *)hTransfer;
-@@ -579,12 +568,12 @@
+@@ -579,12 +569,12 @@
  			return 1; // Invalid transfer
  
  		if (ft->ft_magic == FT_MAGIC_ICQ) {
@@ -868,7 +1273,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  		}
  		else
  			return 1; // Failure
-@@ -606,10 +595,10 @@
+@@ -606,10 +596,10 @@
  	switch (type) {
  
  	case PFLAGNUM_1:
@@ -882,7 +1287,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  
  		if (m_bSsiEnabled && getByte("ServerAddRemove", DEFAULT_SS_ADDSERVER))
  			nReturn |= PF1_SERVERCLIST;
-@@ -617,23 +606,23 @@
+@@ -617,23 +607,23 @@
  
  	case PFLAGNUM_2:
  		return PF2_ONLINE | PF2_SHORTAWAY | PF2_LONGAWAY | PF2_LIGHTDND | PF2_HEAVYDND |
@@ -910,7 +1315,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  
  	case PFLAG_MAXLENOFMESSAGE:
  		return MAX_MESSAGESNACSIZE - 102;
-@@ -802,8 +791,7 @@
+@@ -802,8 +792,7 @@
  	return nullptr; // Failure
  }
  
@@ -920,7 +1325,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  {
  	if (parent && g_plugin.getInst())
  		return CreateDialog(g_plugin.getInst(), MAKEINTRESOURCE(IDD_ICQADVANCEDSEARCH), parent, AdvancedSearchDlgProc);
-@@ -811,7 +799,7 @@
+@@ -811,7 +800,7 @@
  	return nullptr; // Failure
  }
  
@@ -929,7 +1334,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  {
  	if (icqOnline() && IsWindow(hwndDlg)) {
  		size_t nDataLen;
-@@ -831,14 +819,15 @@
+@@ -831,14 +820,15 @@
  ////////////////////////////////////////////////////////////////////////////////////////
  // RecvContacts
  
@@ -948,7 +1353,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  		cbBlob += mir_strlen((char*)isrList[i]->hdr.nick.w) + 2; // both trailing zeros
  		if (isrList[i]->uin)
  			cbBlob += getUINLen(isrList[i]->uin);
-@@ -846,7 +835,7 @@
+@@ -846,7 +836,7 @@
  			cbBlob += mir_strlen((char*)isrList[i]->hdr.id.w);
  	}
  	PBYTE pBlob = (PBYTE)_alloca(cbBlob), pCurBlob;
@@ -957,7 +1362,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  		mir_strcpy((char*)pCurBlob, (char*)isrList[i]->hdr.nick.w);
  		pCurBlob += mir_strlen((char*)pCurBlob) + 1;
  		if (isrList[i]->uin) {
-@@ -860,7 +849,7 @@
+@@ -860,7 +850,7 @@
  		pCurBlob += mir_strlen((char*)pCurBlob) + 1;
  	}
  
@@ -966,7 +1371,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	return 0;
  }
  
-@@ -868,10 +857,10 @@
+@@ -868,10 +858,10 @@
  ////////////////////////////////////////////////////////////////////////////////////////
  // RecvMsg
  
@@ -980,7 +1385,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  
  	// stop contact from typing - some clients do not sent stop notify
  	if (CheckContactCapabilities(hContact, CAPF_TYPING))
-@@ -1219,7 +1208,7 @@
+@@ -1219,7 +1209,7 @@
  ////////////////////////////////////////////////////////////////////////////////////////
  // PS_SendMessage - sends a message
  
@@ -989,7 +1394,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  {
  	if (hContact == NULL || pszSrc == nullptr)
  		return NULL;
-@@ -1345,13 +1334,13 @@
+@@ -1345,13 +1335,13 @@
  
  	DWORD dwUin;
  	if (getContactUid(hContact, &dwUin, nullptr)) // Invalid contact
@@ -1005,7 +1410,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  		return 0;
  	}
  
-@@ -1377,7 +1366,7 @@
+@@ -1377,7 +1367,7 @@
  	// Rate check
  	if (IsServerOverRate(ICQ_MSG_FAMILY, ICQ_MSG_SRV_SEND, RML_LIMIT)) { // rate is too high, the message will not go thru...
  		SAFE_FREE((void**)&pCookieData);
@@ -1014,7 +1419,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	}
  
  	// Select channel and send
-@@ -1391,7 +1380,7 @@
+@@ -1391,7 +1381,7 @@
  
  	// This will stop the message dialog from waiting for the real message delivery ack
  	if (pCookieData->nAckType == ACKTYPE_NONE) {
@@ -1023,7 +1428,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  		// We need to free this here since we will never see the real ack
  		// The actual cookie value will still have to be returned to the message dialog though
  		ReleaseCookie(dwCookie);
-@@ -1699,14 +1688,14 @@
+@@ -1699,14 +1689,14 @@
  
  
  ////////////////////////////////////////////////////////////////////////////////////////
@@ -1044,8 +1449,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	return 0;
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/icq_proto.h
---- a/src/icq_proto.h	2026-09-22 23:33:29.314915100 +0300
-+++ b/src/icq_proto.h	2026-09-22 23:33:29.517948900 +0300
+--- a/src/icq_proto.h	2026-09-26 22:22:14.174571900 +0300
++++ b/src/icq_proto.h	2026-09-26 22:22:14.400163300 +0300
 @@ -59,48 +59,47 @@
  
  	int      Authorize(MEVENT hDbEvent) override;
@@ -1117,7 +1522,17 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  
      //====| Events |======================================================================
  	int  __cdecl OnIdleChanged(WPARAM, LPARAM);
-@@ -742,7 +741,7 @@
+@@ -381,6 +380,9 @@
+ 
+ 	void   handleAvatarOwnerHash(BYTE bFlags, BYTE *pData, size_t nDataLen);
+ 	void   handleAvatarContactHash(DWORD dwUIN, char *szUID, MCONTACT hContact, BYTE *pHash, size_t nHashLen);
++	void   handleFlashAvatarHash(DWORD dwUIN, char *szUID, MCONTACT hContact, const BYTE *pHash, size_t nHashLen);
++	void   storeFlashAvatar(MCONTACT hContact, const BYTE *pHash, size_t cbHash, const BYTE *pData, size_t cbData);
++	void   requestCurrentAvatar(MCONTACT hContact);
+ 
+ 	wchar_t* GetOwnAvatarFileName();
+ 	void   GetFullAvatarFileName(int dwUin, const char *szUid, int dwFormat, wchar_t *pszDest, size_t cbLen);
+@@ -742,12 +744,20 @@
  	MCONTACT AddToListByUIN(DWORD dwUin, DWORD dwFlags);
  	MCONTACT AddToListByUID(const char *szUID, DWORD dwFlags);
  
@@ -1126,7 +1541,20 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  	INT_PTR __cdecl IcqAddCapability(WPARAM wParam, LPARAM lParam);
  	INT_PTR __cdecl IcqCheckCapability(WPARAM wParam, LPARAM lParam);
  
-@@ -794,7 +793,7 @@
+ 	OBJLIST<ICQ_CUSTOMCAP> CustomCapList;
+ 
++	// Contacts being deleted. Between OnContactDeleted() and the removal from
++	// the database the network threads could still find such a contact in the
++	// database, cache it again and write settings to it - into a message window
++	// that is closing (TabSRMM crashes painting it). They skip these instead.
++	LIST<void> m_arDeletedContacts;
++	mir_cs m_csDeletedContacts;
++	bool IsContactDeleted(MCONTACT hContact);
++
+ 	//----| icq_uploadui.cpp |------------------------------------------------------------
+ 	void   ShowUploadContactsDialog(void);
+ 
+@@ -794,7 +804,7 @@
  	void   SafeReleaseFileTransfer(basic_filetransfer **ft);
  	oscar_filetransfer* FindOscarTransfer(MCONTACT hContact, DWORD dwID1, DWORD dwID2);
  
@@ -1135,7 +1563,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  	void   ReleaseOscarListener(oscar_listener **pListener);
  
  	void   OpenOscarConnection(MCONTACT hContact, oscar_filetransfer *ft, int type);
-@@ -861,7 +860,7 @@
+@@ -861,7 +871,7 @@
  	void   AddToSpammerList(DWORD dwUIN);
  	BOOL   IsOnSpammerList(DWORD dwUIN);
  
@@ -1144,7 +1572,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  
  	MCONTACT HandleFromCacheByUid(DWORD dwUin, const char *szUid);
  	MCONTACT HContactFromUIN(DWORD dwUin, int *Added);
-@@ -882,6 +881,7 @@
+@@ -882,6 +892,7 @@
  	void   writeDbInfoSettingTLVStringUtf(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
  	void   writeDbInfoSettingTLVWord(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
  	void   writeDbInfoSettingTLVByte(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
@@ -1153,8 +1581,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  	void   writeDbInfoSettingTLVDate(MCONTACT hContact, const char *szSettingYear, const char *szSettingMonth, const char *szSettingDay, oscar_tlv_chain *chain, WORD wTlv);
  	void   writeDbInfoSettingTLVBlob(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.cpp b/src/icq_server.cpp
---- a/src/icq_server.cpp	2026-09-22 23:33:29.318923800 +0300
-+++ b/src/icq_server.cpp	2026-09-22 23:33:29.519948500 +0300
+--- a/src/icq_server.cpp	2026-09-26 22:22:14.176570300 +0300
++++ b/src/icq_server.cpp	2026-09-26 22:22:14.358138700 +0300
 @@ -54,9 +54,6 @@
  	{
  		NETLIBOPENCONNECTION nloc = infoParam->nloc;
@@ -1175,8 +1603,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.cpp b/src
  		icq_LogUsingErrorCode(LOG_WARNING, GetLastError(), LPGEN("Miranda was unable to allocate a port to listen for direct peer-to-peer connections between clients. You will be able to use most of the ICQ network without problems but you may be unable to send or receive files.\n\nIf you have a firewall this may be blocking Miranda, in which case you should configure your firewall to leave some ports open and tell Miranda which ports to use in Options -> Network -> ICQ client-to-client connections."));
  		wListenPort = 0;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.h b/src/icq_server.h
---- a/src/icq_server.h	2026-09-22 23:33:29.319923800 +0300
-+++ b/src/icq_server.h	2026-09-22 23:33:29.520949700 +0300
+--- a/src/icq_server.h	2026-09-26 22:22:14.177572600 +0300
++++ b/src/icq_server.h	2026-09-26 22:22:14.359138600 +0300
 @@ -30,6 +30,14 @@
  #ifndef __ICQ_SERVER_H
  #define __ICQ_SERVER_H
@@ -1193,18 +1621,30 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.h b/src/i
  {
  	NETLIBOPENCONNECTION nloc;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_servlist.cpp b/src/icq_servlist.cpp
---- a/src/icq_servlist.cpp	2026-09-22 23:33:29.320922900 +0300
-+++ b/src/icq_servlist.cpp	2026-09-22 23:33:29.521949200 +0300
-@@ -2259,7 +2259,7 @@
+--- a/src/icq_servlist.cpp	2026-09-26 22:22:14.179082900 +0300
++++ b/src/icq_servlist.cpp	2026-09-26 22:22:14.364367400 +0300
+@@ -2259,8 +2259,19 @@
  }
  
  
 -void CIcqProto::OnContactDeleted(MCONTACT hContact)
-+bool CIcqProto::OnContactDeleted(MCONTACT hContact, uint32_t)
++bool CIcqProto::IsContactDeleted(MCONTACT hContact)
  {
++	mir_cslock l(m_csDeletedContacts);
++	return hContact && m_arDeletedContacts.find((void*)(INT_PTR)hContact) != nullptr;
++}
++
++bool CIcqProto::OnContactDeleted(MCONTACT hContact, uint32_t)
++{
++	{
++		mir_cslock l(m_csDeletedContacts);
++		if (!m_arDeletedContacts.find((void*)(INT_PTR)hContact))
++			m_arDeletedContacts.insert((void*)(INT_PTR)hContact);
++	}
  	DeleteFromContactsCache(hContact);
  
-@@ -2268,13 +2268,13 @@
+ 	if (!icqOnline() && m_bSsiEnabled)
+@@ -2268,13 +2279,13 @@
  		setWord(hContact, "SrvRecordCount", 0);
  
  	if (!icqOnline() || !m_bSsiEnabled)
@@ -1220,7 +1660,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_servlist.cpp b/s
  
  	WORD wContactID = getWord(hContact, DBSETTING_SERVLIST_ID, 0);
  	WORD wGroupID = getWord(hContact, DBSETTING_SERVLIST_GROUP, 0);
-@@ -2301,6 +2301,7 @@
+@@ -2301,6 +2312,7 @@
  		if (wIgnoreID) // delete ignore record
  			icq_removeServerPrivacyItem(hContact, dwUIN, szUID, wIgnoreID, SSI_ITEM_IGNORE);
  	}
@@ -1229,8 +1669,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_servlist.cpp b/s
  
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_xtraz.cpp b/src/icq_xtraz.cpp
---- a/src/icq_xtraz.cpp	2026-09-22 23:33:29.325923300 +0300
-+++ b/src/icq_xtraz.cpp	2026-09-22 23:33:29.526948800 +0300
+--- a/src/icq_xtraz.cpp	2026-09-26 22:22:14.181621700 +0300
++++ b/src/icq_xtraz.cpp	2026-09-26 22:22:14.367367300 +0300
 @@ -328,12 +328,13 @@
  				mir_strcat(szWork, szNum);
  
@@ -1250,8 +1690,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_xtraz.cpp b/src/
  				SAFE_FREE(&szWork);
  			}
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icqosc_svcs.cpp b/src/icqosc_svcs.cpp
---- a/src/icqosc_svcs.cpp	2026-09-22 23:33:29.326923400 +0300
-+++ b/src/icqosc_svcs.cpp	2026-09-22 23:33:29.527950000 +0300
+--- a/src/icqosc_svcs.cpp	2026-09-26 22:22:14.182623000 +0300
++++ b/src/icqosc_svcs.cpp	2026-09-26 22:22:14.368874400 +0300
 @@ -73,84 +73,6 @@
  	return 0; // Success
  }
@@ -1360,8 +1800,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icqosc_svcs.cpp b/sr
  
  INT_PTR __cdecl CIcqProto::IcqAddCapability(WPARAM, LPARAM lParam)
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.cpp
---- a/src/init.cpp	2026-09-22 23:33:29.328924700 +0300
-+++ b/src/init.cpp	2026-09-22 23:33:29.529949500 +0300
+--- a/src/init.cpp	2026-09-26 22:22:14.184140200 +0300
++++ b/src/init.cpp	2026-09-26 22:22:14.371397200 +0300
 @@ -43,7 +43,7 @@
  	__COPYRIGHT,
  	__AUTHORWEB,
@@ -1391,7 +1831,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.
  	HookEvent(ME_SYSTEM_MODULEUNLOAD, ModuleLoad);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/m_icq.h b/src/m_icq.h
 --- a/src/m_icq.h	1970-01-01 02:00:00.000000000 +0200
-+++ b/src/m_icq.h	2026-09-22 23:33:29.546464300 +0300
++++ b/src/m_icq.h	2026-09-26 22:22:14.393024200 +0300
 @@ -0,0 +1,189 @@
 +// ---------------------------------------------------------------------------80
 +//                ICQ plugin for Miranda Instant Messenger
@@ -1583,8 +2023,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/m_icq.h b/src/m_icq.
 +
 +#endif // M_ICQ_H__
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/oscar_filetransfer.cpp b/src/oscar_filetransfer.cpp
---- a/src/oscar_filetransfer.cpp	2026-09-22 23:33:29.334716900 +0300
-+++ b/src/oscar_filetransfer.cpp	2026-09-22 23:33:29.533956700 +0300
+--- a/src/oscar_filetransfer.cpp	2026-09-26 22:22:14.188140300 +0300
++++ b/src/oscar_filetransfer.cpp	2026-09-26 22:22:14.375910200 +0300
 @@ -263,7 +263,7 @@
  	return dwCheck;
  }
@@ -1662,8 +2102,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/oscar_filetransfer.c
  				if (!oc.hConnection) { // proxy connection failed, we are out of possibilities
  					ProtoBroadcastAck(oc.ft->hContact, ACKTYPE_FILE, ACKRESULT_FAILED, oc.ft, 0);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/resource.h b/src/resource.h
---- a/src/resource.h	2026-09-22 23:33:29.336718000 +0300
-+++ b/src/resource.h	2026-09-22 23:33:29.534958100 +0300
+--- a/src/resource.h	2026-09-26 22:22:14.189645600 +0300
++++ b/src/resource.h	2026-09-26 22:22:14.377911500 +0300
 @@ -72,6 +72,7 @@
  #define IDC_XSTATUSRESET                1042
  #define IDC_MOODSENABLE                 1043
@@ -1673,8 +2113,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/resource.h b/src/res
  #define IDC_NICK                        1053
  #define IDC_GENDER                      1060
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/stdafx.h b/src/stdafx.h
---- a/src/stdafx.h	2026-09-22 23:33:29.338719200 +0300
-+++ b/src/stdafx.h	2026-09-22 23:33:29.537957600 +0300
+--- a/src/stdafx.h	2026-09-26 22:22:14.190652000 +0300
++++ b/src/stdafx.h	2026-09-26 22:22:14.379419000 +0300
 @@ -72,13 +72,13 @@
  #include <m_idle.h>
  #include <m_skin.h>
@@ -1699,8 +2139,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/stdafx.h b/src/stdaf
  #include "icq_constants.h"
  #include "capabilities.h"
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/userinfotab.cpp b/src/userinfotab.cpp
---- a/src/userinfotab.cpp	2026-09-22 23:33:29.346226500 +0300
-+++ b/src/userinfotab.cpp	2026-09-22 23:33:29.542957600 +0300
+--- a/src/userinfotab.cpp	2026-09-26 22:22:14.194655900 +0300
++++ b/src/userinfotab.cpp	2026-09-26 22:22:14.384437400 +0300
 @@ -190,16 +190,15 @@
  	switch (msg) {
  	case WM_INITDIALOG:
@@ -1877,8 +2317,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/userinfotab.cpp b/sr
  	return 0;
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.cpp b/src/utilities.cpp
---- a/src/utilities.cpp	2026-09-22 23:33:29.347236300 +0300
-+++ b/src/utilities.cpp	2026-09-22 23:33:29.543956700 +0300
+--- a/src/utilities.cpp	2026-09-26 22:22:14.195656100 +0300
++++ b/src/utilities.cpp	2026-09-26 22:22:14.391023500 +0300
 @@ -125,12 +125,10 @@
  		nIcqStatus = ICQ_STATUS_AWAY;
  		break;
@@ -1908,7 +2348,34 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.cpp b/src/
  
  		// This is not supposed to happen.
  	default:
-@@ -525,7 +514,7 @@
+@@ -336,7 +325,7 @@
+ 
+ void CIcqProto::AddToContactsCache(MCONTACT hContact, DWORD dwUin, const char *szUid)
+ {
+-	if (!hContact || (!dwUin && !szUid))
++	if (!hContact || (!dwUin && !szUid) || IsContactDeleted(hContact))
+ 		return;
+ 
+ 	icq_contacts_cache *cache_item = (icq_contacts_cache*)SAFE_MALLOC(sizeof(icq_contacts_cache));
+@@ -418,6 +407,8 @@
+ 		return cc;
+ 
+ 	for (auto &hContact : AccContacts()) {
++		if (IsContactDeleted(hContact))
++			continue;
+ 		DWORD dwContactUin = getContactUin(hContact);
+ 		if (dwContactUin == dwUin) {
+ 			AddToContactsCache(hContact, dwUin, nullptr);
+@@ -481,6 +472,8 @@
+ 		return cc;
+ 
+ 	for (auto &hContact : AccContacts()) {
++		if (IsContactDeleted(hContact))
++			continue;
+ 		DWORD dwContactUin;
+ 		uid_str szContactUid;
+ 		if (!getContactUid(hContact, &dwContactUin, &szContactUid)) {
+@@ -525,7 +518,7 @@
  
  	DBEVENTINFO dbei = {};
  	dbei.cbBlob = sizeof(DWORD) * 2;
@@ -1917,7 +2384,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.cpp b/src/
  
  	if (db_event_get(hEvent, &dbei))
  		return INVALID_CONTACT_ID;
-@@ -1149,6 +1138,20 @@
+@@ -1149,6 +1142,20 @@
  }
  
  
@@ -1938,7 +2405,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.cpp b/src/
  void CIcqProto::writeDbInfoSettingTLVStringUtf(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv)
  {
  	oscar_tlv *pTLV = chain->getTLV(wTlv, 1);
-@@ -1332,20 +1335,30 @@
+@@ -1332,20 +1339,30 @@
  }
  
  
@@ -1975,8 +2442,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.cpp b/src/
  	SetLastError(ERROR_INVALID_PARAMETER); // this must be here - NetLib does not set any error :((
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.h b/src/utilities.h
---- a/src/utilities.h	2026-09-22 23:33:29.348235800 +0300
-+++ b/src/utilities.h	2026-09-22 23:33:29.544956700 +0300
+--- a/src/utilities.h	2026-09-26 22:22:14.196653600 +0300
++++ b/src/utilities.h	2026-09-26 22:22:14.391023500 +0300
 @@ -132,4 +132,6 @@
  void   setContactExtraIcon(MCONTACT hContact, int xstatus);
  int    OnReloadIcons(WPARAM wParam, LPARAM lParam);
