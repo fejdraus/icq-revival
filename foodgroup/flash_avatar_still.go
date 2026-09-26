@@ -224,7 +224,7 @@ func (f *FlashAvatarStills) fetchStill(ctx context.Context, flashHash []byte) (w
 	if err != nil {
 		return wire.BARTID{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return wire.BARTID{}, fmt.Errorf("GET %s: %s", stillURL, resp.Status)
 	}
