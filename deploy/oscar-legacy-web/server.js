@@ -213,6 +213,24 @@ async function mgmt(apiPath, options = {}) {
   return res.json();
 }
 
+// The raw bytes of a management API answer with their content type, for the
+// routes that return a file rather than JSON (the user's picture). A 404 is an
+// answer - there is no such file - and comes back as null.
+async function mgmtBytes(apiPath) {
+  const res = await fetch(config.mgmtApi + apiPath, { signal: AbortSignal.timeout(5000) });
+  if (res.status === 404) {
+    await res.arrayBuffer();
+    return null;
+  }
+  if (!res.ok) {
+    throw new Error(`GET ${apiPath}: HTTP ${res.status}`);
+  }
+  return {
+    type: (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase(),
+    body: Buffer.from(await res.arrayBuffer()),
+  };
+}
+
 // ---------------------------------------------------------------- translations
 //
 // The languages are the ones registration and the admin page use, taken from the
@@ -317,6 +335,7 @@ const I18N = {
 
     cSignedInFor: 'Signed in for',
     cAbout: 'About',
+    cAnimatedAvatar: (title) => `animated avatar: ${title}`,
     cAccount: 'Account',
     cSuspended: 'suspended',
     cNick: 'Nickname',
@@ -653,6 +672,7 @@ const I18N = {
 
     cSignedInFor: 'У мережі вже',
     cAbout: 'Про себе',
+    cAnimatedAvatar: (title) => `анімований аватар: ${title}`,
     cAccount: 'Обліковий запис',
     cSuspended: 'заблоковано',
     cNick: 'Нік',
@@ -1279,7 +1299,155 @@ function profileRows(icq, t, row) {
   return out;
 }
 
-async function userCard(uin, t) {
+// ---------------------------------------------------------------- user picture
+//
+// A user has a static picture (the buddy icon), an animated Flash avatar, both
+// or neither. The card shows the animated one when it is one of ours - by its
+// thumbnail from the gallery, since a page for old browsers cannot count on
+// Flash - and otherwise the static picture.
+
+// The picture types every browser the pages are made for shows in an <img>.
+const CARD_ICON_TYPES = new Set(['image/gif', 'image/jpeg', 'image/png', 'image/bmp']);
+const CARD_ICON_BOX = 64;
+
+// The user's static picture as { type, body }, or null when there is none or
+// it is not something a browser can show.
+async function staticIcon(uin) {
+  const icon = await mgmtBytes(`/user/${encodeURIComponent(uin)}/icon`);
+  return icon && icon.body.length && CARD_ICON_TYPES.has(icon.type) ? icon : null;
+}
+
+// The gallery entry of the user's animated avatar, or null when they have none
+// or it is not one of ours. The stored item is a small XML document with the
+// movie's address: <DOCUMENT><RESSET TYPE="ICQ_EXTRAS"><URL>...</URL>.
+async function animatedAvatar(uin) {
+  const doc = await mgmtBytes(`/user/${encodeURIComponent(uin)}/icon?type=8`);
+  if (!doc) return null;
+  const m = /<URL>\s*([^<]+?)\s*<\/URL>/i.exec(doc.body.toString('utf8'));
+  if (!m) return null;
+  let pathname;
+  try {
+    pathname = new URL(m[1].replace(/&amp;/g, '&')).pathname;
+  } catch {
+    return null;
+  }
+  const file = /^\/icq\/avatars\/([a-z0-9_-]+\.swf)$/i.exec(pathname);
+  if (!file) return null;
+  const name = file[1].toLowerCase();
+  return avatarList.find((a) => a.file.toLowerCase() === name) || null;
+}
+
+// The width and height of a GIF, PNG, BMP or JPEG picture, or null.
+function imageSize(b) {
+  if (b.length >= 10 && b.toString('latin1', 0, 4) === 'GIF8') {
+    return { w: b.readUInt16LE(6), h: b.readUInt16LE(8) };
+  }
+  if (b.length >= 24 && b.readUInt32BE(0) === 0x89504e47 && b.toString('latin1', 12, 16) === 'IHDR') {
+    return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+  }
+  if (b.length >= 26 && b.toString('latin1', 0, 2) === 'BM') {
+    return { w: Math.abs(b.readInt32LE(18)), h: Math.abs(b.readInt32LE(22)) };
+  }
+  if (b.length >= 4 && b[0] === 0xff && b[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < b.length) {
+      if (b[i] !== 0xff) return null;
+      const marker = b[i + 1];
+      if (marker === 0xff) { i += 1; continue; }
+      const len = b.readUInt16BE(i + 2);
+      // SOF0..SOF15 carry the size; C4, C8 and CC are other segments.
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { w: b.readUInt16BE(i + 7), h: b.readUInt16BE(i + 5) };
+      }
+      i += 2 + len;
+    }
+  }
+  return null;
+}
+
+// width/height attributes that fit the picture into the card's box, keeping
+// its proportions (old IE knows no max-width). Empty when the size is unknown.
+function iconSizeAttrs(body) {
+  const size = imageSize(body);
+  if (!size || !size.w || !size.h) return '';
+  const scale = Math.min(1, CARD_ICON_BOX / Math.max(size.w, size.h));
+  const w = Math.max(1, Math.round(size.w * scale));
+  const h = Math.max(1, Math.round(size.h * scale));
+  return ` width="${w}" height="${h}"`;
+}
+
+// The picture cell of a user card, or '' when the user has no picture.
+async function cardPicture(uin, t, lang) {
+  let avatar = null;
+  try {
+    avatar = await animatedAvatar(uin);
+  } catch {
+    // The card makes sense without the picture.
+  }
+  if (avatar) {
+    const stem = avatar.file.replace(/\.[a-z]+$/i, '');
+    const title = (avatar.title && (avatar.title[lang] || avatar.title.en)) || stem;
+    return `<img src="/icq/avatars/${escapeHtml(avatar.thumb)}" width="52" height="64"`
+      + ` alt="${escapeHtml(title)}" title="${escapeHtml(title)}" border="0">`
+      + `<div class="dim" style="font-size:11px;line-height:13px;margin-top:3px">${escapeHtml(t.cAnimatedAvatar(title))}</div>`;
+  }
+  // The static picture comes through our own route: the management API it is
+  // stored behind is reachable only from this machine.
+  if (!/^\d{4,10}$/.test(uin)) return '';
+  let icon = null;
+  try {
+    icon = await staticIcon(uin);
+  } catch {
+    // As above.
+  }
+  if (!icon) return '';
+  return `<img src="/icq/whitepages/icon?icq=${escapeHtml(uin)}"${iconSizeAttrs(icon.body)}`
+    + ' alt="" border="0">';
+}
+
+// GET /icq/whitepages/icon?icq=<uin>: the user's static picture, relayed from
+// the management API. Only a number, only a picture; anything else is a 404.
+async function serveCardIcon(ctx) {
+  const uin = ctx.url.searchParams.get('icq') || '';
+  const notFound = () => {
+    ctx.res.writeHead(404, { 'content-length': 0, 'cache-control': 'no-store' });
+    ctx.res.end();
+  };
+  if (!/^\d{4,10}$/.test(uin) || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) {
+    notFound();
+    return;
+  }
+  let icon;
+  try {
+    icon = await staticIcon(uin);
+  } catch {
+    ctx.res.writeHead(502, { 'content-length': 0, 'cache-control': 'no-store' });
+    ctx.res.end();
+    return;
+  }
+  if (!icon) {
+    notFound();
+    return;
+  }
+  // The picture can change at any time, so the browser asks again every time
+  // and gets a 304 while it is the same.
+  const etag = `"${crypto.createHash('sha1').update(icon.body).digest('hex').slice(0, 20)}"`;
+  if (ctx.req.headers['if-none-match'] === etag) {
+    ctx.res.writeHead(304, { etag, 'cache-control': 'no-cache' });
+    ctx.res.end();
+    return;
+  }
+  ctx.res.writeHead(200, {
+    'content-type': icon.type,
+    'content-length': icon.body.length,
+    'cache-control': 'no-cache',
+    'x-content-type-options': 'nosniff',
+    etag,
+  });
+  ctx.res.end(ctx.req.method === 'HEAD' ? undefined : icon.body);
+}
+
+async function userCard(uin, t, lang = FALLBACK_LANG) {
   let account;
   try {
     account = await mgmt(`/user/${encodeURIComponent(uin)}/account`);
@@ -1340,10 +1508,21 @@ async function userCard(uin, t) {
     account.suspended_status ? row(t.cAccount, `<span class="bad">${t.cSuspended}</span>`) : '',
   ].join('');
 
+  const table = `<table cellpadding="0" cellspacing="0" border="0">${rows}</table>`;
+  const picture = await cardPicture(uin, t, lang);
+
   return {
     exists: true,
-    html: `<div class="card">
-      <table cellpadding="0" cellspacing="0" border="0">${rows}</table>
+    // The picture sits left of the details, like a photo on a profile.
+    html: picture
+      ? `<div class="card">
+      <table cellpadding="0" cellspacing="0" border="0"><tr>
+        <td valign="top" align="center" width="72" style="padding:0 12px 0 0">${picture}</td>
+        <td valign="top">${table}</td>
+      </tr></table>
+    </div>`
+      : `<div class="card">
+      ${table}
     </div>`,
   };
 }
@@ -1359,7 +1538,7 @@ async function whitepagesPage(uin, selfPath, u) {
       </form>`, '', false, u);
   }
 
-  const card = await userCard(uin, t);
+  const card = await userCard(uin, t, u.lang);
   if (card.error) {
     return page(t.findTitle, `<p>${t.serverSilent(escapeHtml(card.error))}</p>`, '', false, u);
   }
@@ -1446,7 +1625,7 @@ async function centerPage(uin, selfPath, u) {
     <td style="padding:1px 0 2px 0"><a href="${escapeHtml(base + href)}">${text}</a></td>
   </tr>`;
 
-  const card = /^\d{4,10}$/.test(uin) ? await userCard(uin, t) : { exists: false };
+  const card = /^\d{4,10}$/.test(uin) ? await userCard(uin, t, u.lang) : { exists: false };
   const head = card.exists
     ? card.html
     : `<div class="card">${t.colNumber} <b>${escapeHtml(uin || '&#8212;')}</b></div>`;
@@ -2082,6 +2261,9 @@ const ACTIONS = {
 
   map: async (ctx) => redirect(ctx.res, mapUrl(ctx.req.url)),
 
+  // A user's static picture for the card: /icq/whitepages/icon?icq=<uin>.
+  whitepagesicon: (ctx) => serveCardIcon(ctx),
+
   whitepages: async (ctx) => send(
     ctx.res, 200,
     await whitepagesPage((ctx.url.searchParams.get('icq') || '').trim(), ctx.path, ctx.u),
@@ -2096,7 +2278,7 @@ const ACTIONS = {
     // Show who the message goes to: writing blindly to a number is awkward.
     let card = null;
     if (/^\d{4,10}$/.test(uin)) {
-      const c = await userCard(uin, ctx.u.t);
+      const c = await userCard(uin, ctx.u.t, ctx.u.lang);
       card = c.exists ? c.html
         : `<p style="${FONT}"><font color="#a06000">`
           + ctx.u.t.notRegistered(escapeHtml(uin)) + '</font></p>';

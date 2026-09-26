@@ -664,7 +664,22 @@ func postInstantMessageHandler(w http.ResponseWriter, r *http.Request, messageRe
 }
 
 // getUserBuddyIconHandler handles the GET /user/{screenname}/icon endpoint.
+// Without a type query parameter (or with type=1) it returns the buddy icon.
+// With type=8 (Flash avatar) or type=12 (big buddy icon) it returns that ICQ
+// avatar asset from the user's feedbag instead.
 func getUserBuddyIconHandler(w http.ResponseWriter, r *http.Request, u UserManager, f FeedBagRetriever, b BARTAssetManager, logger *slog.Logger) {
+	var avatarType uint16
+	switch r.URL.Query().Get("type") {
+	case "", "1":
+	case "8":
+		avatarType = wire.BARTTypesFlashAvatar
+	case "12":
+		avatarType = wire.BARTTypesBuddyIconBig
+	default:
+		http.Error(w, "unsupported icon type", http.StatusBadRequest)
+		return
+	}
+
 	screenName := state.NewIdentScreenName(r.PathValue("screenname"))
 	user, err := u.User(r.Context(), screenName)
 	if err != nil {
@@ -674,6 +689,10 @@ func getUserBuddyIconHandler(w http.ResponseWriter, r *http.Request, u UserManag
 	}
 	if user == nil {
 		http.Error(w, "user not found", http.StatusNotFound)
+		return
+	}
+	if avatarType != 0 {
+		writeUserAvatarItem(w, r, screenName, avatarType, f, b, logger)
 		return
 	}
 	iconRef, err := f.BuddyIconMetadata(r.Context(), screenName)
@@ -694,6 +713,39 @@ func getUserBuddyIconHandler(w http.ResponseWriter, r *http.Request, u UserManag
 	}
 	w.Header().Set("Content-Type", http.DetectContentType(icon))
 	_, _ = w.Write(icon)
+}
+
+// writeUserAvatarItem writes the user's ICQ avatar asset of avatarType (a
+// Flash avatar XML document or a big buddy icon) found in their feedbag, or
+// responds 404 when they have none.
+func writeUserAvatarItem(w http.ResponseWriter, r *http.Request, screenName state.IdentScreenName, avatarType uint16, f FeedBagRetriever, b BARTAssetManager, logger *slog.Logger) {
+	items, err := f.AvatarBARTItems(r.Context(), screenName)
+	if err != nil {
+		logger.Error("error retrieving avatar bart items", "err", err.Error())
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	idx := slices.IndexFunc(items, func(item wire.BARTID) bool { return item.Type == avatarType })
+	if idx < 0 {
+		http.Error(w, "icon not found", http.StatusNotFound)
+		return
+	}
+	body, err := b.BARTItem(r.Context(), items[idx].Hash)
+	if err != nil {
+		logger.Error("error retrieving avatar bart item", "err", err.Error())
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if len(body) == 0 {
+		http.Error(w, "icon not found", http.StatusNotFound)
+		return
+	}
+	contentType := http.DetectContentType(body)
+	if avatarType == wire.BARTTypesFlashAvatar {
+		contentType = "application/xml"
+	}
+	w.Header().Set("Content-Type", contentType)
+	_, _ = w.Write(body)
 }
 
 // getUserAccountHandler handles the GET /user/{screenname}/account endpoint.

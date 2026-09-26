@@ -107,6 +107,10 @@ type FeedBagRetriever interface {
 	// BuddyIconMetadata retrieves a user's buddy icon metadata. It returns nil
 	// if the user does not have a buddy icon.
 	BuddyIconMetadata(ctx context.Context, screenName state.IdentScreenName) (*wire.BARTID, error)
+
+	// AvatarBARTItems retrieves the user's ICQ avatar items (Flash avatar and
+	// big buddy icon) from their feedbag. Cleared items are left out.
+	AvatarBARTItems(ctx context.Context, screenName state.IdentScreenName) ([]wire.BARTID, error)
 }
 
 // FeedbagManager defines methods for managing feedbag (buddy list) entries.

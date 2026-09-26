@@ -165,8 +165,12 @@ paths:
 
   /user/{screenname}/icon:
     get:
-      summary: Get AIM buddy icon for a screen name
-      description: Retrieve account buddy icon for a specific screen name.
+      summary: Get AIM buddy icon or ICQ avatar for a screen name
+      description: |
+        Retrieve account buddy icon for a specific screen name. With the
+        `type` query parameter, retrieve one of the user's ICQ avatar items
+        instead: `8` returns the Flash avatar asset (a small XML document
+        naming the .swf), `12` returns the big buddy icon image.
       parameters:
         - in: path
           name: screenname
@@ -174,10 +178,24 @@ paths:
             type: string
           description: User's AIM screen name or ICQ UIN.
           required: true
+        - in: query
+          name: type
+          schema:
+            type: integer
+            enum: [1, 8, 12]
+          description: |
+            BART item type to return. Omitted or `1` returns the buddy icon
+            (the original behaviour), `8` the Flash avatar XML, `12` the big
+            buddy icon.
+          required: false
       responses:
         '200':
-          description: Successful response containing buddy icon bytes
+          description: Successful response containing buddy icon or avatar bytes
           content:
+            application/xml:
+              schema:
+                type: string
+                description: Flash avatar document (type=8).
             image/gif:
               schema:
                 type: string
@@ -194,8 +212,10 @@ paths:
               schema:
                 type: string
                 format: binary
+        '400':
+          description: Unsupported `type` value
         '404':
-          description: User not found, or user has no buddy icon
+          description: User not found, or user has no item of the requested type
 
   /user/{screenname}/icq:
     get:

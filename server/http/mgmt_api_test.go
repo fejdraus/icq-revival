@@ -1045,6 +1045,175 @@ func TestUserBuddyIconHandler_GET(t *testing.T) {
 	}
 }
 
+func TestUserBuddyIconHandler_GET_AvatarType(t *testing.T) {
+	flashXML := []byte(`<DOCUMENT><RESSET TYPE="ICQ_EXTRAS"><URL>http://example.com:8101/icq/avatars/devil.swf</URL></RESSET></DOCUMENT>`)
+	bigGIF := []byte("GIF89a\x01\x00\x01\x00\x00\x00\x00;")
+	userA := state.NewIdentScreenName("100003")
+	flashItem := wire.BARTID{Type: wire.BARTTypesFlashAvatar, BARTInfo: wire.BARTInfo{Hash: []byte("flash")}}
+	bigItem := wire.BARTID{Type: wire.BARTTypesBuddyIconBig, BARTInfo: wire.BARTInfo{Hash: []byte("big")}}
+	foundUser := userManagerParams{
+		getUserParams: getUserParams{
+			{screenName: userA, result: &state.User{IdentScreenName: userA}},
+		},
+	}
+
+	tt := []struct {
+		name        string
+		query       string
+		want        string
+		statusCode  int
+		contentType string
+		mockParams  mockParams
+	}{
+		{
+			name:        "flash avatar found",
+			query:       "?type=8",
+			want:        string(flashXML),
+			statusCode:  http.StatusOK,
+			contentType: "application/xml",
+			mockParams: mockParams{
+				userManagerParams: foundUser,
+				feedBagRetrieverParams: feedBagRetrieverParams{
+					avatarBARTItemsParams: avatarBARTItemsParams{
+						{screenName: userA, result: []wire.BARTID{flashItem, bigItem}},
+					},
+				},
+				bartAssetManagerParams: bartAssetManagerParams{
+					bartItemParams: bartItemParams{
+						{hash: []byte("flash"), result: flashXML},
+					},
+				},
+			},
+		},
+		{
+			name:        "big buddy icon found",
+			query:       "?type=12",
+			want:        string(bigGIF),
+			statusCode:  http.StatusOK,
+			contentType: "image/gif",
+			mockParams: mockParams{
+				userManagerParams: foundUser,
+				feedBagRetrieverParams: feedBagRetrieverParams{
+					avatarBARTItemsParams: avatarBARTItemsParams{
+						{screenName: userA, result: []wire.BARTID{flashItem, bigItem}},
+					},
+				},
+				bartAssetManagerParams: bartAssetManagerParams{
+					bartItemParams: bartItemParams{
+						{hash: []byte("big"), result: bigGIF},
+					},
+				},
+			},
+		},
+		{
+			name:        "flash avatar not in feedbag",
+			query:       "?type=8",
+			want:        "icon not found",
+			statusCode:  http.StatusNotFound,
+			contentType: "text/plain; charset=utf-8",
+			mockParams: mockParams{
+				userManagerParams: foundUser,
+				feedBagRetrieverParams: feedBagRetrieverParams{
+					avatarBARTItemsParams: avatarBARTItemsParams{
+						{screenName: userA, result: []wire.BARTID{bigItem}},
+					},
+				},
+			},
+		},
+		{
+			name:        "flash avatar asset missing",
+			query:       "?type=8",
+			want:        "icon not found",
+			statusCode:  http.StatusNotFound,
+			contentType: "text/plain; charset=utf-8",
+			mockParams: mockParams{
+				userManagerParams: foundUser,
+				feedBagRetrieverParams: feedBagRetrieverParams{
+					avatarBARTItemsParams: avatarBARTItemsParams{
+						{screenName: userA, result: []wire.BARTID{flashItem}},
+					},
+				},
+				bartAssetManagerParams: bartAssetManagerParams{
+					bartItemParams: bartItemParams{
+						{hash: []byte("flash"), result: nil},
+					},
+				},
+			},
+		},
+		{
+			name:        "avatar items lookup fails",
+			query:       "?type=8",
+			want:        "internal server error",
+			statusCode:  http.StatusInternalServerError,
+			contentType: "text/plain; charset=utf-8",
+			mockParams: mockParams{
+				userManagerParams: foundUser,
+				feedBagRetrieverParams: feedBagRetrieverParams{
+					avatarBARTItemsParams: avatarBARTItemsParams{
+						{screenName: userA, err: io.EOF},
+					},
+				},
+			},
+		},
+		{
+			name:        "flash avatar for unknown user",
+			query:       "?type=8",
+			want:        "user not found",
+			statusCode:  http.StatusNotFound,
+			contentType: "text/plain; charset=utf-8",
+			mockParams: mockParams{
+				userManagerParams: userManagerParams{
+					getUserParams: getUserParams{
+						{screenName: userA, result: nil},
+					},
+				},
+			},
+		},
+		{
+			name:        "unsupported type",
+			query:       "?type=3",
+			want:        "unsupported icon type",
+			statusCode:  http.StatusBadRequest,
+			contentType: "text/plain; charset=utf-8",
+		},
+	}
+
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/user/"+userA.String()+"/icon"+tc.query, nil)
+			request.SetPathValue("screenname", userA.String())
+			responseRecorder := httptest.NewRecorder()
+
+			userManager := newMockUserManager(t)
+			for _, params := range tc.mockParams.getUserParams {
+				userManager.EXPECT().
+					User(matchContext(), params.screenName).
+					Return(params.result, params.err)
+			}
+
+			feedbagRetriever := newMockFeedBagRetriever(t)
+			for _, params := range tc.mockParams.avatarBARTItemsParams {
+				feedbagRetriever.EXPECT().
+					AvatarBARTItems(matchContext(), params.screenName).
+					Return(params.result, params.err)
+			}
+
+			bartRetriever := newMockBARTAssetManager(t)
+			for _, params := range tc.mockParams.bartItemParams {
+				bartRetriever.EXPECT().
+					BARTItem(matchContext(), params.hash).
+					Return(params.result, params.err)
+			}
+
+			getUserBuddyIconHandler(responseRecorder, request, userManager, feedbagRetriever, bartRetriever, slog.Default())
+
+			assert.Equal(t, tc.statusCode, responseRecorder.Code)
+			assert.Equal(t, tc.contentType, responseRecorder.Header().Get("Content-Type"))
+			assert.Equal(t, tc.want, strings.TrimSpace(responseRecorder.Body.String()))
+		})
+	}
+}
+
 func TestUserHandler_GET(t *testing.T) {
 	tt := []struct {
 		name       string

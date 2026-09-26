@@ -232,6 +232,15 @@ type keywordsByCategoryParams []struct {
 // FeedBagRetriever methods
 type feedBagRetrieverParams struct {
 	buddyIconMetadataParams
+	avatarBARTItemsParams
+}
+
+// avatarBARTItemsParams is the list of parameters passed at the mock
+// FeedBagRetriever.AvatarBARTItems call site
+type avatarBARTItemsParams []struct {
+	screenName state.IdentScreenName
+	result     []wire.BARTID
+	err        error
 }
 
 // buddyIconMetadataParams is the list of parameters passed at the mock
