@@ -231,29 +231,37 @@ func (s buddyNotifier) BroadcastBuddyArrived(ctx context.Context, screenName sta
 		return nil
 	}
 
-	// split the recipients by whether they can take the avatar items
-	var flashRecipients, plainRecipients []state.IdentScreenName
-	// what the ones that can't take them are sent, the same for all of them
-	var plainInfo wire.TLVUserInfo
+	// split the recipients by what they are sent: ICQ 6 the avatar items as
+	// they are, other clients that play Flash avatars those items and the
+	// still picture of the Flash avatar, the rest the still alone. The info
+	// is the same for every recipient of a group.
+	type group struct {
+		info       wire.TLVUserInfo
+		recipients []state.IdentScreenName
+	}
+	var icq6, players, plain group
 	for _, recipient := range recipients {
 		sess := s.sessionRetriever.RetrieveSession(recipient)
+		var g *group
 		switch {
 		case sess == nil:
 			continue // offline
-		case sess.SupportsFlashAvatars():
-			flashRecipients = append(flashRecipients, recipient)
+		case !sess.SupportsFlashAvatars():
+			g = &plain
+		case sess.NeedsFlashAvatarStill():
+			g = &players
 		default:
-			if len(plainRecipients) == 0 {
-				plainInfo = sess.UserInfoFor(userInfo)
-			}
-			plainRecipients = append(plainRecipients, recipient)
+			g = &icq6
 		}
+		if len(g.recipients) == 0 {
+			g.info = sess.UserInfoFor(userInfo)
+		}
+		g.recipients = append(g.recipients, recipient)
 	}
-	if len(flashRecipients) > 0 {
-		s.relayBuddyArrived(ctx, flashRecipients, userInfo)
-	}
-	if len(plainRecipients) > 0 {
-		s.relayBuddyArrived(ctx, plainRecipients, plainInfo)
+	for _, g := range []group{icq6, players, plain} {
+		if len(g.recipients) > 0 {
+			s.relayBuddyArrived(ctx, g.recipients, g.info)
+		}
 	}
 
 	return nil

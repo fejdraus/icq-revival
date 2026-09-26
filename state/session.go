@@ -862,15 +862,36 @@ func (s *Session) SupportsFlashAvatars() bool {
 	return true
 }
 
+// NeedsFlashAvatarStill reports whether this session is sent the still
+// picture of a Flash avatar as the buddy icon of an owner who has none (see
+// FlashAvatarStillFinder): every session but one whose instances are all
+// ICQ 6 (see wire.HasICQ6Caps), which shows the Flash avatar itself.
+func (s *Session) NeedsFlashAvatarStill() bool {
+	instances := s.Instances()
+	if len(instances) == 0 {
+		return true
+	}
+	for _, instance := range instances {
+		if instance.NeedsFlashAvatarStill() {
+			return true
+		}
+	}
+	return false
+}
+
 // UserInfoFor returns info as this session may be sent it: without the Flash
-// avatar and big icon items unless SupportsFlashAvatars, and then with the
-// still picture of a Flash avatar as the buddy icon of an owner who has none
-// (see FlashAvatarStillFinder).
+// avatar and big icon items unless SupportsFlashAvatars and, unless all of
+// its instances are ICQ 6, with the still picture of a Flash avatar as the
+// buddy icon of an owner who has none (see NeedsFlashAvatarStill).
 func (s *Session) UserInfoFor(info wire.TLVUserInfo) wire.TLVUserInfo {
-	if s.SupportsFlashAvatars() {
+	switch {
+	case !s.SupportsFlashAvatars():
+		return userInfoWithoutFlash(info, s.flashAvatarStillFinder())
+	case s.NeedsFlashAvatarStill():
+		return withFlashAvatarStill(info, info, s.flashAvatarStillFinder())
+	default:
 		return info
 	}
-	return userInfoWithoutFlash(info, s.flashAvatarStillFinder())
 }
 
 // flashAvatarStillFinder returns the session's FlashAvatarStillFinder, nil
@@ -1674,15 +1695,26 @@ func (s *SessionInstance) SupportsFlashAvatars() bool {
 	return wire.HasFlashAvatarCaps(s.caps())
 }
 
+// NeedsFlashAvatarStill reports whether this instance is sent the still
+// picture of a Flash avatar as the buddy icon of an owner who has none (see
+// FlashAvatarStillFinder): every client but ICQ 6 (see wire.HasICQ6Caps).
+func (s *SessionInstance) NeedsFlashAvatarStill() bool {
+	return !wire.HasICQ6Caps(s.caps())
+}
+
 // UserInfoFor returns info as this instance may be sent it: without the Flash
-// avatar and big icon items unless SupportsFlashAvatars, and then with the
-// still picture of a Flash avatar as the buddy icon of an owner who has none
-// (see FlashAvatarStillFinder).
+// avatar and big icon items unless SupportsFlashAvatars and, unless it is
+// ICQ 6, with the still picture of a Flash avatar as the buddy icon of an
+// owner who has none (see NeedsFlashAvatarStill).
 func (s *SessionInstance) UserInfoFor(info wire.TLVUserInfo) wire.TLVUserInfo {
-	if s.SupportsFlashAvatars() {
+	switch {
+	case !s.SupportsFlashAvatars():
+		return userInfoWithoutFlash(info, s.Session().flashAvatarStillFinder())
+	case s.NeedsFlashAvatarStill():
+		return withFlashAvatarStill(info, info, s.Session().flashAvatarStillFinder())
+	default:
 		return info
 	}
-	return userInfoWithoutFlash(info, s.Session().flashAvatarStillFinder())
 }
 
 func (s *SessionInstance) caps() [][16]byte {

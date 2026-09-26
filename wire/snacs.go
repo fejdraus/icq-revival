@@ -1618,9 +1618,15 @@ var FlashAvatarCaps = [][16]byte{CapICQTZers, CapICQ6HTML}
 // RelayedAvatarBARTTypes items: it announces every one of FlashAvatarCaps (ICQ
 // 6), or CapFlashAvatarPlayer (another client that plays Flash avatars).
 func HasFlashAvatarCaps(caps [][16]byte) bool {
-	if slices.Contains(caps, [16]byte(CapFlashAvatarPlayer)) {
-		return true
-	}
+	return HasICQ6Caps(caps) || slices.Contains(caps, [16]byte(CapFlashAvatarPlayer))
+}
+
+// HasICQ6Caps reports whether a client with caps announces every one of
+// FlashAvatarCaps, as ICQ 6 does. ICQ 6 shows one avatar: the Flash avatar
+// when it is sent one, so it needs no buddy icon standing in for it, unlike
+// the other clients that play Flash avatars but show a buddy icon wherever
+// they can't.
+func HasICQ6Caps(caps [][16]byte) bool {
 	for _, want := range FlashAvatarCaps {
 		if !slices.Contains(caps, want) {
 			return false

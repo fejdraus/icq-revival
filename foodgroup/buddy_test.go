@@ -848,6 +848,46 @@ func TestBuddyNotifier_BroadcastBuddyArrived(t *testing.T) {
 			},
 		},
 		{
+			// Miranda with the FlashAvatars plugin plays the Flash avatar where
+			// it can and shows the still everywhere else
+			name:       "another Flash avatar player gets the Flash avatar and its still",
+			screenName: state.NewIdentScreenName("me"),
+			userInfo:   userInfoWith(flash),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					allRelationshipsParams: allRelationshipsParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							result:     []state.Relationship{friend("icq6"), friend("player"), friend("miranda")},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams: retrieveSessionParams{
+						{screenName: state.NewIdentScreenName("icq6"), result: newTestInstance("icq6", sessOptICQ6, sessOptFlashAvatarStill(flash, flashStill)).Session()},
+						{screenName: state.NewIdentScreenName("player"), result: newTestInstance("player", sessOptMirandaFlashAvatars, sessOptFlashAvatarStill(flash, flashStill)).Session()},
+						{screenName: state.NewIdentScreenName("miranda"), result: newTestInstance("miranda", sessOptMirandaICQ, sessOptFlashAvatarStill(flash, flashStill)).Session()},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNamesParams: relayToScreenNamesParams{
+						{
+							screenNames: []state.IdentScreenName{state.NewIdentScreenName("icq6")},
+							message:     arrival(userInfoWith(flash)),
+						},
+						{
+							screenNames: []state.IdentScreenName{state.NewIdentScreenName("player")},
+							message:     arrival(userInfoWith(flashStill, flash)),
+						},
+						{
+							screenNames: []state.IdentScreenName{state.NewIdentScreenName("miranda")},
+							message:     arrival(userInfoWith(flashStill)),
+						},
+					},
+				},
+			},
+		},
+		{
 			name:       "only a Flash avatar, no ICQ 6 recipient: the BART tag is dropped",
 			screenName: state.NewIdentScreenName("me"),
 			userInfo:   userInfoWith(flash),

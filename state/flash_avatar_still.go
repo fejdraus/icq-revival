@@ -35,17 +35,24 @@ func (s *InMemorySessionManager) SetFlashAvatarStills(stills FlashAvatarStillFin
 // owner has a Flash avatar but no buddy icon of their own, with the still
 // that stills finds for the avatar as the buddy icon. stills may be nil.
 func userInfoWithoutFlash(info wire.TLVUserInfo, stills FlashAvatarStillFinder) wire.TLVUserInfo {
-	plain := info.WithoutRelayedAvatarItems()
-	if stills == nil || plain.HasBuddyIcon() {
-		return plain
+	return withFlashAvatarStill(info.WithoutRelayedAvatarItems(), info, stills)
+}
+
+// withFlashAvatarStill returns to, with the still that stills finds for the
+// Flash avatar listed in info as the buddy icon, when info's owner has a
+// Flash avatar but no buddy icon of their own. to is info as it is sent, with
+// or without the Flash avatar items. stills may be nil.
+func withFlashAvatarStill(to, info wire.TLVUserInfo, stills FlashAvatarStillFinder) wire.TLVUserInfo {
+	if stills == nil || to.HasBuddyIcon() {
+		return to
 	}
 	flash, ok := info.FlashAvatarItem()
 	if !ok {
-		return plain
+		return to
 	}
 	still, ok := stills.FlashAvatarStill(NewIdentScreenName(info.ScreenName), flash)
 	if !ok {
-		return plain
+		return to
 	}
-	return plain.WithBuddyIcon(still)
+	return to.WithBuddyIcon(still)
 }

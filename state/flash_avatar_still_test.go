@@ -38,6 +38,9 @@ func TestSession_UserInfoFor_FlashAvatarStill(t *testing.T) {
 		name string
 		// icq6 makes the recipient an ICQ 6 client
 		icq6 bool
+		// player makes the recipient another client that plays Flash
+		// avatars, Miranda with the FlashAvatars plugin
+		player bool
 		// noFinder leaves the recipient without a FlashAvatarStillFinder
 		noFinder  bool
 		info      wire.TLVUserInfo
@@ -55,6 +58,19 @@ func TestSession_UserInfoFor_FlashAvatarStill(t *testing.T) {
 			icq6: true,
 			info: infoWith(flash),
 			want: infoWith(flash),
+		},
+		{
+			name:      "another Flash avatar player gets the Flash avatar and the still",
+			player:    true,
+			info:      infoWith(flash),
+			want:      infoWith(still, flash),
+			wantAsked: []IdentScreenName{NewIdentScreenName("owner")},
+		},
+		{
+			name:   "another Flash avatar player keeps the owner's own icon",
+			player: true,
+			info:   infoWith(icon, flash),
+			want:   infoWith(icon, flash),
 		},
 		{
 			name: "the owner's own icon stays and no still is asked for",
@@ -85,8 +101,11 @@ func TestSession_UserInfoFor_FlashAvatarStill(t *testing.T) {
 			stills := &fakeFlashAvatarStills{stills: map[string]wire.BARTID{string(flash.Hash): still}}
 			recipient := NewSession()
 			instance := recipient.AddInstance()
-			if tt.icq6 {
+			switch {
+			case tt.icq6:
 				instance.SetCaps(wire.FlashAvatarCaps)
+			case tt.player:
+				instance.SetCaps([][16]byte{wire.CapUTF8Messages, wire.CapFlashAvatarPlayer})
 			}
 			if !tt.noFinder {
 				recipient.SetFlashAvatarStills(stills)

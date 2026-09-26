@@ -1020,6 +1020,14 @@ func sessOptICQ6(instance *state.SessionInstance) {
 	instance.SetCaps([][16]byte{wire.CapICQTZers, wire.CapICQ6HTML, wire.CapUTF8Messages})
 }
 
+// sessOptMirandaFlashAvatars makes the instance Miranda's ICQ plugin with
+// the FlashAvatars plugin loaded: sessOptMirandaICQ's capabilities and
+// wire.CapFlashAvatarPlayer.
+func sessOptMirandaFlashAvatars(instance *state.SessionInstance) {
+	sessOptMirandaICQ(instance)
+	instance.SetCaps(append(instance.Caps(), wire.CapFlashAvatarPlayer))
+}
+
 // sessOptMirandaICQ makes the instance Miranda's ICQ plugin, with the
 // capabilities it announces: the ICQ "devils" one among them, but none of
 // wire.FlashAvatarCaps.
