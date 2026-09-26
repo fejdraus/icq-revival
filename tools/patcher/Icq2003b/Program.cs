@@ -140,6 +140,7 @@ namespace IcqRevival.Patch
             ui.FolderButton.Click += (sender, e) => SelectFolder();
             string saved = Icq2003bClient.SavedBase();
             if (!string.IsNullOrEmpty(saved)) ui.Server.Text = saved;
+            ui.Jobs = Icq2003bClient.Jobs;
             ui.ReadUnchecked(Icq2003bClient.SettingsKey, Icq2003bClient.Jobs.DefaultOff);
             ui.Server.Leave += (sender, e) => UpdateView();
 

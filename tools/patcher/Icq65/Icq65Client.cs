@@ -22,6 +22,9 @@
 //      replaces turn.oscar.aol.com as the STUN server a voice or video call
 //      asks for the caller's public address - without an answer from it a
 //      call fails as soon as it is picked up.
+//   5. tZers, only when asked for: instead of taking them out, our Flash-free
+//      FlashPlayerControl.dll is put in and registered for the user, and the
+//      tZer list is pointed at the server (see "tZers without Flash").
 //
 // Every file is backed up next to itself before the first change, and
 // "Restore original" puts them all back. The user's profile is never touched.
@@ -573,6 +576,230 @@ namespace IcqRevival.Patch
             new Strip { File = @"ConfigFiles\SMSConfig.xml", Pattern = "[ \\t]*<i n=\"operator\"[^>]*/>[ \\t]*\\r?\\n?", What = "SMS carriers" },
         };
 
+        // --- tZers without Flash ---------------------------------------------------
+        //
+        // ICQ 6.5 plays tZers through FlashPlayerControl.dll, a wrapper around
+        // the Adobe Flash ActiveX control, which no longer exists. The job puts
+        // three things in place, and takes them out again:
+        //
+        //   1. Our FlashPlayerControl.dll (tools\icq65\flashplayer, on Ruffle)
+        //      over the original. The patch does not carry it - fifteen
+        //      megabytes - but takes FlashPlayerControl-Ruffle.dll from next to
+        //      its exe, or -Player: under its own name, so a patch dropped into
+        //      the ICQ folder does not find it in place of the original. Ours
+        //      is told by its version resource, the original by its checksum.
+        //   2. The Flash type library of that DLL, registered for the user by
+        //      its own DllRegisterServer: the client's event sinks look it up
+        //      (LoadRegTypeLib) and get no events without it. The DLL is 32-bit
+        //      and the patch may run as 64-bit, so the 32-bit regsvr32 does it.
+        //      It writes HKCU only - TypeLib\{D27CDB6B-...}\1.0 and the
+        //      Interface keys of IShockwaveFlash and its events - and stores
+        //      the DLL's full path. Only one such registration exists per user.
+        //   3. tzer.xml pointed at the tZers the server has (/icq/tzers/, from
+        //      deploy/oscar-legacy-web/tzers), with only those listed, and the
+        //      server let in by the list's whitelist. The buttons show the
+        //      thumbnails the client comes with (theme\IMAGES\tzer); it fetches
+        //      baseurl + thumb, with its own loader, which drops https:// (see
+        //      the page links above), only for one missing there. The list has
+        //      one base for thumbnails and movies, so it is plain HTTP; our DLL
+        //      fetches the movie from there. A receiving client plays the
+        //      address the sender's list gave.
+        //
+        // It is the rival of the "tzers" job, which takes the tZers out of the
+        // interface: with the player the button, the option and the sound stay.
+
+        public const string PlayerFile = "FlashPlayerControl.dll";
+        // Our DLL as it is handed out, next to the patch.
+        public const string PlayerShipped = "FlashPlayerControl-Ruffle.dll";
+        const string PlayerSha256Original = "00F9EB5B63BEC2EEB3578DC7BCE6192F5EF4C455B48E55747F7D8F39ED1BAA9C";
+        // What our DLL says in its version resource (typelib\resource.rc).
+        const string PlayerProduct = "ICQ Revival";
+        const string PlayerInternalName = "FlashPlayerControl-Ruffle";
+        const string TzerList = @"ConfigFiles\tzer.xml";
+        const string TzersPath = "/icq/tzers";
+        // The tZers the server has, by the name of their files: the list the
+        // client is given keeps these and drops any other.
+        static readonly string[] ServedTzers =
+        {
+            "gangsta", "canthearu", "skratch", "boo", "kisses", "chillout",
+            "akitaka", "laugh", "duh", "beback", "likeu", "sorry",
+        };
+        const string FlashTypeLib = @"Software\Classes\TypeLib\{D27CDB6B-AE6D-11CF-96B8-444553540000}\1.0\0\win32";
+
+        // Our DLL to put in: next to the patch unless given.
+        public string PlayerSource;
+
+        public static string DefaultPlayerSource()
+        {
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, PlayerShipped);
+        }
+
+        static bool IsOurPlayer(string path)
+        {
+            if (!File.Exists(path)) return false;
+            try
+            {
+                var v = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+                return v.ProductName == PlayerProduct && v.InternalName == PlayerInternalName;
+            }
+            catch { return false; }
+        }
+
+        // Why our DLL cannot be put in, or null when it can.
+        string PlayerMissing()
+        {
+            if (string.IsNullOrEmpty(PlayerSource) || !File.Exists(PlayerSource))
+            {
+                return "no " + Path.GetFileName(PlayerSource ?? PlayerShipped) + " next to the patch";
+            }
+            if (!IsOurPlayer(PlayerSource)) return Path.GetFileName(PlayerSource) + " is not the tZers player";
+            return null;
+        }
+
+        static bool SameFile(string a, string b)
+        {
+            return Ps.Eq(Path.GetFullPath(a), Path.GetFullPath(b));
+        }
+
+        // original / patched / unavailable / other version / missing. Ours in
+        // place, but another build than the one to put in, is "original":
+        // Apply puts that one in.
+        string PlayerState()
+        {
+            string path = At(PlayerFile);
+            if (!PatchFiles.Exists(path)) return "missing";
+            if (IsOurPlayer(path))
+            {
+                if (PlayerMissing() != null || SameFile(path, PlayerSource)) return "patched";
+                return Ps.Eq(PatchFiles.Sha256(path), PatchFiles.Sha256(PlayerSource)) ? "patched" : "original";
+            }
+            if (!Ps.Eq(PatchFiles.Sha256(path), PlayerSha256Original)) return "other version";
+            return PlayerMissing() != null ? "unavailable" : "original";
+        }
+
+        // The DLL the Flash type library is registered to for this user, or null.
+        static string RegisteredTypeLib()
+        {
+            try
+            {
+                using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(FlashTypeLib))
+                {
+                    return key == null ? null : key.GetValue("") as string;
+                }
+            }
+            catch { return null; }
+        }
+
+        bool TypeLibIsOurs()
+        {
+            string dll = RegisteredTypeLib();
+            return !string.IsNullOrEmpty(dll) && SameFile(dll, At(PlayerFile));
+        }
+
+        string TypeLibState()
+        {
+            if (!PatchFiles.Exists(At(PlayerFile))) return "missing";
+            return IsOurPlayer(At(PlayerFile)) && TypeLibIsOurs() ? "patched" : "original";
+        }
+
+        static string TzerBase(string domain)
+        {
+            return "http://" + domain + ":" + PagesPortHttp + TzersPath;
+        }
+
+        const string BaseUrlPattern = "(<R\\b[^>]*\\bbaseurl=\")([^\"]*)(\")";
+
+        // The list with its base on the server, only the tZers the server has,
+        // and the server let in.
+        static string BuildTzerList(string text, string domain)
+        {
+            text = Regex.Replace(text, BaseUrlPattern, m => m.Groups[1].Value + TzerBase(domain) + m.Groups[3].Value);
+            text = Regex.Replace(text, "[ \\t]*<tz\\b[^>]*/>[ \\t]*\\r?\\n?", m =>
+            {
+                Match url = Regex.Match(m.Value, "\\burl=\"/?([^\"/]*)\\.swf\"");
+                return url.Success && Ps.Contains(ServedTzers, url.Groups[1].Value) ? m.Value : "";
+            });
+            return AddWhitelisted("tzer.xml", text, domain);
+        }
+
+        string TzerListState(string domain)
+        {
+            string path = At(TzerList);
+            if (!PatchFiles.Exists(path)) return "missing";
+            Match m = Regex.Match(PatchFiles.ReadText(path).Text, BaseUrlPattern);
+            if (!m.Success) return "unknown";
+            if (Ps.Eq(m.Groups[2].Value, TzerBase(domain))) return "patched";
+            return m.Groups[2].Value.EndsWith(TzersPath, StringComparison.OrdinalIgnoreCase) ? "another server" : "original";
+        }
+
+        // The 32-bit regsvr32 on the DLL; its exit code, or -1 when it did not
+        // finish. 0 is success.
+        static int Regsvr32(string dll, bool unregister)
+        {
+            string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            string exe = Path.Combine(windows, Environment.Is64BitOperatingSystem ? "SysWOW64" : "System32", "regsvr32.exe");
+            var info = new System.Diagnostics.ProcessStartInfo(exe, (unregister ? "/s /u " : "/s ") + "\"" + dll + "\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            try
+            {
+                using (var p = System.Diagnostics.Process.Start(info))
+                {
+                    if (p.WaitForExit(60000)) return p.ExitCode;
+                    try { p.Kill(); } catch { }
+                    return -1;
+                }
+            }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception || e is InvalidOperationException)
+            {
+                return -1;
+            }
+        }
+
+        // Takes the type library registration away from our DLL, if it is ours
+        // and registered there. A line for the report when that failed, or null.
+        string UnregisterPlayer()
+        {
+            string path = At(PlayerFile);
+            if (!IsOurPlayer(path) || !TypeLibIsOurs()) return null;
+            int code = Regsvr32(path, true);
+            return code == 0 ? null : "the Flash type library could not be unregistered (regsvr32 exit code " + code + ")";
+        }
+
+        // Makes the DLL and its registration match the selection (the list is
+        // done with the other configuration files). A line for the report when
+        // something could not be done, or null.
+        string SetPlayer(bool wanted)
+        {
+            string path = At(PlayerFile);
+            string state = PlayerState();
+            if (!wanted)
+            {
+                // Ours without a backup was not put there by the patch: it
+                // stays, registered or not.
+                if (!IsOurPlayer(path) || !AllSuffixes.Any(x => PatchFiles.Exists(path + x))) return null;
+                string note = UnregisterPlayer();
+                RestoreFromBackup(path);
+                return note;
+            }
+            if (state == "missing") return PlayerFile + " is not in the client - tZers player left out";
+            if (state == "other version") return PlayerFile + " is neither the one from build 2024 nor the tZers player - tZers player left out";
+            if (state == "original")
+            {
+                if (!IsOurPlayer(path)) PatchFiles.BackupOnce(path, Suffix);
+                PatchFiles.Copy(PlayerSource, path, true);
+            }
+            if (!IsOurPlayer(path)) return PlayerFile + " could not be put in - tZers player left out";
+            if (!TypeLibIsOurs())
+            {
+                int code = Regsvr32(path, false);
+                if (code != 0) return "the Flash type library could not be registered (regsvr32 exit code " + code + ") - tZers will not play";
+            }
+            return null;
+        }
+
         // --- sign-in server --------------------------------------------------------
         //
         // With automatic connection settings ICQ 6.5 signs in to ServerHostName of
@@ -612,7 +839,11 @@ namespace IcqRevival.Patch
 
         public string Root;
 
-        public Icq65Client(string root) { Root = root; }
+        public Icq65Client(string root, string player = null)
+        {
+            Root = root;
+            PlayerSource = string.IsNullOrEmpty(player) ? DefaultPlayerSource() : Path.GetFullPath(player);
+        }
 
         string At(string relative) { return PatchFiles.Join(Root, relative); }
 
@@ -850,6 +1081,10 @@ namespace IcqRevival.Patch
             j.Add("fix", "Fixes", "the cut-off bottom of the \"Advanced\" preferences group");
             j.Add("links", "Your server", "the pages the client opens point at your server");
             j.Add("sign-in", "Your server", "automatic connection and voice calls use your server");
+            // Off until chosen: it needs our DLL next to the patch, and the
+            // type library it registers is the user's, not the folder's.
+            j.Add("tzers-player", "Your server", "tZers without Flash: our player (" + PlayerShipped + " next to this patch)", off: true);
+            j.Rivals("tzers-player", "tzers");
 
             j.Assign("the Xtraz strip above the contact list", "xtraz");
             j.Assign("the Xtraz panel below the contact list", "xtraz");
@@ -890,6 +1125,9 @@ namespace IcqRevival.Patch
             j.Assign("page links", "links");
             foreach (CodeLink c in CodeLinks) j.Assign(c.What, "links");
             j.Assign("sign-in", "sign-in");
+            j.Assign("the tZers player", "tzers-player");
+            j.Assign("the Flash type library", "tzers-player");
+            j.Assign("the tZers list", "tzers-player");
             return j;
         }
 
@@ -909,7 +1147,21 @@ namespace IcqRevival.Patch
             foreach (CodeLink c in CodeLinks) add(c.What, c.File, CodeLinkState(c, domain));
             foreach (Strip st in Strips) add(st.What, PatchFiles.Leaf(st.File), StripState(st));
             add("sign-in", "MCore.dll, now " + SignInShown(), SignInState(domain));
-            return Jobs.Merge(items);
+            string player = PlayerState();
+            add("the tZers player", PlayerFile, player);
+            add("the Flash type library", PlayerFile, TypeLibState());
+            add("the tZers list", PatchFiles.Leaf(TzerList), TzerListState(domain));
+            List<PatchItem> rows = Jobs.Merge(items);
+            // Without our DLL there is nothing to put in: the row says why.
+            if (player == "unavailable")
+            {
+                foreach (PatchItem row in rows.Where(r => r.Key == "tzers-player"))
+                {
+                    row.State = "unavailable";
+                    row.Where = PlayerMissing();
+                }
+            }
+            return rows;
         }
 
         // Puts back a whole file from its backup; the backup stays, as the original.
@@ -950,6 +1202,19 @@ namespace IcqRevival.Patch
         // would be patched in code is not the one from build 2024.
         public List<string> ApplyAll(string domain, ICollection<string> skip)
         {
+            var notes = new List<string>();
+            // The tZers player without our DLL to put in is left out, and then
+            // does not stand in the way of taking the tZers out either.
+            var asked = new HashSet<string>();
+            if (skip != null) foreach (string k in skip) asked.Add(k);
+            if (Jobs.IsWanted(asked, "tzers-player") && PlayerState() == "unavailable")
+            {
+                notes.Add("tZers player left out: " + PlayerMissing());
+                asked.Add("tzers-player");
+            }
+            skip = Jobs.Settle(asked);
+            bool player = Jobs.IsWanted(skip, "tzers-player");
+
             foreach (CodePatch p in CodePatches)
             {
                 if (Jobs.IsWanted(skip, p.What) && CodeState(p) == "other version")
@@ -962,7 +1227,7 @@ namespace IcqRevival.Patch
             // Group-Object File: the edits of one file together, in the order
             // the files first come up.
             var groups = MarkupEdits.GroupBy(e => e.File, Ps.Keys).ToList();
-            PatchSteps.Start(4 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + CodeLinks.Length);
+            PatchSteps.Start(5 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + CodeLinks.Length);
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -1046,6 +1311,7 @@ namespace IcqRevival.Patch
                 TextFile file = PatchFiles.ReadText(f);
                 string original = OriginalText(f);
                 string text = original ?? file.Text;
+                if (player && Ps.Eq(name, PatchFiles.Leaf(TzerList))) text = BuildTzerList(text, domain);
                 if (links)
                 {
                     text = Regex.Replace(text, LinkPattern, m => PagesBase(domain, m.Groups["path"].Value), RegexOptions.IgnoreCase);
@@ -1069,7 +1335,6 @@ namespace IcqRevival.Patch
             // The links of the interface go with the others: each DTD and DLL
             // is built from its original, so leaving the links out takes them
             // back.
-            var notes = new List<string>();
             PatchSteps.Step("Interface: links in the DTDs...");
             SetDtdLinks(domain, Jobs.IsWanted(skip, "page links"));
             foreach (CodeLink c in CodeLinks)
@@ -1078,6 +1343,10 @@ namespace IcqRevival.Patch
                 string note = SetCodeLink(c, domain, Jobs.IsWanted(skip, c.What));
                 if (note != null) notes.Add(note);
             }
+
+            PatchSteps.Step("tZers player...");
+            string playerNote = SetPlayer(player);
+            if (playerNote != null) notes.Add(playerNote);
 
             PatchSteps.Step("Sign-in server...");
             if (Jobs.IsWanted(skip, "sign-in"))
@@ -1105,6 +1374,10 @@ namespace IcqRevival.Patch
         // Puts every backup back where it came from and gives how many.
         public int RestoreAll()
         {
+            // The registration first, while our DLL is still there to take it
+            // back; the original then comes back with the other files.
+            string note = UnregisterPlayer();
+            if (note != null) PatchFiles.Error(note);
             int count = 0;
             Func<string, string> suffixOf = name => AllSuffixes.FirstOrDefault(s => name.EndsWith(s));
             List<FileSystemInfo> items = PatchFiles.Tree(Root).Where(i => suffixOf(i.Name) != null).ToList();

@@ -6,13 +6,15 @@
 // then the standard path.
 //
 // Without arguments the window opens. For a scripted run:
-//   ICQ-6.5-Patch.exe -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>]
+//   ICQ-6.5-Patch.exe -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>] [-Include tzers-player] [-Player <dll>]
 //   ICQ-6.5-Patch.exe -Restore [-Root <folder>]
-// -Skip takes job keys (xtraz, tzers, sms, zlango, ads, fix, links, sign-in),
-// separated by commas; they are left out, or taken out if in place. The run
-// reports on the standard output ("applied: ...", "changes made: N", "files
-// restored: N") and exits with 0, or with 1 and the reason on the standard
-// error.
+// -Skip takes job keys (xtraz, tzers, sms, zlango, ads, fix, links, sign-in,
+// tzers-player), separated by commas; they are left out, or taken out if in
+// place. -Include takes the jobs that are off unless asked for: tzers-player,
+// which then wins over tzers. -Player is our FlashPlayerControl-Ruffle.dll for it,
+// when not next to this exe. The run reports on the standard output
+// ("applied: ...", "changes made: N", "files restored: N") and exits with 0,
+// or with 1 and the reason on the standard error.
 //
 // The window is the one all client patches share, ..\Common\PatchWindow.cs.
 // Built into tools\icq65\patch\ICQ-6.5-Patch.exe by tools\common\Build-Patches.ps1.
@@ -40,7 +42,11 @@ namespace IcqRevival.Patch
                     new CliParam("Root", CliKind.Text),
                     new CliParam("Server", CliKind.Text),
                     // Jobs to leave out - or take out, if in place - by their keys.
-                    new CliParam("Skip", CliKind.List));
+                    new CliParam("Skip", CliKind.List),
+                    // Jobs that are off unless asked for, such as tzers-player.
+                    new CliParam("Include", CliKind.List),
+                    // Our FlashPlayerControl-Ruffle.dll, when not next to this exe.
+                    new CliParam("Player", CliKind.Text));
             }
             catch (CliException e)
             {
@@ -60,7 +66,7 @@ namespace IcqRevival.Patch
             // A failure inside a button's work is reported and the window stays,
             // as it did in the script.
             Application.ThreadException += (sender, e) => Console.Error.WriteLine(e.Exception.Message);
-            new Icq65Window().Run();
+            new Icq65Window(a.Text("Player")).Run();
             return 0;
         }
 
@@ -75,7 +81,7 @@ namespace IcqRevival.Patch
                 Console.Error.WriteLine("ICQ 6.5 folder not found: " + root);
                 return 1;
             }
-            var client = new Icq65Client(root);
+            var client = new Icq65Client(root, a.Text("Player"));
             if (a.Switch("Restore"))
             {
                 int n = client.RestoreAll();
@@ -94,6 +100,11 @@ namespace IcqRevival.Patch
             {
                 var skip = new HashSet<string>();
                 foreach (string k in a.List("Skip")) skip.Add(k);
+                string[] include = a.List("Include");
+                foreach (string k in Icq65Client.Jobs.Keys)
+                {
+                    if (Icq65Client.Jobs[k].Off && !Ps.Contains(include, k)) skip.Add(k);
+                }
                 done = client.ApplyAll(domain, skip);
             }
             catch (Exception e)
@@ -112,10 +123,12 @@ namespace IcqRevival.Patch
     internal sealed class Icq65Window
     {
         readonly PatchWindow ui;
+        readonly string player;
         string root;
 
-        public Icq65Window()
+        public Icq65Window(string player)
         {
+            this.player = player;
             root = Icq65Client.FindRoot();
 
             ui = new PatchWindow("ICQ 6.5 Patch",
@@ -127,6 +140,7 @@ namespace IcqRevival.Patch
             ui.FolderButton.Click += (sender, e) => SelectFolder();
             string saved = Icq65Client.SavedServer();
             if (!string.IsNullOrEmpty(saved)) ui.Server.Text = saved;
+            ui.Jobs = Icq65Client.Jobs;
             ui.ReadUnchecked(Icq65Client.SettingsKey, Icq65Client.Jobs.DefaultOff);
             ui.Server.Leave += (sender, e) => UpdateView();
 
@@ -186,7 +200,7 @@ namespace IcqRevival.Patch
             List<string> done;
             try
             {
-                done = new Icq65Client(root).ApplyAll(server, ui.Unchecked);
+                done = new Icq65Client(root, player).ApplyAll(server, ui.Unchecked);
             }
             catch (Exception e)
             {
@@ -202,6 +216,10 @@ namespace IcqRevival.Patch
                 : "The client already matches the selection.";
             if (done.Count > 12) msg += "\n  ...";
             if (ui.IsSelected("sign-in")) msg += "\n\nWith automatic connection settings ICQ signs in to " + server + ".";
+            // The type library is registered for the user this patch runs as;
+            // elevated with another account's password, that is not the one
+            // who starts ICQ.
+            if (ui.IsSelected("tzers-player")) msg += "\n\ntZers play for the Windows user " + Environment.UserName + ", who has to be the one starting ICQ.";
             msg += "\n\nYou can start ICQ now.";
             MessageBox.Show(msg, "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -211,7 +229,7 @@ namespace IcqRevival.Patch
             if (!Ready()) return;
             ui.StartWork("Restoring...");
             int n;
-            try { n = new Icq65Client(root).RestoreAll(); }
+            try { n = new Icq65Client(root, player).RestoreAll(); }
             finally { ui.StopWork(); }
             UpdateView();
             MessageBox.Show("Files restored: " + n + ".", "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -245,7 +263,7 @@ namespace IcqRevival.Patch
             if (!string.IsNullOrEmpty(root))
             {
                 var groups = new Dictionary<string, ListViewGroup>(Ps.Keys);
-                foreach (PatchItem it in new Icq65Client(root).Items(CurrentServer()))
+                foreach (PatchItem it in new Icq65Client(root, player).Items(CurrentServer()))
                 {
                     if (!groups.ContainsKey(it.Group)) groups[it.Group] = ui.AddGroup(it.Group);
                     ui.AddRow(groups[it.Group], new[] { it.What, it.Where }, it.State, it.Key);

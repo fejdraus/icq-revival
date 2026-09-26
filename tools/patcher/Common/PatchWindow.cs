@@ -23,6 +23,8 @@ namespace IcqRevival.Patch
         public string Mark;
         public string Text;
         public bool Counts;
+        // Cannot be ticked: something the change needs is not there.
+        public bool Blocked;
 
         static readonly Dictionary<string, StateView> Known = new Dictionary<string, StateView>(Ps.Keys)
         {
@@ -32,6 +34,7 @@ namespace IcqRevival.Patch
             { "partly",         new StateView { Mark = "todo", Text = "Partly applied", Counts = true } },
             { "no links",       new StateView { Mark = "none", Text = "Nothing to do",  Counts = false } },
             { "missing",        new StateView { Mark = "none", Text = "Not in client",  Counts = false } },
+            { "unavailable",    new StateView { Mark = "none", Text = "Not available",  Counts = false, Blocked = true } },
             { "no folder",      new StateView { Mark = "none", Text = "-",              Counts = false } },
             { "other version",  new StateView { Mark = "warn", Text = "Other version",  Counts = true } },
             { "unknown",        new StateView { Mark = "warn", Text = "Unknown",        Counts = true } },
@@ -77,6 +80,9 @@ namespace IcqRevival.Patch
         // What the user took the tick off, by key: kept across refills of the
         // list, so a re-check does not undo a choice not applied yet.
         public readonly HashSet<string> Unchecked = new HashSet<string>();
+        // The patch's jobs, for the ones that cannot be on together
+        // (PatchJobs.Rivals); none when not set.
+        public PatchJobs Jobs;
         public bool Filling, Syncing, Locked, Shown, Busy;
 
         public readonly Form Form;
@@ -282,6 +288,11 @@ namespace IcqRevival.Patch
             list.ItemCheck += (sender, e) =>
             {
                 if (Locked && Shown && !Filling) e.NewValue = e.CurrentValue;
+                // A row that cannot be applied here is not ticked either.
+                if (Shown && !Filling && e.NewValue == CheckState.Checked && e.Index < Rows.Count && Rows[e.Index].Blocked)
+                {
+                    e.NewValue = e.CurrentValue;
+                }
             };
             // The tick is the only mark on a row; the State column says the rest.
             // An empty image one pixel wide only gives the rows some height.
@@ -463,15 +474,78 @@ namespace IcqRevival.Patch
                     }
                 }
             }
+            SettleRivals();
             List.EndUpdate();
             Filling = false;
             UpdateSummary();
+        }
+
+        ListViewItem RowOf(string key)
+        {
+            if (key == null) return null;
+            return List.Items.Cast<ListViewItem>().FirstOrDefault(i => i != null && Ps.Eq(i.Name, key));
+        }
+
+        StateView ViewOf(ListViewItem item)
+        {
+            return item != null && item.Index >= 0 && item.Index < Rows.Count ? Rows[item.Index] : null;
+        }
+
+        void SetTick(ListViewItem item, bool on)
+        {
+            item.Checked = on;
+            if (on) Unchecked.Remove(item.Name); else Unchecked.Add(item.Name);
+        }
+
+        // After a refill: a row that cannot be applied is cleared, and its
+        // rival - cleared only to make way for it - ticked again; of two rivals
+        // both ticked, the one in place stays, else the one on by default.
+        void SettleRivals()
+        {
+            if (Jobs == null) return;
+            foreach (ListViewItem item in List.Items.Cast<ListViewItem>().ToList())
+            {
+                StateView view = ViewOf(item);
+                if (item == null || view == null || !view.Blocked || !item.Checked) continue;
+                SetTick(item, false);
+                ListViewItem rival = RowOf(Jobs.RivalOf(item.Name));
+                StateView rivalView = ViewOf(rival);
+                if (rival != null && !rival.Checked && rivalView != null && !rivalView.Blocked) SetTick(rival, true);
+            }
+            foreach (ListViewItem item in List.Items.Cast<ListViewItem>().ToList())
+            {
+                if (item == null || !Jobs.IsWinner(item.Name)) continue;
+                ListViewItem loser = RowOf(Jobs.RivalOf(item.Name));
+                if (loser == null || !item.Checked || !loser.Checked) continue;
+                bool winnerIn = ViewOf(item).Mark == "done";
+                bool loserIn = ViewOf(loser).Mark == "done";
+                SetTick(winnerIn && !loserIn ? loser : item, false);
+            }
+        }
+
+        // Whether a row counts towards "Select all": not one that cannot be
+        // applied, and not one whose rival is ticked in its place.
+        bool Selectable(ListViewItem item)
+        {
+            // A row the list has not come to yet (see Ticked) counts, cleared.
+            if (item == null) return true;
+            StateView view = ViewOf(item);
+            if (view != null && view.Blocked) return false;
+            if (Jobs == null || Ticked(item)) return true;
+            ListViewItem rival = RowOf(Jobs.RivalOf(item.Name));
+            return rival == null || !Ticked(rival);
         }
 
         void UpdateChecks(ListViewItem item)
         {
             if (Filling) return;
             if (item.Checked) Unchecked.Remove(item.Name); else Unchecked.Add(item.Name);
+            // Ticking one of two rivals clears the other.
+            if (item.Checked && Jobs != null && !Syncing)
+            {
+                ListViewItem rival = RowOf(Jobs.RivalOf(item.Name));
+                if (rival != null && rival.Checked) rival.Checked = false;
+            }
             // Select all sums up once, after the last row.
             if (!Syncing) UpdateSummary();
         }
@@ -481,9 +555,29 @@ namespace IcqRevival.Patch
         {
             if (Locked) return;
             List<ListViewItem> items = List.Items.Cast<ListViewItem>().ToList();
-            bool target = items.Any(i => !Ticked(i));
+            bool target = items.Any(i => Selectable(i) && !Ticked(i));
+            var before = new Dictionary<ListViewItem, bool>();
+            foreach (ListViewItem item in items) { if (item != null) before[item] = Ticked(item); }
             Syncing = true;
-            foreach (ListViewItem item in items) { if (item != null && item.Checked != target) item.Checked = target; }
+            foreach (ListViewItem item in items)
+            {
+                if (item == null || item.Checked == target) continue;
+                StateView view = ViewOf(item);
+                if (target && view != null && view.Blocked) continue;
+                item.Checked = target;
+            }
+            // Of two rivals, the one ticked before stays; if neither was, the
+            // one on by default.
+            if (target && Jobs != null)
+            {
+                foreach (ListViewItem item in items)
+                {
+                    if (item == null || !Jobs.IsWinner(item.Name)) continue;
+                    ListViewItem loser = RowOf(Jobs.RivalOf(item.Name));
+                    if (loser == null || !item.Checked || !loser.Checked) continue;
+                    if (before[item] && !before[loser]) loser.Checked = false; else item.Checked = false;
+                }
+            }
             Syncing = false;
             UpdateSummary();
         }
@@ -499,12 +593,13 @@ namespace IcqRevival.Patch
         void UpdateSummary()
         {
             List<ListViewItem> items = List.Items.Cast<ListViewItem>().ToList();
-            int ticked = items.Count(Ticked);
-            All.CheckState = items.Count > 0 && ticked == items.Count ? CheckState.Checked
+            List<ListViewItem> selectable = items.Where(Selectable).ToList();
+            int ticked = selectable.Count(Ticked);
+            All.CheckState = selectable.Count > 0 && ticked == selectable.Count ? CheckState.Checked
                 : ticked == 0 ? CheckState.Unchecked : CheckState.Indeterminate;
             Picked.Text = items.Count == 0 ? ""
                 : Locked ? "Selection locked - Restore original to change it"
-                : ticked + " of " + items.Count + " selected";
+                : ticked + " of " + selectable.Count + " selected";
 
             // What Apply would do: put in what is ticked and missing, take out
             // what is in place and cleared.
@@ -654,6 +749,9 @@ namespace IcqRevival.Patch
                 Form.Show();
                 Form.Activate();
                 Application.DoEvents();
+                // ICQ_PATCH_SNAPSHOT_ROW=<key> brings that row into view first.
+                ListViewItem row = RowOf(Environment.GetEnvironmentVariable(SnapshotVariable + "_ROW"));
+                if (row != null) row.EnsureVisible();
                 Thread.Sleep(400);
                 Application.DoEvents();
                 Rectangle b = Form.Bounds;

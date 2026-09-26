@@ -46,10 +46,14 @@ These facts come from a static analysis of `MCore.dll`, `MUIMessage.dll` and
   `typelib/flash.idl`. `DllRegisterServer` registers it for the current user
   (`RegisterTypeLibForUser`, HKCU only), and `DllUnregisterServer` removes it.
 
-A movie counts as finished when its root timeline stops on the last frame. The
-DLL stops a tZer there instead of looping it. A movie also counts as finished
-when it sends `fscommand("animEnd")`. From then on `FPC_IsPlaying` returns
-`VARIANT_FALSE`.
+`FPC_IsPlaying` returns `VARIANT_TRUE` from `FPC_Play` (also while the movie
+still loads) until the movie has finished, and `VARIANT_FALSE` from then on.
+A movie counts as finished when it sends `fscommand("animEnd")`, or when its
+root timeline has stood on the last frame for 250 ms. The DLL stops a tZer
+there instead of looping it. A root timeline stopped mid-movie does not count:
+some tZers stop it while a nested clip plays, and the clip moves it on.
+`FPC_Stop`, `FPC_StopPlay` and `GotoFrame` make it `VARIANT_FALSE` at once, and
+so does a movie that fails to load.
 
 ## How it works
 
@@ -126,6 +130,15 @@ set H=target\i686-pc-windows-msvc\release
 `reg` writes the type library registration to HKCU; run `unreg` afterwards.
 
 ## Try it in ICQ 6.5
+
+The ICQ 6.5 patch does all of this when "tZers without Flash" is ticked
+(`tools\patcher\Icq65\Icq65Client.cs`): it takes this DLL from next to
+`ICQ-6.5-Patch.exe`, where `tools\common\Build-Patches.ps1` puts it as
+`FlashPlayerControl-Ruffle.dll` (a name of its own, so a patch dropped into the
+ICQ folder cannot mistake the client's original for it), copies it into the
+client as `FlashPlayerControl.dll`, tells it from the original by the ProductName and
+InternalName of its version resource (`typelib\resource.rc`), and runs the
+same `regsvr32` lines. By hand:
 
 Use a copy of the ICQ 6.5 folder, not the installed one.
 

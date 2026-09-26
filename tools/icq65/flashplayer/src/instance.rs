@@ -37,6 +37,11 @@ pub const MSG_AUDIO_STATS: u32 = 0x8000 + 0x0F12;
 
 const TICK_TIMER: usize = 0x46505431; // "FPT1", distinct from the client's 0x25D
 const TICK_MS: u32 = 10;
+/// How long the root timeline has to stand on its last frame before a movie
+/// without animEnd counts as finished, so a nested clip there can finish.
+/// A root stopped anywhere else is waiting for a nested clip to move it on
+/// (three of the tZers do that): the movie still plays.
+const END_GRACE: Duration = Duration::from_millis(250);
 
 pub type Listener = unsafe extern "system" fn(HWND, LPARAM, *mut c_void);
 
@@ -50,6 +55,10 @@ pub struct Instance {
     load_gen: Cell<u32>,
     want_play: Cell<bool>,
     ended: Cell<bool>,
+    /// A movie is being fetched or parsed.
+    loading: Cell<bool>,
+    /// Since when the root timeline has stood on its last frame.
+    idle_since: Cell<Option<Instant>>,
     destroyed: Cell<bool>,
     last_tick: Cell<Option<Instant>>,
     fs: FsQueue,
@@ -154,6 +163,8 @@ impl Instance {
             load_gen: Cell::new(0),
             want_play: Cell::new(true),
             ended: Cell::new(false),
+            loading: Cell::new(false),
+            idle_since: Cell::new(None),
             destroyed: Cell::new(false),
             last_tick: Cell::new(None),
             fs: Rc::new(RefCell::new(VecDeque::new())),
@@ -180,12 +191,19 @@ impl Instance {
             .map_or(0, |m| (m.root_state().0 as i32 - 1).max(0))
     }
 
+    /// Flash's IsPlaying as the client relies on it for a tZer: true from
+    /// Play (also while the movie still loads) until the movie has ended -
+    /// animEnd, or the root timeline stopped on its last frame (see `tick`) -
+    /// and false at once after Stop, StopPlay or GotoFrame. A root timeline
+    /// stopped mid-movie while a nested clip plays is still playing.
     pub fn is_playing(&self) -> bool {
-        let movie = self.movie.borrow();
-        let Some(m) = movie.as_ref() else {
+        if !self.want_play.get() || self.ended.get() {
             return false;
-        };
-        !self.ended.get() && m.running() && m.root_state().1
+        }
+        if self.loading.get() {
+            return true;
+        }
+        self.movie.borrow().as_ref().is_some_and(|m| m.running())
     }
 
     /// Starts loading `url` (http(s) URL, file: URL or local path).
@@ -202,6 +220,8 @@ impl Instance {
         self.ready_state.set(1);
         self.ended.set(false);
         self.want_play.set(true);
+        self.loading.set(true);
+        self.idle_since.set(None);
         let hwnd = self.hwnd as usize;
         let url = url.to_owned();
         std::thread::spawn(move || {
@@ -227,9 +247,14 @@ impl Instance {
         if generation != self.load_gen.get() {
             return; // superseded by a newer load
         }
+        // Loaded or failed: a movie that cannot be had has ended.
+        self.loading.set(false);
         let data = match result {
             Ok(d) => d,
-            Err(_) => return,
+            Err(_) => {
+                self.ended.set(true);
+                return;
+            }
         };
         let url = crate::fetch::movie_url(&self.url.borrow());
         let (w, h) = client_size(self.hwnd);
@@ -237,6 +262,7 @@ impl Instance {
             Ok(m) => m,
             Err(e) => {
                 log(&format!("cannot play {url}: {e}"));
+                self.ended.set(true);
                 return;
             }
         };
@@ -264,6 +290,7 @@ impl Instance {
     pub fn play(&self) -> HRESULT {
         self.want_play.set(true);
         self.ended.set(false);
+        self.idle_since.set(None);
         if let Some(m) = self.movie.borrow().as_ref() {
             let (frame, _) = m.root_state();
             if m.total_frames > 1 && frame >= m.total_frames {
@@ -299,6 +326,7 @@ impl Instance {
     /// Flash's GotoFrame: `frame` is 0-based; the movie stops there.
     pub fn goto_frame(&self, frame: i32) -> HRESULT {
         if let Some(m) = self.movie.borrow().as_ref() {
+            self.want_play.set(false);
             m.goto_frame((frame.max(0) + 1).min(u16::MAX as i32) as u16);
         } else {
             return E_FAIL;
@@ -399,13 +427,20 @@ impl Instance {
             if playing && m.total_frames > 1 && frame >= m.total_frames {
                 m.stop_root();
             }
-            if !self.ended.get()
-                && m.total_frames > 0
-                && frame >= m.total_frames
-                && !m.root_state().1
-            {
-                self.ended.set(true);
-                log(&format!("movie ended on frame {frame}"));
+            // The end of a movie that sends no animEnd: its root timeline
+            // stands on the last frame for a moment.
+            if !self.ended.get() && self.want_play.get() {
+                let (frame, root_playing) = m.root_state();
+                if root_playing || m.total_frames == 0 || frame < m.total_frames {
+                    self.idle_since.set(None);
+                } else {
+                    let since = self.idle_since.get().unwrap_or(now);
+                    self.idle_since.set(Some(since));
+                    if now - since >= END_GRACE {
+                        self.ended.set(true);
+                        log(&format!("movie ended on frame {frame}"));
+                    }
+                }
             }
             changed
         };

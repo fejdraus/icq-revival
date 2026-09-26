@@ -52,6 +52,44 @@ namespace IcqRevival.Patch
             jobOf[part] = job;
         }
 
+        // Two jobs that change the same things opposite ways - taking a
+        // feature out, and making it work - so only one of them can be on.
+        // The window clears one when the other is ticked; when both are asked
+        // for anyway (a scripted run), the winner is taken and the loser left
+        // out, which is also what taking it out means for what is in place.
+        readonly Dictionary<string, string> rivals = new Dictionary<string, string>(Ps.Keys);
+        readonly HashSet<string> winners = new HashSet<string>(Ps.Keys);
+
+        public void Rivals(string winner, string loser)
+        {
+            rivals[winner] = loser;
+            rivals[loser] = winner;
+            winners.Add(winner);
+        }
+
+        // The job that cannot be on together with this one, or null.
+        public string RivalOf(string key)
+        {
+            string r;
+            return key != null && rivals.TryGetValue(key, out r) ? r : null;
+        }
+
+        public bool IsWinner(string key) { return key != null && winners.Contains(key); }
+
+        // The jobs to leave out once the rivals are settled: skip, and the
+        // loser of every pair of which both are wanted.
+        public HashSet<string> Settle(ICollection<string> skip)
+        {
+            var result = new HashSet<string>();
+            if (skip != null) foreach (string k in skip) result.Add(k);
+            foreach (string winner in winners)
+            {
+                string loser = rivals[winner];
+                if (IsWanted(result, winner) && IsWanted(result, loser)) result.Add(loser);
+            }
+            return result;
+        }
+
         public IEnumerable<string> Keys { get { return order; } }
 
         public PatchJob this[string key] { get { return jobs[key]; } }
