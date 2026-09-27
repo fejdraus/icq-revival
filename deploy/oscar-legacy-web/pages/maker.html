@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="{{LANG}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{mkTitle}}</title>
+
+<!-- A template, filled in by makerPage() in server.js, like avatar.html. The
+     avatar is its code (maker/avatar.js): the pickers change the code, the
+     preview shows the files of that code, and "Set as my avatar" hands the
+     client the movie's address, as the picture page's Animated tab does. -->
+
+<!-- The Xtraz plugin object, the way back into the client (see avatar.html). -->
+<OBJECT CLASSID="clsid:8D18DFF4-0943-4347-8BCA-0C57033F6820" id="plugin" width="0" height="0">
+</OBJECT>
+
+<style>{{STYLE}}
+.stage { position: relative; background: #fff; border: 1px solid #cfe3d5; overflow: hidden; }
+table.pick td { padding: 0 6px 4px 0; font-size: 12px; white-space: nowrap; }
+table.pick select { font-size: 12px; width: 108px; padding: 0; }
+a.sw {
+  display: inline-block; *display: inline; zoom: 1; vertical-align: middle;
+  width: 13px; height: 13px; margin: 0 2px 0 0; font-size: 1px; line-height: 1px;
+  border: 1px solid #9a9a9a; text-decoration: none;
+}
+a.sw.on { border: 2px solid #1a1a1a; width: 11px; height: 11px; }
+.moods { margin: 6px 0 2px; }
+.moods a.mood {
+  display: inline-block; *display: inline; zoom: 1; padding: 1px 8px; margin: 0 3px 4px 0;
+  font-size: 12px; text-decoration: none; color: #1a1a1a;
+  border: 1px solid #9a9a9a; border-radius: 9px; background: #f2f0ea;
+}
+.moods a.mood.on { color: #fff; background: #3c6e1f; border-color: #35601a; }
+input.addr { width: 100%; font-size: 12px; }
+</style>
+</head>
+<body class="compact">
+<main class="window">
+  {{HEADER}}
+  <div class="body">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+      <td valign="top" width="{{STAGE_TD}}">
+        <div id="mkStage" class="stage" style="width:{{LARGE_W}}px;height:{{LARGE_H}}px">
+          <img id="mkStill" src="{{LARGE_SRC}}" width="{{LARGE_W}}" height="{{LARGE_H}}" alt="" border="0" style="display:block">
+        </div>
+      </td>
+      <td valign="top">{{PICKERS}}</td>
+    </tr></table>
+
+    <div class="moods"><b>{{mkFaces}}</b> {{MOODS}}</div>
+
+    <div class="actions">
+      <button type="button" class="primary" id="mkSetBtn" style="display:none" onclick="mkApply()">{{mkSet}}</button>
+      <button type="button" onclick="mkRandom()">{{mkRandom}}</button>
+      <a id="mkTry" href="{{TRY_URL}}" target="_blank">{{mkTry}}</a>
+      <a id="mkBack" href="#" style="display:none">{{mkBack}}</a>
+    </div>
+    <div class="hint" id="mkStatus"></div>
+
+    <div id="mkAddrBox" class="soft" style="display:none">
+      {{mkAddress}}<br>
+      <input type="text" class="addr" id="mkAddr" readonly value="{{ADDRESS}}" onclick="this.select()">
+      <div class="hint">{{mkHowTo}}</div>
+    </div>
+  </div>
+  {{FOOTER}}
+</main>
+
+<script type="text/javascript">
+// Old JavaScript only: the client's embedded IE runs this page too.
+var T = {{STRINGS}};
+var FIELDS = {{FIELDS}};
+var S = {{STATE}};
+var EMO = {{EMOTION}};
+var AVATAR_BASE = {{AVATAR_BASE}};
+var LANG = '{{LANG}}';
+var DIGITS = '0123456789abcdefghijklmnopqrstuvwxyz';
+var RUFFLE_SRC = {{RUFFLE_SRC}};
+var RUFFLE_CONFIG = {{RUFFLE_CONFIG}};
+var BART_ANIMATED = 8;
+var transaction = 0;
+var animSet = -1;
+var animPending = '';
+var xtraId = '';
+var player = null, api = null, playing = false;
+
+function el(id) { return document.getElementById(id); }
+
+function say(text) {
+  var s = el('mkStatus');
+  s.innerHTML = '';
+  s.appendChild(document.createTextNode(text));
+}
+
+function code() {
+  var c = 'c-' + FIELDS.version;
+  for (var i = 0; i < FIELDS.list.length; i++) { c += DIGITS.charAt(S[FIELDS.list[i].key]); }
+  return c;
+}
+
+// Everything that shows the code: the pickers, the preview, the links.
+function refresh() {
+  for (var i = 0; i < FIELDS.list.length; i++) {
+    var f = FIELDS.list[i];
+    var sel = el('mk-' + f.key);
+    if (sel) { sel.selectedIndex = S[f.key]; }
+    for (var j = 0; j < f.count; j++) {
+      var sw = el('sw-' + f.key + '-' + j);
+      if (sw) { sw.className = j === S[f.key] ? 'sw on' : 'sw'; }
+    }
+  }
+  var c = code();
+  el('mkTry').href = '/icq/avatar/tester?name=' + c + '&lang=' + LANG;
+  el('mkAddr').value = AVATAR_BASE + c + '.swf';
+  preview();
+}
+
+// Several changes in a row load the player once, after the last of them.
+var pendingLoad = null;
+
+function preview() {
+  var c = code();
+  if (api) {
+    if (pendingLoad) { clearTimeout(pendingLoad); }
+    pendingLoad = setTimeout(function () {
+      pendingLoad = null;
+      if (api) { api.load({ url: '/icq/avatars/' + code() + '.swf?emotion=' + EMO }).then(null, giveUp); }
+    }, 200);
+  } else {
+    el('mkStill').src = '/icq/avatars/' + c + '-large.png' + (EMO === 'stam' ? '' : '?emotion=' + EMO);
+  }
+}
+
+// A picker or a swatch: false keeps the browser from following the link,
+// which does the same without scripts.
+function mkSet(key, value) {
+  S[key] = value;
+  refresh();
+  return false;
+}
+
+function mkMood(label) {
+  EMO = label;
+  var links = el('mkMoodList').getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    links[i].className = links[i].id === 'mood-' + label ? 'mood on' : 'mood';
+  }
+  preview();
+  return false;
+}
+
+function mkRandom() {
+  for (var i = 0; i < FIELDS.list.length; i++) {
+    S[FIELDS.list[i].key] = Math.floor(Math.random() * FIELDS.list[i].count);
+  }
+  refresh();
+}
+
+// ------------------------------------------------------------ the player
+
+function giveUp() {
+  if (player) { try { el('mkStage').removeChild(player); } catch (e) {} }
+  player = null; api = null; playing = false;
+  el('mkStill').style.visibility = 'visible';
+  preview();
+}
+
+// Ruffle where it can run; the embedded IE keeps the server's pictures.
+function startPlayer() {
+  var box = el('mkStage');
+  if (!RUFFLE_SRC || typeof WebAssembly != 'object' || typeof Promise == 'undefined'
+      || !window.fetch || !box.addEventListener) { return; }
+  window.RufflePlayer = window.RufflePlayer || {};
+  window.RufflePlayer.config = RUFFLE_CONFIG;
+  var script = document.createElement('script');
+  script.src = RUFFLE_SRC;
+  script.onload = function () {
+    try {
+      if (!window.RufflePlayer.newest) { return; }
+      player = window.RufflePlayer.newest().createPlayer();
+      var s = player.style;
+      s.position = 'absolute'; s.left = '0'; s.top = '0';
+      s.width = box.offsetWidth + 'px'; s.height = box.offsetHeight + 'px';
+      s.visibility = 'hidden';
+      box.appendChild(player);
+      player.addEventListener('loadeddata', function () {
+        setTimeout(function () {
+          if (!player) { return; }
+          playing = true;
+          player.style.visibility = 'visible';
+          el('mkStill').style.visibility = 'hidden';
+        }, 250);
+      });
+      api = player.ruffle ? player.ruffle() : player;
+      preview();
+      setTimeout(function () { if (!playing) { giveUp(); } }, 20000);
+    } catch (e) { giveUp(); }
+  };
+  document.getElementsByTagName('head')[0].appendChild(script);
+}
+
+// ------------------------------------------------------------ the client
+
+// Inside ICQ 6.5 the page is opened with the Xtra's id (the picture page
+// passes it on); then it can set the avatar. Anywhere else it shows the
+// address instead.
+function connect() {
+  var m = /[?&]id=([^&]*)/.exec(window.location.search);
+  if (m) {
+    try {
+      plugin.Initialize(decodeURIComponent(m[1]));
+      xtraId = decodeURIComponent(m[1]);
+    } catch (e) {
+      xtraId = '';
+    }
+  }
+  if (xtraId) {
+    el('mkSetBtn').style.display = '';
+    el('mkBack').style.display = '';
+    el('mkBack').href = '/icq/avatar?id=' + encodeURIComponent(xtraId) + '&tab=animated&lang=' + LANG;
+  } else {
+    el('mkAddrBox').style.display = '';
+  }
+  refresh();
+  startPlayer();
+}
+
+// The same call as the Animated tab's (avatar.html): the client is handed
+// the movie's address and uploads it as the owner's BART type 8.
+function mkApply() {
+  if (animPending) { return; }
+  transaction = transaction + 1;
+  animSet = transaction;
+  var sent = AVATAR_BASE + code() + '.swf';
+  animPending = sent;
+  say(T.mkSetting);
+  try {
+    plugin.SetBartItem(transaction, BART_ANIMATED, sent);
+  } catch (e) {
+    animPending = '';
+    say(T.mkRefused + e.message);
+    return;
+  }
+  setTimeout(function () { if (animPending === sent) { animDone(); } }, 6000);
+}
+
+function animDone() {
+  if (!animPending) { return; }
+  animPending = '';
+  say(T.mkSaved);
+}
+</script>
+
+<script for="plugin" event="OnBartOpSucceeded(transID, bcstrData)" language="JavaScript">
+  if (transID == animSet) { animDone(); }
+</script>
+
+<script for="plugin" event="OnBartOpFailed(transID)" language="JavaScript">
+  if (transID == animSet) { animPending = ''; say(T.mkServerRefused); }
+</script>
+
+<script for="plugin" event="OnOwnerBartItemChange(eType, bcstrData)" language="JavaScript">
+  if (eType == BART_ANIMATED) { animDone(); }
+</script>
+
+<script type="text/javascript">setTimeout(connect, 0);</script>
+</body>
+</html>

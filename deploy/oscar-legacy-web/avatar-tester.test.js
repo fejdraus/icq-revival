@@ -33,6 +33,7 @@ function stage(withRuffle) {
   }
   fs.cpSync(path.join(HERE, 'pages'), path.join(dir, 'pages'), { recursive: true });
   fs.cpSync(path.join(HERE, 'avatars'), path.join(dir, 'avatars'), { recursive: true });
+  fs.cpSync(path.join(HERE, 'maker'), path.join(dir, 'maker'), { recursive: true });
   for (const f of ['ui.js', 'flower.png']) fs.copyFileSync(path.join(SHARED, f), path.join(dir, f));
   if (withRuffle) {
     // Only the loader: the page decides by it whether a player is there.
@@ -178,4 +179,92 @@ test('avatar tester without the player', async (t) => {
   assert.match(text, /id="avMoods" style="display:none"/);
   assert.doesNotMatch(text, /onclick="return avMood/);
   assert.equal(scripts(text).length, 0);
+});
+
+test('avatar constructor', async (t) => {
+  const srv = await start(true);
+  t.after(srv.stop);
+  const maker = require('./maker');
+  const code = maker.encode({ ...maker.DEFAULTS, hat: 3, bg: 4 });
+
+  await t.test('the page: a picker for every part, the preview, the faces, the address', async () => {
+    const { status, text } = await get(srv.base, `/icq/avatar/maker?code=${code}&lang=en`);
+    assert.equal(status, 200);
+    for (const f of maker.FIELDS) {
+      if (f.colors) assert.equal(ids(text, new RegExp(`id="sw-${f.key}-(\\d+)"`, 'g')).length, f.count, f.key);
+      else assert.match(text, new RegExp(`<select name="${f.key}" id="mk-${f.key}"`), f.key);
+    }
+    assert.match(text, new RegExp(`id="mkStill" src="/icq/avatars/${code}-large.png"`));
+    assert.deepEqual(ids(text, /id="mood-([a-z]+)" class="mood/g), maker.EMOTIONS);
+    assert.match(text, new RegExp(`value="http://127\\.0\\.0\\.1:\\d+/icq/avatars/${code}\\.swf"`));
+    assert.ok(text.includes(`href="/icq/avatar/tester?name=${code}&amp;lang=en"`));
+    // A swatch is a link to the same page with that colour: no script needed.
+    const other = maker.encode({ ...maker.DEFAULTS, hat: 3, bg: 4, skin: 0 });
+    assert.ok(text.includes(`href="/icq/avatar/maker?code=${other}&amp;lang=en"`));
+    assert.match(text, /Avatar constructor/);
+    assert.match((await get(srv.base, `/icq/avatar/maker?code=${code}&lang=uk`)).text, /Конструктор аватарів/);
+  });
+
+  await t.test('the page: its scripts stay plain enough for the embedded IE', async () => {
+    const { text } = await get(srv.base, '/icq/avatar/maker');
+    const code2 = scripts(text).join('\n');
+    // (Its texts have "..." in them; a spread would be followed by a name.)
+    assert.doesNotMatch(code2, /=>|\blet\s|\bconst\s|`|\.\.\.[A-Za-z_$([{]/);
+    assert.match(code2, /typeof WebAssembly != 'object'/);
+  });
+
+  await t.test('the page: parts from the query, bad values ignored', async () => {
+    const want = maker.encode({ ...maker.DEFAULTS, hair: 4 });
+    let { text } = await get(srv.base, '/icq/avatar/maker?hair=4&eyes=99&head=x');
+    assert.ok(text.includes(`/icq/avatars/${want}.swf`));
+    ({ text } = await get(srv.base, '/icq/avatar/maker?code=c-1zzzzzzzzzzzzz'));
+    assert.ok(text.includes(`/icq/avatars/${maker.encode(maker.DEFAULTS)}.swf`));
+    ({ text } = await get(srv.base, '/icq/avatar/maker?id=%22%3E%3Cb%3E'));
+    assert.doesNotMatch(text, /name="id"/);
+    ({ text } = await get(srv.base, '/icq/avatar/maker?id=abc123'));
+    assert.match(text, /<input type="hidden" name="id" value="abc123">/);
+  });
+
+  await t.test('the files of a code, made on request; anything else is a 404', async () => {
+    const want = [
+      [`${code}.swf`, 'application/x-shockwave-flash'],
+      [`${code}-still.jpg`, 'image/jpeg'],
+      [`${code}-large.png`, 'image/png'],
+      [`${code}.png`, 'image/png'],
+      [`${code}-large.png?emotion=love`, 'image/png'],
+      [`${code}.swf?emotion=smile`, 'application/x-shockwave-flash'],
+    ];
+    for (const [name, type] of want) {
+      const res = await fetch(`${srv.base}/icq/avatars/${name}`);
+      assert.equal(res.status, 200, name);
+      assert.equal(res.headers.get('content-type'), type, name);
+      await res.arrayBuffer();
+    }
+    // The same bytes every time.
+    const a = Buffer.from(await (await fetch(`${srv.base}/icq/avatars/${code}.swf`)).arrayBuffer());
+    assert.ok(a.equals(maker.file(`${code}.swf`).body));
+    for (const name of ['c-19999999999999.swf', `${code}.gif`, `${code}-still.jpg?emotion=love`,
+      `${code}-large.png?emotion=nope`, `${code}.swf?emotion=nope`, 'c-1.swf']) {
+      const res = await fetch(`${srv.base}/icq/avatars/${name}`);
+      assert.equal(res.status, 404, name);
+      await res.arrayBuffer();
+    }
+  });
+
+  await t.test('the tester shows a constructed avatar and links back', async () => {
+    const { status, text } = await get(srv.base, `/icq/avatar/tester?name=${code}&lang=en`);
+    assert.equal(status, 200);
+    assert.doesNotMatch(text, /no such avatar/);
+    assert.match(text, /made in the avatar constructor/);
+    assert.ok(text.includes(`href="/icq/avatar/maker?code=${code}&amp;lang=en"`));
+    assert.deepEqual(ids(text, /id="mood-([a-z0-9_]+)"/g), maker.EMOTIONS);
+    for (const f of [`${code}-still.jpg`, `${code}-large.png`, `${code}.png`]) assert.ok(text.includes(`/icq/avatars/${f}`), f);
+  });
+
+  await t.test('the picture page links the constructor; Miranda\'s list does not get created ones', async () => {
+    assert.match((await get(srv.base, '/icq/avatar?lang=en')).text, /id="animMake" href="\/icq\/avatar\/maker\?lang=en"/);
+    await get(srv.base, `/icq/avatars/${code}.swf`);
+    const list = JSON.parse((await get(srv.base, '/icq/avatars/list.json')).text);
+    assert.ok(list.avatars.every((a) => !a.file.startsWith('c-')));
+  });
 });

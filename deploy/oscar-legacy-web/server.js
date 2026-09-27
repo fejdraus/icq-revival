@@ -33,6 +33,9 @@ const { STYLE: SHARED_STYLE, LANGS, FALLBACK_LANG, pickLang,
   langLabel, header, footer, serveAsset } = require('./ui.js');
 // Miranda NG's PluginUpdater through this server, with our plugins in its list.
 const { createMirror } = require('./miranda-updates.js');
+// Avatars made in the constructor, /icq/avatar/maker: c-<code>.swf and its
+// pictures, drawn from the code on request (see maker/index.js).
+const maker = require('./maker');
 
 const PORT = Number(process.env.PORT || 8101);
 // Clients connect to the address written in their own config, so the service has
@@ -145,6 +148,20 @@ function loadAvatars() {
   moodMovies = new Map();
 }
 
+// An avatar by its movie's file name: one of the gallery, or one made in the
+// constructor (c-<code>.swf); null otherwise.
+function lookupAvatar(file) {
+  const name = String(file || '').toLowerCase();
+  return avatarList.find((a) => a.file.toLowerCase() === name) || maker.entry(name);
+}
+
+// One file of an avatar as { body, type }: from the folder, or made from a
+// constructor code; null when there is no such file.
+function avatarAsset(name) {
+  const lower = String(name || '').toLowerCase();
+  return avatarFiles.get(lower) || (maker.isName(lower) ? maker.file(lower) : null);
+}
+
 // An animated avatar stands still until it is told its owner's mood: the
 // client sets face.emotion, and the face clip's class goes to the frame label
 // of that name (stam, idle; smile, sad, ... offline), where a short gesture
@@ -227,15 +244,30 @@ function moodMovie(swf, emotion, other) {
 function serveMoodMovie(ctx) {
   const name = ctx.path.replace(/^\/icq\/avatars\//i, '').toLowerCase();
   const emotion = ctx.url.searchParams.get('emotion') || '';
-  const avatar = avatarList.find((a) => a.file.toLowerCase() === name);
-  const file = avatarFiles.get(name);
+  // A constructed avatar's large picture of one emotion: the constructor's
+  // preview where the movie cannot play.
+  if (maker.isName(name) && !name.endsWith('.swf')) {
+    serveMakerFile(ctx, name, emotion);
+    return;
+  }
+  const avatar = lookupAvatar(name);
   const key = `${name}?${emotion}`;
-  let body = moodMovies.get(key);
   const labels = (avatar && avatar.labels) || [];
   const other = labels.find((l) => l !== emotion);
-  if (!body && file && other && labels.includes(emotion)) {
-    body = moodMovie(file.body, emotion, other);
-    if (body) moodMovies.set(key, body);
+  const make = () => {
+    const file = avatarAsset(name);
+    return file && other && labels.includes(emotion) ? moodMovie(file.body, emotion, other) : null;
+  };
+  let body;
+  if (maker.isName(name)) {
+    // Kept with the other made files, so that no code adds for good.
+    body = maker.cached(key, make);
+  } else {
+    body = moodMovies.get(key);
+    if (!body) {
+      body = make();
+      if (body) moodMovies.set(key, body);
+    }
   }
   if (!body || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) {
     ctx.res.writeHead(404, { 'content-length': 0 });
@@ -248,6 +280,24 @@ function serveMoodMovie(ctx) {
     'cache-control': 'public, max-age=86400',
   });
   ctx.res.end(ctx.req.method === 'HEAD' ? undefined : body);
+}
+
+// GET /icq/avatars/c-<code>.swf (-still.jpg, -large.png, .png): a file of
+// an avatar made in the constructor, drawn on first request and cached; any
+// other name under c- is a 404. They never change, like the gallery's.
+function serveMakerFile(ctx, name, emotion = '') {
+  const file = maker.file(name, emotion);
+  if (!file || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) {
+    ctx.res.writeHead(404, { 'content-length': 0 });
+    ctx.res.end();
+    return;
+  }
+  ctx.res.writeHead(200, {
+    'content-type': file.type,
+    'content-length': file.body.length,
+    'cache-control': 'public, max-age=86400',
+  });
+  ctx.res.end(ctx.req.method === 'HEAD' ? undefined : file.body);
 }
 
 // Ruffle, the Flash player written in Rust, in its web build
@@ -521,6 +571,28 @@ const I18N = {
     tstAll: 'All avatars',
     tstNone: 'This server has no animated avatars.',
     tstUnknown: 'There is no such avatar here; showing the first one.',
+    tstByMaker: 'made in the avatar constructor',
+    tstEditInMaker: 'Change it in the constructor',
+    tstMakeOwn: 'Make your own avatar in the constructor',
+    // The avatar constructor, /icq/avatar/maker.
+    mkTitle: 'Avatar constructor',
+    mkSub: 'an animated face of your own',
+    mkFaces: 'Faces:',
+    mkSet: 'Set as my avatar',
+    mkSetting: 'Setting the avatar...',
+    mkSaved: 'Set. Your contacts see it from now on.',
+    mkRefused: 'The client refused the avatar: ',
+    mkServerRefused: 'The server did not take the avatar.',
+    mkRandom: 'Surprise me',
+    mkTry: 'Open in the tester',
+    mkBack: 'Back to your picture',
+    mkShow: 'Show',
+    mkAddress: 'The address of this avatar:',
+    mkHowTo: 'To use it, open the constructor from ICQ 6.5 (your picture, the Animated tab, '
+      + '"Make your own") and press "Set as my avatar". Miranda NG\'s picker offers the '
+      + 'gallery only, but Miranda contacts see a constructed avatar like any other.',
+    picAnimMake: 'Make your own',
+    picAnimOwn: 'your own, from the constructor',
     picReduced: (from, to) => `${from} reduced to ${to}`,
     picBytes: (n) => (n < 1024 ? `${n} bytes` : `${Math.round(n / 1024)} KB`),
     signedInAs: (u) => `Signed in as <b>${u}</b>`,
@@ -889,6 +961,28 @@ const I18N = {
     tstAll: 'Усі аватари',
     tstNone: 'На цьому сервері немає анімованих аватарів.',
     tstUnknown: 'Такого аватара тут немає; показано перший.',
+    tstByMaker: 'створений у конструкторі аватарів',
+    tstEditInMaker: 'Змінити в конструкторі',
+    tstMakeOwn: 'Створити власний аватар у конструкторі',
+    mkTitle: 'Конструктор аватарів',
+    mkSub: 'власне живе обличчя',
+    mkFaces: 'Обличчя:',
+    mkSet: 'Встановити як мій аватар',
+    mkSetting: 'Встановлюємо аватар...',
+    mkSaved: 'Встановлено. Відтепер його бачать ваші контакти.',
+    mkRefused: 'Клієнт не прийняв аватар: ',
+    mkServerRefused: 'Сервер не прийняв аватар.',
+    mkRandom: 'Навмання',
+    mkTry: 'Відкрити в перегляді',
+    mkBack: 'Назад до картинки',
+    mkShow: 'Показати',
+    mkAddress: 'Адреса цього аватара:',
+    mkHowTo: 'Щоб встановити його, відкрийте конструктор з ICQ 6.5 (ваша картинка, вкладка '
+      + '«Анімація», «Створити свій») і натисніть «Встановити як мій аватар». Вибір аватара '
+      + 'в Miranda NG пропонує лише галерею, але контакти в Miranda бачать створений аватар, '
+      + 'як і будь-який інший.',
+    picAnimMake: 'Створити свій',
+    picAnimOwn: 'власний, з конструктора',
     picReduced: (from, to) => `${from} стиснуто до ${to}`,
     picBytes: (n) => (n < 1024 ? `${n} байт` : `${Math.round(n / 1024)} КБ`),
     signedInAs: (u) => `Ви увійшли як <b>${u}</b>`,
@@ -1630,8 +1724,7 @@ async function animatedAvatar(uin) {
   }
   const file = /^\/icq\/avatars\/([a-z0-9_-]+\.swf)$/i.exec(pathname);
   if (!file) return null;
-  const name = file[1].toLowerCase();
-  return avatarList.find((a) => a.file.toLowerCase() === name) || null;
+  return lookupAvatar(file[1]);
 }
 
 // The width and height of a GIF, PNG, BMP or JPEG picture, or null.
@@ -1766,7 +1859,7 @@ async function cardPicture(uin, t, lang) {
       + `${t.cAnimatedAvatar(`<a href="${escapeHtml(testerUrl(avatar, lang, ''))}">${escapeHtml(title)}</a>`)}</div>`;
     // The large still, when the folder has it; the gallery's thumbnail
     // otherwise, as before.
-    const large = avatar.large && avatarFiles.get(String(avatar.large).toLowerCase());
+    const large = avatar.large && avatarAsset(avatar.large);
     const size = large && imageSize(large.body);
     if (!size) {
       return {
@@ -2507,7 +2600,7 @@ const TESTER_SCALE = 2;
 function galleryAvatar(name) {
   const stem = String(name || '').toLowerCase().replace(/\.swf$/i, '');
   if (!/^[a-z0-9_-]+$/.test(stem)) return null;
-  return avatarList.find((a) => a.file.toLowerCase() === `${stem}.swf`) || null;
+  return lookupAvatar(`${stem}.swf`);
 }
 
 function avatarStem(a) {
@@ -2672,9 +2765,9 @@ ${style}
 
   // The pictures, each at its own size; the large one also stands on the
   // stage until the movie plays over it.
-  const still = avatar.still && avatarFiles.get(String(avatar.still).toLowerCase());
-  const large = avatar.large && avatarFiles.get(String(avatar.large).toLowerCase());
-  const thumb = avatarFiles.get(String(avatar.thumb).toLowerCase());
+  const still = avatar.still && avatarAsset(avatar.still);
+  const large = avatar.large && avatarAsset(avatar.large);
+  const thumb = avatarAsset(avatar.thumb);
   const stillSize = still && imageSize(still.body);
   const largeSize = large && imageSize(large.body);
   const thumbSize = (thumb && imageSize(thumb.body)) || { w: 52, h: 64 };
@@ -2720,8 +2813,10 @@ ${style}
       </td>
       <td valign="top">
         <h2 style="margin-top:0">${escapeHtml(title)}</h2>
-        <p class="dim">${escapeHtml(avatar.author === 'user' ? t.tstByUser : t.tstByIcq)}
-          &middot; ${escapeHtml(avatar.file)}${avatar.size ? `, ${escapeHtml(t.picBytes(avatar.size))}` : ''}</p>
+        <p class="dim">${escapeHtml(avatar.author === 'maker' ? t.tstByMaker
+          : avatar.author === 'user' ? t.tstByUser : t.tstByIcq)}
+          &middot; ${escapeHtml(avatar.file)}${avatar.size ? `, ${escapeHtml(t.picBytes(avatar.size))}` : ''}
+          ${avatar.author === 'maker' ? `<br><a href="${escapeHtml(makerUrl(avatarStem(avatar), lang))}">${escapeHtml(t.tstEditInMaker)}</a>` : ''}</p>
         ${labels.length ? `<div id="avMoods"${playable ? '' : ' style="display:none"'}><b>${escapeHtml(t.tstFaces)}</b>
         <div class="moods">${moods}</div></div>` : ''}
         <div id="avNoPlayer" class="soft" style="display:none">${escapeHtml(t.tstNoPlayer)}<br>
@@ -2738,9 +2833,121 @@ ${style}
     </tr></table>
     ${group('icq', `${t.tstAll}: ${t.picAnimIcq}`)}
     ${group('user', `${t.tstAll}: ${t.picAnimUser}`)}
+    <p><a href="${escapeHtml(makerUrl('', lang))}">${escapeHtml(t.tstMakeOwn)}</a></p>
     ${playable ? testerScript(movies, labels.length ? emotion : '') : ''}`);
 }
 
+
+// ------------------------------------------------------------ avatar constructor
+//
+// /icq/avatar/maker: an avatar built from our own parts (maker/avatar.js). The
+// avatar is its code, c-<version><one digit per part>, and the page only
+// changes the code: the movie and its pictures are made from it on request
+// (serveMakerFile), so there is nothing to store or moderate. Inside ICQ 6.5
+// (opened from the picture page, with the Xtra's id) "Set as my avatar" hands
+// the client the movie's address like the Animated tab does; in a browser
+// the page shows the address and how to set it.
+//
+// Every picker works without scripts too: a colour is a link to the page
+// with that colour, the other parts are a form. The script only saves the
+// reloads, and plays the movie with Ruffle where it can run; the embedded
+// IE shows the server's picture of each face instead.
+
+const makerTemplate = fs.readFileSync(path.join(__dirname, 'pages', 'maker.html'), 'utf8');
+
+function makerUrl(code, lang, extra = '') {
+  return `/icq/avatar/maker?${code ? `code=${encodeURIComponent(code)}&` : ''}lang=${encodeURIComponent(lang)}${extra}`;
+}
+
+// The parameters a request asks for: ?code= first, then any single part
+// (?hair=3) over it; anything out of range is ignored.
+function makerParams(url) {
+  const params = { ...(maker.parseCode(String(url.searchParams.get('code') || '').toLowerCase()) || maker.DEFAULTS) };
+  for (const f of maker.FIELDS) {
+    const v = url.searchParams.get(f.key);
+    if (v !== null && /^\d{1,2}$/.test(v) && Number(v) < f.count) params[f.key] = Number(v);
+  }
+  return params;
+}
+
+// The rows of pickers: a part and its colour share a row.
+const MAKER_ROWS = [['head', 'skin'], ['hair', 'hairColor'], ['eyes', 'eyeColor'], ['mouth', 'cheeks'],
+  ['hat', 'hatColor'], ['shirt'], ['bg', 'bgColor']];
+
+// The Xtra's instance id, passed on so the page can reach the client.
+const XTRA_ID = /^[A-Za-z0-9{}_.-]{1,80}$/;
+
+function makerPickers(params, lang, idParam) {
+  const field = (key) => maker.FIELDS.find((f) => f.key === key);
+  const name = (f) => f.name[lang] || f.name.en;
+  const hidden = [`<input type="hidden" name="lang" value="${escapeHtml(lang)}">`];
+  if (idParam) hidden.push(`<input type="hidden" name="id" value="${escapeHtml(idParam)}">`);
+  const extra = idParam ? `&id=${encodeURIComponent(idParam)}` : '';
+  const rows = MAKER_ROWS.map((keys) => {
+    const cells = keys.map((key) => {
+      const f = field(key);
+      if (f.colors) {
+        hidden.push(`<input type="hidden" name="${f.key}" value="${params[f.key]}">`);
+        return f.colors.map((c, i) => {
+          const href = makerUrl(maker.encode({ ...params, [f.key]: i }), lang, extra);
+          return `<a href="${escapeHtml(href)}" id="sw-${f.key}-${i}" class="sw${i === params[f.key] ? ' on' : ''}"`
+            + ` style="background:${c}" title="${escapeHtml(name(f))}" onclick="return mkSet('${f.key}', ${i});">&nbsp;</a>`;
+        }).join('');
+      }
+      const options = f.options.map((o, i) => `<option value="${i}"${i === params[f.key] ? ' selected' : ''}>`
+        + `${escapeHtml(o[lang] || o.en)}</option>`).join('');
+      return `<select name="${f.key}" id="mk-${f.key}" title="${escapeHtml(name(f))}"`
+        + ` onchange="mkSet('${f.key}', this.selectedIndex);">${options}</select>`;
+    });
+    return `<tr><td>${escapeHtml(name(field(keys[0])))}</td><td>${cells.join(' ')}</td></tr>`;
+  });
+  return `<form id="mkForm" method="get" action="/icq/avatar/maker">${hidden.join('')}
+    <table class="pick" cellpadding="0" cellspacing="0" border="0">${rows.join('')}</table>
+    <noscript><input type="submit" value="${escapeHtml(dict(lang).mkShow)}"></noscript></form>`;
+}
+
+function makerPage(u, req, url) {
+  const t = u.t;
+  const lang = u.lang;
+  const params = makerParams(url);
+  const code = maker.encode(params);
+  const askedMood = url.searchParams.get('emotion') || '';
+  const emotion = maker.EMOTIONS.includes(askedMood) ? askedMood : 'stam';
+  const idParam = XTRA_ID.test(url.searchParams.get('id') || '') ? url.searchParams.get('id') : '';
+  const extra = idParam ? `&id=${encodeURIComponent(idParam)}` : '';
+  const strings = {};
+  for (const k of Object.keys(t)) if (k.startsWith('mk') && typeof t[k] === 'string') strings[k] = t[k];
+  const moodName = (l) => (t.tstMood && t.tstMood[l]) || l;
+  const moods = maker.EMOTIONS.map((l) => `<a href="${escapeHtml(makerUrl(code, lang, `${extra}&emotion=${l}`))}"`
+    + ` id="mood-${l}" class="mood${l === emotion ? ' on' : ''}" onclick="return mkMood('${l}');">`
+    + `${escapeHtml(moodName(l))}</a>`).join('');
+  const fields = {
+    version: code[2],
+    list: maker.FIELDS.map((f) => ({ key: f.key, count: f.count })),
+  };
+  const largeSrc = `/icq/avatars/${code}-large.png${emotion === 'stam' ? '' : `?emotion=${emotion}`}`;
+  return makerTemplate
+    .replace('{{STYLE}}', () => SHARED_STYLE)
+    .replace('{{HEADER}}', () => header(escapeHtml(t.mkTitle), escapeHtml(t.mkSub)))
+    .replace('{{FOOTER}}', () => footer({ langs: langSwitch(lang, u.selfUrl) }))
+    .replace('{{PICKERS}}', () => makerPickers(params, lang, idParam))
+    .replace('{{MOODS}}', () => `<span id="mkMoodList">${moods}</span>`)
+    .replace('{{STRINGS}}', () => scriptJson(strings))
+    .replace('{{FIELDS}}', () => scriptJson(fields))
+    .replace('{{STATE}}', () => scriptJson(params))
+    .replace('{{EMOTION}}', () => scriptJson(emotion))
+    .replace('{{AVATAR_BASE}}', () => scriptJson(`${plainBase(req)}/icq/avatars/`))
+    .replace('{{RUFFLE_SRC}}', () => scriptJson(ruffleFiles.has('ruffle.js') ? `/icq/ruffle/ruffle.js?v=${ruffleTag}` : ''))
+    .replace('{{RUFFLE_CONFIG}}', () => scriptJson(TESTER_RUFFLE_CONFIG))
+    .replace(/\{\{LARGE_W\}\}/g, () => String(maker.LARGE.w))
+    .replace(/\{\{LARGE_H\}\}/g, () => String(maker.LARGE.h))
+    .replace('{{STAGE_TD}}', () => String(maker.LARGE.w + 12))
+    .replace('{{LARGE_SRC}}', () => escapeHtml(largeSrc))
+    .replace('{{TRY_URL}}', () => escapeHtml(`/icq/avatar/tester?name=${code}&lang=${lang}`))
+    .replace('{{ADDRESS}}', () => escapeHtml(`${plainBase(req)}/icq/avatars/${code}.swf`))
+    .replace(/\{\{LANG\}\}/g, () => lang)
+    .replace(/\{\{(mk[A-Za-z]+)\}\}/g, (m, k) => (typeof t[k] === 'string' ? escapeHtml(t[k]) : m));
+}
 
 // Pictures on their way from the page to the client, held in memory for a few
 // minutes each. A picture is wanted exactly once - ICQ fetches the address it
@@ -2865,6 +3072,9 @@ const ACTIONS = {
 
   // Any gallery avatar playing in the browser, with its faces and pictures.
   avatartester: (ctx) => send(ctx.res, 200, testerPage(ctx.u, ctx.req, ctx.url)),
+
+  // The avatar constructor.
+  avatarmaker: (ctx) => send(ctx.res, 200, makerPage(ctx.u, ctx.req, ctx.url)),
 
   // Receives a picture from the page and keeps it just long enough for the
   // client to fetch it. The client does not take image data: SetBartItem is
@@ -3050,6 +3260,8 @@ const ACTIONS = {
   // face on that mood already, for the user card's player (see moodMovie).
   avatarfiles: (ctx) => {
     if (/^\/icq\/avatars\/list\.json$/i.test(ctx.path)) return serveAvatarListJson(ctx);
+    const name = ctx.path.replace(/^\/icq\/avatars\//i, '').toLowerCase();
+    if (maker.isName(name) && !ctx.url.searchParams.has('emotion')) return serveMakerFile(ctx, name);
     return ctx.url.searchParams.has('emotion')
       ? serveMoodMovie(ctx)
       : serveFolderFile(ctx, /^\/icq\/avatars\//i, avatarFiles);

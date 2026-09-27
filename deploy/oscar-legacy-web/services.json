@@ -31,6 +31,7 @@
     "  avatarfiles an animated avatar or its thumbnail from the avatars folder, by exact name",
     "  avatargallery the avatar gallery list (2007 XML) with our animated avatars",
     "  avatartester the avatar tester: any gallery avatar playing in the browser, with its faces and pictures",
+    "  avatarmaker the avatar constructor: an animated avatar from our own parts, its files made from its code",
     "  ruffle      Ruffle's web build from the ruffle folder, by exact name; the user card plays the animated avatar with it",
     "  files       a download of /icq/download from the files folder, by exact name",
     "  miranda     Miranda NG's PluginUpdater list and packages: the upstream stable ones with our plugins in them",
@@ -206,6 +207,11 @@
       "path": "^/icq/avatar/tester",
       "action": "avatartester",
       "note": "the avatar tester: a gallery avatar played with Ruffle, a button per face, and its still, large and thumbnail pictures; the picture page and the user card link here"
+    },
+    {
+      "path": "^/icq/avatar/maker",
+      "action": "avatarmaker",
+      "note": "the avatar constructor: pick the parts of an animated avatar and set it; the avatar is its code, and /icq/avatars/c-<code>.swf and its pictures are made from the code on request"
     },
     {
       "path": "^/icq/avatar/upload",

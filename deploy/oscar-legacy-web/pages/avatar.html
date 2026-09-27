@@ -81,7 +81,8 @@ td.anim.on a { font-weight: bold; }
     </div>
 
     <div id="pageAnimated" style="display:none">
-      <p>{{picAnimLead}}</p>
+      <p>{{picAnimLead}}
+        <a id="animMake" href="/icq/avatar/maker?lang={{LANG}}"><b>{{picAnimMake}}</b></a></p>
 
       <!-- The same frame as the picture tab's: what is set now, as contacts
            see it. -->
@@ -178,6 +179,8 @@ function connect() {
   if (AVATARS.length && /[?&]tab=animated/.test(window.location.search)) { tab('animated'); }
   var m = /[?&]id=([^&]*)/.exec(window.location.search);
   if (!m) { say(T.picOnlyInIcq); return; }
+  // The constructor sets the avatar through the same Xtra: it gets the id.
+  document.getElementById('animMake').href = '/icq/avatar/maker?lang=' + LANG + '&id=' + m[1];
   try {
     plugin.Initialize(m[1]);
   } catch (e) {
@@ -384,6 +387,10 @@ function showAnimated(data) {
   if (data) {
     var m = /\/icq\/avatars\/([A-Za-z0-9_-]+\.swf)/.exec(String(data));
     a = m ? findAvatar(m[1]) : null;
+    // One made in the constructor: its code is its name.
+    if (!a && m && /^c-[0-9a-z]+\.swf$/i.test(m[1])) {
+      a = { title: T.picAnimOwn, thumb: m[1].replace(/\.swf$/i, '.png') };
+    }
     text = a ? a.title : T.picAnimOther;
   }
   var now = document.getElementById('animNow');
