@@ -82,9 +82,9 @@ services:
       - path: ./secrets/mail.env
         required: false
     environment:
-      # The admin panel, linked at the foot of the pages; it is reached
-      # through the SSH tunnel described at the admin service.
-      ADMIN_URL: http://127.0.0.1:8100/
+      # The admin panel, linked at the foot of the pages: nginx serves it
+      # on /admin/ of the same host (conf.d/register.conf).
+      ADMIN_URL: /admin/
       PORT: "8099"
       HOST: 127.0.0.1          # published through nginx on 443 only
       API_BASE: http://127.0.0.1:8090
@@ -101,8 +101,9 @@ services:
     depends_on:
       - server
 
-  # Bound to 127.0.0.1: reach it over an SSH tunnel or a VPN,
-  #   ssh -L 8100:127.0.0.1:8100 <host>   then http://127.0.0.1:8100
+  # Bound to 127.0.0.1; nginx publishes it as https://<host>/admin/ behind
+  # its own password (conf.d/register.conf). Also reachable over an SSH
+  # tunnel: ssh -L 8100:127.0.0.1:8100 <host>, then http://127.0.0.1:8100
   admin:
     <<: *node
     build:

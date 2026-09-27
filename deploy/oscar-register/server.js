@@ -25,9 +25,9 @@ const DB_PATH = process.env.DB_PATH || '/var/lib/open-oscar-server/oscar.sqlite'
 // В базу сервера их класть нельзя: поле почты в профиле ICQ ищется
 // через каталог, то есть адрес стал бы публичным.
 const RECOVERY_DB = process.env.RECOVERY_DB || '/var/lib/oscar-register/recovery.sqlite';
-// The admin panel, linked at the foot of every page when set. It listens on
-// the machine only (deploy/docker-compose.yaml), so the link opens it through
-// the SSH tunnel its comment describes; empty: no link.
+// The admin panel, linked at the foot of every page when set: /admin/ of the
+// same host, which nginx passes to it (deploy/nginx/conf.d/register.conf).
+// Empty: no link.
 const ADMIN_URL = (process.env.ADMIN_URL || '').trim();
 // The admin panel's entry in a row of page links, with its separator.
 function adminLink(t) {

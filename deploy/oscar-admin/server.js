@@ -449,7 +449,7 @@ function updateCounts() {
 async function load() {
   setStatus('statusLoading');
   try {
-    const d = await call('/api/state');
+    const d = await call('api/state');
     users = d.users;
     sessions = d.sessions;
     render();
@@ -561,7 +561,7 @@ async function resetSecret(u) {
   if (!r) return;
   setStatus('statusChangingPwd');
   try {
-    await call('/api/users/' + encodeURIComponent(u.screen_name) + '/password', {
+    await call('api/users/' + encodeURIComponent(u.screen_name) + '/password', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: r.value }),
@@ -583,7 +583,7 @@ async function toggleBlock(u, blocked) {
   }
   setStatus(blocked ? 'statusUnblocking' : 'statusBlocking');
   try {
-    await call('/api/users/' + encodeURIComponent(u.screen_name) + '/suspend', {
+    await call('api/users/' + encodeURIComponent(u.screen_name) + '/suspend', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: blocked ? null : 'suspended' }),
@@ -597,7 +597,7 @@ async function toggleBlock(u, blocked) {
 async function kick(u) {
   setStatus('statusKicking');
   try {
-    await call('/api/sessions/' + encodeURIComponent(u.screen_name), { method: 'DELETE' });
+    await call('api/sessions/' + encodeURIComponent(u.screen_name), { method: 'DELETE' });
     await load();
   } catch (e) {
     setStatus('statusError', e.message);
@@ -620,7 +620,7 @@ async function removeUser(u) {
   }
   setStatus('statusDeleting');
   try {
-    await call('/api/users/' + encodeURIComponent(u.screen_name), { method: 'DELETE' });
+    await call('api/users/' + encodeURIComponent(u.screen_name), { method: 'DELETE' });
     await load();
     setStatus('msgDeleted', u.screen_name);
   } catch (e) {
@@ -651,7 +651,7 @@ document.getElementById('create').addEventListener('click', async () => {
   if (!secretAnswer) return;
   setStatus('statusCreating');
   try {
-    await call('/api/users', {
+    await call('api/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ screen_name: name, password: secretAnswer.value }),
