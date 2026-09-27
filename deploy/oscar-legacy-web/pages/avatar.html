@@ -129,10 +129,12 @@ td.anim.on a { font-weight: bold; }
             <button type="button" onclick="resetEdit()">{{picCentre}}</button>
           </div>
           <div class="hint">{{picEditHint}}</div>
+          <div class="hint" id="edGifNote" style="display:none"></div>
         </td>
       </tr></table>
       <div class="actions">
         <button type="button" class="primary" onclick="apply()">{{picSetPicture}}</button>
+        <button type="button" id="edStillBtn" style="display:none" onclick="useStill()">{{picGifStill}}</button>
         <button type="button" onclick="cancel()">{{picCancel}}</button>
       </div>
     </div>
@@ -377,9 +379,20 @@ function r4(x) { return Math.round(x * 10000) / 10000; }
 
 function startEdit(edit) {
   EDIT = edit;
+  EDIT.still = false;
   Z = 1; U = 0.5; V = 0.5;
+  // An animated GIF's copy is a GIF, and an <img> plays it: the frame and
+  // both previews move, even in the client's old IE.
   var src = edit.work;
   el('edImg').src = src; el('edBig').src = src; el('edSmall').src = src;
+  var note = '';
+  if (edit.animated) {
+    note = T.picGif + (edit.fits ? ' ' + T.picGifFits : '') + (edit.cut ? ' ' + T.picGifCut : '');
+  }
+  el('edGifNote').innerHTML = '';
+  el('edGifNote').appendChild(document.createTextNode(note));
+  el('edGifNote').style.display = note ? '' : 'none';
+  el('edStillBtn').style.display = 'none';
   el('picLead').style.display = 'none';
   el('currentRow').style.display = 'none';
   el('form').style.display = 'none';
@@ -524,10 +537,20 @@ function setUpEditor() {
 // "Set as my picture": the server cuts the icon from the numbers of the
 // preview, the page waits for it to be there, then hands the client its
 // plain HTTP address, as the page always did.
+// A still of the animation's first frame, when the animation cannot be
+// made small enough.
+function useStill() {
+  EDIT.still = true;
+  el('edStillBtn').style.display = 'none';
+  applyEdit();
+}
+
 function applyEdit() {
   var query = '?z=' + Z + '&u=' + U + '&v=' + V;
   var cut = new Image();
-  var sent = EDIT.clientFile + query;
+  // The address says what it is: .gif for the animation, .jpg otherwise.
+  var ext = EDIT.animated && !EDIT.still ? '.gif' : '.jpg';
+  var sent = EDIT.clientFile + ext + query;
   pending = sent;
   say(T.picPreparing);
   cut.onload = function () {
@@ -547,9 +570,14 @@ function applyEdit() {
   cut.onerror = function () {
     if (pending !== sent) { return; }
     pending = '';
+    if (EDIT.animated && !EDIT.still) {
+      say(T.picGifTooBig);
+      el('edStillBtn').style.display = '';
+      return;
+    }
     say(T.picCutFailed);
   };
-  cut.src = EDIT.file + query;
+  cut.src = EDIT.file + ext + query;
 }
 
 function refresh() {

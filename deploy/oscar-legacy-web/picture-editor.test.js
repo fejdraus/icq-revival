@@ -198,6 +198,154 @@ test('the server cut', { skip: !havePillow && 'no python3 with Pillow here' }, a
 
 // ------------------------------------------------------------------- the page
 
+// ------------------------------------------------------------------- animated GIFs
+
+// Python with Pillow: runs code with stdin, returns stdout.
+function py(code, input = Buffer.alloc(0)) {
+  const run = spawnSync('python3', ['-c', code], { input, maxBuffer: 1 << 26 });
+  assert.equal(run.status, 0, String(run.stderr));
+  return run.stdout;
+}
+
+// An animated GIF of the four quarters, split at (sx, sy), whose colours
+// turn by one place each frame, so every frame is known exactly.
+function turningQuarters(w, h, sx, sy, frames, duration, loop) {
+  return py(`
+import sys, io
+from PIL import Image, ImageDraw
+Q = ${JSON.stringify(QUARTERS)}
+fs = []
+for i in range(${frames}):
+    im = Image.new('RGB', (${w}, ${h}))
+    d = ImageDraw.Draw(im)
+    for k, (x0, y0, x1, y1) in enumerate([(0, 0, ${sx}, ${sy}), (${sx}, 0, ${w}, ${sy}), (0, ${sy}, ${sx}, ${h}), (${sx}, ${sy}, ${w}, ${h})]):
+        d.rectangle([x0, y0, x1 - 1, y1 - 1], fill=tuple(Q[(k + i) % 4]))
+    fs.append(im)
+out = io.BytesIO()
+fs[0].save(out, 'GIF', save_all=True, append_images=fs[1:], duration=${duration}, loop=${loop})
+sys.stdout.buffer.write(out.getvalue())`);
+}
+
+// Every frame of a GIF, composed, as RGB pixels, with the loop and durations.
+function gifFrames(bytes) {
+  return JSON.parse(py(`
+import sys, io, json
+from PIL import Image
+im = Image.open(io.BytesIO(sys.stdin.buffer.read()))
+frames = []
+for i in range(getattr(im, 'n_frames', 1)):
+    im.seek(i)
+    frames.append({'d': im.info.get('duration'), 'px': list(im.convert('RGB').getdata())})
+print(json.dumps({'format': im.format, 'size': im.size, 'loop': im.info.get('loop'), 'frames': frames}))`, bytes));
+}
+
+test('animated GIFs', { skip: !havePillow && 'no python3 with Pillow here' }, async (t) => {
+  const srv = await start(false);
+  t.after(srv.stop);
+  const fetchAll = async (url) => {
+    const res = await fetch(url);
+    return { status: res.status, type: res.headers.get('content-type'), body: Buffer.from(await res.arrayBuffer()) };
+  };
+
+  await t.test('one that already fits goes through byte for byte, unless it is moved', async () => {
+    const small = turningQuarters(48, 48, 20, 30, 6, 150, 0);
+    assert.ok(small.length <= 7168);
+    const reply = await upload(srv.base, small, 'image/gif');
+    assert.equal(reply.edit.animated, true);
+    assert.equal(reply.edit.fits, true);
+    const same = await fetchAll(`${reply.edit.file}.gif?z=1&u=0.5&v=0.5`);
+    assert.equal(same.type, 'image/gif');
+    assert.ok(same.body.equals(small));
+    const moved = await fetchAll(`${reply.edit.file}.gif?z=1.5&u=0.4&v=0.5`);
+    assert.equal(moved.status, 200);
+    const g = gifFrames(moved.body);
+    assert.deepEqual(g.size, [ICON_W, ICON_H]);
+    assert.equal(g.frames.length, 6);
+  });
+
+  await t.test('a large one comes out animated, small enough, same loop and timing, every frame cut as previewed', async () => {
+    const W = 320; const H = 240; const SX = 200; const SY = 90; const N = 24;
+    const big = turningQuarters(W, H, SX, SY, N, 80, 0);
+    const reply = await upload(srv.base, big, 'image/gif');
+    assert.equal(reply.edit.animated, true);
+    assert.equal(reply.edit.fits, false);
+    assert.equal(reply.edit.frames, N);
+    assert.deepEqual([reply.edit.w, reply.edit.h], [W, H]);
+    assert.equal((await fetchAll(reply.edit.work)).type, 'image/gif');
+    const params = parseCropParams('2', '0.62', '0.4');
+    const res = await fetchAll(`${reply.edit.file}.gif?z=${params.z}&u=${params.u}&v=${params.v}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.type, 'image/gif');
+    assert.ok(res.body.length <= 7168, `${res.body.length} bytes`);
+    const g = gifFrames(res.body);
+    assert.deepEqual(g.size, [ICON_W, ICON_H]);
+    assert.equal(g.loop, 0);
+    // Every frame changes all over here, so to fit it may have kept every
+    // other frame, each shown twice as long: the same length in time.
+    const step = N / g.frames.length;
+    assert.ok(step === 1 || step === 2, `${g.frames.length} frames`);
+    assert.equal(g.frames.reduce((n, f) => n + f.d, 0), N * 80);
+    const box = pictureCrop(W, H, params.z, params.u, params.v, ICON_W, ICON_H);
+    g.frames.forEach((f, j) => {
+      const i = j * step;
+      let checked = 0;
+      for (let y = 0; y < ICON_H; y++) {
+        for (let x = 0; x < ICON_W; x++) {
+          const px = box.left + (x + 0.5) / box.scale;
+          const py2 = box.top + (y + 0.5) / box.scale;
+          const margin = 3 / box.scale + 2;
+          if (Math.abs(px - SX) < margin || Math.abs(py2 - SY) < margin) continue;
+          const k = (py2 < SY ? 0 : 2) + (px < SX ? 0 : 1);
+          const want = QUARTERS[(k + i) % 4];
+          const got = f.px[y * ICON_W + x];
+          const d = Math.max(...got.map((c, j) => Math.abs(c - want[j])));
+          assert.ok(d < 48, `frame ${i} at ${x},${y}: ${got} vs ${want}`);
+          checked++;
+        }
+      }
+      assert.ok(checked > 200);
+    });
+  });
+
+  await t.test('one that cannot be made small enough: a 422 for the animation, a still JPEG instead', async () => {
+    const noisy = py(`
+import sys, io
+from PIL import Image
+fs = [Image.effect_noise((160, 200), 90).convert('RGB') for i in range(60)]
+out = io.BytesIO()
+fs[0].save(out, 'GIF', save_all=True, append_images=fs[1:], duration=50, loop=0)
+sys.stdout.buffer.write(out.getvalue())`);
+    const reply = await upload(srv.base, noisy, 'image/gif');
+    assert.equal(reply.edit.animated, true);
+    const gif = await fetchAll(`${reply.edit.file}.gif?z=1&u=0.5&v=0.5`);
+    assert.equal(gif.status, 422);
+    const still = await fetchAll(`${reply.edit.file}.jpg?z=1&u=0.5&v=0.5`);
+    assert.equal(still.status, 200);
+    assert.equal(still.type, 'image/jpeg');
+    assert.deepEqual(decode(still.body).size, [ICON_W, ICON_H]);
+  });
+
+  await t.test('pictures that do not move are as before; .gif of one is a 400', async () => {
+    const reply = await upload(srv.base, quarters(300, 200, 150, 100));
+    assert.equal(reply.edit.animated, false);
+    const a = await fetchAll(`${reply.edit.file}?z=1&u=0.5&v=0.5`);
+    const b = await fetchAll(`${reply.edit.file}.jpg?z=1&u=0.5&v=0.5`);
+    assert.equal(a.type, 'image/jpeg');
+    assert.ok(a.body.equals(b.body));
+    assert.equal((await fetchAll(`${reply.edit.file}.gif`)).status, 400);
+    // A GIF of one frame is a picture like any other.
+    const one = py(`
+import sys, io
+from PIL import Image
+out = io.BytesIO()
+Image.new('RGB', (120, 90), (200, 30, 30)).save(out, 'GIF')
+sys.stdout.buffer.write(out.getvalue())`);
+    const r1 = await upload(srv.base, one, 'image/gif');
+    assert.equal(r1.edit.animated, false);
+    assert.equal((await fetchAll(`${r1.edit.file}.jpg`)).type, 'image/jpeg');
+  });
+});
+
 test('the picture page', async (t) => {
   const srv = await start(false);
   t.after(srv.stop);
@@ -272,6 +420,14 @@ test('the picture page', async (t) => {
     const avatars = JSON.parse(/var AVATARS = (\[[^\n]*\]);/.exec(text)[1]);
     assert.ok(avatars.length > 0 && avatars.every((a) => /-large\.png$/.test(a.large)));
     assert.match((await get(srv.base, '/icq/avatar?lang=uk')).text, /Поки встановлено анімований аватар/);
+  });
+
+  await t.test('an animated GIF: the note, the still fallback, the address by kind', async () => {
+    const { text } = await get(srv.base, '/icq/avatar?lang=en');
+    assert.match(text, /id="edGifNote"/);
+    assert.match(text, /<button type="button" id="edStillBtn" style="display:none" onclick="useStill\(\)">Use a still picture<\/button>/);
+    assert.match(text, /var ext = EDIT\.animated && !EDIT\.still \? '\.gif' : '\.jpg';/);
+    assert.match(text, /var sent = EDIT\.clientFile \+ ext \+ query;/);
   });
 
   await t.test('the constructor is a button in the Animated tab', async () => {

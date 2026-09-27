@@ -518,6 +518,12 @@ const I18N = {
     picEditHint: 'Drag the picture in the frame; the wheel or the slider zooms.',
     picSetPicture: 'Set as my picture',
     picCutFailed: 'The server could not cut the picture. Try uploading it again.',
+    picGif: 'An animated GIF: it stays animated where the client plays it.',
+    picGifFits: 'It already fits a buddy icon: left as it is, it goes unchanged.',
+    picGifCut: 'Only its first seconds are used.',
+    picGifTooBig: 'This animation cannot be made small enough for a buddy icon '
+      + '(7 KB). Use a still picture of its first frame instead?',
+    picGifStill: 'Use a still picture',
     picCurrent: 'Current picture',
     picCurrentNote: 'as your contacts see it now',
     picCurrentAnimNote: 'While an animated avatar is set, contacts see this still of it. '
@@ -924,6 +930,12 @@ const I18N = {
     picEditHint: 'Перетягніть зображення в рамці; коліщатко чи повзунок змінює масштаб.',
     picSetPicture: 'Встановити як мою картинку',
     picCutFailed: 'Сервер не зміг вирізати картинку. Спробуйте завантажити її знову.',
+    picGif: 'Анімований GIF: він лишається анімованим там, де клієнт його програє.',
+    picGifFits: 'Він уже підходить як картинка: якщо нічого не змінювати, піде як є.',
+    picGifCut: 'Використано лише його перші секунди.',
+    picGifTooBig: 'Цю анімацію не вдається зробити досить малою для картинки (7 КБ). '
+      + 'Узяти натомість нерухомий перший кадр?',
+    picGifStill: 'Узяти нерухому картинку',
     picCurrent: 'Поточна картинка',
     picCurrentNote: 'такою її зараз бачать ваші контакти',
     picCurrentAnimNote: 'Поки встановлено анімований аватар, контакти бачать цей його кадр. '
@@ -3030,7 +3042,7 @@ const PICTURE_ID = /^[0-9a-f]{16}$/;
 const PICTURE_MAX = 16 * 1024 * 1024;
 
 function pictureBytes(item) {
-  let n = (item.work || item.body).length;
+  let n = (item.work || item.body).length + (item.original ? item.original.length : 0);
   if (item.renders) for (const b of item.renders.values()) n += b.length;
   return n;
 }
@@ -3111,13 +3123,19 @@ function uploadPicture(ctx) {
     const self = selfBase(ctx.req);
     const work = workingCopy(data);
     if (work) {
-      keepPicture(id, { work: work.body, w: work.w, h: work.h, renders: new Map() });
+      // An animated GIF that is already a valid icon is kept as it came, to
+      // be handed out untouched unless the user moves or zooms it.
+      keepPicture(id, {
+        work: work.body, w: work.w, h: work.h, renders: new Map(),
+        animated: work.animated, original: work.fits ? data : null,
+      });
       const file = `/icq/avatar/file/${id}`;
       send(ctx.res, 200, editReply({
         id, w: work.w, h: work.h,
         work: `${self}/icq/avatar/work/${id}`,
         file: `${self}${file}`,
         clientFile: `${plainBase(ctx.req)}${file}`,
+        animated: work.animated, fits: work.fits, frames: work.frames, cut: work.cut,
       }));
       return;
     }
@@ -3163,34 +3181,60 @@ function shrink(data) {
   }
 }
 
-// The editor's copy of an upload as { body, w, h }, or null when the
-// picture cannot be read (or there is no Python with Pillow here).
+// The editor's copy of an upload as { body, w, h, animated, frames, fits,
+// cut }, or null when the picture cannot be read (or there is no Python with
+// Pillow here). An animated GIF's copy is an animated GIF (at most 400
+// pixels, 200 frames and 10 seconds), and the script says so on its error
+// output, with whether the upload already is a valid icon.
 function workingCopy(data) {
   try {
     const run = child_process.spawnSync('python3',
       [path.join(__dirname, 'shrink-picture.py'), 'work'],
-      { input: data, maxBuffer: 8 * 1024 * 1024 });
+      { input: data, maxBuffer: 32 * 1024 * 1024, timeout: 30000 });
     if (run.status !== 0 || !run.stdout || !run.stdout.length) return null;
     const size = imageSize(run.stdout);
     if (!size || !size.w || !size.h) return null;
-    return { body: run.stdout, w: size.w, h: size.h };
+    let meta = {};
+    try {
+      const lines = String(run.stderr || '').trim().split('\n');
+      meta = JSON.parse(lines[lines.length - 1] || '{}');
+    } catch {
+      meta = {};
+    }
+    const animated = meta.animated === true && isGif(run.stdout);
+    return {
+      body: run.stdout, w: size.w, h: size.h, animated,
+      frames: animated ? Number(meta.frames) || 0 : 1,
+      fits: animated && meta.fits === true,
+      cut: animated && meta.cut === true,
+    };
   } catch {
     return null;
   }
 }
 
+const isGif = (b) => b.length > 6 && b.toString('latin1', 0, 4) === 'GIF8';
+
 // The icon cut from a working copy by the editor's zoom and centre, the same
-// box the page previewed (pictureCrop), or null.
-function cutPicture(item, params) {
-  const key = `${params.z}/${params.u}/${params.v}`;
+// box the page previewed (pictureCrop): a JPEG, or for an animated GIF an
+// animated GIF of every frame (still: its first frame as the JPEG). Null
+// when it cannot be made; TOO_BIG when an animation does not fit an icon's
+// 7168 bytes even cut down.
+const TOO_BIG = Symbol('too big');
+
+function cutPicture(item, params, still = false) {
+  const key = `${params.z}/${params.u}/${params.v}/${still ? 'still' : ''}`;
   let body = item.renders.get(key);
   if (body) return body;
+  // Untouched, an animation that already is a valid icon goes as it came.
+  if (item.original && !still && params.z === 1 && params.u === 0.5 && params.v === 0.5) return item.original;
   const box = pictureCrop(item.w, item.h, params.z, params.u, params.v, ICON_W, ICON_H);
   try {
     const run = child_process.spawnSync('python3',
-      [path.join(__dirname, 'shrink-picture.py'), 'crop',
+      [path.join(__dirname, 'shrink-picture.py'), still ? 'crop-still' : 'crop',
         ...[box.left, box.top, box.left + box.width, box.top + box.height].map((v) => v.toFixed(4))],
-      { input: item.work, maxBuffer: 8 * 1024 * 1024 });
+      { input: item.work, maxBuffer: 8 * 1024 * 1024, timeout: 30000 });
+    if (run.status === 3) return TOO_BIG;
     if (run.status !== 0 || !run.stdout || !run.stdout.length) return null;
     body = run.stdout;
   } catch {
@@ -3201,13 +3245,17 @@ function cutPicture(item, params) {
   return body;
 }
 
-// GET /icq/avatar/file/<id>[?z=&u=&v=]: the icon of an upload. For one the
-// editor has, the zoom and centre choose the part (all three, in range, or a
-// 400); without them it is the middle of the picture at zoom 1, the crop the
-// page always made. One that went through as it came is handed out as it is.
+// GET /icq/avatar/file/<id>[.jpg|.gif][?z=&u=&v=]: the icon of an upload.
+// For one the editor has, the zoom and centre choose the part (all three, in
+// range, or a 400); without them it is the middle of the picture at zoom 1,
+// the crop the page always made. The extension, which the page always puts
+// on, says what comes back: .gif the animation (only for an animated
+// upload; a 422 when it cannot be made small enough), .jpg a still. One that
+// went through as it came is handed out as it is.
 function servePictureFile(ctx) {
-  const id = ctx.path.split('/').pop();
-  const item = PICTURE_ID.test(id) ? pictures.get(id) : null;
+  const m = /^([0-9a-f]{16})(\.(jpg|gif))?$/.exec(ctx.path.split('/').pop());
+  const item = m ? pictures.get(m[1]) : null;
+  const ext = m ? m[3] || '' : '';
   const plain = (status, headers = {}) => { ctx.res.writeHead(status, { 'content-length': 0, ...headers }); ctx.res.end(); };
   if (!item || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) { plain(404); return; }
   let body = item.body;
@@ -3216,10 +3264,12 @@ function servePictureFile(ctx) {
     const q = ctx.url.searchParams;
     const any = q.has('z') || q.has('u') || q.has('v');
     const params = any ? parseCropParams(q.get('z'), q.get('u'), q.get('v')) : { z: 1, u: 0.5, v: 0.5 };
-    if (!params) { plain(400); return; }
-    body = cutPicture(item, params);
-    type = 'image/jpeg';
+    if (!params || (ext === 'gif' && !item.animated)) { plain(400); return; }
+    const still = !item.animated || ext === 'jpg';
+    body = cutPicture(item, params, item.animated && still);
+    if (body === TOO_BIG) { plain(422); return; }
     if (!body) { plain(500); return; }
+    type = isGif(body) ? 'image/gif' : 'image/jpeg';
   }
   ctx.res.writeHead(200, { 'content-type': type, 'content-length': body.length, 'cache-control': 'no-store' });
   ctx.res.end(ctx.req.method === 'HEAD' ? undefined : body);
@@ -3234,7 +3284,11 @@ function serveWorkPicture(ctx) {
     ctx.res.end();
     return;
   }
-  ctx.res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': item.work.length, 'cache-control': 'no-store' });
+  ctx.res.writeHead(200, {
+    'content-type': isGif(item.work) ? 'image/gif' : 'image/jpeg',
+    'content-length': item.work.length,
+    'cache-control': 'no-store',
+  });
   ctx.res.end(ctx.req.method === 'HEAD' ? undefined : item.work);
 }
 
