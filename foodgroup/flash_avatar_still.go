@@ -54,6 +54,7 @@ func NewFlashAvatarStills(
 	logger *slog.Logger,
 ) *FlashAvatarStills {
 	return &FlashAvatarStills{
+		messageRelayer:   messageRelayer,
 		legacyWebURL:     strings.TrimRight(legacyWebURL, "/"),
 		httpClient:       &http.Client{Timeout: flashStillFetchTimeout},
 		bartItemManager:  bartItemManager,
@@ -84,6 +85,7 @@ func NewFlashAvatarStills(
 // FlashAvatarStills implements state.FlashAvatarStillFinder and is safe for
 // concurrent use.
 type FlashAvatarStills struct {
+	messageRelayer   MessageRelayer
 	legacyWebURL     string
 	httpClient       *http.Client
 	bartItemManager  BARTItemManager
@@ -272,6 +274,10 @@ func (f *FlashAvatarStills) announce(ctx context.Context, owner state.IdentScree
 	}
 	if err := f.buddyBroadcaster.BroadcastBuddyArrived(ctx, owner, sess.TLVUserInfo()); err != nil {
 		f.logger.WarnContext(ctx, "unable to announce the still picture of a Flash avatar", "owner", owner.String(), "err", err.Error())
+	}
+	// the owner's own clients learn it too (see sendOwnBuddyIcon)
+	for _, instance := range sess.Instances() {
+		sendOwnBuddyIcon(ctx, f.messageRelayer, instance)
 	}
 }
 

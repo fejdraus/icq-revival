@@ -32,6 +32,7 @@ func NewBuddyIconNormaliser(
 	logger *slog.Logger,
 ) *BuddyIconNormaliser {
 	return &BuddyIconNormaliser{
+		messageRelayer:   messageRelayer,
 		bartItemManager:  bartItemManager,
 		buddyBroadcaster: newBuddyNotifier(bartItemManager, relationshipFetcher, messageRelayer, sessionRetriever),
 		sessionRetriever: sessionRetriever,
@@ -59,6 +60,7 @@ func NewBuddyIconNormaliser(
 // BuddyIconNormaliser implements state.NormalisedBuddyIconFinder and is safe
 // for concurrent use.
 type BuddyIconNormaliser struct {
+	messageRelayer   MessageRelayer
 	bartItemManager  BARTItemManager
 	buddyBroadcaster buddyBroadcaster
 	sessionRetriever SessionRetriever
@@ -220,5 +222,9 @@ func (n *BuddyIconNormaliser) announce(ctx context.Context, owner state.IdentScr
 	}
 	if err := n.buddyBroadcaster.BroadcastBuddyArrived(ctx, owner, sess.TLVUserInfo()); err != nil {
 		n.logger.WarnContext(ctx, "unable to announce the normalised copy of a buddy icon", "owner", owner.String(), "err", err.Error())
+	}
+	// the owner's own clients learn it too (see sendOwnBuddyIcon)
+	for _, instance := range sess.Instances() {
+		sendOwnBuddyIcon(ctx, n.messageRelayer, instance)
 	}
 }
