@@ -48,8 +48,11 @@ td.anim.on a { font-weight: bold; }
 }
 .edshot { position: relative; overflow: hidden; border: 1px solid #cfe3d5; background: #fff; }
 .edframe img, .edshot img { position: absolute; left: 0; top: 0; border: 0; }
-.edtools { margin: 6px 0 0; }
-.edtools button { padding: 1px 7px; margin: 0 2px 3px 0; font-size: 12px; min-width: 24px; }
+.edtools { margin: 6px 0 0; white-space: nowrap; }
+.edtools button { padding: 1px 7px; margin: 0 2px 3px 0; font-size: 12px; min-width: 24px; overflow: visible; }
+/* The editor's own buttons are the page's small ones, so the three of them
+   fit on one line of the client's 540-pixel window. */
+#editRow .actions button { padding: 3px 14px; font-size: 13px; overflow: visible; }
 .edtrack {
   position: relative; display: inline-block; *display: inline; zoom: 1; vertical-align: middle;
   width: 110px; height: 6px; margin: 0 6px; border: 1px solid #9a9a9a; background: #eeeae1;
@@ -126,7 +129,7 @@ td.anim.on a { font-weight: bold; }
               type="button" title="{{picMoveUp}}" onclick="nudge(0, -1)">&uarr;</button><button
               type="button" title="{{picMoveDown}}" onclick="nudge(0, 1)">&darr;</button><button
               type="button" title="{{picMoveRight}}" onclick="nudge(1, 0)">&rarr;</button>
-            <button type="button" onclick="resetEdit()">{{picCentre}}</button>
+            <button type="button" title="{{picCentre}}" onclick="resetEdit()">&#9678;</button>
           </div>
           <div class="hint">{{picEditHint}}</div>
           <div class="hint" id="edGifNote" style="display:none"></div>
