@@ -2,7 +2,7 @@
 'use strict';
 
 // Админка Open OSCAR Server: пользователи, пароли, блокировки, сессии.
-// Обёртка над management API, закрытая HTTP Basic-авторизацией.
+// Обёртка над management API, закрытая страницей входа (сеанс в cookie).
 // Язык интерфейса определяется по Accept-Language, переключается вручную.
 
 const http = require('http');
@@ -15,7 +15,14 @@ const PORT = Number(process.env.PORT || 8100);
 const HOST = process.env.HOST || '0.0.0.0';
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_SECRET = process.env.ADMIN_PASSWORD || '';
-const REALM = 'ICQ Revival admin';
+// Сеанс после входа: случайный токен в cookie, живёт SESSION_HOURS часов.
+// Хранится в памяти — перезапуск службы просто просит войти заново.
+const SESSION_COOKIE = 'icq_admin';
+const SESSION_HOURS = 12;
+// Подбор пароля: столько неудачных попыток с одного адреса — и вход
+// закрыт на LOCK_MINUTES минут. nginx вдобавок ограничивает частоту.
+const MAX_FAILURES = 5;
+const LOCK_MINUTES = 15;
 
 if (!ADMIN_SECRET) {
   console.error('ADMIN_PASSWORD не задан — отказываюсь запускаться без пароля.');
@@ -34,6 +41,13 @@ const I18N = {
   en: {
     name: 'English',
     docTitle: 'Server administration',
+    loginTitle: 'Sign in to administration',
+    loginUser: 'Login',
+    loginPass: 'Password',
+    loginBtn: 'Sign in',
+    loginBad: 'Wrong login or password.',
+    loginLocked: (m) => `Too many failed attempts. Try again in ${m} min.`,
+    btnLogout: 'Sign out',
     winTitle: 'Server administration — accounts',
     filterPlaceholder: 'Search by number or name',
     btnRefresh: 'Refresh',
@@ -100,6 +114,13 @@ const I18N = {
   uk: {
     name: 'Українська',
     docTitle: 'Керування сервером',
+    loginTitle: 'Вхід до керування сервером',
+    loginUser: 'Логін',
+    loginPass: 'Пароль',
+    loginBtn: 'Увійти',
+    loginBad: 'Неправильний логін або пароль.',
+    loginLocked: (m) => `Забагато невдалих спроб. Спробуйте за ${m} хв.`,
+    btnLogout: 'Вийти',
     winTitle: 'Керування сервером — користувачі',
     filterPlaceholder: 'Пошук за номером або іменем',
     btnRefresh: 'Оновити',
@@ -198,23 +219,137 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
+const sessions = new Map(); // token -> expiry (ms)
+const failures = new Map(); // client address -> { count, until }
+
+function parseCookies(req) {
+  const out = {};
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+  }
+  return out;
+}
+
+// The address failed sign-ins are counted against: the one nginx saw, or
+// the socket's when the panel is opened through an SSH tunnel.
+function clientAddr(req) {
+  return String(req.headers['x-real-ip'] || req.socket.remoteAddress || '');
+}
+
+function viaHttps(req) {
+  return req.headers['x-forwarded-proto'] === 'https';
+}
+
 function authorized(req) {
-  const header = req.headers.authorization || '';
-  if (!header.startsWith('Basic ')) return false;
-  let decoded;
-  try {
-    decoded = Buffer.from(header.slice(6), 'base64').toString('utf8');
-  } catch {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (!token) return false;
+  const expires = sessions.get(token);
+  if (!expires) return false;
+  if (expires < Date.now()) {
+    sessions.delete(token);
     return false;
   }
-  const idx = decoded.indexOf(':');
-  if (idx < 0) return false;
-  const user = decoded.slice(0, idx);
-  const secret = decoded.slice(idx + 1);
+  return true;
+}
+
+// Minutes left of a lockout for this address, or 0.
+function lockedFor(addr) {
+  const f = failures.get(addr);
+  if (!f || !f.until) return 0;
+  const left = f.until - Date.now();
+  if (left <= 0) {
+    failures.delete(addr);
+    return 0;
+  }
+  return Math.ceil(left / 60000);
+}
+
+function checkCredentials(user, secret) {
   // Оба сравнения выполняются всегда — без short-circuit.
   const okUser = safeEqual(user, ADMIN_USER);
   const okSecret = safeEqual(secret, ADMIN_SECRET);
   return okUser && okSecret;
+}
+
+function cookieAttrs(req, maxAge) {
+  const attrs = ['HttpOnly', 'SameSite=Strict', 'Path=/', `Max-Age=${maxAge}`];
+  if (viaHttps(req)) attrs.push('Secure');
+  return attrs.join('; ');
+}
+
+function newSession(req) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  sessions.set(token, Date.now() + SESSION_HOURS * 3600 * 1000);
+  // Expired sessions go when a new one starts, so the map stays small.
+  for (const [k, exp] of sessions) if (exp < Date.now()) sessions.delete(k);
+  return `${SESSION_COOKIE}=${token}; ${cookieAttrs(req, SESSION_HOURS * 3600)}`;
+}
+
+function endSession(req) {
+  const token = parseCookies(req)[SESSION_COOKIE];
+  if (token) sessions.delete(token);
+  return `${SESSION_COOKIE}=; ${cookieAttrs(req, 0)}`;
+}
+
+// A request that changes something must come from our own page: the cookie
+// is SameSite=Strict already, and a browser that says the request is
+// cross-site, or names another origin, is refused as well.
+function sameOrigin(req) {
+  if (req.headers['sec-fetch-site'] === 'cross-site') return false;
+  const origin = req.headers.origin;
+  if (!origin || origin === 'null') return !origin;
+  try {
+    return new URL(origin).host === req.headers.host;
+  } catch {
+    return false;
+  }
+}
+
+function readForm(req) {
+  return new Promise((resolve) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 4096) req.destroy();
+    });
+    req.on('end', () => resolve(new URLSearchParams(body)));
+    req.on('error', () => resolve(new URLSearchParams()));
+  });
+}
+
+function renderLoginPage(lang, error) {
+  const t = I18N[lang];
+  const esc = (v) => String(v).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  return `<!DOCTYPE html>
+<html lang="${lang}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${esc(t.loginTitle)}</title>
+<style>${STYLE}
+  .login { max-width: 360px; margin: 0 auto; padding: 16px; }
+  .login label { display: block; margin: 10px 0 4px; }
+  .login input { width: 100%; box-sizing: border-box; }
+  .login .actions { margin-top: 16px; text-align: right; }
+  .login .err { color: #b00020; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<main class="window" style="max-width:420px">
+  ${header(t.loginTitle, '', '')}
+  <form class="login" method="post" action="login?lang=${lang}">
+    <label for="user">${esc(t.loginUser)}</label>
+    <input type="text" id="user" name="user" autocomplete="username" autofocus required>
+    <label for="pass">${esc(t.loginPass)}</label>
+    <input type="password" id="pass" name="pass" autocomplete="current-password" required>
+    ${error ? `<p class="err">${esc(error)}</p>` : ''}
+    <div class="actions"><button type="submit" class="primary">${esc(t.loginBtn)}</button></div>
+  </form>
+</main>
+</body>
+</html>`;
 }
 
 async function apiCall(path, opts = {}) {
@@ -283,7 +418,15 @@ function renderPage(lang) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${t.docTitle}</title>
-<style>${STYLE}</style>
+<style>${STYLE}
+  /* A table of every account wants the whole browser window, not the
+     narrow ICQ window the forms of the other pages use. */
+  main.window { max-width: none; width: calc(100% - 32px); margin: 16px auto; }
+  .rowactions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .rowactions button { margin: 0; white-space: nowrap; }
+  table.data th:last-child, table.data td:last-child { width: auto !important; }
+  @media (max-width: 700px) { main.window { width: 100%; margin: 0; } }
+</style>
 </head>
 <body>
 <main class="window">
@@ -293,6 +436,7 @@ function renderPage(lang) {
     <div class="grow"><input type="text" id="filter" data-i18n-placeholder="filterPlaceholder" placeholder="${t.filterPlaceholder}" autocomplete="off"></div>
     <button type="button" id="refresh" data-i18n="btnRefresh">${t.btnRefresh}</button>
     <button type="button" id="create" class="primary" data-i18n="btnCreate">${t.btnCreate}</button>
+    <form method="post" action="logout" style="display:inline;margin:0"><button type="submit" data-i18n="btnLogout">${t.btnLogout}</button></form>
   </div>
 
   <div class="body">
@@ -401,6 +545,8 @@ function errText(payload) {
 
 async function call(path, opts) {
   const r = await fetch(path, opts);
+  // The session ended (expired, signed out elsewhere, service restarted).
+  if (r.status === 401) { location.href = 'login'; throw new Error(''); }
   const d = await r.json().catch(() => ({}));
   if (!r.ok || d.ok === false) throw new Error(errText(d));
   return d;
@@ -677,16 +823,78 @@ setInterval(load, 20000);
 const server = http.createServer(async (req, res) => {
   // Картинка отдаётся без пароля: иначе её не покажет ни один браузер.
   if (serveAsset(req, res)) return;
-  if (!authorized(req)) {
-    res.writeHead(401, {
-      'WWW-Authenticate': `Basic realm="${REALM}", charset="UTF-8"`,
-      'Content-Type': 'text/plain; charset=utf-8',
-    });
-    res.end('Authorization required');
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  const pageLang = () => {
+    const forced = String(url.searchParams.get('lang') || '').toLowerCase();
+    return LANGS.includes(forced) ? forced : pickLang(req.headers['accept-language']);
+  };
+  const html = (status, body) => {
+    res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(body);
+  };
+  const redirect = (to, cookie) => {
+    const h = { Location: to, 'Cache-Control': 'no-store' };
+    if (cookie) h['Set-Cookie'] = cookie;
+    res.writeHead(303, h);
+    res.end();
+  };
+
+  // The redirects are relative on purpose: behind nginx the panel lives
+  // under /admin/, through an SSH tunnel at the root.
+  if (url.pathname === '/login') {
+    const lang = pageLang();
+    if (req.method === 'GET') {
+      if (authorized(req)) return redirect('./');
+      html(200, renderLoginPage(lang, ''));
+      return;
+    }
+    if (req.method === 'POST') {
+      const addr = clientAddr(req);
+      const locked = lockedFor(addr);
+      if (locked) {
+        html(429, renderLoginPage(lang, I18N[lang].loginLocked(locked)));
+        return;
+      }
+      const form = await readForm(req);
+      if (!sameOrigin(req) || !checkCredentials(form.get('user') || '', form.get('pass') || '')) {
+        const f = failures.get(addr) || { count: 0, until: 0 };
+        f.count += 1;
+        if (f.count >= MAX_FAILURES) {
+          f.until = Date.now() + LOCK_MINUTES * 60000;
+          f.count = 0;
+          console.log(`admin: sign-in locked for ${LOCK_MINUTES} min after ${MAX_FAILURES} failures`);
+        }
+        failures.set(addr, f);
+        html(401, renderLoginPage(lang, I18N[lang].loginBad));
+        return;
+      }
+      failures.delete(addr);
+      redirect('./', newSession(req));
+      return;
+    }
+  }
+
+  if (url.pathname === '/logout' && req.method === 'POST') {
+    redirect('login', endSession(req));
     return;
   }
 
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  if (!authorized(req)) {
+    if (url.pathname.startsWith('/api/')) {
+      res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: false, code: 'auth' }));
+      return;
+    }
+    redirect('login');
+    return;
+  }
+
+  if (req.method !== 'GET' && url.pathname.startsWith('/api/') && !sameOrigin(req)) {
+    res.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ ok: false, code: 'origin' }));
+    return;
+  }
+
   const parts = url.pathname.split('/').filter(Boolean);
 
   try {
