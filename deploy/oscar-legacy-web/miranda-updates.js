@@ -314,7 +314,9 @@ function createMirror(options = {}) {
     }
     ours = next;
     // A list built from the previous packages is out of date.
-    for (const l of lists.values()) l.fetchedAt = 0;
+    // Rebuild it now rather than on the next request, which would still
+    // get the old one while the new one is made.
+    for (const [platform, l] of lists) { l.fetchedAt = 0; refresh(platform); }
     log(`packages: ${PLATFORMS.map((p) => `${p} ${ours.get(p)?.files.size || 0}`).join(', ')}`);
   }
 
