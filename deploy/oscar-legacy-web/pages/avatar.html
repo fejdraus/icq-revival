@@ -757,10 +757,13 @@ function showAnimated(data) {
   var now = document.getElementById('animNow');
   now.innerHTML = '';
   now.appendChild(document.createTextNode(text));
-  // The same preview the picture tab has: the avatar's thumbnail, or an
-  // empty frame when none of ours is set.
+  // The same preview the picture tab has: the avatar's large still, twice
+  // the thumbnail's size, so it isn't blown up blurred into the frame; the
+  // thumbnail when there is no large one; an empty frame when none of ours
+  // is set.
   var shot = document.getElementById('animCurrent');
-  if (a && a.thumb) { shot.src = '/icq/avatars/' + a.thumb; }
+  if (a && a.large) { shot.src = '/icq/avatars/' + a.large; }
+  else if (a && a.thumb) { shot.src = '/icq/avatars/' + a.thumb; }
   else { shot.removeAttribute('src'); }
 }
 </script>
