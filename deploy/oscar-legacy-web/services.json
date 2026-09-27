@@ -31,6 +31,7 @@
     "  avatarfiles an animated avatar or its thumbnail from the avatars folder, by exact name",
     "  avatargallery the avatar gallery list (2007 XML) with our animated avatars",
     "  ruffle      Ruffle's web build from the ruffle folder, by exact name; the user card plays the animated avatar with it",
+    "  files       a download of /icq/download from the files folder, by exact name",
     "  miranda     Miranda NG's PluginUpdater list and packages: the upstream stable ones with our plugins in them",
     "  stub        a \"this service is gone\" page",
     "",
@@ -184,6 +185,11 @@
       "path": "^/icq/avatars/",
       "action": "avatarfiles",
       "note": "animated avatars (Flash devils) and their thumbnails from the avatars folder, by exact file name; the picture page hands the client these addresses, and every contact's client fetches the movie from here over plain HTTP"
+    },
+    {
+      "path": "^/icq/files/",
+      "action": "files",
+      "note": "the downloads of /icq/download: the client patches and the Miranda NG plugins, by exact file name"
     },
     {
       "path": "^/miranda/stable/",
@@ -373,13 +379,13 @@
       "wwp.icq.com"
     ]
   },
-  "_contact": "An e-mail address or a web page for questions about this server, shown on /icq/about and /icq/legal. Empty: no contact line. TODO: fill in before the server is public. CONTACT in the environment overrides it.",
+  "_contact": "An e-mail address or a web page for questions about this server, shown on /icq/about and /icq/legal. Empty: no contact line. CONTACT in the environment overrides it.",
   "contact": "",
-  "_downloads": "Where the patches are published, listed on /icq/download. A value that is empty or starts with TODO is shown as not published yet.",
+  "_downloads": "Where the patches are published, listed on /icq/download. The files are served by this server from /icq/files/ (DOWNLOADS_DIR, built by tools/make-downloads.py). A value that is empty or starts with TODO is shown as not published yet.",
   "downloads": {
-    "icq2003bPatch": "TODO: the address of ICQ-2003b-Patch.exe (tools/icq2003b/patch)",
-    "icq65Patch": "TODO: the address of ICQ-6.5-Patch.exe (tools/icq65/patch)",
-    "mirandaPlugin": "TODO: the address of the Miranda NG plugin, IcqOscarJ.dll for x32 and x64 (tools/miranda-icq/build)"
+    "icq2003bPatch": "/icq/files/icq-2003b-patch.exe",
+    "icq65Patch": "/icq/files/icq-65-patch.zip",
+    "mirandaPlugin": "/icq/files/icq-revival-miranda.zip"
   },
   "_oscarHost": "The server address for clients, shown in the \"how to start\" guide. Leave empty to drop that section.",
   "oscarHost": "icq.example.com"

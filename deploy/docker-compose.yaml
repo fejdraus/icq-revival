@@ -136,8 +136,12 @@ services:
       # deploy/miranda-updates by hand (the engine is 15 MB, not kept in git).
       MIRANDA_UPSTREAM: https://miranda-ng.org/distr/stable
       MIRANDA_PACKAGES: /miranda-updates
+      # The downloads of /icq/download (/icq/files/), made by
+      # tools/make-downloads.py and copied to deploy/downloads by hand.
+      DOWNLOADS_DIR: /downloads
     volumes:
       - ./miranda-updates:/miranda-updates:ro
+      - ./downloads:/downloads:ro
     depends_on:
       - server
 

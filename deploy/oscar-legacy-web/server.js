@@ -92,6 +92,21 @@ function loadFolder(dir, types, names = PLAIN_NAME) {
   return files;
 }
 
+// The files /icq/download offers, served from /icq/files/: the client
+// patches and the Miranda NG plugins, built by tools/make-downloads.py and
+// copied to the machine by hand (the Flash engine in them is 15 MB, not kept
+// in git). Read at start and on SIGHUP, like the tZers.
+const FILES_DIR = process.env.DOWNLOADS_DIR || path.join(__dirname, 'files');
+const FILE_TYPES = {
+  '.exe': 'application/vnd.microsoft.portable-executable',
+  '.zip': 'application/zip',
+};
+let downloadFiles = new Map();
+
+function loadDownloads() {
+  downloadFiles = loadFolder(FILES_DIR, FILE_TYPES);
+}
+
 function loadTzers() {
   tzerFiles = loadFolder(TZER_DIR, TZER_TYPES);
 }
@@ -761,9 +776,11 @@ const I18N = {
     dlHowNote: 'Every file is backed up before it is changed. <b>Restore original</b> '
       + 'puts the client back exactly as it was. To move to another server, apply '
       + 'the patch again with the new domain.',
-    dlMirandaNote: 'Miranda NG: put the DLL of your Miranda\'s bitness into the '
-      + '<code>Plugins</code> folder and restart it. The file is deliberately not '
-      + 'named <code>ICQ.dll</code>, so that the plugin updater does not replace it.',
+    dlMirandaNote: 'Miranda NG: the archive has a <code>Miranda32</code> and a '
+      + '<code>Miranda64</code> folder. With Miranda closed, copy the contents of the '
+      + 'one for your Miranda over its folder, restart it and create an ICQ account '
+      + 'with this server as the login server. From then on the plugin updater keeps '
+      + 'our plugins up to date from this server.',
   },
 
   uk: {
@@ -1098,9 +1115,11 @@ const I18N = {
     dlHowNote: 'Кожен файл перед зміною зберігається в резервну копію. '
       + '<b>Restore original</b> повертає клієнт точно таким, яким він був. Щоб '
       + 'перейти на інший сервер, застосуйте патч ще раз із новим доменом.',
-    dlMirandaNote: 'Miranda NG: покладіть DLL тієї розрядності, що й ваша Miranda, '
-      + 'у теку <code>Plugins</code> і перезапустіть її. Файл навмисно названо не '
-      + '<code>ICQ.dll</code>, щоб засіб оновлення плагінів його не замінив.',
+    dlMirandaNote: 'Miranda NG: в архіві є теки <code>Miranda32</code> і '
+      + '<code>Miranda64</code>. Закрийте Miranda, скопіюйте вміст теки своєї '
+      + 'розрядності поверх її теки, перезапустіть і створіть обліковий запис ICQ '
+      + 'з цим сервером як сервером входу. Далі засіб оновлення плагінів сам '
+      + 'оновлює наші плагіни з цього сервера.',
   },
 };
 
@@ -2704,6 +2723,9 @@ const ACTIONS = {
   // Anything else under /icq/tzers/ is a 404, as the dead ICQ.com one was.
   tzer: (ctx) => serveFolderFile(ctx, /^\/icq\/tzers\//i, tzerFiles),
 
+  // A download of /icq/download by its exact name: /icq/files/icq-65-patch.zip.
+  files: (ctx) => serveFolderFile(ctx, /^\/icq\/files\//i, downloadFiles),
+
   // An animated avatar or its thumbnail, the same way: /icq/avatars/pirate.swf.
   // With ?emotion=stam (or another of its labels) the movie comes with its
   // face on that mood already, for the user card's player (see moodMovie).
@@ -2842,6 +2864,7 @@ const mirandaMirror = createMirror({
 config = loadConfig();
 loadTopics();
 loadTzers();
+loadDownloads();
 loadAvatars();
 loadRuffle();
 
@@ -2852,10 +2875,11 @@ process.on('SIGHUP', () => {
     config = loadConfig();
     loadTopics();
     loadTzers();
+    loadDownloads();
     loadAvatars();
     loadRuffle();
     mirandaMirror.load();
-    console.log(`config reloaded: ${config.routes.length} routes, ${tzerFiles.size} tZer files, `
+    console.log(`config reloaded: ${config.routes.length} routes, ${tzerFiles.size} tZer files, ${downloadFiles.size} downloads, `
       + `${avatarList.length} animated avatars`);
   } catch (err) {
     console.error(`config not reloaded, keeping the old one: ${err.message}`);
