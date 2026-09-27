@@ -179,11 +179,30 @@ func normaliseBuddyIcon(data []byte) ([]byte, error) {
 		if err := jpeg.Encode(&buf, scaled, &jpeg.Options{Quality: quality}); err != nil {
 			return nil, err
 		}
-		if buf.Len() <= maxBuddyIconBytes {
-			return bytes.Clone(buf.Bytes()), nil
+		out := withJFIF(buf.Bytes())
+		if len(out) <= maxBuddyIconBytes {
+			return out, nil
 		}
 	}
 	return nil, fmt.Errorf("the copy doesn't fit in %d bytes", maxBuddyIconBytes)
+}
+
+// jfifAPP0 is a JFIF APP0 segment: version 1.1, no density, no thumbnail.
+var jfifAPP0 = []byte{0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00}
+
+// withJFIF returns a copy of the JPEG b with a JFIF APP0 segment after its
+// start-of-image marker, which Go's encoder doesn't write. Clients tell a
+// picture's format by its first bytes: QIP 2012 looks for "JFIF" or "Exif"
+// and, finding neither, saves the picture without an extension its cache
+// never finds again.
+func withJFIF(b []byte) []byte {
+	if len(b) < 4 || b[0] != 0xFF || b[1] != 0xD8 || (b[2] == 0xFF && b[3] == 0xE0) {
+		return bytes.Clone(b)
+	}
+	out := make([]byte, 0, len(b)+len(jfifAPP0))
+	out = append(out, b[:2]...)
+	out = append(out, jfifAPP0...)
+	return append(out, b[2:]...)
 }
 
 // fitWithin returns the size of a width x height picture scaled down to fit

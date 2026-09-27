@@ -827,6 +827,8 @@ func (s OServiceService) ClientOnline(ctx context.Context, service uint16, inBod
 			}
 		}
 
+		sendOwnBuddyIcon(ctx, s.messageRelayer, instance)
+
 		if instance.UIN() == 0 && instance.OfflineMsgCount() > 0 {
 			if err := s.sendOfflineMessageNotification(ctx, instance); err != nil {
 				return fmt.Errorf("send offline message notification: %w", err)
@@ -1030,6 +1032,32 @@ func instanceUserInfo(instance *state.SessionInstance, recipient *state.SessionI
 	info.Append(wire.NewTLVBE(wire.OServiceUserInfoMemberSince, uint32(sess.MemberSince().Unix())))
 
 	return info
+}
+
+// sendOwnBuddyIcon tells a client other than ICQ 6 which buddy icon its
+// account shows, with the BART reply (SNAC 01,21) that otherwise only answers
+// a feedbag icon change. Some clients learn their own icon from nothing else:
+// QIP 2012 reads the first item of this reply and ignores the BART tag of its
+// own user info, so it showed no picture of its own. The icon is the one the
+// client's contacts of the same kind get: the still of a Flash avatar, or a
+// copy of an icon too large for old clients (see state.Session.UserInfoFor).
+// ICQ 6 manages its own icon and is left alone.
+func sendOwnBuddyIcon(ctx context.Context, relayer MessageRelayer, instance *state.SessionInstance) {
+	if !instance.NeedsFlashAvatarStill() {
+		return
+	}
+	icon, ok := instance.UserInfoFor(instance.Session().TLVUserInfo()).BuddyIconItem()
+	if !ok || icon.Flags&wire.BARTFlagsUnknown != 0 || len(icon.Hash) != 16 {
+		return
+	}
+	relayer.RelayToSelf(ctx, instance, wire.SNACMessage{
+		Frame: wire.SNACFrame{
+			FoodGroup: wire.OService,
+			SubGroup:  wire.OServiceBartReply,
+			RequestID: wire.ReqIDFromServer,
+		},
+		Body: wire.SNAC_0x01_0x21_OServiceBARTReply{BARTID: icon},
+	})
 }
 
 // sessionBARTIDs returns the account's buddy icon and status message BART
