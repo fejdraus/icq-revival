@@ -16,6 +16,16 @@
 
 [# Custom Status Icons #]
 Значки xСтатусов
+[bytes]
+байт
+[File from %s]
+Файл от %s
+[GB]
+ГБ
+[KB]
+КБ
+[MB]
+МБ
 [Animated avatar...]
 Анимированный аватар…
 [Barbuda]

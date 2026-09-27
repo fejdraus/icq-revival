@@ -265,6 +265,8 @@ xСтатус %s
 Дела
 [Business Services]
 Бизнес услуги
+[bytes]
+байт
 [Cambodia]
 Камбоджа
 [Cameroon]
@@ -645,6 +647,8 @@ xСтатус "%s"
 Женский
 [Fiji]
 Фиджи
+[File from %s]
+Файл от %s
 [File transfer negotiation failed for unknown reason.]
 Передача файла не удалась по неизвестной причине.
 [Finance]
@@ -687,6 +691,8 @@ xСтатус "%s"
 Игры
 [Gaming]
 Играю
+[GB]
+ГБ
 [Gender]
 Пол
 [Gender:]
@@ -877,6 +883,8 @@ xСтатус ICQ
 Июнь
 [Kazakhstan]
 Казахстан
+[KB]
+КБ
 [Kenya]
 Кения
 [Keywords:]
@@ -1025,6 +1033,8 @@ xСтатус ICQ
 Май
 [Mayotte]
 Майотта
+[MB]
+МБ
 [Media]
 Медиа
 [Medical & Health Care]
