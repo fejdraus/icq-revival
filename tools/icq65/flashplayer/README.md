@@ -114,6 +114,21 @@ directly:
     or offline, busy and stam for a status. In the avatar SWFs `face` has
     `addProperty("emotion", ...)`, and its setter does
     `gotoAndPlay(label)`.
+  - **The face goes back after a smiley** (`src/face.rs`). Each emotion's
+    animation plays once and stands on its last frame; neither the movie nor
+    ICQ 6.5 goes back to the status face. `MCDevilImpl` has no timer (only
+    `MCAdImpl` and `MCSelectUsersDlg` in `MUICoreLib` use one), and it sets the
+    status face only when the status changes (`ChangeDevilStatus`: offline,
+    busy for statuses 2 to 5, else stam). So a smiley's face stayed until the
+    next status change, with Adobe's control as well. ICQ's own devil testing
+    page (`devils.zip` of the devil kit) went back to stam 9 seconds after a
+    smiley. The DLL now does that: 9 seconds after a smiley face it sets the
+    last status face again. A new smiley starts the wait again, a status face
+    ends it. The leading "stam" of ICQ's pair is not taken for a status: a face
+    that follows a "stam" within 250 ms restores the status from before it.
+    `FLASHPLAYERCONTROL_FACE_RETURN` sets the wait; a host that times the faces
+    itself turns it off with the export `FPCSetFaceReturn(0)` (milliseconds,
+    for the whole process), as the Miranda plugin does.
   - Also implemented: `GetVariable`, `TGotoFrame`, `TPlay`, `TStopPlay`, and
     `WMode`/`Scale` get/put. The other property setters are accepted and
     ignored.
@@ -378,6 +393,16 @@ repaints only when the control asks.
 The host is DPI aware, so its screenshots line up with window coordinates on
 a scaled display.
 
+`face` hosts one avatar, sends the faces as ICQ 6.5 does ("stam", then the
+face) and checks with `GetVariable` that a smiley's face goes back to the
+status face after the wait, that a second smiley restarts it, that a status
+face ends it, and that `FPCSetFaceReturn(0)` turns it off. Set
+`FLASHPLAYERCONTROL_FACE_RETURN=2` first; it expects a 2-second wait:
+
+```
+%H%\examples\host.exe %H%\FlashPlayerControl.dll face W:\...\deploy\oscar-legacy-web\avatars pirate.swf
+```
+
 `axreg` runs `DllRegisterServer` and `DllUnregisterServer` under a test root
 (`FLASHPLAYERCONTROL_TEST_REGROOT`), checks every key, and shows that the
 user's real registration did not change:
@@ -445,6 +470,7 @@ to that file. It always writes the same lines to the debugger
 | Variable | Effect |
 |----------|--------|
 | `FLASHPLAYERCONTROL_LOG` | Appends log lines to this file |
+| `FLASHPLAYERCONTROL_FACE_RETURN` | Seconds a Flash avatar shows a smiley's face before it goes back to its status face (fractions allowed). Default 9; `0` turns it off. A host's `FPCSetFaceReturn` wins |
 | `FLASHPLAYERCONTROL_BACKEND` | Devices to try, in order: `vulkan`, `warp`, `gl`, `dx12` (hardware DX12), `fail` (behave as if the adapter request failed), or `none` (no renderer). Default `vulkan,warp,gl`, with `gl` only when there is a hardware GPU |
 | `FLASHPLAYERCONTROL_TEST_REGROOT` | Test only: register the control class under this HKCU key instead of `Software\Classes`, and leave the type library alone |
 | `FLASHPLAYERCONTROL_TEST_PANIC` | Test only: render number *n* and every later render panic, to exercise the failure handling |
@@ -496,7 +522,8 @@ to that file. It always writes the same lines to the debugger
   Later movies reuse the device.
 - **Only the ten exports.** `FPC_SetVariable*`, `FPC_GetVariable*`,
   `FPCLoadMovieFromMemory` and the other exports of the original are missing.
-  The client imports none of them.
+  The client imports none of them. `FPCSetFaceReturn` is ours, not the
+  original's.
 - **Snapshot windows play no sound.** A window created with no owner or parent
   plays without sound. That matches the client's avatar snapshot service; a
   sound in any other ownerless use would be lost.

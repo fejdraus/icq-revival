@@ -42,6 +42,8 @@ pub const MSG_AUDIO_STATS: u32 = 0x8000 + 0x0F12;
 const TICK_TIMER: usize = 0x46505431; // "FPT1", distinct from the client's 0x25D
 /// The ActiveX control's repaint-retry timer on the same hidden window.
 pub const CONTROL_TIMER: usize = 0x46505432; // "FPT2"
+/// A Flash avatar's face goes back to its status face (face.rs).
+const FACE_TIMER: usize = 0x46505433; // "FPT3"
 const TICK_MS: u32 = 10;
 /// How long the root timeline has to stand on its last frame before a movie
 /// without animEnd counts as finished, so a nested clip there can finish.
@@ -89,6 +91,8 @@ pub struct Instance {
     /// Counts frames rendered in control mode; the control compares it with
     /// the last frame the host drew.
     pub frame_serial: Cell<u64>,
+    /// The faces a Flash avatar was told to show (face.rs).
+    faces: crate::face::Faces,
 }
 
 /// The windows of one thread. Each window lives on the thread that created
@@ -257,6 +261,7 @@ impl Instance {
             on_frame: RefCell::new(None),
             on_control_timer: RefCell::new(None),
             frame_serial: Cell::new(0),
+            faces: crate::face::Faces::default(),
         }
     }
 
@@ -307,6 +312,8 @@ impl Instance {
             log("releasing a player failed");
         }
         self.fs.borrow_mut().clear();
+        self.faces.reset();
+        unsafe { KillTimer(self.hwnd, FACE_TIMER) };
         *self.url.borrow_mut() = url.to_owned();
         self.ready_state.set(1);
         self.ended.set(false);
@@ -559,7 +566,26 @@ impl Instance {
             _ => E_FAIL,
         };
         log(&format!("SetVariable({path:?}, {value:?}) -> {hr:#x}"));
+        let delay = crate::face::delay_ms();
+        match self.faces.on_set(path, value, Instant::now(), delay) {
+            crate::face::Action::Arm(ms) => {
+                unsafe { SetTimer(self.hwnd, FACE_TIMER, ms, None) };
+            }
+            crate::face::Action::Cancel => {
+                unsafe { KillTimer(self.hwnd, FACE_TIMER) };
+            }
+            crate::face::Action::None => {}
+        }
         hr
+    }
+
+    /// FACE_TIMER: the smiley's face has been shown long enough.
+    fn face_timer(&self) {
+        unsafe { KillTimer(self.hwnd, FACE_TIMER) };
+        if let Some(face) = self.faces.take_return() {
+            log(&format!("face returns to {face:?}"));
+            self.set_variable(crate::face::VARIABLE, &face);
+        }
     }
 
     pub fn get_variable(&self, path: &str) -> Option<String> {
@@ -786,6 +812,7 @@ impl Instance {
     fn destroy(&self) {
         self.destroyed.set(true);
         unsafe { KillTimer(self.hwnd, TICK_TIMER) };
+        unsafe { KillTimer(self.hwnd, FACE_TIMER) };
         self.load_gen.set(self.load_gen.get().wrapping_add(1));
         let old = self.movie.borrow_mut().take();
         if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(old))).is_err() {
@@ -840,6 +867,12 @@ unsafe fn handle(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT
         WM_TIMER if wp == TICK_TIMER => {
             if let Some(i) = get(hwnd) {
                 i.tick();
+            }
+            Some(0)
+        }
+        WM_TIMER if wp == FACE_TIMER => {
+            if let Some(i) = get(hwnd) {
+                i.face_timer();
             }
             Some(0)
         }

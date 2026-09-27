@@ -1474,3 +1474,86 @@ pub fn registration(fpc: &crate::Fpc) -> bool {
     );
     ok && gone && before == after
 }
+
+/// face <base dir|url> <name>: the return to the status face after a smiley
+/// (src/face.rs), with the faces sent the way ICQ 6.5's MCDevilImpl sends
+/// them: "stam", then the face. Run with FLASHPLAYERCONTROL_FACE_RETURN=2.
+pub fn face_return(dll_path: &str, base: &str, name: &str) -> bool {
+    let wait = Duration::from_secs(2);
+    let win = container_window(95, 117, "face return");
+    let rect = RECT {
+        left: 4,
+        top: 4,
+        right: 91,
+        bottom: 113,
+    };
+    let params = [("WMode", "transparent"), ("Scale", "NoBorder")];
+    let h = match host_control(win, rect, &params, name, true) {
+        Ok(h) => h,
+        Err(e) => {
+            say!("[{name}] cannot host: {e}");
+            return false;
+        }
+    };
+    let sep = if base.starts_with("http") { "/" } else { "\\" };
+    h.put_movie_dispatch(&format!("{base}{sep}{name}"));
+    h.play();
+    let t = Instant::now();
+    while t.elapsed() < Duration::from_secs(30) && h.ready_state() != 4 {
+        pump_for(Duration::from_millis(50));
+    }
+    pump_for(Duration::from_millis(300));
+
+    let pair = |e: &str| {
+        h.set_variable("face.emotion", "stam");
+        h.set_variable("face.emotion", e);
+    };
+    let face = || h.get_variable("face.emotion").1;
+    let mut ok = true;
+    let mut check = |what: &str, want: &str| {
+        let got = face();
+        say!("{what}: face {got:?} (want {want:?})");
+        ok &= got == want;
+    };
+
+    pair("busy");
+    check("status busy", "busy");
+    pair("smile");
+    check("smiley while busy", "smile");
+    pump_for(wait - Duration::from_millis(500));
+    check("just before the return", "smile");
+    pump_for(Duration::from_millis(1000));
+    check("after the return", "busy");
+
+    pair("stam");
+    pair("laugh");
+    pump_for(wait - Duration::from_millis(700));
+    pair("sad");
+    pump_for(Duration::from_millis(1200));
+    check("a second smiley restarted the wait", "sad");
+    pump_for(Duration::from_millis(1300));
+    check("after the second return", "stam");
+
+    pair("mad");
+    pump_for(Duration::from_millis(300));
+    pair("offline");
+    check("status change during a smiley", "offline");
+    pump_for(wait + Duration::from_millis(500));
+    check("the status stays", "offline");
+
+    // A host that times the faces itself.
+    unsafe {
+        let w = wide(dll_path);
+        let m = LoadLibraryW(w.as_ptr());
+        let set = GetProcAddress(m, c"FPCSetFaceReturn".as_ptr().cast()).expect("FPCSetFaceReturn");
+        let set: unsafe extern "system" fn(u32) -> HRESULT = std::mem::transmute(set);
+        say!("FPCSetFaceReturn(0) -> {:#x}", set(0));
+    }
+    pair("stam");
+    h.set_variable("face.emotion", "love");
+    pump_for(wait + Duration::from_millis(500));
+    check("return off", "love");
+
+    say!("result: face return ok {ok}");
+    ok
+}

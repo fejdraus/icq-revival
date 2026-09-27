@@ -156,6 +156,17 @@ static int FaceForText(const wchar_t *text)
 	return -1;
 }
 
+// A smiley's face lasts this long, then the status face comes back, as on
+// ICQ's devil testing page (devils.zip: 9 seconds). Hidden setting
+// IcqRevivalFlash/SmileyFaceSeconds (WORD); 0 keeps the smiley's face until
+// the next smiley or status change.
+#define FACE_SECONDS_DEFAULT 9
+
+static UINT SmileyFaceMs()
+{
+	return g_plugin.getWord("SmileyFaceSeconds", FACE_SECONDS_DEFAULT) * 1000;
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////
 // The engine
 
@@ -170,6 +181,16 @@ HMODULE LoadEngine()
 		PathToAbsoluteW(L"Libs\\FlashPlayerControl.dll", path);
 		g_hEngine = LoadLibraryExW(path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
 		Log("engine %S: %s", path, g_hEngine ? "loaded" : "not found, using the registered ShockwaveFlash control");
+
+		// the engine would take a smiley's face back to the status face after
+		// 9 seconds on its own (as ICQ 6.5 needs); here the plugin times that
+		// (FACE_TIMER), with or without the engine
+		if (g_hEngine) {
+			typedef HRESULT(WINAPI *pfnSetFaceReturn)(DWORD);
+			auto pSetFaceReturn = (pfnSetFaceReturn)GetProcAddress(g_hEngine, "FPCSetFaceReturn");
+			if (pSetFaceReturn)
+				pSetFaceReturn(0);
+		}
 	}
 	return g_hEngine;
 }
@@ -261,6 +282,7 @@ public:
 #define LOAD_TIMER    0x4641   // AVS uses timer 0 for animated GIFs
 #define LOAD_TICK     100
 #define LOAD_TIMEOUT  20000
+#define FACE_TIMER    0x4642   // a smiley's face goes back to the status face
 
 struct FlashView
 {
@@ -295,6 +317,7 @@ static std::vector<FlashView *> g_views; // main thread only
 static void DestroyFlash(FlashView *v)
 {
 	KillTimer(v->hwnd, LOAD_TIMER);
+	KillTimer(v->hwnd, FACE_TIMER);
 	if (v->pView) {
 		v->pView->SetAdvise(DVASPECT_CONTENT, 0, nullptr);
 		v->pView->Release();
@@ -764,6 +787,15 @@ static LRESULT FlashControlProc(WNDPROC orig, HWND hwnd, UINT msg, WPARAM wParam
 				OnLoadTimer(v);
 			return 0;
 		}
+		if (wParam == FACE_TIMER) {
+			KillTimer(hwnd, FACE_TIMER);
+			if (v && !v->bDead) {
+				int face = FaceForStatus(ViewStatus(v));
+				Log("%p: the smiley's face ends", hwnd);
+				SetFace(v, face);
+			}
+			return 0;
+		}
 		break;
 
 	case WM_SIZE:
@@ -828,26 +860,36 @@ struct FaceJob
 	MCONTACT hContact;
 	char szProto[64];
 	int face;
+	bool bSmiley;  // a smiley's face, which lasts SmileyFaceMs(); else a status face
 };
 
 static void MIR_SYSCALL ApplyFaceJob(void *param)
 {
 	FaceJob *job = (FaceJob *)param;
+	UINT ms = job->bSmiley ? SmileyFaceMs() : 0;
 	for (auto *v : g_views) {
 		if (!v->pFlash || v->bFixed)
 			continue;
-		if (job->hContact ? v->hContact == job->hContact : (v->hContact == 0 && !mir_strcmp(ViewProto(v), job->szProto)))
+		if (job->hContact ? v->hContact == job->hContact : (v->hContact == 0 && !mir_strcmp(ViewProto(v), job->szProto))) {
 			SetFace(v, job->face);
+			// a new smiley starts the wait again; a status face ends it
+			if (ms) {
+				SetTimer(v->hwnd, FACE_TIMER, ms, nullptr);
+				Log("%p: the smiley's face lasts %u s", v->hwnd, ms / 1000);
+			}
+			else KillTimer(v->hwnd, FACE_TIMER);
+		}
 	}
 	delete job;
 }
 
-static void PostFace(MCONTACT hContact, const char *szProto, int face)
+static void PostFace(MCONTACT hContact, const char *szProto, int face, bool bSmiley)
 {
 	FaceJob *job = new FaceJob();
 	job->hContact = hContact;
 	strncpy_s(job->szProto, szProto ? szProto : "", _TRUNCATE);
 	job->face = face;
+	job->bSmiley = bSmiley;
 	CallFunctionAsync(ApplyFaceJob, job);
 }
 
@@ -876,9 +918,9 @@ static int OnEventAdded(WPARAM hContact, LPARAM hDbEvent)
 		return 0;
 
 	if (dbei.bSent)
-		PostFace(0, Proto_GetBaseAccountName(hContact), face);
+		PostFace(0, Proto_GetBaseAccountName(hContact), face, true);
 	else
-		PostFace(hContact, nullptr, face);
+		PostFace(hContact, nullptr, face, true);
 	return 0;
 }
 
@@ -928,7 +970,7 @@ static int OnSettingChanged(WPARAM hContact, LPARAM lParam)
 	else if (hContact && !strcmp(cws->szSetting, "Status")) {
 		const char *szProto = Proto_GetBaseAccountName(hContact);
 		if (szProto && !strcmp(cws->szModule, szProto))
-			PostFace(hContact, nullptr, FaceForStatus(cws->value.type == DBVT_WORD ? cws->value.wVal : ID_STATUS_OFFLINE));
+			PostFace(hContact, nullptr, FaceForStatus(cws->value.type == DBVT_WORD ? cws->value.wVal : ID_STATUS_OFFLINE), false);
 	}
 	return 0;
 }
@@ -938,10 +980,10 @@ static int OnStatusModeChange(WPARAM wParam, LPARAM lParam)
 {
 	const char *szProto = (const char *)lParam;
 	if (szProto)
-		PostFace(0, szProto, FaceForStatus((int)wParam));
+		PostFace(0, szProto, FaceForStatus((int)wParam), false);
 	else
 		for (auto &pa : Accounts())
-			PostFace(0, pa->szModuleName, FaceForStatus((int)wParam));
+			PostFace(0, pa->szModuleName, FaceForStatus((int)wParam), false);
 	return 0;
 }
 

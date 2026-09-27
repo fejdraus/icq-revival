@@ -1011,6 +1011,12 @@ fn main() {
             let ok = axfirst::run(&args[3], &args[4], &args[5..]);
             std::process::exit(if ok { 0 } else { 1 });
         }
+        // face <base dir|url> <name>: the return to the status face.
+        "face" => {
+            axhost::register_class(&args[1]);
+            let ok = axhost::face_return(&args[1], &args[3], &args[4]);
+            std::process::exit(if ok { 0 } else { 1 });
+        }
         // ax <base dir|url> <out> <names...>: windowless container + ATL host.
         "ax" => {
             axhost::register_class(&args[1]);

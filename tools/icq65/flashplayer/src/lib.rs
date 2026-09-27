@@ -6,6 +6,7 @@
 mod audio;
 mod com;
 mod control;
+mod face;
 mod fetch;
 mod gpu;
 mod instance;
@@ -259,6 +260,23 @@ pub extern "system" fn FPCSetEventListener(
         }
         Err(_) => 0,
     })
+}
+
+/// How long a Flash avatar shows a smiley's face before it goes back to its
+/// status face, in milliseconds, for every control of this process; 0 turns
+/// the return off (a host that times the faces itself). See face.rs. Not an
+/// export of the original DLL.
+#[unsafe(no_mangle)]
+pub extern "system" fn FPCSetFaceReturn(milliseconds: u32) -> HRESULT {
+    crate::ffi_guard(
+        "FPCSetFaceReturn",
+        windows_sys::Win32::Foundation::E_FAIL,
+        || {
+            face::set_delay_ms(milliseconds);
+            log(&format!("FPCSetFaceReturn({milliseconds})"));
+            S_OK
+        },
+    )
 }
 
 /// Registers the type library for the current user (HKCU\Software\Classes).
