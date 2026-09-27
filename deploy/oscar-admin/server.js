@@ -422,8 +422,25 @@ function renderPage(lang) {
   /* A table of every account wants the whole browser window, not the
      narrow ICQ window the forms of the other pages use. */
   main.window { max-width: none; width: calc(100% - 32px); margin: 16px auto; }
-  .rowactions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
-  .rowactions button { margin: 0; white-space: nowrap; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin: 0; padding: 14px 16px; border-bottom: 1px solid rgba(0,0,0,.08); }
+  .toolbar > * { margin: 0; }
+  .toolbar .grow { flex: 0 1 420px; min-width: 220px; }
+  .toolbar .grow input { width: 100%; box-sizing: border-box; }
+  .toolbar .signout { margin-left: auto; }
+  /* Password, block, disconnect (online only), delete: always in the same
+     four columns, so the buttons line up from row to row. */
+  .rowactions { display: grid; grid-template-columns: 8.5em 6.5em 9.5em 7em;
+    gap: 6px; justify-content: end; align-items: center; }
+  .rowactions button { margin: 0; white-space: nowrap; width: 100%; }
+  /* Disconnect comes first, so rows without it keep the gap at the left. */
+  .rowactions .slot-kick { order: -1; }
+  .dot { margin-right: 6px; vertical-align: 1px; }
+  @media (max-width: 900px) {
+    .rowactions { grid-template-columns: repeat(2, max-content); }
+    .rowactions span.slot-kick { display: none; }
+    .toolbar .signout { margin-left: 0; }
+  }
   table.data th:last-child, table.data td:last-child { width: auto !important; }
   @media (max-width: 700px) { main.window { width: 100%; margin: 0; } }
 </style>
@@ -436,7 +453,7 @@ function renderPage(lang) {
     <div class="grow"><input type="text" id="filter" data-i18n-placeholder="filterPlaceholder" placeholder="${t.filterPlaceholder}" autocomplete="off"></div>
     <button type="button" id="refresh" data-i18n="btnRefresh">${t.btnRefresh}</button>
     <button type="button" id="create" class="primary" data-i18n="btnCreate">${t.btnCreate}</button>
-    <form method="post" action="logout" style="display:inline;margin:0"><button type="submit" data-i18n="btnLogout">${t.btnLogout}</button></form>
+    <form method="post" action="logout" class="signout"><button type="submit" data-i18n="btnLogout">${t.btnLogout}</button></form>
   </div>
 
   <div class="body">
@@ -444,10 +461,10 @@ function renderPage(lang) {
       <table class="data">
         <thead>
           <tr>
-            <th style="width:30%" data-i18n="thAccount">${t.thAccount}</th>
-            <th style="width:14%" data-i18n="thType">${t.thType}</th>
-            <th style="width:20%" data-i18n="thState">${t.thState}</th>
-            <th class="hide-sm" style="width:16%" data-i18n="thSession">${t.thSession}</th>
+            <th style="width:20%" data-i18n="thAccount">${t.thAccount}</th>
+            <th style="width:8%" data-i18n="thType">${t.thType}</th>
+            <th style="width:16%" data-i18n="thState">${t.thState}</th>
+            <th class="hide-sm" style="width:22%" data-i18n="thSession">${t.thSession}</th>
             <th style="width:20%"></th>
           </tr>
         </thead>
@@ -647,7 +664,13 @@ function render() {
       kickBtn.textContent = t.btnKick;
       kickBtn.title = t.btnKickHint;
       kickBtn.addEventListener('click', () => kick(u));
+      kickBtn.className = 'slot-kick';
       actions.appendChild(kickBtn);
+    } else {
+      // An empty slot, so every row's buttons stand in the same columns.
+      const gap = document.createElement('span');
+      gap.className = 'slot-kick';
+      actions.appendChild(gap);
     }
 
     const delBtn = document.createElement('button');
