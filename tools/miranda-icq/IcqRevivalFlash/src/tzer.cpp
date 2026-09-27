@@ -86,9 +86,9 @@ static CMStringA CleanBase(const char *szBase)
 	return ret;
 }
 
-static CMStringA TzerBase(const char *szProto)
+CMStringA ServerWebBase(const char *szProto, const char *szOverride, const char *szPath)
 {
-	CMStringA ret(CleanBase(ptrA(db_get_sa(0, szProto, "TzerBase"))));
+	CMStringA ret(CleanBase(ptrA(db_get_sa(0, szProto, szOverride))));
 	if (!ret.IsEmpty())
 		return ret + "/";
 
@@ -99,10 +99,15 @@ static CMStringA TzerBase(const char *szProto)
 	if (iColon != -1)
 		szHost.Truncate(iColon);
 	if (!szHost.IsEmpty())
-		return CMStringA(FORMAT, "http://%s:%d" TZER_PATH, szHost.c_str(), TZER_PORT);
+		return CMStringA(FORMAT, "http://%s:%d%s", szHost.c_str(), TZER_PORT, szPath);
 
 	ret = CleanBase(ptrA(db_get_sa(0, szProto, "WebBase")));
-	return ret.IsEmpty() ? ret : ret + TZER_PATH;
+	return ret.IsEmpty() ? ret : ret + szPath;
+}
+
+static CMStringA TzerBase(const char *szProto)
+{
+	return ServerWebBase(szProto, "TzerBase", TZER_PATH);
 }
 
 static bool CanSendTzers(MCONTACT hContact)

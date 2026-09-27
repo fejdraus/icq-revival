@@ -1291,6 +1291,32 @@ function serveFolderFile(ctx, prefix, files, names = PLAIN_NAME) {
   ctx.res.end(ctx.req.method === 'HEAD' ? undefined : file.body);
 }
 
+// The animated avatar gallery as data, /icq/avatars/list.json, for the
+// picker of Miranda NG's IcqRevivalFlash plugin: the movies this folder has,
+// with their thumbnails, author group (icq or user) and titles. The client
+// builds the movie and thumbnail addresses on /icq/avatars/ itself.
+function serveAvatarListJson(ctx) {
+  if (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD') {
+    ctx.res.writeHead(404, { 'content-length': 0 });
+    ctx.res.end();
+    return;
+  }
+  const body = Buffer.from(JSON.stringify({
+    avatars: avatarList.map((a) => ({
+      file: a.file,
+      thumb: a.thumb,
+      author: a.author,
+      title: { en: (a.title && a.title.en) || a.file, uk: (a.title && a.title.uk) || '' },
+    })),
+  }));
+  ctx.res.writeHead(200, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': body.length,
+    'cache-control': 'public, max-age=300',
+  });
+  ctx.res.end(ctx.req.method === 'HEAD' ? undefined : body);
+}
+
 function formatDuration(seconds, t) {
   const unit = (t || dict(FALLBACK_LANG)).unit;
   const s = Number(seconds) || 0;
@@ -2681,9 +2707,12 @@ const ACTIONS = {
   // An animated avatar or its thumbnail, the same way: /icq/avatars/pirate.swf.
   // With ?emotion=stam (or another of its labels) the movie comes with its
   // face on that mood already, for the user card's player (see moodMovie).
-  avatarfiles: (ctx) => (ctx.url.searchParams.has('emotion')
-    ? serveMoodMovie(ctx)
-    : serveFolderFile(ctx, /^\/icq\/avatars\//i, avatarFiles)),
+  avatarfiles: (ctx) => {
+    if (/^\/icq\/avatars\/list\.json$/i.test(ctx.path)) return serveAvatarListJson(ctx);
+    return ctx.url.searchParams.has('emotion')
+      ? serveMoodMovie(ctx)
+      : serveFolderFile(ctx, /^\/icq\/avatars\//i, avatarFiles);
+  },
 
   // Ruffle's web build, for the user card: /icq/ruffle/ruffle.js and the
   // files it loads itself.

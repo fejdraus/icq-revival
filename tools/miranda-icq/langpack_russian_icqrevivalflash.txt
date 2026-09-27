@@ -34,3 +34,38 @@ tZer не отправлен: учётная запись не в сети ил�
 Ты мне нравишься
 [I'm Sorry]
 Мне очень жаль
+
+[Animated avatar]
+Анимированный аватар
+[Preview]
+Просмотр
+[Set]
+Установить
+[Remove animated avatar]
+Убрать анимированный аватар
+[Close]
+Закрыть
+[Official]
+Официальные
+[User created]
+Пользовательские
+[Loading the server's gallery...]
+Загрузка галереи сервера...
+[The server's gallery could not be loaded.]
+Не удалось загрузить галерею сервера.
+[No animated avatar is set.]
+Анимированный аватар не установлен.
+[Now set: %s]
+Сейчас: %s
+[Now set: an animated avatar from elsewhere.]
+Сейчас: анимированный аватар не из галереи.
+[The animated avatar was set.]
+Анимированный аватар установлен.
+[The animated avatar was removed.]
+Анимированный аватар убран.
+[The account is offline.]
+Учётная запись не в сети.
+[The account did not take this avatar.]
+Учётная запись не приняла этот аватар.
+[The account has no sign-in server set.]
+У учётной записи не указан сервер входа.

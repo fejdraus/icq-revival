@@ -33,6 +33,8 @@ of the License.
 #include <m_message.h>
 #include <m_icolib.h>
 #include <m_imgsrvc.h>
+#include <m_json.h>
+#include <commctrl.h>
 
 #include "version.h"
 

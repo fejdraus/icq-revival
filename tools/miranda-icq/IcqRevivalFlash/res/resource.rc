@@ -1,3 +1,25 @@
 #include "..\src\resource.h"
+#include <winres.h>
+#include <commctrl.h>
 
 IDI_TZER ICON "tzer.ico"
+
+// The animated avatar picker (avatars.cpp); its preview is a window of this
+// plugin (FLASHVIEW_PREVIEW_CLASS, main.cpp).
+IDD_AVATARS DIALOGEX 0, 0, 330, 240
+STYLE DS_SETFONT | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+EXSTYLE WS_EX_APPWINDOW
+CAPTION "Animated avatar"
+FONT 8, "MS Shell Dlg", 0, 0, 0x1
+BEGIN
+    CONTROL         "", IDC_GROUPS, "SysTabControl32", WS_CLIPSIBLINGS | WS_TABSTOP, 7, 7, 220, 190
+    CONTROL         "", IDC_LIST, "SysListView32", LVS_ICON | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_AUTOARRANGE | WS_BORDER | WS_TABSTOP, 12, 24, 210, 168
+    LTEXT           "Preview", IDC_STATIC, 234, 7, 89, 10
+    CONTROL         "", IDC_PREVIEW, "IcqRevivalFlashPreview", 0, 238, 20, 80, 98
+    CTEXT           "", IDC_TITLE, 234, 122, 89, 20, SS_NOPREFIX
+    LTEXT           "", IDC_CURRENT, 234, 150, 89, 40, SS_NOPREFIX
+    LTEXT           "", IDC_STATUS, 7, 202, 316, 10, SS_NOPREFIX
+    PUSHBUTTON      "Set", IDC_SET, 7, 218, 70, 14, WS_DISABLED
+    PUSHBUTTON      "Remove animated avatar", IDC_REMOVE, 82, 218, 120, 14, WS_DISABLED
+    PUSHBUTTON      "Close", IDCANCEL, 263, 218, 60, 14
+END

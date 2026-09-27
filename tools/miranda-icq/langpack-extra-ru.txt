@@ -16,6 +16,8 @@
 
 [# Custom Status Icons #]
 Значки xСтатусов
+[Animated avatar...]
+Анимированный аватар…
 [Barbuda]
 Барбуда
 [Expand string edit]

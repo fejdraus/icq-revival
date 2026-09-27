@@ -27,10 +27,11 @@
   </ImportGroup>
   <ItemDefinitionGroup>
     <Link>
-      <AdditionalDependencies>uxtheme.lib;dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>uxtheme.lib;dwmapi.lib;comctl32.lib;libjson.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\avatars.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\tzer.cpp" />
     <ClCompile Include="src\stdafx.cxx">

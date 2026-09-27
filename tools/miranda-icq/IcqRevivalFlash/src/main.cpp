@@ -14,7 +14,9 @@ takes over the window procedure of the avatar control class instead
 (AVATAR_CONTROL_CLASS, AVS) and draws the movie in place of the picture. Every
 component that shows avatars through that control shows Flash avatars then:
 tabSRMM (the avatar under the message log and the one in the info panel),
-Scriver, the plain message window, the user info window.
+Scriver, the plain message window, the user info window. Not the own avatar
+on AVS's own pages (the owner's "Avatar" page): that is where the static
+picture is chosen, for every protocol, and it shows it as AVS always did.
 
 Where the movie comes from: our IcqOscarJ port keeps the ICQ 6 Flash avatar
 (BART type 8) apart from the picture and writes the address of its movie to
@@ -267,6 +269,9 @@ struct FlashView
 	char szProto[64] = "";     // own avatar of this account when hContact == 0
 
 	CMStringA szUrl;           // address of the movie shown (or waited for)
+	CMStringA szFixedUrl;      // bFixed: the movie this control was told to show
+	bool bFixed = false;       // a preview (FLASHVIEW_SETMOVIE), no contact or account
+	bool bAvsPage = false;     // a control on a page of AVS (the owner's "Avatar" page)
 	IUnknown *pUnk = nullptr;
 	IShockwaveFlash *pFlash = nullptr;
 	IViewObject *pView = nullptr;
@@ -284,6 +289,7 @@ struct FlashView
 };
 
 static WNDPROC g_origProc;
+static HINSTANCE g_hAvs; // the module of AVS, which owns the avatar control class
 static std::vector<FlashView *> g_views; // main thread only
 
 static void DestroyFlash(FlashView *v)
@@ -330,6 +336,8 @@ static void DestroyFlash(FlashView *v)
 // an own Flash avatar.
 static const char* ViewProto(FlashView *v)
 {
+	if (v->bFixed)
+		return nullptr;
 	if (v->hContact)
 		return Proto_GetBaseAccountName(v->hContact);
 	if (v->szProto[0])
@@ -347,6 +355,13 @@ static const char* ViewProto(FlashView *v)
 
 static CMStringA ViewUrl(FlashView *v)
 {
+	if (v->bFixed)
+		return v->szFixedUrl;
+
+	// the owner's picture as AVS sets it: no movie over it
+	if (v->bAvsPage && v->hContact == 0)
+		return CMStringA();
+
 	const char *szProto = ViewProto(v);
 	if (szProto == nullptr || *szProto == 0)
 		return CMStringA();
@@ -359,6 +374,9 @@ static CMStringA ViewUrl(FlashView *v)
 
 static int ViewStatus(FlashView *v)
 {
+	if (v->bFixed)
+		return ID_STATUS_ONLINE;
+
 	const char *szProto = ViewProto(v);
 	if (szProto == nullptr || *szProto == 0)
 		return ID_STATUS_OFFLINE;
@@ -683,16 +701,20 @@ static void DetachView(FlashView *v)
 	delete v;
 }
 
-static LRESULT CALLBACK AvatarControlProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+// The window procedure of both kinds of control that show movies: the avatar
+// controls of AVS (orig: theirs) and the picker's preview (orig: DefWindowProc).
+static LRESULT FlashControlProc(WNDPROC orig, HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	FlashView *v = (FlashView *)GetPropW(hwnd, VIEW_PROP);
 
 	switch (msg) {
 	case WM_NCCREATE:
 		{
-			LRESULT res = CallWindowProc(g_origProc, hwnd, msg, wParam, lParam);
+			LRESULT res = CallWindowProc(orig, hwnd, msg, wParam, lParam);
 			if (res) {
 				v = new FlashView(hwnd);
+				// on a page of AVS itself (see ViewUrl)
+				v->bAvsPage = orig == g_origProc && g_hAvs && ((CREATESTRUCT *)lParam)->hInstance == g_hAvs;
 				SetPropW(hwnd, VIEW_PROP, v);
 				g_views.push_back(v);
 			}
@@ -707,7 +729,7 @@ static LRESULT CALLBACK AvatarControlProc(HWND hwnd, UINT msg, WPARAM wParam, LP
 	case AVATAR_SETCONTACT:
 	case AVATAR_SETPROTOCOL:
 		{
-			LRESULT res = CallWindowProc(g_origProc, hwnd, msg, wParam, lParam);
+			LRESULT res = CallWindowProc(orig, hwnd, msg, wParam, lParam);
 			if (v && (msg == AVATAR_SETPROTOCOL || lParam != 0)) {
 				if (msg == AVATAR_SETCONTACT)
 					v->hContact = (MCONTACT)lParam;
@@ -719,6 +741,22 @@ static LRESULT CALLBACK AvatarControlProc(HWND hwnd, UINT msg, WPARAM wParam, LP
 			}
 			return res;
 		}
+
+	case FLASHVIEW_SETMOVIE:
+		if (v) {
+			const char *szUrl = (const char *)lParam;
+			v->bFixed = true;
+			v->hContact = 0;
+			v->szFixedUrl = (szUrl && (!_strnicmp(szUrl, "http://", 7) || !_strnicmp(szUrl, "https://", 8))) ? szUrl : "";
+			UpdateView(v);
+			InvalidateRect(hwnd, nullptr, TRUE);
+		}
+		return 0;
+
+	case FLASHVIEW_SETFACE:
+		if (v && wParam < _countof(g_faces))
+			SetFace(v, (int)wParam);
+		return 0;
 
 	case WM_TIMER:
 		if (wParam == LOAD_TIMER) {
@@ -754,7 +792,32 @@ static LRESULT CALLBACK AvatarControlProc(HWND hwnd, UINT msg, WPARAM wParam, LP
 		}
 		break;
 	}
-	return CallWindowProc(g_origProc, hwnd, msg, wParam, lParam);
+	return CallWindowProc(orig, hwnd, msg, wParam, lParam);
+}
+
+static LRESULT CALLBACK AvatarControlProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	return FlashControlProc(g_origProc, hwnd, msg, wParam, lParam);
+}
+
+// The picker's preview (avatars.cpp): a window of its own class rather than
+// an avatar control, which would paint AVS's own avatar text while it has no
+// movie. It shows nothing but the movie it is given (FLASHVIEW_SETMOVIE).
+static LRESULT CALLBACK PreviewProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	return FlashControlProc(DefWindowProcW, hwnd, msg, wParam, lParam);
+}
+
+static void RegisterPreviewClass()
+{
+	WNDCLASSEXW wc = { sizeof(wc) };
+	wc.style = CS_HREDRAW | CS_VREDRAW;
+	wc.lpfnWndProc = PreviewProc;
+	wc.hInstance = g_plugin.getInst();
+	wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+	wc.hbrBackground = (HBRUSH)(COLOR_3DFACE + 1);
+	wc.lpszClassName = FLASHVIEW_PREVIEW_CLASS;
+	RegisterClassExW(&wc);
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////
@@ -771,7 +834,7 @@ static void MIR_SYSCALL ApplyFaceJob(void *param)
 {
 	FaceJob *job = (FaceJob *)param;
 	for (auto *v : g_views) {
-		if (!v->pFlash)
+		if (!v->pFlash || v->bFixed)
 			continue;
 		if (job->hContact ? v->hContact == job->hContact : (v->hContact == 0 && !mir_strcmp(ViewProto(v), job->szProto)))
 			SetFace(v, job->face);
@@ -893,6 +956,12 @@ static bool HookAvatarControlClass()
 	}
 	g_origProc = (WNDPROC)SetClassLongPtrW(hwnd, GCLP_WNDPROC, (LONG_PTR)AvatarControlProc);
 	DestroyWindow(hwnd);
+
+	// AVS registers the class without its module (a global class): the module
+	// is the one its window procedure is in
+	HMODULE hAvs = nullptr;
+	if (g_origProc && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)g_origProc, &hAvs))
+		g_hAvs = hAvs;
 	return g_origProc != nullptr;
 }
 
@@ -907,14 +976,19 @@ static void UnhookAvatarControlClass()
 		DestroyWindow(hwnd);
 	}
 
-	// controls created meanwhile keep our procedure as their own
+	// controls created meanwhile keep our procedure as their own; a preview
+	// (its own class) is destroyed with its picker before this
 	while (!g_views.empty()) {
 		FlashView *v = g_views.back();
 		HWND h = v->hwnd;
 		DetachView(v);
+		wchar_t cls[64];
+		if (GetClassNameW(h, cls, _countof(cls)) && !mir_wstrcmp(cls, FLASHVIEW_PREVIEW_CLASS))
+			continue;
 		SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)g_origProc);
 		InvalidateRect(h, nullptr, TRUE);
 	}
+	UnregisterClassW(FLASHVIEW_PREVIEW_CLASS, g_plugin.getInst());
 }
 
 void AddIcqCapability(const char *szModule, const BYTE caps[0x10], const char *szName)
@@ -939,9 +1013,11 @@ static int OnModulesLoaded(WPARAM, LPARAM)
 	g_hNetlib = Netlib_RegisterUser(&nlu);
 
 	Tzers_ModulesLoaded();
+	Avatars_ModulesLoaded();
 
 	if (!HookAvatarControlClass())
 		return 0;
+	RegisterPreviewClass();
 
 	// tell ICQ servers that this client plays Flash avatars
 	for (auto &pa : Accounts())
@@ -1085,12 +1161,14 @@ int CMPlugin::Load()
 	ClearOldMark(L"Plugins\\FlashAvatars.dll", bOurList);
 	ClearOldMark(L"Languages\\langpack_russian_flashavatars.txt", bOurList);
 	MigrateOldName();
+	Avatars_Load(); // its service before the accounts build their menus
 	HookEvent(ME_SYSTEM_MODULESLOADED, OnModulesLoaded);
 	return 0;
 }
 
 int CMPlugin::Unload()
 {
+	Avatars_Unload();
 	Tzers_Unload();
 	UnhookAvatarControlClass();
 	if (g_hNetlib)
