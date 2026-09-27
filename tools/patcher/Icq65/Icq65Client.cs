@@ -792,6 +792,23 @@ namespace IcqRevival.Patch
             return code == 0 ? null : "the Flash type library could not be unregistered (regsvr32 exit code " + code + ")";
         }
 
+        // The still pictures ICQ 6.5 keeps of the animated avatars it has
+        // shown, %APPDATA%\ICQ\BART\613\<hash of the avatar>, next to the
+        // avatars themselves in BART\8. The player that is in place draws them,
+        // and the client keeps them for good: the ones an earlier build of ours
+        // drew stay upside down or squeezed, and the original Flash drew none.
+        // Whenever the player changes they go, and the client draws them again
+        // from the avatars the next time it shows them. The avatars stay.
+        static void ClearFlashSnapshots()
+        {
+            string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ICQ", "BART", "613");
+            if (!Directory.Exists(dir)) return;
+            foreach (string file in Directory.GetFiles(dir))
+            {
+                try { File.Delete(file); } catch { }
+            }
+        }
+
         // Makes the DLL and its registration match the selection (the list is
         // done with the other configuration files). A line for the report when
         // something could not be done, or null.
@@ -806,6 +823,7 @@ namespace IcqRevival.Patch
                 if (!IsOurPlayer(path) || !AllSuffixes.Any(x => PatchFiles.Exists(path + x))) return null;
                 string note = UnregisterPlayer();
                 RestoreFromBackup(path);
+                ClearFlashSnapshots();
                 return note;
             }
             if (state == "missing") return PlayerFile + " is not in the client - tZers player left out";
@@ -814,6 +832,7 @@ namespace IcqRevival.Patch
             {
                 if (!IsOurPlayer(path)) PatchFiles.BackupOnce(path, Suffix);
                 PatchFiles.Copy(PlayerSource, path, true);
+                ClearFlashSnapshots();
             }
             if (!IsOurPlayer(path)) return PlayerFile + " could not be put in - tZers player left out";
             if (!TypeLibIsOurs())
