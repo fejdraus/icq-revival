@@ -12,7 +12,7 @@ WorkingDirectory=/opt/oscar-register
 Environment="PORT=8099"
 Environment="HOST=0.0.0.0"
 Environment="API_BASE=http://127.0.0.1:8090"
-Environment="OSCAR_HOST=chat.example.ts.net"
+Environment="OSCAR_HOST=icq.example.com"
 Environment="OSCAR_PORT=5190"
 Environment="OSCAR_PORT_SSL=5193"
 Environment="DB_PATH=/var/lib/open-oscar-server/oscar.sqlite"
@@ -24,7 +24,7 @@ ReadWritePaths=/var/lib/open-oscar-server
 # каталог создаёт сам systemd и отдаёт его сервису на запись.
 StateDirectory=oscar-register
 Environment="RECOVERY_DB=/var/lib/oscar-register/recovery.sqlite"
-Environment="PUBLIC_BASE_URL=https://chat.example.ts.net:8444"
+Environment="PUBLIC_BASE_URL=https://icq.example.com:8444"
 # Пароль почтового ящика держим отдельно, с правами 600.
 EnvironmentFile=-/etc/oscar-register/mail.env
 ExecStart=/usr/bin/node /opt/oscar-register/server.js

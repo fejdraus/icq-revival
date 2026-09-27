@@ -14,7 +14,7 @@ Environment="PORT=8101"
 # ссылки ведут на имя хоста, а не на 127.0.0.1.
 Environment="BIND=0.0.0.0"
 Environment="MGMT_API=http://127.0.0.1:8090"
-Environment="REGISTER_BASE=https://chat.example.ts.net:8444"
+Environment="REGISTER_BASE=https://icq.example.com:8444"
 ExecStart=/usr/bin/node /opt/oscar-legacy-web/server.js
 # Перечитать services.json и topics.json можно без перезапуска.
 ExecReload=/bin/kill -HUP $MAINPID

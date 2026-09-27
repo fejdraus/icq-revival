@@ -37,7 +37,7 @@
     "Substitutions in target: {registerBase}, {q}, {host}, {path}."
   ],
   "serverName": "ICQ Revival",
-  "registerBase": "https://chat.example.ts.net:8444",
+  "registerBase": "https://icq.example.com:8444",
   "mgmtApi": "http://127.0.0.1:8090",
   "_links": "How the pages link to each other. The default paths suit the \"own address\" mode; when the ICQ.com names are intercepted, replace them with http://wwp.icq.com/wwp/.",
   "links": {
@@ -382,5 +382,5 @@
     "mirandaPlugin": "TODO: the address of the Miranda NG plugin, IcqOscarJ.dll for x32 and x64 (tools/miranda-icq/build)"
   },
   "_oscarHost": "The server address for clients, shown in the \"how to start\" guide. Leave empty to drop that section.",
-  "oscarHost": "chat.example.ts.net"
+  "oscarHost": "icq.example.com"
 }

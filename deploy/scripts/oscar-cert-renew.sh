@@ -8,7 +8,7 @@
 # в контейнер по отдельности, и замена его новым inode контейнеру не видна.
 set -euo pipefail
 
-DOMAIN="${OSCAR_TLS_DOMAIN:-chat.example.ts.net}"
+DOMAIN="${OSCAR_TLS_DOMAIN:?set OSCAR_TLS_DOMAIN to the server's host name}"
 CERT="/etc/oscar-tls/ts-cert.pem"
 KEY="/etc/oscar-tls/ts-key.pem"
 NGINX_CERTS="/etc/oscar-nginx/certs"

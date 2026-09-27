@@ -12,7 +12,7 @@
 
 ## Что где развёрнуто
 
-Хост `junior` (SSH-хост `lan-43`, 192.168.1.43, в тайлнете — `chat.example.ts.net`,
+Хост `junior` (SSH-хост `lan-43`, 192.168.1.43, в тайлнете — `<имя в тайлнете>`,
 100.77.29.116).
 
 | что | где | порт |
@@ -167,7 +167,7 @@ address that was not validated.
 
 ### Страница регистрации — `deploy/oscar-register/`
 
-`https://chat.example.ts.net:8444/` (внутри тайлнета; HTTP-порт 8099 тоже отвечает).
+`https://<имя в тайлнете>:8444/` (внутри тайлнета; HTTP-порт 8099 тоже отвечает).
 
 Разделы:
 
@@ -279,7 +279,7 @@ SMTP-клиент написан вручную (`mail.js`): EHLO, STARTTLS, AUT
 
 ## TLS и сертификаты
 
-`tailscale cert chat.example.ts.net` выдаёт настоящий Let's Encrypt, обновление —
+`tailscale cert <имя в тайлнете>` выдаёт настоящий Let's Encrypt, обновление —
 таймером `oscar-cert-renew` раз в неделю (`deploy/scripts/oscar-cert-renew.sh`).
 
 Для AIM пришлось выпустить **свой корневой RSA CA**: сертификат Tailscale подписан

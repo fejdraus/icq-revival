@@ -6,4 +6,4 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/oscar-cert-renew.sh
-Environment="OSCAR_TLS_DOMAIN=chat.example.ts.net"
+Environment="OSCAR_TLS_DOMAIN=icq.example.com"
