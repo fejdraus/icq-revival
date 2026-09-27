@@ -82,6 +82,9 @@ services:
       - path: ./secrets/mail.env
         required: false
     environment:
+      # The admin panel, linked at the foot of the pages; it is reached
+      # through the SSH tunnel described at the admin service.
+      ADMIN_URL: http://127.0.0.1:8100/
       PORT: "8099"
       HOST: 127.0.0.1          # published through nginx on 443 only
       API_BASE: http://127.0.0.1:8090

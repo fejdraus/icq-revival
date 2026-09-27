@@ -25,6 +25,18 @@ const DB_PATH = process.env.DB_PATH || '/var/lib/open-oscar-server/oscar.sqlite'
 // В базу сервера их класть нельзя: поле почты в профиле ICQ ищется
 // через каталог, то есть адрес стал бы публичным.
 const RECOVERY_DB = process.env.RECOVERY_DB || '/var/lib/oscar-register/recovery.sqlite';
+// The admin panel, linked at the foot of every page when set. It listens on
+// the machine only (deploy/docker-compose.yaml), so the link opens it through
+// the SSH tunnel its comment describes; empty: no link.
+const ADMIN_URL = (process.env.ADMIN_URL || '').trim();
+// The admin panel's entry in a row of page links, with its separator.
+function adminLink(t) {
+  if (!ADMIN_URL) return '';
+  return `
+      &nbsp;·&nbsp;
+      <a href="${ADMIN_URL.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)}" data-i18n="linkToAdmin">${t.linkToAdmin}</a>`;
+}
+
 const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || `http://${OSCAR_HOST}:${PORT}`).replace(/\/+$/, '');
 const TOKEN_TTL_MS = 30 * 60 * 1000;
 // Письма шлём редко: не чаще раза в минуту и трёх раз в час на номер.
@@ -92,6 +104,7 @@ const I18N = {
     errOffline: 'The registration service is unavailable.',
     linkToChange: 'Change password',
     linkToProfile: 'My profile',
+    linkToAdmin: 'Admin panel',
     linkToRegister: 'Get a number',
     chDocTitle: 'Change ICQ password',
     chWinTitle: 'Change password',
@@ -229,6 +242,7 @@ const I18N = {
     errOffline: 'Сервіс реєстрації недоступний.',
     linkToChange: 'Змінити пароль',
     linkToProfile: 'Мій профіль',
+    linkToAdmin: 'Адмінка',
     linkToRegister: 'Отримати номер',
     chDocTitle: 'Зміна пароля ICQ',
     chWinTitle: 'Зміна пароля',
@@ -908,7 +922,7 @@ function renderPage(lang) {
       &nbsp;·&nbsp;
       <a href="/recover" data-i18n="linkToRecover">${t.linkToRecover}</a>
       &nbsp;·&nbsp;
-      <a href="/account" data-i18n="linkToAccount">${t.linkToAccount}</a>
+      <a href="/account" data-i18n="linkToAccount">${t.linkToAccount}</a>${adminLink(t)}
     </div>
   </div>
 
@@ -1163,7 +1177,7 @@ function renderRecoverPage(lang, token) {
       &nbsp;·&nbsp;
       <a href="/profile" data-i18n="linkToProfile">${t.linkToProfile}</a>
       &nbsp;·&nbsp;
-      <a href="/account" data-i18n="linkToAccount">${t.linkToAccount}</a>
+      <a href="/account" data-i18n="linkToAccount">${t.linkToAccount}</a>${adminLink(t)}
     </div>
   </div>
 
@@ -1352,7 +1366,7 @@ function renderVerifyPage(lang, uin, failText) {
       &nbsp;·&nbsp;
       <a href="/profile">${t.linkToProfile}</a>
       &nbsp;·&nbsp;
-      <a href="/recover">${t.linkToRecover}</a>
+      <a href="/recover">${t.linkToRecover}</a>${adminLink(t)}
     </div>
   </div>
 
@@ -1435,7 +1449,7 @@ function renderAccountPage(lang) {
       &nbsp;·&nbsp;
       <a href="/profile" data-i18n="linkToProfile">${t.linkToProfile}</a>
       &nbsp;·&nbsp;
-      <a href="/recover" data-i18n="linkToRecover">${t.linkToRecover}</a>
+      <a href="/recover" data-i18n="linkToRecover">${t.linkToRecover}</a>${adminLink(t)}
     </div>
   </div>
 
