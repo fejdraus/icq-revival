@@ -235,7 +235,7 @@ function checkRow(id, labelKey, t, hintKey) {
 
 // deps: всё, что страница берёт у сервиса, — оформление, словарь, языки.
 function renderProfilePage(lang, deps) {
-  const { STYLE, header, footer, I18N, LANGS, PASS_MAX, EMAIL_MAX, serializeI18N } = deps;
+  const { STYLE, header, footer, I18N, LANGS, PASS_MAX, EMAIL_MAX, serializeI18N, adminLink } = deps;
   const t = I18N[lang];
 
   const basic = BASIC_TEXT.map(([k, l, m]) => textRow('b', k, l, m, t)).join('\n');
@@ -412,7 +412,7 @@ function renderProfilePage(lang, deps) {
       &nbsp;·&nbsp;
       <a href="/recover" data-i18n="linkToRecover">${esc(t.linkToRecover)}</a>
       &nbsp;·&nbsp;
-      <a href="/account" data-i18n="linkToAccount">${esc(t.linkToAccount)}</a>
+      <a href="/account" data-i18n="linkToAccount">${esc(t.linkToAccount)}</a>${adminLink ? adminLink(t) : ''}
     </div>
 
     ${footer({ statusId: 'status', langsId: 'langs' })}

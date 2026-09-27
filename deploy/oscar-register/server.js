@@ -1683,7 +1683,7 @@ const server = http.createServer(async (req, res) => {
         Vary: 'Accept-Language',
       });
       res.end(renderProfilePage(lang, {
-        STYLE, header, footer, I18N, LANGS, PASS_MAX, EMAIL_MAX, serializeI18N,
+        STYLE, header, footer, I18N, LANGS, PASS_MAX, EMAIL_MAX, serializeI18N, adminLink,
       }));
       return;
     }
