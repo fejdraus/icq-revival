@@ -848,7 +848,7 @@ func TestBuddyNotifier_BroadcastBuddyArrived(t *testing.T) {
 			},
 		},
 		{
-			// Miranda with the FlashAvatars plugin plays the Flash avatar where
+			// Miranda with the IcqRevivalFlash plugin plays the Flash avatar where
 			// it can and shows the still everywhere else
 			name:       "another Flash avatar player gets the Flash avatar and its still",
 			screenName: state.NewIdentScreenName("me"),

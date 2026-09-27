@@ -219,8 +219,8 @@ var (
 	// FlashAvatarCaps.
 	CapICQ6HTML = uuid.MustParse("0138CA7B-769A-4915-88F2-13FC00979EA8")
 	// CapFlashAvatarPlayer indicates a client other than ICQ 6 that plays
-	// ICQ 6 Flash avatars: Miranda NG with the ICQ Revival FlashAvatars
-	// plugin (tools/miranda-icq/FlashAvatars) announces it while the plugin
+	// ICQ 6 Flash avatars: Miranda NG with the ICQ Revival Flash plugin
+	// (tools/miranda-icq/IcqRevivalFlash) announces it while the plugin
 	// is loaded. See HasFlashAvatarCaps.
 	CapFlashAvatarPlayer = uuid.MustParse("B9E03A0C-B33E-4B18-BC0B-7BB5903129AE")
 

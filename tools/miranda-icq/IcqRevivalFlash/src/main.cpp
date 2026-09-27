@@ -1,6 +1,10 @@
 /*
-FlashAvatars: ICQ 6 animated avatars in Miranda NG, played by the Ruffle-based
-Flash engine (tools/icq65/flashplayer).
+IcqRevivalFlash: ICQ 6 animated avatars in Miranda NG, played by the
+Ruffle-based Flash engine (tools/icq65/flashplayer).
+
+It was called FlashAvatars.dll until the name turned out to be taken:
+Miranda NG's update list still deletes "flashavatars.dll", the plugin it
+removed in 2014. Settings of the old name are moved over once (MigrateOldName).
 
 Based on the FlashAvatars plugin (C) 2006 Big Muscle, removed from Miranda NG
 in 2014. That plugin offered services ("FlashAvatar/Make", ...) which the
@@ -66,7 +70,7 @@ static const BYTE capFlashAvatars[0x10] = {
 
 /////////////////////////////////////////////////////////////////////////////////////////
 // Logging: the network log (Options - Network - Log), the debugger, and the
-// file named by the FLASHAVATARS_LOG environment variable.
+// file named by the ICQREVIVALFLASH_LOG environment variable.
 
 HNETLIBUSER g_hNetlib;
 
@@ -82,11 +86,11 @@ void Log(const char *fmt, ...)
 		Netlib_Log(g_hNetlib, buf);
 
 	char line[1100];
-	mir_snprintf(line, "FlashAvatars: %s\n", buf);
+	mir_snprintf(line, "IcqRevivalFlash: %s\n", buf);
 	OutputDebugStringA(line);
 
 	wchar_t path[MAX_PATH];
-	if (GetEnvironmentVariableW(L"FLASHAVATARS_LOG", path, _countof(path))) {
+	if (GetEnvironmentVariableW(L"ICQREVIVALFLASH_LOG", path, _countof(path))) {
 		FILE *f = _wfopen(path, L"ab");
 		if (f) {
 			SYSTEMTIME st;
@@ -251,7 +255,7 @@ public:
 /////////////////////////////////////////////////////////////////////////////////////////
 // One per avatar control
 
-#define VIEW_PROP     L"FlashAvatars.View"
+#define VIEW_PROP     L"IcqRevivalFlash.View"
 #define LOAD_TIMER    0x4641   // AVS uses timer 0 for animated GIFs
 #define LOAD_TICK     100
 #define LOAD_TIMEOUT  20000
@@ -931,7 +935,7 @@ static int OnModulesLoaded(WPARAM, LPARAM)
 	NETLIBUSER nlu = {};
 	nlu.flags = NUF_OUTGOING | NUF_HTTPCONNS | NUF_UNICODE;
 	nlu.szSettingsModule = MODULENAME;
-	nlu.szDescriptiveName.w = TranslateT("Flash avatars");
+	nlu.szDescriptiveName.w = TranslateT("ICQ Revival Flash");
 	g_hNetlib = Netlib_RegisterUser(&nlu);
 
 	Tzers_ModulesLoaded();
@@ -961,7 +965,7 @@ static int OnModulesLoaded(WPARAM, LPARAM)
 // marks are taken back so that it updates our files too. Every start, written
 // only when they change.
 
-#define OUR_MODULE L"Plugins\\FlashAvatars.dll"
+#define OUR_MODULE L"Plugins\\IcqRevivalFlash.dll"
 
 static void MarkForUpdater(const wchar_t *pwszRelPath, bool bProtect)
 {
@@ -991,12 +995,82 @@ static void MarkModuleForUpdater(HINSTANCE hInst, bool bOurList)
 	}
 }
 
+// A file of the old name (up to 1.0 this was FlashAvatars.dll): our list moves
+// it to the new name, and a mark left on it would keep that from happening.
+// So the mark goes while our list is used or once the file is gone; a file
+// still in place under the Miranda NG list keeps it, as that list deletes
+// "flashavatars.dll".
+static void ClearOldMark(const wchar_t *pwszRelPath, bool bOurList)
+{
+	if (!bOurList) {
+		wchar_t wszPath[MAX_PATH];
+		if (!GetModuleFileNameW(nullptr, wszPath, MAX_PATH))
+			return;
+		wchar_t *p = wcsrchr(wszPath, '\\');
+		if (p == nullptr)
+			return;
+		wcsncpy_s(p + 1, MAX_PATH - (p + 1 - wszPath), pwszRelPath, _TRUNCATE);
+		if (GetFileAttributesW(wszPath) != INVALID_FILE_ATTRIBUTES)
+			return;
+	}
+
+	CMStringA szKey(pwszRelPath);
+	szKey.MakeLower();
+	db_unset(0, "PluginUpdaterFiles", szKey);
+}
+
 static bool UpdaterUsesOurList()
 {
 	if (db_get_b(0, "PluginUpdater", "UpdateMode", 0xFF) != 0)
 		return false;
 	ptrA szCur(db_get_sa(0, "PluginUpdater", "UpdateURL")), szOurs(db_get_sa(0, "IcqRevival", "UpdateURL"));
 	return szCur && szOurs && *szOurs && !mir_strcmp(szCur, szOurs);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////
+// Up to 1.0 the plugin was FlashAvatars.dll with the settings module
+// "FlashAvatars". Its settings (the network log options among them), the
+// place of its message window button and a custom tZers icon move to the new
+// names once; what is already set under the new name stays.
+
+#define OLD_MODULE "FlashAvatars"
+
+static int CollectSetting(const char *szSetting, void *param)
+{
+	((LIST<char> *)param)->insert(mir_strdup(szSetting));
+	return 0;
+}
+
+static void MoveSetting(const char *szFromModule, const char *szFrom, const char *szToModule, const char *szTo)
+{
+	DBVARIANT dbv;
+	if (db_get(0, szFromModule, szFrom, &dbv))
+		return;
+	DBVARIANT dbvNew;
+	if (db_get(0, szToModule, szTo, &dbvNew))
+		db_set(0, szToModule, szTo, &dbv);
+	else
+		db_free(&dbvNew);
+	db_free(&dbv);
+	db_unset(0, szFromModule, szFrom);
+}
+
+static void MigrateOldName()
+{
+	LIST<char> arSettings(10);
+	db_enum_settings(0, CollectSetting, OLD_MODULE, &arSettings);
+	for (auto &it : arSettings) {
+		MoveSetting(OLD_MODULE, it, MODULENAME, it);
+		mir_free(it);
+	}
+	if (arSettings.getCount()) {
+		db_delete_module(0, OLD_MODULE);
+		Log("settings of %s moved to %s", OLD_MODULE, MODULENAME);
+	}
+
+	MoveSetting("SRMM_Toolbar", OLD_MODULE "_1", "SRMM_Toolbar", MODULENAME "_1");
+	MoveSetting("TabSRMM_Toolbar", OLD_MODULE "_1", "TabSRMM_Toolbar", MODULENAME "_1");
+	MoveSetting("SkinIcons", OLD_MODULE "_tzer", "SkinIcons", MODULENAME "_tzer");
 }
 
 int CMPlugin::Load()
@@ -1006,7 +1080,11 @@ int CMPlugin::Load()
 	bool bOurList = UpdaterUsesOurList();
 	MarkModuleForUpdater(g_plugin.getInst(), bOurList);
 	MarkForUpdater(L"Libs\\FlashPlayerControl.dll", !bOurList);
-	MarkForUpdater(L"Languages\\langpack_russian_flashavatars.txt", !bOurList);
+	MarkForUpdater(L"Languages\\langpack_russian_icqrevivalflash.txt", !bOurList);
+
+	ClearOldMark(L"Plugins\\FlashAvatars.dll", bOurList);
+	ClearOldMark(L"Languages\\langpack_russian_flashavatars.txt", bOurList);
+	MigrateOldName();
 	HookEvent(ME_SYSTEM_MODULESLOADED, OnModulesLoaded);
 	return 0;
 }

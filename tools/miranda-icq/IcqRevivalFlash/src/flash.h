@@ -1,5 +1,5 @@
 /*
-FlashAvatars: what the avatar part (main.cpp) and the tZers (tzer.cpp) share:
+IcqRevivalFlash: what the avatar part (main.cpp) and the tZers (tzer.cpp) share:
 the engine, the network user, the log and the movie cache.
 
 This program is free software; you can redistribute it and/or

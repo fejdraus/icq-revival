@@ -10,7 +10,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const {
-  createMirror, readZip, writeZip, filterRules, withIncludes, packagePath, wildMatch,
+  createMirror, readZip, writeZip, parseHashes, filterRules, withIncludes, packagePath, wildMatch,
 } = require('./miranda-updates.js');
 
 const crcHex = (b) => zlib.crc32(b).toString(16).padStart(8, '0');
@@ -46,7 +46,7 @@ async function get(url) {
   return { status: res.status, body: Buffer.from(await res.arrayBuffer()) };
 }
 
-const LANGPACK = Buffer.from('Miranda Language Pack Version 1\r\n[Hello]\r\nПривет\r\n', 'utf8');
+const LANGPACK = Buffer.from('Miranda Language Pack Version 1\r\n[Hello]\r\nПривет\r\n#include langpack_russian_flashavatars.txt\r\n', 'utf8');
 const STOCK_ICQ = writeZip([['Plugins/IcqOscarJ.dll', Buffer.from('stock')]]);
 const DUMMY = writeZip([['Plugins/Dummy.dll', Buffer.from('dummy v2')]]);
 const LANGPACK_ZIP = writeZip([['Languages/langpack_russian.txt', LANGPACK]]);
@@ -60,7 +60,8 @@ function upstreamFiles() {
     'Core\\StdMsg.dll 44444444444444444444444444444444 00000000',
   ].join('\r\n') + '\r\n';
   const rules = {
-    rules: { 'IcqOscarJ.dll': null, 'Flash*.dll': null, 'ICQ.dll': 'Plugins\\IcqOscarJ.dll', 'Obsolete.dll': null },
+    // Miranda NG's real rules delete "flashavatars.dll", the old name of ours
+    rules: { 'IcqOscarJ.dll': null, 'flashavatars.dll': null, 'ICQ.dll': 'Plugins\\IcqOscarJ.dll', 'Obsolete.dll': null },
     packets: [{ module: 'Plugins\\IcqOscarJ.dll', depends: ['Libs\\x.mir'] }, { module: 'Plugins\\Dummy.dll', depends: [] }],
   };
   const hz = writeZip([['hashes.txt', Buffer.from(hashes, 'latin1')], ['rules.txt', Buffer.from(JSON.stringify(rules))]]);
@@ -76,7 +77,8 @@ function upstreamFiles() {
 function ourPackages() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mirpkg-'));
   const files = [];
-  for (const [name, data] of [['Plugins\\IcqOscarJ.dll', 'our icq'], ['Plugins\\FlashAvatars.dll', 'our flash']]) {
+  for (const [name, data] of [['Plugins\\IcqOscarJ.dll', 'our icq'], ['Plugins\\IcqRevivalFlash.dll', 'our flash'],
+    ['Languages\\langpack_russian_icqrevivalflash.txt', 'our translation']]) {
     const rel = `${name.replace(/\.[^.]+$/, '').replace(/\\/g, '/')}.zip`;
     const body = writeZip([[name.replace(/\\/g, '/'), Buffer.from(data)]]);
     fs.mkdirSync(path.join(dir, 'x32', path.dirname(rel)), { recursive: true });
@@ -85,7 +87,12 @@ function ourPackages() {
   }
   fs.writeFileSync(path.join(dir, 'x32', 'manifest.json'), JSON.stringify({
     files,
-    langpackIncludes: { 'Languages\\langpack_russian.txt': ['#include langpack_russian_icq.txt'] },
+    langpackIncludes: {
+      'Languages\\langpack_russian.txt': {
+        add: ['#include langpack_russian_icq.txt', '#include langpack_russian_icqrevivalflash.txt'],
+        drop: ['#include langpack_russian_flashavatars.txt'],
+      },
+    },
   }));
   return { dir, files };
 }
@@ -111,9 +118,28 @@ test('filterRules drops what touches our files and keeps the rest', () => {
   assert.deepEqual(out.packets, [{ module: 'Plugins\\Dummy.dll' }]);
 });
 
+test('filterRules keeps a rule that leaves our file where it is', () => {
+  const out = filterRules({
+    rules: { 'langpack_*.txt': 'Languages\\*', 'langpack_russian_icq.txt': 'Other\\x.txt', 'flashavatars.dll': null },
+  }, ['Languages\\langpack_russian_icq.txt', 'Plugins\\FlashAvatars.dll'], { 'FlashAvatars.dll': 'Plugins\\IcqRevivalFlash.dll' });
+  assert.deepEqual(out.rules, { 'FlashAvatars.dll': 'Plugins\\IcqRevivalFlash.dll', 'langpack_*.txt': 'Languages\\*' });
+});
+
+test('parseHashes reads upstream\'s own spacing', () => {
+  const { lines } = parseHashes('Miranda32.exe F3353902E3F6CEA6934826FD84D0B6C5  7F3D2D33 \r\n; c\r\n');
+  assert.equal(lines[0].name, 'Miranda32.exe');
+  assert.equal(lines[0].hash, 'f3353902e3f6cea6934826fd84d0b6c5');
+  assert.equal(lines[0].crc, '7F3D2D33');
+  assert.equal(lines[1].name, undefined);
+});
+
 test('withIncludes appends only the missing lines, in the file\'s line endings', () => {
   assert.equal(withIncludes('a\r\nb', ['#include x.txt']), 'a\r\nb\r\n#include x.txt\r\n');
   assert.equal(withIncludes('a\n#include X.txt\n', ['#include x.txt']), 'a\n#include X.txt\n');
+  assert.equal(withIncludes('a\r\n#include old.txt\r\nb\r\n', { add: ['#include new.txt'], drop: ['#include OLD.txt'] }),
+    'a\r\nb\r\n#include new.txt\r\n');
+  assert.equal(withIncludes('a\n#include new.txt\n', { add: ['#include new.txt'], drop: ['#include old.txt'] }),
+    'a\n#include new.txt\n');
 });
 
 test('zip round trip', () => {
@@ -136,12 +162,20 @@ test('the list: our lines in, stock ones out, rules cleaned, translation patched
   const lines = entries.get('hashes.txt').toString('latin1').split('\r\n');
   assert.ok(lines.includes('; upstream'));
   assert.ok(lines.includes(`Plugins\\IcqOscarJ.dll ${files[0].hash} ${files[0].crc}`));
-  assert.ok(lines.includes(`Plugins\\FlashAvatars.dll ${files[1].hash} ${files[1].crc}`));
+  assert.ok(lines.includes(`Plugins\\IcqRevivalFlash.dll ${files[1].hash} ${files[1].crc}`));
+  assert.ok(!lines.some((l) => /flashavatars/i.test(l)), 'nothing under the old name');
   assert.ok(!lines.some((l) => l.includes('22222222')), 'the stock line is gone');
   assert.ok(lines.some((l) => l.startsWith('Plugins\\Dummy.dll 1111')));
 
   const rules = JSON.parse(entries.get('rules.txt').toString());
-  assert.deepEqual(rules.rules, { 'Obsolete.dll': null });
+  // The old name moves to the new one instead of being deleted; ours first,
+  // since PluginUpdater takes the first rule that matches.
+  assert.deepEqual(rules.rules, {
+    'FlashAvatars.dll': 'Plugins\\IcqRevivalFlash.dll',
+    'langpack_russian_flashavatars.txt': 'Languages\\langpack_russian_icqrevivalflash.txt',
+    'Obsolete.dll': null,
+  });
+  assert.deepEqual(Object.keys(rules.rules)[0], 'FlashAvatars.dll');
   assert.deepEqual(rules.packets.map((p) => p.module), ['Plugins\\Dummy.dll']);
 
   // The translation: upstream's plus our include, hash and crc of what is served.
@@ -152,7 +186,8 @@ test('the list: our lines in, stock ones out, rules cleaned, translation patched
   assert.equal(crcHex(pkg.body), crc);
   const text = readZip(pkg.body).get('Languages/langpack_russian.txt');
   assert.equal(md5(text), hash);
-  assert.ok(text.toString('utf8').endsWith('Привет\r\n#include langpack_russian_icq.txt\r\n'));
+  assert.ok(text.toString('utf8').endsWith(
+    'Привет\r\n#include langpack_russian_icq.txt\r\n#include langpack_russian_icqrevivalflash.txt\r\n'));
 
   // Our package, whatever the case of the file name.
   const ours = await get(`${srv.url}/x32/Plugins/icqoscarj.zip`);

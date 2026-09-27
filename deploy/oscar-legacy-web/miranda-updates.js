@@ -10,15 +10,20 @@
 // /miranda/stable/x32 and /x64 here are such a base. hashes.zip is the
 // upstream one (stable channel), cached, with our lines put in:
 //
-//   - our files (Plugins\IcqOscarJ.dll, Plugins\FlashAvatars.dll,
+//   - our files (Plugins\IcqOscarJ.dll, Plugins\IcqRevivalFlash.dll,
 //     Libs\FlashPlayerControl.dll, their translations) with the hashes of our
 //     builds, so PluginUpdater offers our build and never a stock one;
-//   - the rules that would delete or rename them are dropped;
+//   - the rules that would delete or rename them are dropped, and so are the
+//     ones for the old name of the Flash plugin, FlashAvatars.dll: Miranda NG
+//     deletes "flashavatars.dll", its own plugin of that name removed in 2014.
+//     A rename rule of ours moves the old file and its translation to the new
+//     names instead (RENAMES); PluginUpdater only updates files that are in
+//     place, so a rename is what carries an existing install over;
 //   - the main Russian translation is served with the #include lines of our
-//     translations appended, since the stock one does not have them and an
-//     update would otherwise cut our plugins' translations off. When its
-//     package cannot be fetched, its line is left out and the installed file
-//     is kept as it is.
+//     translations appended (and the one for the old name taken out), since
+//     the stock one does not have them and an update would otherwise cut our
+//     plugins' translations off. When its package cannot be fetched, its line
+//     is left out and the installed file is kept as it is.
 //
 // Our packages and their hashes come ready-made from
 // tools/miranda-icq/make-update-packages.py (the hash is PluginUpdater's own
@@ -51,18 +56,33 @@ const PLATFORMS = ['x32', 'x64'];
 // them. manifest.json may add names.
 const OUR_FILES = [
   'Plugins\\IcqOscarJ.dll',
-  'Plugins\\FlashAvatars.dll',
+  'Plugins\\IcqRevivalFlash.dll',
   'Libs\\FlashPlayerControl.dll',
   'Languages\\langpack_russian_icq.txt',
+  'Languages\\langpack_russian_icqrevivalflash.txt',
+  // the old names, up to 1.0 of the Flash plugin
+  'Plugins\\FlashAvatars.dll',
   'Languages\\langpack_russian_flashavatars.txt',
 ];
 
-// The lines our translations need in the main one (see withIncludes).
+// Old file name (as rules.txt matches it: the bare name) -> the new path.
+// PluginUpdater moves the installed file to the new name and updates it by
+// the new name's line. Put in only when there is a package for the new name.
+const RENAMES = {
+  'FlashAvatars.dll': 'Plugins\\IcqRevivalFlash.dll',
+  'langpack_russian_flashavatars.txt': 'Languages\\langpack_russian_icqrevivalflash.txt',
+};
+
+// The lines our translations need in the main one, and the ones of old names
+// to take out of it (see withIncludes).
 const LANGPACK_INCLUDES = {
-  'Languages\\langpack_russian.txt': [
-    '#include langpack_russian_icq.txt',
-    '#include langpack_russian_flashavatars.txt',
-  ],
+  'Languages\\langpack_russian.txt': {
+    add: [
+      '#include langpack_russian_icq.txt',
+      '#include langpack_russian_icqrevivalflash.txt',
+    ],
+    drop: ['#include langpack_russian_flashavatars.txt'],
+  },
 };
 
 // ------------------------------------------------------------------- zip
@@ -175,7 +195,10 @@ function parseHashes(text) {
     lines: lines.map((raw) => {
       const s = raw.trimEnd();
       if (!s || s.startsWith(';') || !s.includes(' ')) return { raw };
-      const [name, hash, crc] = s.split(' ');
+      // as sscanf does it: upstream writes "<name> <HASH>  <CRC> ", with two
+      // spaces and a trailing one
+      const name = s.slice(0, s.indexOf(' '));
+      const [hash, crc] = s.slice(name.length).trim().split(/\s+/);
       return { raw, name, hash: (hash || '').toLowerCase(), crc: crc || '' };
     }),
   };
@@ -190,17 +213,32 @@ function wildMatch(mask, name) {
 
 const baseName = (name) => name.slice(name.lastIndexOf('\\') + 1);
 
+// Where a rule sends a file: null for a delete, else the new path; a target
+// ending in * takes the file's own name there (upstream's
+// "langpack_*.txt": "Languages\\*" gathers stray translations).
+function ruleTarget(target, name) {
+  if (typeof target !== 'string') return null;
+  return target.endsWith('*') ? target.slice(0, -1) + baseName(name) : target;
+}
+
 // rules.txt without what would touch our files. PluginUpdater tests a rule
-// against the bare file name; a rename into one of our paths goes too, and
-// so does a packet (dependency list) of one of our modules.
-function filterRules(json, ourNames) {
-  const ourBase = ourNames.map(baseName);
+// against the bare file name; one that would delete one of our files or move
+// it elsewhere goes (one that leaves it in place, as the translations rule
+// does, stays), a rename into one of our paths goes too, and so does a packet
+// (dependency list) of one of our modules. Our renames come first:
+// PluginUpdater takes the first rule that matches.
+function filterRules(json, ourNames, renames = {}) {
   const ourLower = new Set(ourNames.map((n) => n.toLowerCase()));
+  const hurts = (mask, target) => ourNames.some((n) => {
+    if (!wildMatch(mask, baseName(n))) return false;
+    const to = ruleTarget(target, n);
+    return to === null || to.toLowerCase() !== n.toLowerCase();
+  });
   const out = { ...json };
-  if (json.rules && typeof json.rules === 'object') {
-    out.rules = {};
-    for (const [mask, target] of Object.entries(json.rules)) {
-      if (ourBase.some((n) => wildMatch(mask, n))) continue;
+  if ((json.rules && typeof json.rules === 'object') || Object.keys(renames).length) {
+    out.rules = { ...renames };
+    for (const [mask, target] of Object.entries(json.rules || {})) {
+      if (hurts(mask, target)) continue;
       if (typeof target === 'string' && ourLower.has(target.toLowerCase())) continue;
       out.rules[mask] = target;
     }
@@ -211,12 +249,21 @@ function filterRules(json, ourNames) {
   return out;
 }
 
-// The main translation with the lines ours need appended, if missing.
+// The main translation with the lines ours need appended, if missing, and the
+// lines of old names taken out. includes is { add: [...], drop: [...] }, or
+// just the array to add.
 function withIncludes(text, includes) {
-  const have = new Set(text.split(/\r?\n/).map((l) => l.trim().toLowerCase()));
-  const missing = includes.filter((l) => !have.has(l.trim().toLowerCase()));
-  if (!missing.length) return text;
+  const add = Array.isArray(includes) ? includes : (includes.add || []);
+  const drop = new Set((Array.isArray(includes) ? [] : (includes.drop || [])).map((l) => l.trim().toLowerCase()));
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  if (drop.size) {
+    const lines = text.split(/\r?\n/);
+    const kept = lines.filter((l) => !drop.has(l.trim().toLowerCase()));
+    if (kept.length !== lines.length) text = kept.join(eol);
+  }
+  const have = new Set(text.split(/\r?\n/).map((l) => l.trim().toLowerCase()));
+  const missing = add.filter((l) => !have.has(l.trim().toLowerCase()));
+  if (!missing.length) return text;
   const sep = text.endsWith('\n') || text === '' ? '' : eol;
   return text + sep + missing.join(eol) + eol;
 }
@@ -368,21 +415,29 @@ function createMirror(options = {}) {
     }
 
     const zipEntries = [[hashesName, Buffer.from(out.join(parsed.eol) + parsed.eol, 'latin1')]];
+    const names = [...OUR_FILES, ...[...own.files.values()].map((f) => f.name)];
+    const renames = Object.fromEntries(Object.entries(RENAMES)
+      .filter(([, to]) => own.files.has(to.toLowerCase())));
+    const rulesEntry = (name, json) => [name, Buffer.from(JSON.stringify(filterRules(json, names, renames), null, 1), 'utf8')];
+    let rulesSeen = false;
     for (const [name, data] of entries) {
       if (name === hashesName) continue;
       if (name.toLowerCase() === 'rules.txt') {
+        rulesSeen = true;
+        let json;
         try {
-          const json = JSON.parse(data.toString('utf8').trimStart());
-          const names = [...OUR_FILES, ...[...own.files.values()].map((f) => f.name)];
-          zipEntries.push([name, Buffer.from(JSON.stringify(filterRules(json, names), null, 1), 'utf8')]);
+          json = JSON.parse(data.toString('utf8').trimStart());
         } catch (err) {
-          // A rules file we cannot read may delete anything: leave it out.
+          // A rules file we cannot read may delete anything: only ours go out.
           log(`${platform} rules.txt left out: ${err.message}`);
+          json = {};
         }
+        zipEntries.push(rulesEntry(name, json));
         continue;
       }
       zipEntries.push([name, data]);
     }
+    if (!rulesSeen && Object.keys(renames).length) zipEntries.push(rulesEntry('rules.txt', {}));
     return { zip: writeZip(zipEntries), upstreamNames, patched, fetchedAt: Date.now(), failedAt: 0 };
   }
 

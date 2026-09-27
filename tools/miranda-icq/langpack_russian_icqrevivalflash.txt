@@ -1,0 +1,36 @@
+Miranda Language Pack Version 1
+Language: Русский
+Locale: 0419
+
+;============================================================
+;  File: IcqRevivalFlash.dll
+;  Plugin: ICQ Revival Flash (ICQ 6 animated avatars and tZers)
+;  tZer titles: ICQ 6.5, TzerLabels.dtd of its ru-RU resources
+;============================================================
+#muuid {3E5C9A2B-7D41-4F08-B6E2-91A4C7D3F5E8}
+
+[ICQ Revival Flash]
+ICQ Revival: Flash-аватары и tZers
+[tZers]
+tZers
+[Send a tZer]
+Отправить tZer
+[The tZer could not be sent: the account is offline or the contact is not an ICQ contact.]
+tZer не отправлен: учётная запись не в сети или это не контакт ICQ.
+
+[Can't Hear U]
+Вас не слышно
+[Scratch]
+Царапина
+[Kisses]
+Поцелуйчики
+[Chill Out]
+Расслабьтесь
+[Hilaaarious]
+Умооооора
+[Like Duh!]
+Вот дурак!
+[Like U!]
+Ты мне нравишься
+[I'm Sorry]
+Мне очень жаль

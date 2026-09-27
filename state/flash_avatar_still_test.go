@@ -39,7 +39,7 @@ func TestSession_UserInfoFor_FlashAvatarStill(t *testing.T) {
 		// icq6 makes the recipient an ICQ 6 client
 		icq6 bool
 		// player makes the recipient another client that plays Flash
-		// avatars, Miranda with the FlashAvatars plugin
+		// avatars, Miranda with the IcqRevivalFlash plugin
 		player bool
 		// noFinder leaves the recipient without a FlashAvatarStillFinder
 		noFinder  bool

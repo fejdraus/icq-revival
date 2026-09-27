@@ -261,7 +261,7 @@ The output is `target\i686-pc-windows-msvc\release\FlashPlayerControl.dll`
 (about 15 MB). The first build compiles Ruffle and takes a few minutes.
 
 Miranda NG plays ICQ 6 Flash avatars with this DLL too
-(`tools\miranda-icq\FlashAvatars`, which loads it from Miranda's `Libs`
+(`tools\miranda-icq\IcqRevivalFlash`, which loads it from Miranda's `Libs`
 folder without registration). For `miranda64.exe` build the same source for
 64 bits; `.cargo/config.toml` links the C runtime statically there as well:
 

@@ -1,5 +1,5 @@
 /*
-FlashAvatars: tZers, the short animations with sound ICQ 6 sends, played over
+IcqRevivalFlash: tZers, the short animations with sound ICQ 6 sends, played over
 the message window by the same engine as the avatars.
 
 Receiving: our IcqOscarJ port turns a tZer into a message in the history
@@ -590,7 +590,7 @@ static int OnToolbarLoaded(WPARAM, LPARAM)
 
 void Tzers_ModulesLoaded()
 {
-	g_plugin.registerIcon(LPGEN("Flash avatars"), iconList, MODULENAME);
+	g_plugin.registerIcon(LPGEN("ICQ Revival Flash"), iconList, MODULENAME);
 
 	// every ICQ account of our port: its tZers, and tell servers we play them
 	for (auto &pa : Accounts()) {

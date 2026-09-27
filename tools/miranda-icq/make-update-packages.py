@@ -13,7 +13,7 @@
 #   python make-update-packages.py --hash <файл...>      только хэши, для сверки
 #
 # Результат — <каталог>/x32 и <каталог>/x64: Plugins/IcqOscarJ.zip,
-# Plugins/FlashAvatars.zip, Libs/FlashPlayerControl.zip, Languages/*.zip и
+# Plugins/IcqRevivalFlash.zip, Libs/FlashPlayerControl.zip, Languages/*.zip и
 # manifest.json. Этот каталог и кладётся на сервер (см. README).
 import argparse
 import hashlib
@@ -31,12 +31,16 @@ ENGINE = os.path.join(ROOT, 'tools', 'icq65', 'flashplayer', 'target')
 
 # Строки, которые сервер дописывает в основной langpack_russian.txt, если их там
 # нет: без них ядро не прочтёт переводы плагинов, а обновление langpack с
-# сервера Miranda NG их стирает.
+# сервера Miranda NG их стирает. drop — строки старых имён, которые сервер
+# убирает (до 1.1 Flash-плагин назывался FlashAvatars.dll).
 LANGPACK_INCLUDES = {
-    'Languages\\langpack_russian.txt': [
-        '#include langpack_russian_icq.txt',
-        '#include langpack_russian_flashavatars.txt',
-    ],
+    'Languages\\langpack_russian.txt': {
+        'add': [
+            '#include langpack_russian_icq.txt',
+            '#include langpack_russian_icqrevivalflash.txt',
+        ],
+        'drop': ['#include langpack_russian_flashavatars.txt'],
+    },
 }
 
 
@@ -194,11 +198,11 @@ def sources(platform, engine):
     build = os.path.join(HERE, 'build', platform)
     return [
         ('Plugins\\IcqOscarJ.dll', os.path.join(build, 'IcqOscarJ.dll')),
-        ('Plugins\\FlashAvatars.dll', os.path.join(build, 'FlashAvatars.dll')),
+        ('Plugins\\IcqRevivalFlash.dll', os.path.join(build, 'IcqRevivalFlash.dll')),
         ('Libs\\FlashPlayerControl.dll', engine),
         ('Languages\\langpack_russian_icq.txt', os.path.join(HERE, 'langpack_russian_icq.txt')),
-        ('Languages\\langpack_russian_flashavatars.txt',
-         os.path.join(HERE, 'langpack_russian_flashavatars.txt')),
+        ('Languages\\langpack_russian_icqrevivalflash.txt',
+         os.path.join(HERE, 'langpack_russian_icqrevivalflash.txt')),
     ]
 
 

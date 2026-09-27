@@ -13,9 +13,9 @@
 | `IcqOscarJ.diff` | заплатка к `NotWorkingStuff/Deprecated/IcqOscarJ`, 39 файлов |
 | `build/x32/IcqOscarJ.dll` | собрано под ядро 0.96.7, для `miranda32.exe` |
 | `build/x64/IcqOscarJ.dll` | то же для `miranda64.exe` |
-| `FlashAvatars/` | исходники плагина анимированных аватаров и tZers ICQ 6, см. ниже |
-| `langpack_russian_flashavatars.txt` | его русский перевод, в том числе названия tZers из ICQ 6.5 |
-| `build/x32/FlashAvatars.dll`, `build/x64/FlashAvatars.dll` | он же, собранный под ядро 0.96.7 |
+| `IcqRevivalFlash/` | исходники плагина анимированных аватаров и tZers ICQ 6 (до 1.1 — `FlashAvatars`), см. ниже |
+| `langpack_russian_icqrevivalflash.txt` | его русский перевод, в том числе названия tZers из ICQ 6.5 |
+| `build/x32/IcqRevivalFlash.dll`, `build/x64/IcqRevivalFlash.dll` | он же, собранный под ядро 0.96.7 |
 | `langpack_russian_icq.txt` | русский перевод плагина, готовый к установке |
 | `langpack-extra-ru.txt` | строки, которых нет ни в одном паке, — источник для сборщика |
 | `make-langpack.py` | собирает перевод заново |
@@ -56,15 +56,19 @@
 Список сервера составлен так, что `PluginUpdater` обновляет наши файлы нашими же
 сборками и никогда — чужими:
 
-- строки `Plugins\IcqOscarJ.dll`, `Plugins\FlashAvatars.dll`,
+- строки `Plugins\IcqOscarJ.dll`, `Plugins\IcqRevivalFlash.dll`,
   `Libs\FlashPlayerControl.dll` и двух наших переводов — наши, с хэшами наших
-  сборок, остальные строки — как у Miranda NG;
-- правила `rules.txt`, которые удалили бы или переименовали наши файлы, и
-  зависимости наших модулей выброшены;
+  сборок, остальные строки — как у Miranda NG; строк Miranda NG под нашими
+  именами, в том числе старыми, нет, даже когда наших пакетов на сервере нет;
+- правила `rules.txt`, которые удалили бы наши файлы или унесли их в другое
+  место, и зависимости наших модулей выброшены; правило, оставляющее файл где
+  он есть (`"langpack_*.txt": "Languages\\*"` у Miranda NG), остаётся;
+- впереди правил — наши переименования старых имён (см. ниже);
 - основной `langpack_russian.txt` — как у Miranda NG, но с дописанными строками
-  `#include langpack_russian_icq.txt` и `#include langpack_russian_flashavatars.txt`,
-  иначе его обновление отрезало бы переводы плагинов; не удалось скачать его
-  пакет — строки нет вовсе, и файл остаётся как есть;
+  `#include langpack_russian_icq.txt` и `#include langpack_russian_icqrevivalflash.txt`
+  (и без `#include langpack_russian_flashavatars.txt`), иначе его обновление
+  отрезало бы переводы плагинов; не удалось скачать его пакет — строки нет
+  вовсе, и файл остаётся как есть;
 - прочие пакеты отдаются с сервера Miranda NG байт в байт, только те, что есть в
   его текущем списке.
 
@@ -82,9 +86,54 @@ cbBaseLen`, без начальной косой черты), тип BYTE, зн�
 не распаковывает (`unzipfile.cpp`, `IsFilteredFile`). Плагины ставят `2`, когда
 список чужой, и снимают его, когда список наш; пишут, только если значение
 меняется. IcqOscarJ отвечает за себя, `languages\langpack_russian_icq.txt` и
-файлы FlashAvatars, FlashAvatars — за себя, `libslashplayercontrol.dll` и
-`languages\langpack_russian_flashavatars.txt`. Модуль под чужим именем (скажем,
-`ICQ.dll`) защищён всегда: список принёс бы под этим именем чужой файл.
+файлы IcqRevivalFlash, IcqRevivalFlash — за себя, `libs\flashplayercontrol.dll`
+и `languages\langpack_russian_icqrevivalflash.txt`. Модуль под чужим именем
+(скажем, `ICQ.dll`) защищён всегда: список принёс бы под этим именем чужой файл.
+
+### Старое имя: FlashAvatars.dll
+
+До 1.1 Flash-плагин назывался `FlashAvatars.dll`, а это имя занято: в
+`rules.txt` Miranda NG (x32 и x64) есть `"flashavatars.dll": null` — так она
+удаляет свой одноимённый плагин, убранный в 2014 году. Обычный `PluginUpdater`
+стёр бы наш. Поэтому теперь он `IcqRevivalFlash.dll`, модуль настроек и
+пользователь журнала — `IcqRevivalFlash`, перевод —
+`langpack_russian_icqrevivalflash.txt`; UUID и capability прежние, настройки
+контактов (`FlashAvatarHash`/`FlashAvatarUrl` в модуле учётки ICQ) тоже.
+
+Как переезжают старые установки:
+
+- **через наш список.** `PluginUpdater` обновляет только те файлы, что лежат на
+  месте, поэтому сервер кладёт в начало `rules.txt` переименования
+  `"FlashAvatars.dll": "Plugins\\IcqRevivalFlash.dll"` и
+  `"langpack_russian_flashavatars.txt": "Languages\\langpack_russian_icqrevivalflash.txt"`
+  (только если пакет нового имени есть). `PluginUpdater` берёт первое
+  совпавшее правило, сверяет старый файл со строкой нового имени, при
+  «Обновить» уносит старый в резервную копию и распаковывает новый
+  (`DlgUpdate.cpp`, `ApplyUpdates`). Отметку `PluginUpdaterFiles` он проверяет
+  по старому пути — её снимают сборки 2e228c7, пока список наш;
+- **вручную** — положить новые файлы, старые убрать, в `langpack_russian.txt`
+  заменить `#include langpack_russian_flashavatars.txt` на
+  `#include langpack_russian_icqrevivalflash.txt`.
+
+Новый плагин и IcqOscarJ снимают отметки со старых путей, когда список наш или
+старого файла уже нет; старый файл при чужом списке остаётся защищённым, иначе
+Miranda NG его удалила бы. Один раз при запуске настройки модуля `FlashAvatars`
+(в том числе журнала) переносятся в `IcqRevivalFlash` — то, что уже задано под
+новым именем, не трогается, — вместе с местом кнопки tZers на панели окна
+сообщений (`SRMM_Toolbar`/`TabSRMM_Toolbar`, `FlashAvatars_1`) и своей иконкой
+tZers (`SkinIcons/FlashAvatars_tzer`).
+
+Проверено на копии 0.96.7 с установленными сборками 2e228c7
+(`FlashAvatars.dll`, его перевод, `#include` старого имени) и настоящими
+списками Miranda NG stable x32 (в подменённой строке только
+`langpack_russian.txt`: его пакета здесь нет, он собран из перевода копии):
+`PluginUpdater` предложил `IcqOscarJ.dll`, `FlashAvatars.dll`,
+`langpack_russian_flashavatars.txt` и `langpack_russian.txt`; после
+«Обновить» и перезапуска `FlashAvatars.dll` и старого перевода нет,
+`IcqRevivalFlash.dll` и новый перевод на месте, хэши совпадают со списком, в
+`langpack_russian.txt` только новые `#include`, плагин загрузился (движок,
+capability). Перенос настроек: `FlashAvatars/NLlog` и `SRMM_Toolbar/FlashAvatars_1`
+оказались под новыми именами, модуль `FlashAvatars` удалён.
 
 Сборки, вышедшие до этого, ставят `2` всегда, поэтому до первой ручной установки
 нынешних `PluginUpdater` их не обновит.
@@ -94,7 +143,8 @@ Miranda NG (список с чужим хэшем `IcqOscarJ.dll`, правил�
 и более новым `Dummy.dll`):
 
 - `PluginUpdater` сам получил наш адрес и спросил `/miranda/stable/x32/hashes.zip`;
-- предложил `FlashAvatars.dll` (стояла сборка 0.9, на сервере 1.0), `Dummy.dll`
+- предложил `FlashAvatars.dll` (так тогда звался Flash-плагин; стояла сборка
+  0.9, на сервере 1.0), `Dummy.dll`
   с сервера Miranda NG, `langpack_russian.txt` и наш перевод;
   `IcqOscarJ.dll` — нет;
 - после «Обновить» и перезапуска все файлы совпали со списком, `FlashAvatars.dll`
@@ -247,7 +297,8 @@ XML `<DOCUMENT><RESSET><URL>…swf</URL>`, — у которого клип `fac
 FlashAvatars (Big Muscle, 2006) через Adobe Flash; из Miranda NG его убрали в
 2014 году (`NotWorkingStuff/Deprecated/FlashAvatars` в репозитории
 `miranda-ng/deprecated`), его UUID внесён в `pluginBannedList`, а переименованный
-`flashavatars.dll` PluginUpdater удалял.
+`flashavatars.dll` PluginUpdater удалял (правило в `rules.txt` stable есть и
+сейчас — поэтому наш плагин называется иначе, см. «Старое имя»).
 
 **Кто вызывал его сервисы.** `FlashAvatar/Make`, `/Destroy`, `/Resize`,
 `/SetPos`, `/GetInfo`, `/SetEmoFace`, `/SetBkColor` (`m_flash.h`) звали
@@ -257,7 +308,8 @@ FlashAvatars (Big Muscle, 2006) через Adobe Flash; из Miranda NG его �
 `plugins/Popup/src/avatars_flash.h`. Поэтому возвращать старые сервисы
 бессмысленно: их никто не позовёт.
 
-**Как сделано теперь.** `FlashAvatars/` — новый плагин по мотивам старого:
+**Как сделано теперь.** `IcqRevivalFlash/` («ICQ Revival Flash», до 1.1 —
+`FlashAvatars.dll`) — новый плагин по мотивам старого:
 
 - Подменяет оконную процедуру класса `MAvatarControlClass` (элемент аватара
   AVS, `SetClassLongPtr` при загрузке модулей). Этот элемент показывает
@@ -304,7 +356,7 @@ FlashAvatars (Big Muscle, 2006) через Adobe Flash; из Miranda NG его �
 После отправки capabilities плагин ещё раз запрашивает свою анкету (SNAC 1,0E)
 — в ней сервер теперь перечисляет тип 8, — а элемент 8 в данных сессии
 (SNAC 1,21) обрабатывается так же и никогда не выдаётся за картинку. Итог —
-`FlashAvatarUrl` у самой учётной записи; FlashAvatars рисует его во всех
+`FlashAvatarUrl` у самой учётной записи; IcqRevivalFlash рисует его во всех
 элементах своего аватара (окно «О пользователе Владелец → Аватар», своя
 картинка в окне сообщений). Загружаемая на сервер картинка (тип 1) остаётся
 локальной картинкой Miranda: отображение Flash её не трогает.
@@ -324,7 +376,7 @@ FlashAvatars (Big Muscle, 2006) через Adobe Flash; из Miranda NG его �
 инфопанель, а та читает `m_cache`) — это ошибка самого TabSRMM, в падении
 CrashDumper покажет адрес чтения `0000015C`. Чтобы её не задевать:
 
-- FlashAvatars на `ME_DB_CONTACT_DELETED` сразу прячет окно сообщений этого
+- IcqRevivalFlash на `ME_DB_CONTACT_DELETED` сразу прячет окно сообщений этого
   контакта (скрытое окно не перерисовывается) и останавливает его фильмы;
   фон под фильмом берётся у родителя один раз на размер, а не на каждом кадре;
 - IcqOscarJ запоминает удаляемые контакты (`OnContactDeleted`) и не находит,
@@ -333,13 +385,18 @@ CrashDumper покажет адрес чтения `0000015C`. Чтобы её �
 
 ### Установка
 
-Три файла, Miranda должна быть закрыта:
+Три файла и перевод, Miranda должна быть закрыта:
 
 | Файл | Куда |
 |------|------|
 | `build/x32/IcqOscarJ.dll` (или x64) | `Plugins\IcqOscarJ.dll`, поверх прежнего |
-| `build/x32/FlashAvatars.dll` (или x64) | `Plugins\FlashAvatars.dll` |
+| `build/x32/IcqRevivalFlash.dll` (или x64) | `Plugins\IcqRevivalFlash.dll` |
 | `FlashPlayerControl.dll` из `tools/icq65/flashplayer` той же разрядности | `Libs\FlashPlayerControl.dll` |
+| `langpack_russian_icqrevivalflash.txt` | `Languages\`, и `#include` в основной пак (см. «tZers») |
+
+Стоял плагин под старым именем — удалить `Plugins\FlashAvatars.dll` и
+`Languages\langpack_russian_flashavatars.txt`, а `#include` старого перевода в
+`langpack_russian.txt` заменить на новый (см. «Старое имя: FlashAvatars.dll»).
 
 Движок в git не лежит (15 МБ), собирается `cargo build --release` в
 `tools/icq65/flashplayer` (32 бита, `target\i686-pc-windows-msvc\release`), для
@@ -349,16 +406,16 @@ CrashDumper покажет адрес чтения `0000015C`. Чтобы её �
 Сборка плагина — так же, как IcqOscarJ, в дереве miranda-ng той же версии:
 
 ```
-cp -r FlashAvatars <miranda-ng>/plugins/
-MSBuild.exe <miranda-ng>/plugins/FlashAvatars/FlashAvatars.vcxproj   -p:Configuration=Release -p:Platform=Win32 -p:PlatformToolset=v143
+cp -r IcqRevivalFlash <miranda-ng>/plugins/
+MSBuild.exe <miranda-ng>/plugins/IcqRevivalFlash/IcqRevivalFlash.vcxproj   -p:Configuration=Release -p:Platform=Win32 -p:PlatformToolset=v143
 ```
 
 `src/flash.tlb` — копия `tools/icq65/flashplayer/typelib/flash.tlb`, из неё
 `#import` берёт `IShockwaveFlash`.
 
-Проверка: «Настройки → Плагины» — «Flash avatars»; журнал — «Настройки → Сеть
-→ Журнал», пользователь «Flash avatars», или файл из переменной окружения
-`FLASHAVATARS_LOG`. Убрать — удалить `FlashAvatars.dll`: картинки остаются, а
+Проверка: «Настройки → Плагины» — «ICQ Revival Flash»; журнал — «Настройки →
+Сеть → Журнал», пользователь «ICQ Revival Flash», или файл из переменной
+окружения `ICQREVIVALFLASH_LOG`. Убрать — удалить `IcqRevivalFlash.dll`: картинки остаются, а
 сервер перестаёт присылать Flash-элементы после следующего входа.
 
 ## tZers
@@ -380,13 +437,13 @@ tZer — короткий Flash-ролик со звуком, который ICQ
 **IcqOscarJ** (`src/icq_tzer.cpp`) узнаёт этот плагин и пишет в историю
 обычное сообщение «tZer: <название>» — без ссылки, так что его одинаково
 видят встроенный журнал tabSRMM, IEView и History++, в том числе без плагина
-FlashAvatars. Адрес ролика отдаётся событием `<учётка>/Tzer` (`ME_ICQ_TZER`,
+IcqRevivalFlash. Адрес ролика отдаётся событием `<учётка>/Tzer` (`ME_ICQ_TZER`,
 `m_icq.h`). Отправка — сервис `<учётка>/SendTzer` (`PS_ICQ_SENDTZER`) тем же
 форматом (заголовок 0x2711 — обычный мирандовский, как у запросов Xtraz;
 plugin-часть и тело совпадают с ICQ 6.5 байт в байт); отправленный tZer тоже
 пишется в историю.
 
-**FlashAvatars** (`src/tzer.cpp`) играет tZer так же, как ICQ 6.5: окно класса
+**IcqRevivalFlash** (`src/tzer.cpp`) играет tZer так же, как ICQ 6.5: окно класса
 `FlashPlayerControl` нашего движка (слоистое, прозрачное, со звуком) на весь
 видимую рамку окна, в котором окно сообщений (у tabSRMM — контейнера; без
 невидимых рамок изменения размера, что Windows 10/11 добавляет к
@@ -420,8 +477,8 @@ IP-адрес или localhost тоже годятся. Скрытая наст�
 ещё раз и делил бы с первым кэш.
 
 Русские названия tZers — из `TzerLabels.dtd` ICQ 6.5 — в
-`langpack_russian_flashavatars.txt`: положить в `Languages\` и дописать в
-конец основного пака `#include langpack_russian_flashavatars.txt`.
+`langpack_russian_icqrevivalflash.txt`: положить в `Languages\` и дописать в
+конец основного пака `#include langpack_russian_icqrevivalflash.txt`.
 
 ## Почему две проверки ломают плагин молча
 

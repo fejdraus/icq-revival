@@ -1,5 +1,5 @@
 /*
-FlashAvatars: ICQ 6 animated avatars in Miranda NG, played by the Ruffle-based
+IcqRevivalFlash: ICQ 6 animated avatars in Miranda NG, played by the Ruffle-based
 Flash engine (tools/icq65/flashplayer).
 
 This program is free software; you can redistribute it and/or

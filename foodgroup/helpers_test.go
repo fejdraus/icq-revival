@@ -1021,7 +1021,7 @@ func sessOptICQ6(instance *state.SessionInstance) {
 }
 
 // sessOptMirandaFlashAvatars makes the instance Miranda's ICQ plugin with
-// the FlashAvatars plugin loaded: sessOptMirandaICQ's capabilities and
+// the IcqRevivalFlash plugin loaded: sessOptMirandaICQ's capabilities and
 // wire.CapFlashAvatarPlayer.
 func sessOptMirandaFlashAvatars(instance *state.SessionInstance) {
 	sessOptMirandaICQ(instance)

@@ -19,7 +19,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <PropertyGroup Label="Globals">
-    <ProjectName>FlashAvatars</ProjectName>
+    <ProjectName>IcqRevivalFlash</ProjectName>
     <ProjectGuid>{5B2E7A43-8C1D-4F6E-9A3B-2D7C4E1F0A96}</ProjectGuid>
   </PropertyGroup>
   <ImportGroup Label="PropertySheets">
