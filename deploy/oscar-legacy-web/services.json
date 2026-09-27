@@ -31,6 +31,7 @@
     "  avatarfiles an animated avatar or its thumbnail from the avatars folder, by exact name",
     "  avatargallery the avatar gallery list (2007 XML) with our animated avatars",
     "  ruffle      Ruffle's web build from the ruffle folder, by exact name; the user card plays the animated avatar with it",
+    "  miranda     Miranda NG's PluginUpdater list and packages: the upstream stable ones with our plugins in them",
     "  stub        a \"this service is gone\" page",
     "",
     "Substitutions in target: {registerBase}, {q}, {host}, {path}."
@@ -183,6 +184,11 @@
       "path": "^/icq/avatars/",
       "action": "avatarfiles",
       "note": "animated avatars (Flash devils) and their thumbnails from the avatars folder, by exact file name; the picture page hands the client these addresses, and every contact's client fetches the movie from here over plain HTTP"
+    },
+    {
+      "path": "^/miranda/stable/",
+      "action": "miranda",
+      "note": "PluginUpdater of Miranda NG: /miranda/stable/x32 and /x64 are its update address; hashes.zip is upstream's with our plugins put in, their packages are ours, the rest is relayed from upstream"
     },
     {
       "path": "^/icq/ruffle/",

@@ -17,6 +17,9 @@ deploy/.env
 deploy/secrets/*.env
 deploy/certs/
 deploy/backups/
+# Miranda NG update packages of ours (tools/miranda-icq/make-update-packages.py),
+# copied to the machine by hand: the engine in them is 15 MB
+deploy/miranda-updates/
 
 # Build output of the C# client patches (the exes are copied into tools\*\patch)
 tools/patcher/**/bin/

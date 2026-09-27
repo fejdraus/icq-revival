@@ -129,6 +129,15 @@ services:
       MGMT_API: http://127.0.0.1:8090
       REGISTER_BASE: https://${PUBLIC_HOST}
       OSCAR_HOST: ${PUBLIC_HOST}
+      # Miranda NG's PluginUpdater list with our plugins in it
+      # (/miranda/stable/x32 and /x64, miranda-updates.js): the upstream
+      # channel it relays and our packages, made by
+      # tools/miranda-icq/make-update-packages.py and copied to
+      # deploy/miranda-updates by hand (the engine is 15 MB, not kept in git).
+      MIRANDA_UPSTREAM: https://miranda-ng.org/distr/stable
+      MIRANDA_PACKAGES: /miranda-updates
+    volumes:
+      - ./miranda-updates:/miranda-updates:ro
     depends_on:
       - server
 

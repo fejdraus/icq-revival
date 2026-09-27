@@ -180,6 +180,8 @@ static void StopTzer()
 	}
 }
 
+static bool TzerRect(HWND hwndOwner, RECT &rc);
+
 static LRESULT CALLBACK TzerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	switch (msg) {
@@ -193,6 +195,21 @@ static LRESULT CALLBACK TzerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 				Log("tZer done after %d ms (%s)", dwElapsed, playing ? "timeout" : "end of movie");
 				KillTimer(hwnd, TZER_TIMER);
 				PostMessage(hwnd, WM_CLOSE, 0, 0);
+				return 0;
+			}
+
+			// follow the owner: gone - close; moved or resized - along with it
+			// (minimised: Windows hides an owned window with its owner)
+			HWND hwndOwner = GetWindow(hwnd, GW_OWNER);
+			if (hwndOwner && !IsWindow(hwndOwner)) {
+				PostMessage(hwnd, WM_CLOSE, 0, 0);
+				return 0;
+			}
+			RECT rcOwner, rcSelf;
+			if (TzerRect(hwndOwner, rcOwner) && GetWindowRect(hwnd, &rcSelf) && !EqualRect(&rcOwner, &rcSelf)) {
+				SetWindowPos(hwnd, nullptr, rcOwner.left, rcOwner.top, rcOwner.right - rcOwner.left, rcOwner.bottom - rcOwner.top,
+					SWP_NOZORDER | SWP_NOACTIVATE);
+				pUpdateWindow(hwnd);
 			}
 			return 0;
 		}
@@ -221,6 +238,42 @@ static LRESULT CALLBACK TzerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 }
 
 // Plays the movie (a cached file) over the message window hwndMsg.
+// The rectangle the player covers: the owner window's visible frame, if it is
+// shown. GetWindowRect includes the invisible resize borders Windows 10/11 draw
+// around a window (left, right and bottom); DWM knows the visible frame, in
+// physical pixels, while this process (Miranda is not DPI aware) works in
+// scaled ones: the borders are measured in physical pixels and scaled back.
+static bool TzerRect(HWND hwndOwner, RECT &rc)
+{
+	if (hwndOwner == nullptr || !IsWindowVisible(hwndOwner) || IsIconic(hwndOwner))
+		return false;
+	if (!GetWindowRect(hwndOwner, &rc) || rc.right <= rc.left || rc.bottom <= rc.top)
+		return false;
+
+	RECT rcFrame;
+	if (FAILED(DwmGetWindowAttribute(hwndOwner, DWMWA_EXTENDED_FRAME_BOUNDS, &rcFrame, sizeof(rcFrame))))
+		return true;
+
+	// Windows 8.1+; with an older one the DPI is 96 anyway and the points stay
+	typedef BOOL(WINAPI *pfnLogicalToPhysical)(HWND, LPPOINT);
+	static auto pToPhysical = (pfnLogicalToPhysical)GetProcAddress(GetModuleHandleW(L"user32.dll"), "LogicalToPhysicalPointForPerMonitorDPI");
+	POINT tl = { rc.left, rc.top }, br = { rc.right, rc.bottom };
+	if (pToPhysical) {
+		pToPhysical(hwndOwner, &tl);
+		pToPhysical(hwndOwner, &br);
+	}
+	if (br.x <= tl.x || br.y <= tl.y)
+		return true;
+
+	double sx = (rc.right - rc.left) / double(br.x - tl.x), sy = (rc.bottom - rc.top) / double(br.y - tl.y);
+	int dl = max(0, int((rcFrame.left - tl.x) * sx + 0.5)), dt = max(0, int((rcFrame.top - tl.y) * sy + 0.5));
+	int dr = max(0, int((br.x - rcFrame.right) * sx + 0.5)), db = max(0, int((br.y - rcFrame.bottom) * sy + 0.5));
+	RECT rcIn = { rc.left + dl, rc.top + dt, rc.right - dr, rc.bottom - db };
+	if (rcIn.right > rcIn.left && rcIn.bottom > rcIn.top)
+		rc = rcIn;
+	return true;
+}
+
 static void PlayFile(HWND hwndMsg, const CMStringW &file)
 {
 	if (!LoadPlayer())
@@ -228,26 +281,24 @@ static void PlayFile(HWND hwndMsg, const CMStringW &file)
 
 	StopTzer();
 
-	// over the window the message window is in (tabSRMM: its container)
+	// As ICQ 6.5 does it (MUIMessage: GetWindowRect of the window it plays
+	// over, then CreateWindowEx of the class with exactly that rectangle and
+	// that window as the owner): the player covers the whole window the
+	// message window is in (tabSRMM: its container). The engine scales the
+	// movie to fit (ShowAll) and centres it, with no letterbox, so what a
+	// tZer draws outside its stage - a figure coming in from the side - stays
+	// visible in the margins instead of being cut at the stage's edge.
+	//
+	// Not topmost: an owned popup stays just above its owner and goes behind
+	// any window that covers it, hides with it when it is minimised, and
+	// follows it (TzerWndProc's timer) when it moves or changes size.
 	HWND hwndOwner = hwndMsg ? GetAncestor(hwndMsg, GA_ROOT) : nullptr;
 	RECT rc;
-	if (hwndOwner && IsWindowVisible(hwndOwner) && !IsIconic(hwndOwner))
-		GetWindowRect(hwndOwner, &rc);
-	else
+	if (!TzerRect(hwndOwner, rc))
 		SystemParametersInfo(SPI_GETWORKAREA, 0, &rc, 0);
+	int x = rc.left, y = rc.top, w = rc.right - rc.left, h = rc.bottom - rc.top;
 
-	// the movies are 755x560; as large as fits, at most their own size
-	int cx = rc.right - rc.left, cy = rc.bottom - rc.top;
-	int w = min(755, cx * 9 / 10), h = w * 560 / 755;
-	if (h > cy * 9 / 10) {
-		h = cy * 9 / 10;
-		w = h * 755 / 560;
-	}
-	int x = rc.left + (cx - w) / 2, y = rc.top + (cy - h) / 2;
-
-	// as ICQ 6.5 creates it: a layered, non-activating tool popup; with an
-	// owner, so that it plays its sound
-	HWND hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"FlashPlayerControl", nullptr,
+	HWND hwnd = CreateWindowExW(WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, L"FlashPlayerControl", nullptr,
 		WS_POPUP | WS_VISIBLE, x, y, w, h, hwndOwner, nullptr, GetModuleHandle(nullptr), nullptr);
 	if (hwnd == nullptr) {
 		Log("tZers: cannot create the player window (%d)", GetLastError());
@@ -391,7 +442,7 @@ static int OnWindowEvent(WPARAM uType, LPARAM lParam)
 // Sending: the button of the message window and its menu of tZers
 
 static HBITMAP g_thumbs[_countof(g_tzers)];
-static bool g_bThumbsFetching;
+static volatile LONG g_bThumbsFetching;
 
 struct ThumbJob
 {
@@ -408,7 +459,40 @@ static void __cdecl ThumbThread(void *param)
 			DownloadFile(szUrl, file, false);
 	}
 	delete job;
-	g_bThumbsFetching = false;
+	InterlockedExchange(&g_bThumbsFetching, 0);
+}
+
+// Fetches the thumbnails that are not in the cache yet, in the background;
+// true when they are all there already.
+static bool FetchThumbs(const CMStringA &szBase)
+{
+	bool bMissing = false;
+	for (auto &it : g_tzers)
+		if (_waccess(MovieFile(szBase + it.file + ".png", L".png"), 0))
+			bMissing = true;
+
+	if (bMissing && !InterlockedExchange(&g_bThumbsFetching, 1)) {
+		ThumbJob *job = new ThumbJob();
+		job->szBase = szBase;
+		mir_forkthread(ThumbThread, job);
+	}
+	return !bMissing;
+}
+
+// An ICQ account is online: its thumbnails are fetched now, so that the menu
+// has them the first time it opens.
+static int OnProtoAck(WPARAM, LPARAM lParam)
+{
+	auto *ack = (ACKDATA *)lParam;
+	if (ack->type != ACKTYPE_STATUS || ack->result != ACKRESULT_SUCCESS || (INT_PTR)ack->lParam == ID_STATUS_OFFLINE)
+		return 0;
+	if (ack->szModule == nullptr || !ProtoServiceExists(ack->szModule, PS_ICQ_SENDTZER))
+		return 0;
+
+	CMStringA szBase(TzerBase(ack->szModule));
+	if (!szBase.IsEmpty())
+		FetchThumbs(szBase);
+	return 0;
 }
 
 static HBITMAP Thumb(int i, const CMStringA &szBase)
@@ -460,17 +544,11 @@ static int OnButtonPressed(WPARAM hContact, LPARAM lParam)
 		return 0;
 	}
 
-	// the thumbnails: fetched once, in the background
-	bool bMissing = false;
-	for (int i = 0; i < _countof(g_tzers); i++)
-		if (!Thumb(i, szBase))
-			bMissing = true;
-	if (bMissing && !g_bThumbsFetching) {
-		g_bThumbsFetching = true;
-		ThumbJob *job = new ThumbJob();
-		job->szBase = szBase;
-		mir_forkthread(ThumbThread, job);
-	}
+	// the thumbnails: normally fetched when the account went online; if not
+	// yet, the menu waits for them a moment (a shown menu keeps its pictures)
+	if (!FetchThumbs(szBase))
+		for (int n = 0; n < 20 && g_bThumbsFetching; n++)
+			Sleep(50);
 
 	HMENU hMenu = CreatePopupMenu();
 	for (int i = 0; i < _countof(g_tzers); i++) {
@@ -526,6 +604,7 @@ void Tzers_ModulesLoaded()
 	HookTemporaryEvent(ME_MSG_TOOLBARLOADED, OnToolbarLoaded);
 	HookEvent(ME_MSG_BUTTONPRESSED, OnButtonPressed);
 	HookEvent(ME_MSG_WINDOWEVENT, OnWindowEvent);
+	HookEvent(ME_PROTO_ACK, OnProtoAck);
 }
 
 void Tzers_Unload()

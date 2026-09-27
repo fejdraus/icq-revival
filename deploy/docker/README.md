@@ -49,6 +49,7 @@ example in root's crontab:
 | Password-recovery tokens | volume `icq-revival_register-data` |
 | Backups | `deploy/backups/`, one gzipped copy a day, 14 kept by default |
 | Certificates | `deploy/certs/` |
+| Miranda NG update packages of ours | `deploy/miranda-updates/` (see below) |
 | Logs | `docker compose logs -f <service>` |
 
 Copy `deploy/backups/` off the machine on a schedule of its own - a backup on
@@ -63,6 +64,20 @@ Listens on `127.0.0.1:8100` only. From your own computer:
 
 `git pull`, then `docker compose up -d --build`. Database migrations run when
 the server starts.
+
+### Miranda NG update packages
+
+`legacy-web` hands Miranda NG's PluginUpdater the upstream list with our
+plugins in it (`/miranda/stable/x32` and `/x64`, on 8102 over HTTPS). Our
+packages are not in git - the Flash engine alone is 15 MB. Build them on a
+machine with the plugin builds and both engine builds:
+
+    python tools/miranda-icq/make-update-packages.py out
+
+and copy `out/x32` and `out/x64` to `deploy/miranda-updates/` here, then
+`docker compose kill -s HUP legacy-web` (or restart it). Without the folder
+there is nothing of ours to update to, but upstream's lines and delete rules
+for our files are still left out, so PluginUpdater leaves them as they are.
 
 ## Moving an existing installation in
 

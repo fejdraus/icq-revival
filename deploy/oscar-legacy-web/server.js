@@ -31,6 +31,8 @@ const zlib = require('node:zlib');
 // The shared look of the project, the same as registration and the admin page.
 const { STYLE: SHARED_STYLE, LANGS, FALLBACK_LANG, pickLang,
   langLabel, header, footer, serveAsset } = require('./ui.js');
+// Miranda NG's PluginUpdater through this server, with our plugins in its list.
+const { createMirror } = require('./miranda-updates.js');
 
 const PORT = Number(process.env.PORT || 8101);
 // Clients connect to the address written in their own config, so the service has
@@ -2687,6 +2689,11 @@ const ACTIONS = {
   // files it loads itself.
   ruffle: (ctx) => serveRuffle(ctx),
 
+  // Miranda NG's PluginUpdater: /miranda/stable/x32/hashes.zip and the
+  // packages it lists, ours and the relayed upstream ones
+  // (miranda-updates.js).
+  miranda: (ctx) => mirandaMirror.handle(ctx.req, ctx.res, ctx.path.replace(/^\/miranda\/stable/i, '')),
+
   // The list the original avatar gallery loaded first
   // (xtraz.icq.com/xtraz2/products/avatar/xml/avatarsGalery.php), in its 2007
   // form, with our movies in the Animated_Devils category it kept empty. In
@@ -2796,6 +2803,13 @@ async function route(req, res) {
   await ACTIONS[chosen.action](ctx);
 }
 
+// The upstream is the stable channel of Miranda NG; our packages are made by
+// tools/miranda-icq/make-update-packages.py and mounted into MIRANDA_PACKAGES.
+const mirandaMirror = createMirror({
+  upstream: process.env.MIRANDA_UPSTREAM || 'https://miranda-ng.org/distr/stable',
+  dir: process.env.MIRANDA_PACKAGES || path.join(__dirname, 'miranda'),
+});
+
 config = loadConfig();
 loadTopics();
 loadTzers();
@@ -2811,6 +2825,7 @@ process.on('SIGHUP', () => {
     loadTzers();
     loadAvatars();
     loadRuffle();
+    mirandaMirror.load();
     console.log(`config reloaded: ${config.routes.length} routes, ${tzerFiles.size} tZer files, `
       + `${avatarList.length} animated avatars`);
   } catch (err) {
@@ -2836,6 +2851,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, BIND, () => {
   console.log(`oscar-legacy-web listening on ${BIND}:${PORT}`);
+  if (process.env.MIRANDA_WARM !== '0') mirandaMirror.warm();
   console.log(`config ${CONFIG_PATH}: ${config.routes.length} routes, `
     + `management API ${config.mgmtApi}`);
 });

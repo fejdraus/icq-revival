@@ -14,6 +14,7 @@ of the License.
 #include <ole2.h>
 #include <ocidl.h>
 #include <uxtheme.h>
+#include <dwmapi.h>
 #include <io.h>
 #include <time.h>
 

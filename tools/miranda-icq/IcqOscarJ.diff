@@ -1,6 +1,6 @@
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/icqoscar8.vcxproj b/icqoscar8.vcxproj
---- a/icqoscar8.vcxproj	2026-09-26 23:05:25.577306600 +0300
-+++ b/icqoscar8.vcxproj	2026-09-26 23:05:25.773080300 +0300
+--- a/icqoscar8.vcxproj	2026-09-27 13:50:55.770683500 +0300
++++ b/icqoscar8.vcxproj	2026-09-27 13:50:56.498732100 +0300
 @@ -25,4 +25,102 @@
    <ImportGroup Label="PropertySheets">
      <Import Project="$(ProjectDir)..\..\build\vc.common\plugin.props" />
@@ -106,8 +106,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/icqoscar8.vcxproj b/icqo
  </Project>
 \ No newline at end of file
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/res/resources.rc b/res/resources.rc
---- a/res/resources.rc	2026-09-26 23:05:25.595593800 +0300
-+++ b/res/resources.rc	2026-09-26 23:05:25.789472200 +0300
+--- a/res/resources.rc	2026-09-27 13:50:55.874255500 +0300
++++ b/res/resources.rc	2026-09-27 13:50:56.542304100 +0300
 @@ -125,7 +125,7 @@
      CTEXT           "Note: The options marked with an asterisk have important side-effects or caveats that may not be initially apparent documented in the help.",IDC_STATIC,10,212,290,16
  END
@@ -128,8 +128,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/res/resources.rc b/res/r
  
  IDD_OPT_ICQPRIVACY DIALOGEX 0, 0, 310, 234
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/chan_04close.cpp b/src/chan_04close.cpp
---- a/src/chan_04close.cpp	2026-09-26 23:05:25.601639500 +0300
-+++ b/src/chan_04close.cpp	2026-09-26 23:05:25.794635300 +0300
+--- a/src/chan_04close.cpp	2026-09-27 13:50:55.904783300 +0300
++++ b/src/chan_04close.cpp	2026-09-27 13:50:56.548813600 +0300
 @@ -152,12 +152,6 @@
  			}
  		}
@@ -144,8 +144,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/chan_04close.cpp b/s
  
  	// Free allocated memory
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/dlgproc.cpp b/src/dlgproc.cpp
---- a/src/dlgproc.cpp	2026-09-26 23:05:25.610896500 +0300
-+++ b/src/dlgproc.cpp	2026-09-26 23:05:25.800668500 +0300
+--- a/src/dlgproc.cpp	2026-09-27 13:50:55.941842400 +0300
++++ b/src/dlgproc.cpp	2026-09-27 13:50:56.554814200 +0300
 @@ -216,19 +216,16 @@
  		switch (((LPNMHDR)lParam)->idFrom) {
  		case 0:
@@ -181,8 +181,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/dlgproc.cpp b/src/dl
  				for (i = 0; i < _countof(dat->hUpload); i++)
  					if (dat->hUpload[i] && ack->hProcess == dat->hUpload[i])
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_01service.cpp b/src/fam_01service.cpp
---- a/src/fam_01service.cpp	2026-09-26 23:05:25.613905100 +0300
-+++ b/src/fam_01service.cpp	2026-09-26 23:05:25.802674200 +0300
+--- a/src/fam_01service.cpp	2026-09-27 13:50:55.955351000 +0300
++++ b/src/fam_01service.cpp	2026-09-27 13:50:56.557325600 +0300
 @@ -249,6 +249,22 @@
  			pBuffer += 4;      /* warning level & user class */
  			wBufferLength -= 5 + bUinLen;
@@ -246,8 +246,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_01service.cpp b/
  	/* SNAC 3,15: Try to add unauthorised contacts to temporary list */
  	sendEntireListServ(ICQ_BUDDY_FAMILY, ICQ_USER_ADDTOTEMPLIST, BUL_ALLCONTACTS);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_02location.cpp b/src/fam_02location.cpp
---- a/src/fam_02location.cpp	2026-09-26 23:05:25.614910100 +0300
-+++ b/src/fam_02location.cpp	2026-09-26 23:05:25.876671400 +0300
+--- a/src/fam_02location.cpp	2026-09-27 13:50:55.961741100 +0300
++++ b/src/fam_02location.cpp	2026-09-27 13:50:56.611761200 +0300
 @@ -246,11 +246,11 @@
  			disposeChain(&pChain);
  		}
@@ -266,8 +266,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_02location.cpp b
  		SAFE_FREE((void**)&szMsg);
  	}
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_03buddy.cpp b/src/fam_03buddy.cpp
---- a/src/fam_03buddy.cpp	2026-09-26 23:05:25.616911900 +0300
-+++ b/src/fam_03buddy.cpp	2026-09-26 23:05:25.803674200 +0300
+--- a/src/fam_03buddy.cpp	2026-09-27 13:50:55.967739900 +0300
++++ b/src/fam_03buddy.cpp	2026-09-27 13:50:56.558332100 +0300
 @@ -244,7 +244,7 @@
  			if (wClass & CLASS_AWAY)
  				wStatus = ID_STATUS_AWAY;
@@ -287,8 +287,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_03buddy.cpp b/sr
  			wStatus = ID_STATUS_ONLINE;
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/src/fam_04message.cpp
---- a/src/fam_04message.cpp	2026-09-26 23:05:25.617911000 +0300
-+++ b/src/fam_04message.cpp	2026-09-26 23:05:25.807676400 +0300
+--- a/src/fam_04message.cpp	2026-09-27 13:50:55.974402800 +0300
++++ b/src/fam_04message.cpp	2026-09-27 13:50:56.559332700 +0300
 @@ -233,7 +233,7 @@
  				DWORD dwRecvTime;
  				char* szMsg = nullptr;
@@ -520,8 +520,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_04message.cpp b/
  
  				case MTYPE_FILEREQ:
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_13servclist.cpp b/src/fam_13servclist.cpp
---- a/src/fam_13servclist.cpp	2026-09-26 23:05:25.621932600 +0300
-+++ b/src/fam_13servclist.cpp	2026-09-26 23:05:25.810881700 +0300
+--- a/src/fam_13servclist.cpp	2026-09-27 13:50:55.990414900 +0300
++++ b/src/fam_13servclist.cpp	2026-09-27 13:50:56.562334500 +0300
 @@ -1080,7 +1080,7 @@
  					// Set apparent mode & ignore
  					setWord(hContact, "ApparentMode", ID_STATUS_OFFLINE);
@@ -576,8 +576,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_13servclist.cpp 
  	SAFE_FREE(&szNick);
  	SAFE_FREE(&szReason);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_15icqserver.cpp b/src/fam_15icqserver.cpp
---- a/src/fam_15icqserver.cpp	2026-09-26 23:05:25.623439700 +0300
-+++ b/src/fam_15icqserver.cpp	2026-09-26 23:05:25.811885700 +0300
+--- a/src/fam_15icqserver.cpp	2026-09-27 13:50:55.996427900 +0300
++++ b/src/fam_15icqserver.cpp	2026-09-27 13:50:56.563331800 +0300
 @@ -91,7 +91,7 @@
  						}
  						else if (wSubType == META_SET_PASSWORD_REQ) {
@@ -655,8 +655,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/fam_15icqserver.cpp 
  		DWORD64 qwMetaTime;
  		BYTE pbEmptyMetaToken[0x10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/families.h b/src/families.h
---- a/src/families.h	2026-09-26 23:05:25.624447000 +0300
-+++ b/src/families.h	2026-09-26 23:05:25.812887200 +0300
+--- a/src/families.h	2026-09-27 13:50:56.004940800 +0300
++++ b/src/families.h	2026-09-27 13:50:56.564332900 +0300
 @@ -57,6 +57,11 @@
  	WORD wTLV;
  	int dbType;
@@ -670,8 +670,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/families.h b/src/fam
  
  /*---------* Functions *---------------*/
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/guids.h b/src/guids.h
---- a/src/guids.h	2026-09-26 23:05:25.627447100 +0300
-+++ b/src/guids.h	2026-09-26 23:05:25.819899800 +0300
+--- a/src/guids.h	2026-09-27 13:50:56.014457900 +0300
++++ b/src/guids.h	2026-09-27 13:50:56.565333100 +0300
 @@ -57,6 +57,7 @@
  static const plugin_guid MGTYPE_CHAT = { MGTYPE_CHAT_s };
  static const plugin_guid MGTYPE_SMS_MESSAGE = { MGTYPE_SMS_MESSAGE_s };
@@ -681,8 +681,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/guids.h b/src/guids.
  // make GUID checks easy
  __forceinline bool CompareGUIDs(DWORD q1, DWORD q2, DWORD q3, DWORD q4, const plugin_guid guid)
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.cpp b/src/icq_avatar.cpp
---- a/src/icq_avatar.cpp	2026-09-26 23:05:25.632477700 +0300
-+++ b/src/icq_avatar.cpp	2026-09-26 23:05:25.884705900 +0300
+--- a/src/icq_avatar.cpp	2026-09-27 13:50:56.033987600 +0300
++++ b/src/icq_avatar.cpp	2026-09-27 13:50:56.615764100 +0300
 @@ -80,8 +80,8 @@
  
  	FOLDERSGETDATA fgd = { sizeof(fgd) };
@@ -994,8 +994,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.cpp b/src
  			SAFE_FREE((void**)&pCookieData->hash);
  			SAFE_FREE((void**)&pCookieData);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.h b/src/icq_avatar.h
---- a/src/icq_avatar.h	2026-09-26 23:05:25.633478800 +0300
-+++ b/src/icq_avatar.h	2026-09-26 23:05:25.885705900 +0300
+--- a/src/icq_avatar.h	2026-09-27 13:50:56.039992400 +0300
++++ b/src/icq_avatar.h	2026-09-27 13:50:56.617763100 +0300
 @@ -37,6 +37,13 @@
  #define AVATAR_HASH_FLASH   0x08
  #define AVATAR_HASH_PHOTO   0x0C
@@ -1019,8 +1019,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_avatar.h b/src/i
  	int      runCount;
  	void     checkRequestQueue();
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_constants.h b/src/icq_constants.h
---- a/src/icq_constants.h	2026-09-26 23:05:25.635476800 +0300
-+++ b/src/icq_constants.h	2026-09-26 23:05:25.830305300 +0300
+--- a/src/icq_constants.h	2026-09-27 13:50:56.053509300 +0300
++++ b/src/icq_constants.h	2026-09-27 13:50:56.570804700 +0300
 @@ -244,6 +244,7 @@
  #define MTYPE_SCRIPT_INVITATION     0x201 // Xtraz Invitation
  #define MTYPE_SCRIPT_DATA           0x202 // Xtraz Message
@@ -1048,8 +1048,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_constants.h b/sr
  #define DC_TYPE                     DC_NORMAL // Used for DC settings
  #define MAX_CONTACTSSEND            15
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_db.cpp b/src/icq_db.cpp
---- a/src/icq_db.cpp	2026-09-26 23:05:25.636984000 +0300
-+++ b/src/icq_db.cpp	2026-09-26 23:05:25.831356100 +0300
+--- a/src/icq_db.cpp	2026-09-27 13:50:56.059808800 +0300
++++ b/src/icq_db.cpp	2026-09-27 13:50:56.570804700 +0300
 @@ -184,7 +184,7 @@
  
  int CIcqProto::IsICQContact(MCONTACT hContact)
@@ -1075,8 +1075,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_db.cpp b/src/icq
  }
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_directmsg.cpp b/src/icq_directmsg.cpp
---- a/src/icq_directmsg.cpp	2026-09-26 23:05:25.640008200 +0300
-+++ b/src/icq_directmsg.cpp	2026-09-26 23:05:25.834355500 +0300
+--- a/src/icq_directmsg.cpp	2026-09-27 13:50:56.073842200 +0300
++++ b/src/icq_directmsg.cpp	2026-09-27 13:50:56.572809900 +0300
 @@ -166,7 +166,7 @@
  					ackType = ACKTYPE_MESSAGE;
  					break;
@@ -1096,8 +1096,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_directmsg.cpp b/
  			case MTYPE_CONTACTS:
  				ackType = ACKTYPE_CONTACTS;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_filerequests.cpp b/src/icq_filerequests.cpp
---- a/src/icq_filerequests.cpp	2026-09-26 23:05:25.643016200 +0300
-+++ b/src/icq_filerequests.cpp	2026-09-26 23:05:25.836358800 +0300
+--- a/src/icq_filerequests.cpp	2026-09-27 13:50:56.087394500 +0300
++++ b/src/icq_filerequests.cpp	2026-09-27 13:50:56.574805800 +0300
 @@ -154,16 +154,12 @@
  	// Send chain event
  	wchar_t* ptszFileName = mir_utf8decodeW(pszFileName);
@@ -1121,8 +1121,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_filerequests.cpp
  }
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_firstrun.cpp b/src/icq_firstrun.cpp
---- a/src/icq_firstrun.cpp	2026-09-26 23:05:25.645015600 +0300
-+++ b/src/icq_firstrun.cpp	2026-09-26 23:05:25.837357700 +0300
+--- a/src/icq_firstrun.cpp	2026-09-27 13:50:56.100909400 +0300
++++ b/src/icq_firstrun.cpp	2026-09-27 13:50:56.576807200 +0300
 @@ -68,7 +68,7 @@
  	case WM_COMMAND:
  		switch (LOWORD(wParam)) {
@@ -1143,8 +1143,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_firstrun.cpp b/s
 +	return CreateDialogParam(g_plugin.getInst(), MAKEINTRESOURCE(IDD_ICQACCOUNT), hwndParent, icq_FirstRunDlgProc, LPARAM(this));
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_menu.cpp b/src/icq_menu.cpp
---- a/src/icq_menu.cpp	2026-09-26 23:05:25.649523400 +0300
-+++ b/src/icq_menu.cpp	2026-09-26 23:05:25.842321800 +0300
+--- a/src/icq_menu.cpp	2026-09-27 13:50:56.116423400 +0300
++++ b/src/icq_menu.cpp	2026-09-27 13:50:56.579861700 +0300
 @@ -106,7 +106,10 @@
  
  INT_PTR CIcqProto::OpenWebProfile(WPARAM hContact, LPARAM)
@@ -1171,8 +1171,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_menu.cpp b/src/i
  		Menu_ShowItem(g_hContactMenuItems[ICMI_ADD_TO_SERVLIST],
  			m_bSsiEnabled && !getWord(hContact, DBSETTING_SERVLIST_ID, 0) &&
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_opts.cpp b/src/icq_opts.cpp
---- a/src/icq_opts.cpp	2026-09-26 23:05:25.651040600 +0300
-+++ b/src/icq_opts.cpp	2026-09-26 23:05:25.843321400 +0300
+--- a/src/icq_opts.cpp	2026-09-27 13:50:56.122935700 +0300
++++ b/src/icq_opts.cpp	2026-09-27 13:50:56.580859600 +0300
 @@ -25,8 +25,6 @@
  
  #include "stdafx.h"
@@ -1221,8 +1221,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_opts.cpp b/src/i
  		}
  		break;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_packet.cpp b/src/icq_packet.cpp
---- a/src/icq_packet.cpp	2026-09-26 23:05:25.652047500 +0300
-+++ b/src/icq_packet.cpp	2026-09-26 23:05:25.843321400 +0300
+--- a/src/icq_packet.cpp	2026-09-27 13:50:56.130148200 +0300
++++ b/src/icq_packet.cpp	2026-09-27 13:50:56.581860500 +0300
 @@ -41,6 +41,8 @@
  	pPacket->pData = (BYTE*)SAFE_MALLOC(pPacket->wLen);
  }
@@ -1233,8 +1233,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_packet.cpp b/src
  {
  	init_generic_packet(pPacket, 14);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_popups.cpp b/src/icq_popups.cpp
---- a/src/icq_popups.cpp	2026-09-26 23:05:25.653046400 +0300
-+++ b/src/icq_popups.cpp	2026-09-26 23:05:25.883706300 +0300
+--- a/src/icq_popups.cpp	2026-09-27 13:50:56.137147900 +0300
++++ b/src/icq_popups.cpp	2026-09-27 13:50:56.613763000 +0300
 @@ -195,7 +195,7 @@
  int CIcqProto::ShowPopupMsg(MCONTACT hContact, const char *szTitle, const char *szMsg, BYTE bType)
  {
@@ -1254,8 +1254,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_popups.cpp b/src
  	return -1; // Failure
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/icq_proto.cpp
---- a/src/icq_proto.cpp	2026-09-26 23:05:25.655047100 +0300
-+++ b/src/icq_proto.cpp	2026-09-26 23:05:25.851976000 +0300
+--- a/src/icq_proto.cpp	2026-09-27 13:50:56.150160200 +0300
++++ b/src/icq_proto.cpp	2026-09-27 13:50:56.584859100 +0300
 @@ -75,6 +75,7 @@
  	expectedFileRecvs(10, CompareFT),
  	contactsCache(10, CompareContactsCache),
@@ -1553,8 +1553,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.cpp b/src/
  	return 0;
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/icq_proto.h
---- a/src/icq_proto.h	2026-09-26 23:05:25.656049500 +0300
-+++ b/src/icq_proto.h	2026-09-26 23:05:25.883706300 +0300
+--- a/src/icq_proto.h	2026-09-27 13:50:56.156165400 +0300
++++ b/src/icq_proto.h	2026-09-27 13:50:56.612761500 +0300
 @@ -59,48 +59,47 @@
  
  	int      Authorize(MEVENT hDbEvent) override;
@@ -1702,8 +1702,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_proto.h b/src/ic
  	void   writeDbInfoSettingTLVDate(MCONTACT hContact, const char *szSettingYear, const char *szSettingMonth, const char *szSettingDay, oscar_tlv_chain *chain, WORD wTlv);
  	void   writeDbInfoSettingTLVBlob(MCONTACT hContact, const char *szSetting, oscar_tlv_chain *chain, WORD wTlv);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.cpp b/src/icq_server.cpp
---- a/src/icq_server.cpp	2026-09-26 23:05:25.659063700 +0300
-+++ b/src/icq_server.cpp	2026-09-26 23:05:25.852975100 +0300
+--- a/src/icq_server.cpp	2026-09-27 13:50:56.171445000 +0300
++++ b/src/icq_server.cpp	2026-09-27 13:50:56.586860100 +0300
 @@ -54,9 +54,6 @@
  	{
  		NETLIBOPENCONNECTION nloc = infoParam->nloc;
@@ -1724,8 +1724,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.cpp b/src
  		icq_LogUsingErrorCode(LOG_WARNING, GetLastError(), LPGEN("Miranda was unable to allocate a port to listen for direct peer-to-peer connections between clients. You will be able to use most of the ICQ network without problems but you may be unable to send or receive files.\n\nIf you have a firewall this may be blocking Miranda, in which case you should configure your firewall to leave some ports open and tell Miranda which ports to use in Options -> Network -> ICQ client-to-client connections."));
  		wListenPort = 0;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.h b/src/icq_server.h
---- a/src/icq_server.h	2026-09-26 23:05:25.660248700 +0300
-+++ b/src/icq_server.h	2026-09-26 23:05:25.853975300 +0300
+--- a/src/icq_server.h	2026-09-27 13:50:56.178626400 +0300
++++ b/src/icq_server.h	2026-09-27 13:50:56.587859800 +0300
 @@ -30,6 +30,14 @@
  #ifndef __ICQ_SERVER_H
  #define __ICQ_SERVER_H
@@ -1742,8 +1742,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_server.h b/src/i
  {
  	NETLIBOPENCONNECTION nloc;
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_servlist.cpp b/src/icq_servlist.cpp
---- a/src/icq_servlist.cpp	2026-09-26 23:05:25.661615000 +0300
-+++ b/src/icq_servlist.cpp	2026-09-26 23:05:25.854975700 +0300
+--- a/src/icq_servlist.cpp	2026-09-27 13:50:56.186139600 +0300
++++ b/src/icq_servlist.cpp	2026-09-27 13:50:56.588366200 +0300
 @@ -2259,8 +2259,19 @@
  }
  
@@ -1791,7 +1791,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_servlist.cpp b/s
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_tzer.cpp b/src/icq_tzer.cpp
 --- a/src/icq_tzer.cpp	1970-01-01 02:00:00.000000000 +0200
-+++ b/src/icq_tzer.cpp	2026-09-26 23:05:25.885705900 +0300
++++ b/src/icq_tzer.cpp	2026-09-27 13:50:56.616762700 +0300
 @@ -0,0 +1,146 @@
 +// ---------------------------------------------------------------------------80
 +//                ICQ plugin for Miranda Instant Messenger
@@ -1940,8 +1940,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_tzer.cpp b/src/i
 +	return 0;
 +}
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_xtraz.cpp b/src/icq_xtraz.cpp
---- a/src/icq_xtraz.cpp	2026-09-26 23:05:25.664121800 +0300
-+++ b/src/icq_xtraz.cpp	2026-09-26 23:05:25.858980900 +0300
+--- a/src/icq_xtraz.cpp	2026-09-27 13:50:56.206943000 +0300
++++ b/src/icq_xtraz.cpp	2026-09-27 13:50:56.592889500 +0300
 @@ -328,12 +328,13 @@
  				mir_strcat(szWork, szNum);
  
@@ -1961,8 +1961,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icq_xtraz.cpp b/src/
  				SAFE_FREE(&szWork);
  			}
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icqosc_svcs.cpp b/src/icqosc_svcs.cpp
---- a/src/icqosc_svcs.cpp	2026-09-26 23:05:25.665127800 +0300
-+++ b/src/icqosc_svcs.cpp	2026-09-26 23:05:25.859488200 +0300
+--- a/src/icqosc_svcs.cpp	2026-09-27 13:50:56.212943000 +0300
++++ b/src/icqosc_svcs.cpp	2026-09-27 13:50:56.593986500 +0300
 @@ -73,84 +73,6 @@
  	return 0; // Success
  }
@@ -2071,8 +2071,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/icqosc_svcs.cpp b/sr
  
  INT_PTR __cdecl CIcqProto::IcqAddCapability(WPARAM, LPARAM lParam)
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.cpp
---- a/src/init.cpp	2026-09-26 23:05:25.667136800 +0300
-+++ b/src/init.cpp	2026-09-26 23:05:25.861002100 +0300
+--- a/src/init.cpp	2026-09-27 13:50:56.220965600 +0300
++++ b/src/init.cpp	2026-09-27 13:50:56.614762700 +0300
 @@ -43,7 +43,7 @@
  	__COPYRIGHT,
  	__AUTHORWEB,
@@ -2091,7 +2091,154 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.
  	return 0;
  }
  
-@@ -86,7 +86,7 @@
+@@ -73,8 +73,146 @@
+ 	{ LPGEN("Expand string edit"), "ICO_EXPANDSTRINGEDIT", IDI_EXPANDSTRINGEDIT }
+ };
+ 
++/////////////////////////////////////////////////////////////////////////////////////////
++// PluginUpdater compares every file it knows by name with the list of its
++// update server and replaces it with the server's copy, or deletes it when a
++// server rule says so. The Miranda NG list knows nothing of this port, so
++// against it our files are left out of both by the hidden setting
++// PluginUpdaterFiles/<path relative to the Miranda folder, lower case> = 2.
++//
++// Our sign-in server hands out the same list with our files in it (the legacy
++// web pages, /miranda/stable/x32 and /x64), so PluginUpdater is pointed there:
++// custom mode, https://<sign-in host>:8102/miranda/stable/x%platform%, where
++// PluginUpdater puts 32 or 64 in place of %platform%. Only when the user has
++// not chosen an address of their own: the one written here is remembered in
++// IcqRevival/UpdateURL, and once PluginUpdater's differs from it, it is the
++// user's and stays. The hidden IcqRevival/UpdateBase (a full base address,
++// without /x..) replaces the derived one, for a test setup.
++//
++// While PluginUpdater takes our list, the marks are taken back so that it
++// updates our files too; otherwise they stay. Every start, written only when
++// they change.
++
++#define REVIVAL_MODULE "IcqRevival"
++#define UPDATE_PORT    8102
++#define UPDATE_PATH    "/miranda/stable"
++#define OUR_MODULE     L"Plugins\\IcqOscarJ.dll"
++
++// Our other files the list names; FlashAvatars marks its own as well.
++static const wchar_t *g_arOurFiles[] =
++{
++	L"Plugins\\FlashAvatars.dll",
++	L"Libs\\FlashPlayerControl.dll",
++	L"Languages\\langpack_russian_icq.txt",
++	L"Languages\\langpack_russian_flashavatars.txt"
++};
++
++static void MarkForUpdater(const wchar_t *pwszRelPath, bool bProtect)
++{
++	CMStringA szKey(pwszRelPath);
++	szKey.MakeLower();
++	int iMark = db_get_b(0, "PluginUpdaterFiles", szKey, 1);
++	if (bProtect && iMark != 2)
++		db_set_b(0, "PluginUpdaterFiles", szKey, 2);
++	else if (!bProtect && iMark == 2)
++		db_unset(0, "PluginUpdaterFiles", szKey);
++}
++
++// The module under the name the list gives it is updated from our list; under
++// any other name (ICQ.dll, say) the list would bring a stranger's file, so it
++// stays protected.
++static void MarkModuleForUpdater(HINSTANCE hInst, bool bOurList)
++{
++	wchar_t wszExe[MAX_PATH], wszDll[MAX_PATH];
++	if (!GetModuleFileNameW(nullptr, wszExe, MAX_PATH) || !GetModuleFileNameW(hInst, wszDll, MAX_PATH))
++		return;
++	wchar_t *p = wcsrchr(wszExe, '\\');
++	if (p == nullptr)
++		return;
++	size_t cbBase = p - wszExe + 1;
++	if (!_wcsnicmp(wszExe, wszDll, cbBase)) {
++		const wchar_t *pwszRel = wszDll + cbBase;
++		MarkForUpdater(pwszRel, !bOurList || mir_wstrcmpi(pwszRel, OUR_MODULE));
++	}
++}
++
++static bool UpdaterUsesOurList()
++{
++	if (db_get_b(0, "PluginUpdater", "UpdateMode", 0xFF) != 0)
++		return false;
++	ptrA szCur(db_get_sa(0, "PluginUpdater", "UpdateURL")), szOurs(db_get_sa(0, REVIVAL_MODULE, "UpdateURL"));
++	return szCur && szOurs && *szOurs && !mir_strcmp(szCur, szOurs);
++}
++
++static CMStringA OurUpdateUrl()
++{
++	CMStringA szBase(ptrA(db_get_sa(0, REVIVAL_MODULE, "UpdateBase")));
++	szBase.Trim();
++	while (!szBase.IsEmpty() && szBase[szBase.GetLength() - 1] == '/')
++		szBase.Truncate(szBase.GetLength() - 1);
++	if (!_strnicmp(szBase, "http://", 7) || !_strnicmp(szBase, "https://", 8))
++		return szBase + "/x%platform%";
++
++	// the sign-in server of the first account that has one of its own
++	for (auto &pa : Accounts()) {
++		if (mir_strcmp(pa->szProtoName, ICQ_PROTOCOL_NAME) || !pa->bIsEnabled)
++			continue;
++		CMStringA szHost(ptrA(db_get_sa(0, pa->szModuleName, "OscarServer")));
++		szHost.Trim();
++		int iColon = szHost.Find(':');
++		if (iColon != -1)
++			szHost.Truncate(iColon);
++		if (szHost.IsEmpty() || !mir_strcmpi(szHost, DEFAULT_SERVER_HOST) || !mir_strcmpi(szHost, DEFAULT_SERVER_HOST_SSL))
++			continue;
++		return CMStringA(FORMAT, "https://%s:%d" UPDATE_PATH "/x%%platform%%", szHost.c_str(), UPDATE_PORT);
++	}
++	return CMStringA();
++}
++
++static void PointUpdaterAtServer()
++{
++	CMStringA szUrl(OurUpdateUrl());
++	if (szUrl.IsEmpty())
++		return;
++
++	int iMode = db_get_b(0, "PluginUpdater", "UpdateMode", 0xFF);
++	ptrA szCur(db_get_sa(0, "PluginUpdater", "UpdateURL")), szLast(db_get_sa(0, REVIVAL_MODULE, "UpdateURL"));
++	bool bCustom = (iMode == 0 && szCur && *szCur);
++	if (szLast && *szLast) {
++		// set up before and changed since: the user's choice
++		if (!bCustom || mir_strcmp(szCur, szLast))
++			return;
++		// ours and up to date
++		if (!mir_strcmp(szLast, szUrl))
++			return;
++	}
++	else if (bCustom)
++		return; // an address of the user's own
++
++	db_set_b(0, "PluginUpdater", "UpdateMode", 0);
++	db_set_ws(0, "PluginUpdater", "UpdateURL", _A2T(szUrl));
++	db_set_s(0, REVIVAL_MODULE, "UpdateURL", szUrl);
++}
++
++static int OnModulesLoaded(WPARAM, LPARAM)
++{
++	// the accounts are known only now
++	PointUpdaterAtServer();
++
++	bool bOurList = UpdaterUsesOurList();
++	MarkModuleForUpdater(g_plugin.getInst(), bOurList);
++	for (auto &it : g_arOurFiles)
++		MarkForUpdater(it, !bOurList);
++	return 0;
++}
++
+ int CMPlugin::Load()
+ {
++	bool bOurList = UpdaterUsesOurList();
++	MarkModuleForUpdater(g_plugin.getInst(), bOurList);
++	MarkForUpdater(L"Languages\\langpack_russian_icq.txt", !bOurList);
++	HookEvent(ME_SYSTEM_MODULESLOADED, OnModulesLoaded);
++
+ 	srand(time(0));
+ 	_tzset();
+ 
+@@ -86,7 +224,7 @@
  
  	// Init extra statuses
  	InitXStatusIcons();
@@ -2102,7 +2249,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.
  	HookEvent(ME_SYSTEM_MODULEUNLOAD, ModuleLoad);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/m_icq.h b/src/m_icq.h
 --- a/src/m_icq.h	1970-01-01 02:00:00.000000000 +0200
-+++ b/src/m_icq.h	2026-09-26 23:05:25.875674200 +0300
++++ b/src/m_icq.h	2026-09-27 13:50:56.610755300 +0300
 @@ -0,0 +1,214 @@
 +// ---------------------------------------------------------------------------80
 +//                ICQ plugin for Miranda Instant Messenger
@@ -2319,8 +2466,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/m_icq.h b/src/m_icq.
 +
 +#endif // M_ICQ_H__
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/oscar_filetransfer.cpp b/src/oscar_filetransfer.cpp
---- a/src/oscar_filetransfer.cpp	2026-09-26 23:05:25.671657100 +0300
-+++ b/src/oscar_filetransfer.cpp	2026-09-26 23:05:25.863008500 +0300
+--- a/src/oscar_filetransfer.cpp	2026-09-27 13:50:56.240554800 +0300
++++ b/src/oscar_filetransfer.cpp	2026-09-27 13:50:56.597717600 +0300
 @@ -263,7 +263,7 @@
  	return dwCheck;
  }
@@ -2398,8 +2545,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/oscar_filetransfer.c
  				if (!oc.hConnection) { // proxy connection failed, we are out of possibilities
  					ProtoBroadcastAck(oc.ft->hContact, ACKTYPE_FILE, ACKRESULT_FAILED, oc.ft, 0);
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/resource.h b/src/resource.h
---- a/src/resource.h	2026-09-26 23:05:25.673656000 +0300
-+++ b/src/resource.h	2026-09-26 23:05:25.864007800 +0300
+--- a/src/resource.h	2026-09-27 13:50:56.248072500 +0300
++++ b/src/resource.h	2026-09-27 13:50:56.599241600 +0300
 @@ -72,6 +72,7 @@
  #define IDC_XSTATUSRESET                1042
  #define IDC_MOODSENABLE                 1043
@@ -2409,8 +2556,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/resource.h b/src/res
  #define IDC_NICK                        1053
  #define IDC_GENDER                      1060
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/stdafx.h b/src/stdafx.h
---- a/src/stdafx.h	2026-09-26 23:05:25.674656600 +0300
-+++ b/src/stdafx.h	2026-09-26 23:05:25.866048400 +0300
+--- a/src/stdafx.h	2026-09-27 13:50:56.259093800 +0300
++++ b/src/stdafx.h	2026-09-27 13:50:56.601245800 +0300
 @@ -72,13 +72,13 @@
  #include <m_idle.h>
  #include <m_skin.h>
@@ -2435,8 +2582,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/stdafx.h b/src/stdaf
  #include "icq_constants.h"
  #include "capabilities.h"
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/userinfotab.cpp b/src/userinfotab.cpp
---- a/src/userinfotab.cpp	2026-09-26 23:05:25.681860600 +0300
-+++ b/src/userinfotab.cpp	2026-09-26 23:05:25.871671600 +0300
+--- a/src/userinfotab.cpp	2026-09-27 13:50:56.286312100 +0300
++++ b/src/userinfotab.cpp	2026-09-27 13:50:56.606242400 +0300
 @@ -190,16 +190,15 @@
  	switch (msg) {
  	case WM_INITDIALOG:
@@ -2613,8 +2760,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/userinfotab.cpp b/sr
  	return 0;
  }
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.cpp b/src/utilities.cpp
---- a/src/utilities.cpp	2026-09-26 23:05:25.682368400 +0300
-+++ b/src/utilities.cpp	2026-09-26 23:05:25.872669600 +0300
+--- a/src/utilities.cpp	2026-09-27 13:50:56.292826400 +0300
++++ b/src/utilities.cpp	2026-09-27 13:50:56.607242600 +0300
 @@ -125,12 +125,10 @@
  		nIcqStatus = ICQ_STATUS_AWAY;
  		break;
@@ -2738,8 +2885,8 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.cpp b/src/
  	SetLastError(ERROR_INVALID_PARAMETER); // this must be here - NetLib does not set any error :((
  
 diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/utilities.h b/src/utilities.h
---- a/src/utilities.h	2026-09-26 23:05:25.683378000 +0300
-+++ b/src/utilities.h	2026-09-26 23:05:25.873670100 +0300
+--- a/src/utilities.h	2026-09-27 13:50:56.300869800 +0300
++++ b/src/utilities.h	2026-09-27 13:50:56.607242600 +0300
 @@ -132,4 +132,6 @@
  void   setContactExtraIcon(MCONTACT hContact, int xstatus);
  int    OnReloadIcons(WPARAM wParam, LPARAM lParam);

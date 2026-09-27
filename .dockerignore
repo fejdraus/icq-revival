@@ -9,6 +9,8 @@ deploy/.env
 deploy/secrets/
 deploy/certs/
 deploy/backups/
+deploy/miranda-updates/
+deploy/**/*.test.js
 certs/
 clients/
 dist/

@@ -950,9 +950,63 @@ static int OnModulesLoaded(WPARAM, LPARAM)
 	return 0;
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////
+// PluginUpdater compares every file it knows by name with the list of its
+// update server and replaces it with the server's copy, or deletes it when a
+// server rule says so. Against the Miranda NG list our files are left out of
+// both by the hidden setting PluginUpdaterFiles/<path relative to the Miranda
+// folder, lower case> = 2. Our sign-in server hands out the same list with our
+// files in it; the ICQ plugin points PluginUpdater there and remembers the
+// address in IcqRevival/UpdateURL. While PluginUpdater takes that list, the
+// marks are taken back so that it updates our files too. Every start, written
+// only when they change.
+
+#define OUR_MODULE L"Plugins\\FlashAvatars.dll"
+
+static void MarkForUpdater(const wchar_t *pwszRelPath, bool bProtect)
+{
+	CMStringA szKey(pwszRelPath);
+	szKey.MakeLower();
+	int iMark = db_get_b(0, "PluginUpdaterFiles", szKey, 1);
+	if (bProtect && iMark != 2)
+		db_set_b(0, "PluginUpdaterFiles", szKey, 2);
+	else if (!bProtect && iMark == 2)
+		db_unset(0, "PluginUpdaterFiles", szKey);
+}
+
+// Under a name other than the list's the module stays protected: the list
+// would bring a stranger's file for it.
+static void MarkModuleForUpdater(HINSTANCE hInst, bool bOurList)
+{
+	wchar_t wszExe[MAX_PATH], wszDll[MAX_PATH];
+	if (!GetModuleFileNameW(nullptr, wszExe, MAX_PATH) || !GetModuleFileNameW(hInst, wszDll, MAX_PATH))
+		return;
+	wchar_t *p = wcsrchr(wszExe, '\\');
+	if (p == nullptr)
+		return;
+	size_t cbBase = p - wszExe + 1;
+	if (!_wcsnicmp(wszExe, wszDll, cbBase)) {
+		const wchar_t *pwszRel = wszDll + cbBase;
+		MarkForUpdater(pwszRel, !bOurList || mir_wstrcmpi(pwszRel, OUR_MODULE));
+	}
+}
+
+static bool UpdaterUsesOurList()
+{
+	if (db_get_b(0, "PluginUpdater", "UpdateMode", 0xFF) != 0)
+		return false;
+	ptrA szCur(db_get_sa(0, "PluginUpdater", "UpdateURL")), szOurs(db_get_sa(0, "IcqRevival", "UpdateURL"));
+	return szCur && szOurs && *szOurs && !mir_strcmp(szCur, szOurs);
+}
+
 int CMPlugin::Load()
 {
 	g_dwMainThread = GetCurrentThreadId();
+
+	bool bOurList = UpdaterUsesOurList();
+	MarkModuleForUpdater(g_plugin.getInst(), bOurList);
+	MarkForUpdater(L"Libs\\FlashPlayerControl.dll", !bOurList);
+	MarkForUpdater(L"Languages\\langpack_russian_flashavatars.txt", !bOurList);
 	HookEvent(ME_SYSTEM_MODULESLOADED, OnModulesLoaded);
 	return 0;
 }
