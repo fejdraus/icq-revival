@@ -388,10 +388,10 @@ function startEdit(edit) {
   // both previews move, even in the client's old IE.
   var src = edit.work;
   el('edImg').src = src; el('edBig').src = src; el('edSmall').src = src;
+  // No note about the animation: ICQ 6.5, the one client that sets the
+  // picture from this page, re-encodes whatever it is handed into a still
+  // JPEG before it uploads it, so promising an animation would be wrong.
   var note = '';
-  if (edit.animated) {
-    note = T.picGif + (edit.fits ? ' ' + T.picGifFits : '') + (edit.cut ? ' ' + T.picGifCut : '');
-  }
   el('edGifNote').innerHTML = '';
   el('edGifNote').appendChild(document.createTextNode(note));
   el('edGifNote').style.display = note ? '' : 'none';
@@ -573,9 +573,10 @@ function applyEdit() {
   cut.onerror = function () {
     if (pending !== sent) { return; }
     pending = '';
+    // An animation too big for a buddy icon: its first frame instead, with
+    // no question - the client makes a still of it anyway (see startEdit).
     if (EDIT.animated && !EDIT.still) {
-      say(T.picGifTooBig);
-      el('edStillBtn').style.display = '';
+      useStill();
       return;
     }
     say(T.picCutFailed);
