@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -160,8 +161,62 @@ type Config struct {
 	STUNListener           string `envconfig:"STUN_LISTENER" required:"false" basic:"0.0.0.0:3478" ssl:"0.0.0.0:3478" default:"0.0.0.0:3478" description:"UDP address of the STUN server. ICQ 6 asks STUN for its public address before a voice or video call; the ICQ 6.5 patch points the client here in place of turn.oscar.aol.com, which no longer exists. Clients reach it on UDP 3478, the port the client has built in. Empty turns it off.\n\nFormat: HOST:PORT\n\nExamples:\n\t// All interfaces\n\t0.0.0.0:3478"`
 	LegacyWebURL           string `envconfig:"LEGACY_WEB_URL" required:"false" default:"" basic:"http://127.0.0.1:8101" ssl:"http://127.0.0.1:8101" description:"Base address of the legacy web service (the ICQ 6 pages and the animated avatar gallery), as this server reaches it. Clients that cannot play Flash avatars are shown a still picture of a gallery avatar in its place, which the server downloads from LEGACY_WEB_URL/icq/avatars/NAME-still.jpg. Empty turns the still pictures off.\n\nExamples:\n\t// legacy web on the same host\n\thttp://127.0.0.1:8101"`
 
+	// TURN relay of the STUN server
+	TURN TURNConfig
+
 	// ICQ Legacy Protocol Configuration
 	ICQLegacy ICQLegacyConfig
+}
+
+// TURNConfig holds the settings of the TURN relay that the STUN server runs
+// for ICQ 6.5 voice and video calls.
+type TURNConfig struct {
+	Enabled     bool          `envconfig:"TURN_ENABLED" required:"false" default:"false" basic:"false" ssl:"false" description:"Make the STUN server a TURN relay as well. ICQ 6.5 asks the STUN host for a relayed address before a voice or video call, in the TURN of an early draft, and offers it to its peer as one more way to reach it; the call goes through the relay only when the two clients cannot reach each other directly, as between two symmetric NATs or through a VPN. Only clients signed in to this server from the same IP address get an allocation. Needs STUN_LISTENER, TURN_PUBLIC_IP, and TURN_RELAY_PORTS open to the Internet for UDP."`
+	PublicIP    string        `envconfig:"TURN_PUBLIC_IP" required:"false" basic:"127.0.0.1" ssl:"ras.dev" description:"The server's IPv4 address on the Internet, or a host name that resolves to it: clients are told their relayed ports are on this address. Resolved once, at startup.\n\nExamples:\n\t// an address\n\t192.0.2.1\n\t// a host name\n\ticq.example.com"`
+	RelayPorts  string        `envconfig:"TURN_RELAY_PORTS" required:"false" default:"49160-49199" basic:"49160-49199" ssl:"49160-49199" description:"UDP ports of relayed addresses, as FIRST-LAST. Each allocation takes one, and a call takes up to four per client relayed (audio and video, RTP and RTCP), so the size of the range caps how many allocations there are at once. They must be open to the Internet for UDP.\n\nExamples:\n\t49160-49199"`
+	MaxPerIP    int           `envconfig:"TURN_MAX_ALLOCATIONS_PER_IP" required:"false" default:"8" basic:"8" ssl:"8" description:"Most allocations the clients behind one IP address may hold at once. A client in a video call holds four."`
+	Kbps        int           `envconfig:"TURN_RELAY_KBPS" required:"false" default:"2000" basic:"2000" ssl:"2000" description:"Most kilobits a second one allocation relays, both ways together; what is over it is dropped. An ICQ 6.5 audio stream needs under 100, a video stream a few hundred."`
+	IdleTimeout time.Duration `envconfig:"TURN_IDLE_TIMEOUT" required:"false" default:"5m" basic:"5m" ssl:"5m" description:"Close an allocation that has relayed nothing for this long, even if the client keeps refreshing it."`
+}
+
+// PortRange returns the first and last relay port of TURN_RELAY_PORTS.
+func (c TURNConfig) PortRange() (first, last uint16, err error) {
+	lo, hi, ok := strings.Cut(strings.TrimSpace(c.RelayPorts), "-")
+	if !ok {
+		return 0, 0, fmt.Errorf("invalid TURN relay ports %q. Valid format: FIRST-LAST (e.g., 49160-49199)", c.RelayPorts)
+	}
+	a, errA := strconv.ParseUint(strings.TrimSpace(lo), 10, 16)
+	b, errB := strconv.ParseUint(strings.TrimSpace(hi), 10, 16)
+	if errA != nil || errB != nil || a == 0 || a > b {
+		return 0, 0, fmt.Errorf("invalid TURN relay ports %q. Valid format: FIRST-LAST (e.g., 49160-49199)", c.RelayPorts)
+	}
+	return uint16(a), uint16(b), nil
+}
+
+// validate checks the settings of an enabled relay.
+func (c TURNConfig) validate(stunListener string) error {
+	if !c.Enabled {
+		return nil
+	}
+	if strings.TrimSpace(stunListener) == "" {
+		return fmt.Errorf("TURN_ENABLED needs STUN_LISTENER: the relay runs in the STUN server")
+	}
+	if strings.TrimSpace(c.PublicIP) == "" {
+		return fmt.Errorf("TURN_ENABLED needs TURN_PUBLIC_IP, the address clients are told to reach relayed ports on")
+	}
+	if _, _, err := c.PortRange(); err != nil {
+		return err
+	}
+	if c.MaxPerIP < 1 {
+		return fmt.Errorf("TURN_MAX_ALLOCATIONS_PER_IP must be at least 1")
+	}
+	if c.Kbps < 64 {
+		return fmt.Errorf("TURN_RELAY_KBPS must be at least 64")
+	}
+	if c.IdleTimeout <= 0 {
+		return fmt.Errorf("TURN_IDLE_TIMEOUT must be positive")
+	}
+	return nil
 }
 
 // ICQLegacyConfig holds configuration for legacy ICQ protocol support (v2-v5)
@@ -456,5 +511,6 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
-	return nil
+
+	return c.TURN.validate(c.STUNListener)
 }

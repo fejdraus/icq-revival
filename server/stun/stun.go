@@ -7,8 +7,14 @@
 // fails as soon as it is picked up. The ICQ 6.5 patch points the client here.
 //
 // Both the classic STUN of RFC 3489, which that client speaks, and RFC 5389
-// are answered. Only the Binding method is served; other requests, such as
-// a TURN Allocate, get an error at once so the client does not wait on them.
+// are answered.
+//
+// The same host was AOL's TURN server, and the client asks it for a relayed
+// address as well, in the TURN of an early draft (see turn.go). With a relay
+// configured the server is one (see relay.go): a call then works where no
+// direct path between the two clients exists, such as between two
+// symmetric NATs or through a VPN. Without one, and for every other request,
+// the client gets an error at once so that it does not wait on it.
 package stun
 
 import (
@@ -17,6 +23,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"net/netip"
 	"sync"
 )
 
@@ -41,13 +48,40 @@ type Server struct {
 	addr   string
 	logger *slog.Logger
 
+	requests *requestLog
+	// relay serves TURN; nil when the server answers STUN only.
+	relay *relay
+
 	mu   sync.Mutex
 	conn net.PacketConn
 }
 
-// NewServer returns a server that listens on addr, e.g. "0.0.0.0:3478".
+// NewServer returns a STUN server that listens on addr, e.g. "0.0.0.0:3478".
 func NewServer(addr string, logger *slog.Logger) *Server {
-	return &Server{addr: addr, logger: logger}
+	return &Server{addr: addr, logger: logger, requests: newRequestLog(logger)}
+}
+
+// NewServerWithRelay returns a STUN server that is a TURN relay too, for
+// clients signed in from the address they ask from. Relayed ports are opened
+// on the interface of addr.
+func NewServerWithRelay(addr string, logger *slog.Logger, cfg RelayConfig, signedIn SignedIn) (*Server, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	if host == "" {
+		host = "0.0.0.0"
+	}
+	cfg.PublicIP = cfg.PublicIP.Unmap()
+	if !cfg.PublicIP.Is4() {
+		return nil, errors.New("the relay's public address must be an IPv4 address")
+	}
+	if cfg.PortMin == 0 || cfg.PortMin > cfg.PortMax {
+		return nil, errors.New("the relay's port range is empty")
+	}
+	s := NewServer(addr, logger)
+	s.relay = newRelay(cfg, host, signedIn, logger)
+	return s, nil
 }
 
 // ListenAndServe answers requests until Shutdown.
@@ -60,8 +94,12 @@ func (s *Server) ListenAndServe() error {
 	s.conn = conn
 	s.mu.Unlock()
 	s.logger.Info("starting STUN server", "addr", s.addr)
+	if s.relay != nil {
+		s.relay.start(conn)
+		defer s.relay.stop()
+	}
 
-	buf := make([]byte, 1500)
+	buf := make([]byte, 65535)
 	for {
 		n, from, err := conn.ReadFrom(buf)
 		if err != nil {
@@ -74,15 +112,39 @@ func (s *Server) ListenAndServe() error {
 		if !ok {
 			continue
 		}
-		reply, method := Reply(buf[:n], udp)
+		msg := buf[:n]
+		src := udp.AddrPort()
+		src = netip.AddrPortFrom(src.Addr().Unmap(), src.Port())
+		if s.relay != nil && s.relay.fromClient(msg, src) {
+			continue // media relayed, not logged
+		}
+		s.requests.log(msg, udp)
+		var reply []byte
+		if m, ok := parseTURN(msg); ok {
+			reply = s.turnReply(m, src)
+		} else {
+			reply, _ = Reply(msg, udp)
+		}
 		if reply == nil {
 			continue
 		}
-		s.logger.Info("STUN request", "from", udp.String(), "method", method)
 		if _, err := conn.WriteTo(reply, from); err != nil {
 			s.logger.Warn("STUN reply failed", "to", udp.String(), "err", err)
 		}
 	}
+}
+
+// turnReply answers a message in the TURN of ICQ 6.5.
+func (s *Server) turnReply(m turnMsg, from netip.AddrPort) []byte {
+	if m.typ&0x0110 != classRequest {
+		return nil
+	}
+	if s.relay != nil {
+		if reply := s.relay.handle(m, from); reply != nil {
+			return reply
+		}
+	}
+	return encodeTURN(m.typ|classErrorResponse, m.id, turnError(403, "Forbidden"))
 }
 
 // Shutdown stops the server.

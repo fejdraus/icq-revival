@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -360,6 +361,24 @@ func (s *InMemorySessionManager) AllSessions() []*Session {
 		sessions = append(sessions, rec.session)
 	}
 	return sessions
+}
+
+// SignedInFrom reports whether a user is signed in from an IP address: some
+// signed-on instance's connection comes from it. The STUN server's TURN
+// relay serves only such addresses.
+func (s *InMemorySessionManager) SignedInFrom(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	for _, sess := range s.AllSessions() {
+		for _, instance := range sess.Instances() {
+			if !instance.live() {
+				continue
+			}
+			if addr := instance.RemoteAddr(); addr != nil && addr.Addr().Unmap() == ip {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // NewInMemoryChatSessionManager creates a new instance of

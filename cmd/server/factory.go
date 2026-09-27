@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net"
+	"net/netip"
 	"os"
 	"slices"
 	"strings"
@@ -21,6 +23,7 @@ import (
 	"github.com/mk6i/open-oscar-server/server/kerberos"
 	"github.com/mk6i/open-oscar-server/server/oscar"
 	oscarmiddleware "github.com/mk6i/open-oscar-server/server/oscar/middleware"
+	"github.com/mk6i/open-oscar-server/server/stun"
 	"github.com/mk6i/open-oscar-server/server/toc"
 	"github.com/mk6i/open-oscar-server/server/webapi"
 	"github.com/mk6i/open-oscar-server/state"
@@ -754,4 +757,52 @@ func ICQLegacy(deps Container) *icq_legacy.LegacyServer {
 	})
 
 	return server
+}
+
+// STUN creates the STUN server, which is a TURN relay as well when
+// TURN_ENABLED is set.
+func STUN(deps Container) (*stun.Server, error) {
+	logger := deps.logger.With("svc", "STUN")
+	turn := deps.cfg.TURN
+	if !turn.Enabled {
+		return stun.NewServer(deps.cfg.STUNListener, logger), nil
+	}
+	first, last, err := turn.PortRange()
+	if err != nil {
+		return nil, err
+	}
+	ip, err := resolvePublicIP(turn.PublicIP)
+	if err != nil {
+		return nil, fmt.Errorf("TURN_PUBLIC_IP: %w", err)
+	}
+	return stun.NewServerWithRelay(deps.cfg.STUNListener, logger, stun.RelayConfig{
+		PublicIP:    ip,
+		PortMin:     first,
+		PortMax:     last,
+		MaxPerIP:    turn.MaxPerIP,
+		Kbps:        turn.Kbps,
+		IdleTimeout: turn.IdleTimeout,
+	}, deps.inMemorySessionManager)
+}
+
+// resolvePublicIP returns the IPv4 address of TURN_PUBLIC_IP, which is an
+// address or a host name.
+func resolvePublicIP(host string) (netip.Addr, error) {
+	host = strings.TrimSpace(host)
+	if ip, err := netip.ParseAddr(host); err == nil {
+		if ip = ip.Unmap(); !ip.Is4() {
+			return netip.Addr{}, fmt.Errorf("%s is not an IPv4 address", host)
+		}
+		return ip, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip4", host)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	if len(ips) == 0 {
+		return netip.Addr{}, fmt.Errorf("%s has no IPv4 address", host)
+	}
+	return ips[0].Unmap(), nil
 }

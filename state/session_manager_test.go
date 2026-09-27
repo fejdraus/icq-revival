@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"math/rand"
+	"net/netip"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -1287,4 +1288,36 @@ func TestInMemorySessionManager_AddSession_MaxConcurrentSessions(t *testing.T) {
 		// Verify the limit doesn't apply to non-multi-session
 		assert.Equal(t, 1, sess2.Session().InstanceCount())
 	})
+}
+
+func TestInMemorySessionManager_SignedInFrom(t *testing.T) {
+	sm := NewInMemorySessionManager(slog.Default())
+	ctx := context.Background()
+
+	signedOn, err := sm.AddSession(ctx, "signed-on", false)
+	assert.NoError(t, err)
+	signedOn.SetSignonComplete()
+	on := netip.MustParseAddrPort("203.0.113.5:40000")
+	signedOn.SetRemoteAddr(&on)
+
+	signingOn, err := sm.AddSession(ctx, "signing-on", false)
+	assert.NoError(t, err)
+	half := netip.MustParseAddrPort("203.0.113.6:40000")
+	signingOn.SetRemoteAddr(&half)
+
+	tests := []struct {
+		name string
+		ip   netip.Addr
+		want bool
+	}{
+		{name: "the address of a signed-on user", ip: netip.MustParseAddr("203.0.113.5"), want: true},
+		{name: "the same address written as IPv4-mapped IPv6", ip: netip.MustParseAddr("::ffff:203.0.113.5"), want: true},
+		{name: "a user still signing on does not count", ip: netip.MustParseAddr("203.0.113.6"), want: false},
+		{name: "a stranger", ip: netip.MustParseAddr("198.51.100.1"), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, sm.SignedInFrom(tt.ip))
+		})
+	}
 }

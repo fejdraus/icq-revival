@@ -81,7 +81,10 @@ func main() {
 
 	var stunServer *stun.Server
 	if deps.cfg.STUNListener != "" {
-		stunServer = stun.NewServer(deps.cfg.STUNListener, deps.logger.With("svc", "STUN"))
+		if stunServer, err = STUN(deps); err != nil {
+			deps.logger.Error("STUN server setup failed", "err", err.Error())
+			os.Exit(1)
+		}
 		g.Go(stunServer.ListenAndServe)
 	}
 
