@@ -67,12 +67,45 @@ func TestFlashAvatarStills_UserInfoFor(t *testing.T) {
 			wantFlash:     true,
 		},
 		{
-			name:          "the owner's own buddy icon wins over the still",
+			// ICQ 6 shows the Flash avatar over the owner's own icon
+			name:          "the still takes the place of the owner's own buddy icon",
 			ownerOpts:     []func(*state.SessionInstance){sessOptAvatarItem(flash), sessOptBuddyIcon(ownIcon)},
 			recipientOpts: []func(*state.SessionInstance){sessOptMirandaICQ},
 			doc:           galleryDoc,
 			stillStatus:   http.StatusOK,
+			wantIcon:      &still,
+			wantFetches:   1,
+			wantStored:    true,
+		},
+		{
+			name:          "the owner's own buddy icon stays when the Flash avatar has no still",
+			ownerOpts:     []func(*state.SessionInstance){sessOptAvatarItem(flash), sessOptBuddyIcon(ownIcon)},
+			recipientOpts: []func(*state.SessionInstance){sessOptMirandaICQ},
+			doc:           foreignDoc,
+			stillStatus:   http.StatusOK,
 			wantIcon:      &ownIcon,
+		},
+		{
+			// ICQ 6.5 clears the Flash avatar when a static picture is chosen
+			name: "the owner's own buddy icon shows again once the Flash avatar is cleared",
+			ownerOpts: []func(*state.SessionInstance){
+				sessOptAvatarItem(flash),
+				sessOptBuddyIcon(ownIcon),
+				sessOptAvatarItem(wire.BARTID{Type: wire.BARTTypesFlashAvatar}),
+			},
+			recipientOpts: []func(*state.SessionInstance){sessOptMirandaICQ},
+			doc:           galleryDoc,
+			stillStatus:   http.StatusOK,
+			wantIcon:      &ownIcon,
+		},
+		{
+			name:          "ICQ 6 gets the owner's own buddy icon and the Flash avatar",
+			ownerOpts:     []func(*state.SessionInstance){sessOptAvatarItem(flash), sessOptBuddyIcon(ownIcon)},
+			recipientOpts: []func(*state.SessionInstance){sessOptICQ6},
+			doc:           galleryDoc,
+			stillStatus:   http.StatusOK,
+			wantIcon:      &ownIcon,
+			wantFlash:     true,
 		},
 		{
 			name:          "a Flash avatar from elsewhere has no still",
@@ -139,7 +172,8 @@ func TestFlashAvatarStills_UserInfoFor(t *testing.T) {
 			first := recipient.UserInfoFor(owner.Session().TLVUserInfo())
 			stills.fetches.Wait()
 			if tt.wantStored {
-				assert.False(t, first.HasBuddyIcon())
+				firstIcon, _ := first.BuddyIconItem()
+				assert.False(t, bytes.Equal(firstIcon.Hash, stillHash[:]), "the still is not ready yet")
 			}
 
 			got := userInfoBARTIDs(t, recipient.UserInfoFor(owner.Session().TLVUserInfo()))

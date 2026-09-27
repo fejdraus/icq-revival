@@ -132,6 +132,15 @@ func MakeCommonDeps() (Container, error) {
 		c.inMemorySessionManager,
 		c.logger.With("svc", "FlashAvatarStills"),
 	))
+	// Clients other than ICQ 6 get a 64x64 baseline JPEG copy of a buddy
+	// icon they can't show, such as ICQ 6's large progressive JPEGs.
+	c.inMemorySessionManager.SetNormalisedBuddyIcons(foodgroup.NewBuddyIconNormaliser(
+		c.sqLiteUserStore,
+		c.sqLiteUserStore,
+		c.inMemorySessionManager,
+		c.inMemorySessionManager,
+		c.logger.With("svc", "BuddyIconNormaliser"),
+	))
 
 	c.feedbagSvc.BridgeICBMService(c.icbmSvc)
 	c.icbmSvc.BridgeFeedbagService(c.feedbagSvc)

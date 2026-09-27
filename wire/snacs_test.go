@@ -203,6 +203,62 @@ func TestTLVUserInfo_WithBuddyIcon(t *testing.T) {
 	}
 }
 
+func TestTLVUserInfo_ReplacingBuddyIcon(t *testing.T) {
+	icon := BARTID{Type: BARTTypesBuddyIcon, BARTInfo: BARTInfo{Flags: BARTFlagsCustom, Hash: []byte("icon")}}
+	small := BARTID{Type: BARTTypesBuddyIcon, BARTInfo: BARTInfo{Flags: BARTFlagsCustom, Hash: []byte("small")}}
+	cleared := BARTID{Type: BARTTypesBuddyIcon, BARTInfo: BARTInfo{Hash: GetClearIconHash()}}
+	status := BARTID{Type: BARTTypesStatusStr, BARTInfo: BARTInfo{Flags: BARTFlagsData, Hash: []byte("status")}}
+
+	signon := NewTLVBE(OServiceUserInfoSignonTOD, uint32(1))
+	infoWith := func(bart ...TLV) TLVUserInfo {
+		return TLVUserInfo{ScreenName: "100003", TLVBlock: TLVBlock{TLVList: append(TLVList{signon}, bart...)}}
+	}
+
+	tests := []struct {
+		name     string
+		info     TLVUserInfo
+		wantIcon *BARTID
+		want     TLVUserInfo
+	}{
+		{
+			name:     "the icon is replaced where it is",
+			info:     infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{status, icon})),
+			wantIcon: &icon,
+			want:     infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{status, small})),
+		},
+		{
+			name: "a cleared icon is no icon, and is replaced",
+			info: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{cleared, status})),
+			want: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{small, status})),
+		},
+		{
+			name: "no icon: it goes first",
+			info: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{status})),
+			want: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{small, status})),
+		},
+		{
+			name: "no BART tag: one is added",
+			info: infoWith(),
+			want: infoWith(NewTLVBE(OServiceUserInfoBARTInfo, []BARTID{small})),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := infoCopy(tt.info)
+			gotIcon, hasIcon := tt.info.BuddyIconItem()
+			if tt.wantIcon != nil {
+				assert.True(t, hasIcon)
+				assert.Equal(t, *tt.wantIcon, gotIcon)
+			} else {
+				assert.False(t, hasIcon)
+			}
+			assert.Equal(t, tt.want, tt.info.ReplacingBuddyIcon(small))
+			// the info it was made from is shared by other recipients
+			assert.Equal(t, before, tt.info)
+		})
+	}
+}
+
 // infoCopy returns a deep copy of info's TLV list.
 func infoCopy(info TLVUserInfo) TLVUserInfo {
 	out := info

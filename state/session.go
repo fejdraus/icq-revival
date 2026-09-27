@@ -118,6 +118,9 @@ type Session struct {
 	// flashAvatarStills finds the stills sent in place of other users' Flash
 	// avatars when this session can't play them; nil sends none.
 	flashAvatarStills FlashAvatarStillFinder
+	// normalisedBuddyIcons finds the copies sent in place of other users'
+	// buddy icons that this session's clients may not show; nil sends none.
+	normalisedBuddyIcons NormalisedBuddyIconFinder
 }
 
 // NewSession creates a new Session for a user.
@@ -863,8 +866,9 @@ func (s *Session) SupportsFlashAvatars() bool {
 }
 
 // NeedsFlashAvatarStill reports whether this session is sent the still
-// picture of a Flash avatar as the buddy icon of an owner who has none (see
-// FlashAvatarStillFinder): every session but one whose instances are all
+// picture of a Flash avatar as its owner's buddy icon (see
+// FlashAvatarStillFinder) and normalised buddy icons (see
+// NormalisedBuddyIconFinder): every session but one whose instances are all
 // ICQ 6 (see wire.HasICQ6Caps), which shows the Flash avatar itself.
 func (s *Session) NeedsFlashAvatarStill() bool {
 	instances := s.Instances()
@@ -881,17 +885,12 @@ func (s *Session) NeedsFlashAvatarStill() bool {
 
 // UserInfoFor returns info as this session may be sent it: without the Flash
 // avatar and big icon items unless SupportsFlashAvatars and, unless all of
-// its instances are ICQ 6, with the still picture of a Flash avatar as the
-// buddy icon of an owner who has none (see NeedsFlashAvatarStill).
+// its instances are ICQ 6 (see NeedsFlashAvatarStill), with the still
+// picture of the owner's Flash avatar as the buddy icon, in place of the
+// owner's own, or else with a normalised copy of the owner's own icon when
+// the old clients may not show it (see NormalisedBuddyIconFinder).
 func (s *Session) UserInfoFor(info wire.TLVUserInfo) wire.TLVUserInfo {
-	switch {
-	case !s.SupportsFlashAvatars():
-		return userInfoWithoutFlash(info, s.flashAvatarStillFinder())
-	case s.NeedsFlashAvatarStill():
-		return withFlashAvatarStill(info, info, s.flashAvatarStillFinder())
-	default:
-		return info
-	}
+	return userInfoFor(info, s.SupportsFlashAvatars(), s.NeedsFlashAvatarStill(), s.flashAvatarStillFinder(), s.normalisedBuddyIconFinder())
 }
 
 // flashAvatarStillFinder returns the session's FlashAvatarStillFinder, nil
@@ -1696,25 +1695,22 @@ func (s *SessionInstance) SupportsFlashAvatars() bool {
 }
 
 // NeedsFlashAvatarStill reports whether this instance is sent the still
-// picture of a Flash avatar as the buddy icon of an owner who has none (see
-// FlashAvatarStillFinder): every client but ICQ 6 (see wire.HasICQ6Caps).
+// picture of a Flash avatar as its owner's buddy icon (see
+// FlashAvatarStillFinder) and normalised buddy icons (see
+// NormalisedBuddyIconFinder): every client but ICQ 6 (see wire.HasICQ6Caps).
 func (s *SessionInstance) NeedsFlashAvatarStill() bool {
 	return !wire.HasICQ6Caps(s.caps())
 }
 
 // UserInfoFor returns info as this instance may be sent it: without the Flash
 // avatar and big icon items unless SupportsFlashAvatars and, unless it is
-// ICQ 6, with the still picture of a Flash avatar as the buddy icon of an
-// owner who has none (see NeedsFlashAvatarStill).
+// ICQ 6 (see NeedsFlashAvatarStill), with the still picture of the owner's
+// Flash avatar as the buddy icon, in place of the owner's own, or else with a
+// normalised copy of the owner's own icon when the old clients may not show
+// it (see NormalisedBuddyIconFinder).
 func (s *SessionInstance) UserInfoFor(info wire.TLVUserInfo) wire.TLVUserInfo {
-	switch {
-	case !s.SupportsFlashAvatars():
-		return userInfoWithoutFlash(info, s.Session().flashAvatarStillFinder())
-	case s.NeedsFlashAvatarStill():
-		return withFlashAvatarStill(info, info, s.Session().flashAvatarStillFinder())
-	default:
-		return info
-	}
+	sess := s.Session()
+	return userInfoFor(info, s.SupportsFlashAvatars(), s.NeedsFlashAvatarStill(), sess.flashAvatarStillFinder(), sess.normalisedBuddyIconFinder())
 }
 
 func (s *SessionInstance) caps() [][16]byte {

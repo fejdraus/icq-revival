@@ -3,6 +3,8 @@ package foodgroup
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"slices"
 
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
@@ -206,8 +208,11 @@ type buddyNotifier struct {
 // only used to indicate the user coming online. It can also notify changes to
 // buddy icons, warning levels, invisibility status, etc.
 //
-// A user info that lists Flash avatar or big icon items reaches the recipients
-// that can't show them without those items (see state.Session.UserInfoFor).
+// A user info that lists Flash avatar or big icon items, or a buddy icon,
+// reaches each recipient as that recipient may be sent it (see
+// state.Session.UserInfoFor): without the items it can't show, with the
+// still of a Flash avatar or a normalised buddy icon in place of the owner's
+// own.
 func (s buddyNotifier) BroadcastBuddyArrived(ctx context.Context, screenName state.IdentScreenName, userInfo wire.TLVUserInfo) error {
 	if userInfo.IsInvisible() {
 		return nil
@@ -226,42 +231,56 @@ func (s buddyNotifier) BroadcastBuddyArrived(ctx context.Context, screenName sta
 		recipients = append(recipients, user.User)
 	}
 
-	if !userInfo.HasRelayedAvatarItems() {
+	if !userInfo.HasRelayedAvatarItems() && !userInfo.HasBuddyIcon() {
 		s.relayBuddyArrived(ctx, recipients, userInfo)
 		return nil
 	}
 
-	// split the recipients by what they are sent: ICQ 6 the avatar items as
-	// they are, other clients that play Flash avatars those items and the
-	// still picture of the Flash avatar, the rest the still alone. The info
-	// is the same for every recipient of a group.
+	// split the recipients by what they are sent: ICQ 6 the user info as it
+	// is, other clients that play Flash avatars the avatar items and the
+	// still of the Flash avatar or a normalised icon, the rest the still or
+	// the normalised icon alone. The info is the same for every recipient of
+	// a kind, and the kinds sent the same info share one relay.
+	type recipientKind int
+	const (
+		icq6 recipientKind = iota
+		player
+		plain
+	)
 	type group struct {
 		info       wire.TLVUserInfo
 		recipients []state.IdentScreenName
 	}
-	var icq6, players, plain group
+	var groups []*group
+	byKind := make(map[recipientKind]*group)
 	for _, recipient := range recipients {
 		sess := s.sessionRetriever.RetrieveSession(recipient)
-		var g *group
+		var kind recipientKind
 		switch {
 		case sess == nil:
 			continue // offline
 		case !sess.SupportsFlashAvatars():
-			g = &plain
+			kind = plain
 		case sess.NeedsFlashAvatarStill():
-			g = &players
+			kind = player
 		default:
-			g = &icq6
+			kind = icq6
 		}
-		if len(g.recipients) == 0 {
-			g.info = sess.UserInfoFor(userInfo)
+		g, ok := byKind[kind]
+		if !ok {
+			info := sess.UserInfoFor(userInfo)
+			if i := slices.IndexFunc(groups, func(g *group) bool { return reflect.DeepEqual(g.info, info) }); i >= 0 {
+				g = groups[i]
+			} else {
+				g = &group{info: info}
+				groups = append(groups, g)
+			}
+			byKind[kind] = g
 		}
 		g.recipients = append(g.recipients, recipient)
 	}
-	for _, g := range []group{icq6, players, plain} {
-		if len(g.recipients) > 0 {
-			s.relayBuddyArrived(ctx, g.recipients, g.info)
-		}
+	for _, g := range groups {
+		s.relayBuddyArrived(ctx, g.recipients, g.info)
 	}
 
 	return nil

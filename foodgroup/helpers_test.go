@@ -1053,6 +1053,12 @@ func sessOptAIM(instance *state.SessionInstance) {
 	instance.SetCaps([][16]byte{wire.CapChat, wire.CapFileTransfer, wire.CapAvatarService})
 }
 
+// sessOptQIP makes the instance a QIP-like ICQ client: ICQ capabilities, but
+// neither of wire.FlashAvatarCaps.
+func sessOptQIP(instance *state.SessionInstance) {
+	instance.SetCaps([][16]byte{wire.CapICQCh2Extended, wire.CapUTF8Messages, wire.CapSupportICQ, wire.CapFileTransfer})
+}
+
 // sessOptStatus sets the status message BART item on the session object.
 func sessOptStatus(status wire.BARTID) func(instance *state.SessionInstance) {
 	return func(instance *state.SessionInstance) {

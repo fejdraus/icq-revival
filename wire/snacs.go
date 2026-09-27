@@ -2977,6 +2977,18 @@ func (t TLVUserInfo) HasBuddyIcon() bool {
 	})
 }
 
+// BuddyIconItem returns the buddy icon (BARTTypesBuddyIcon) the BART info tag
+// of t lists and reports whether it lists one that is set: a cleared icon
+// reports false.
+func (t TLVUserInfo) BuddyIconItem() (BARTID, bool) {
+	for _, id := range t.bartIDs() {
+		if id.Type == BARTTypesBuddyIcon && !id.IsCleared() {
+			return id, true
+		}
+	}
+	return BARTID{}, false
+}
+
 // WithBuddyIcon returns a copy of t whose BART info tag lists icon as its
 // buddy icon, in place of a cleared one or first in the tag, where older
 // clients look for it. A t that lists a buddy icon that is set is returned
@@ -2985,6 +2997,19 @@ func (t TLVUserInfo) WithBuddyIcon(icon BARTID) TLVUserInfo {
 	if t.HasBuddyIcon() {
 		return t
 	}
+	return t.withBuddyIconItem(icon)
+}
+
+// ReplacingBuddyIcon returns a copy of t whose BART info tag lists icon as
+// its buddy icon, in place of the one t lists, set or cleared, or first in
+// the tag when it lists none. t itself is not modified.
+func (t TLVUserInfo) ReplacingBuddyIcon(icon BARTID) TLVUserInfo {
+	return t.withBuddyIconItem(icon)
+}
+
+// withBuddyIconItem returns a copy of t whose BART info tag lists icon in
+// place of its first buddy icon item, or first in the tag when it has none.
+func (t TLVUserInfo) withBuddyIconItem(icon BARTID) TLVUserInfo {
 	ids := t.bartIDs()
 	if i := slices.IndexFunc(ids, func(id BARTID) bool { return id.Type == BARTTypesBuddyIcon }); i >= 0 {
 		ids[i] = icon

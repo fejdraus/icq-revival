@@ -67,9 +67,11 @@ func NewFlashAvatarStills(
 }
 
 // FlashAvatarStills makes the still pictures the server shows in place of a
-// Flash avatar to the clients that can't play one (everyone but ICQ 6, see
-// state.Session.SupportsFlashAvatars), so they show the owner's animated
-// avatar as a picture instead of no picture at all.
+// Flash avatar to the clients that show a buddy icon instead (everyone but
+// ICQ 6, see state.Session.NeedsFlashAvatarStill), so they show the owner's
+// animated avatar as a picture: in place of no picture at all, and in place
+// of the owner's own buddy icon too, which ICQ 6 doesn't show while the owner
+// has a Flash avatar.
 //
 // Only the avatars of the legacy web's own gallery have a still: a Flash
 // avatar document whose address has the path /icq/avatars/<name>.swf. The

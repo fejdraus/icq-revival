@@ -636,6 +636,7 @@ func TestBuddyNotifier_BroadcastBuddyArrived(t *testing.T) {
 	flash := wire.BARTID{Type: wire.BARTTypesFlashAvatar, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("devil")}}
 	big := wire.BARTID{Type: wire.BARTTypesBuddyIconBig, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("big")}}
 	flashStill := wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("still")}}
+	smallIcon := wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Flags: wire.BARTFlagsCustom, Hash: []byte("small")}}
 	userInfoWith := func(ids ...wire.BARTID) wire.TLVUserInfo {
 		return wire.TLVUserInfo{
 			ScreenName: "me",
@@ -916,9 +917,124 @@ func TestBuddyNotifier_BroadcastBuddyArrived(t *testing.T) {
 			},
 		},
 		{
-			name:       "no ICQ avatar items: sent to everyone as it is",
+			// every recipient kind is sent the same info, so there is one relay
+			name:       "a buddy icon every client takes: one relay to everyone",
 			screenName: state.NewIdentScreenName("me"),
 			userInfo:   userInfoWith(icon),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					allRelationshipsParams: allRelationshipsParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							result:     []state.Relationship{friend("icq6"), friend("miranda")},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams: retrieveSessionParams{
+						{screenName: state.NewIdentScreenName("icq6"), result: newTestInstance("icq6", sessOptICQ6).Session()},
+						{screenName: state.NewIdentScreenName("miranda"), result: newTestInstance("miranda", sessOptMirandaICQ).Session()},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNamesParams: relayToScreenNamesParams{
+						{
+							screenNames: []state.IdentScreenName{
+								state.NewIdentScreenName("icq6"),
+								state.NewIdentScreenName("miranda"),
+							},
+							message: arrival(userInfoWith(icon)),
+						},
+					},
+				},
+			},
+		},
+		{
+			// ICQ 6 shows the Flash avatar over the owner's own icon, the
+			// others show its still in place of that icon
+			name:       "the still of the Flash avatar replaces the owner's own icon",
+			screenName: state.NewIdentScreenName("me"),
+			userInfo:   userInfoWith(icon, flash),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					allRelationshipsParams: allRelationshipsParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							result:     []state.Relationship{friend("icq6"), friend("player"), friend("qip")},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams: retrieveSessionParams{
+						{screenName: state.NewIdentScreenName("icq6"), result: newTestInstance("icq6", sessOptICQ6, sessOptFlashAvatarStill(flash, flashStill)).Session()},
+						{screenName: state.NewIdentScreenName("player"), result: newTestInstance("player", sessOptMirandaFlashAvatars, sessOptFlashAvatarStill(flash, flashStill)).Session()},
+						{screenName: state.NewIdentScreenName("qip"), result: newTestInstance("qip", sessOptQIP, sessOptFlashAvatarStill(flash, flashStill)).Session()},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNamesParams: relayToScreenNamesParams{
+						{
+							screenNames: []state.IdentScreenName{state.NewIdentScreenName("icq6")},
+							message:     arrival(userInfoWith(icon, flash)),
+						},
+						{
+							screenNames: []state.IdentScreenName{state.NewIdentScreenName("player")},
+							message:     arrival(userInfoWith(flashStill, flash)),
+						},
+						{
+							screenNames: []state.IdentScreenName{state.NewIdentScreenName("qip")},
+							message:     arrival(userInfoWith(flashStill)),
+						},
+					},
+				},
+			},
+		},
+		{
+			// the normalised copy comes from the recipient's
+			// NormalisedBuddyIconFinder
+			name:       "a normalised copy of the owner's icon reaches everyone but ICQ 6",
+			screenName: state.NewIdentScreenName("me"),
+			userInfo:   userInfoWith(icon),
+			mockParams: mockParams{
+				relationshipFetcherParams: relationshipFetcherParams{
+					allRelationshipsParams: allRelationshipsParams{
+						{
+							screenName: state.NewIdentScreenName("me"),
+							result:     []state.Relationship{friend("icq6"), friend("qip"), friend("aim"), friend("miranda")},
+						},
+					},
+				},
+				sessionRetrieverParams: sessionRetrieverParams{
+					retrieveSessionParams: retrieveSessionParams{
+						{screenName: state.NewIdentScreenName("icq6"), result: newTestInstance("icq6", sessOptICQ6, sessOptNormalisedBuddyIcon(icon, smallIcon)).Session()},
+						{screenName: state.NewIdentScreenName("qip"), result: newTestInstance("qip", sessOptQIP, sessOptNormalisedBuddyIcon(icon, smallIcon)).Session()},
+						{screenName: state.NewIdentScreenName("aim"), result: newTestInstance("aim", sessOptAIM, sessOptNormalisedBuddyIcon(icon, smallIcon)).Session()},
+						{screenName: state.NewIdentScreenName("miranda"), result: newTestInstance("miranda", sessOptMirandaFlashAvatars, sessOptNormalisedBuddyIcon(icon, smallIcon)).Session()},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToScreenNamesParams: relayToScreenNamesParams{
+						{
+							screenNames: []state.IdentScreenName{state.NewIdentScreenName("icq6")},
+							message:     arrival(userInfoWith(icon)),
+						},
+						{
+							// a Flash player is sent the same info as the rest
+							screenNames: []state.IdentScreenName{
+								state.NewIdentScreenName("qip"),
+								state.NewIdentScreenName("aim"),
+								state.NewIdentScreenName("miranda"),
+							},
+							message: arrival(userInfoWith(smallIcon)),
+						},
+					},
+				},
+			},
+		},
+		{
+			name:       "no buddy icon and no ICQ avatar items: sent to everyone as it is",
+			screenName: state.NewIdentScreenName("me"),
+			userInfo:   userInfoWith(wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Hash: wire.GetClearIconHash()}}),
 			mockParams: mockParams{
 				relationshipFetcherParams: relationshipFetcherParams{
 					allRelationshipsParams: allRelationshipsParams{
@@ -935,7 +1051,7 @@ func TestBuddyNotifier_BroadcastBuddyArrived(t *testing.T) {
 								state.NewIdentScreenName("icq6"),
 								state.NewIdentScreenName("miranda"),
 							},
-							message: arrival(userInfoWith(icon)),
+							message: arrival(userInfoWith(wire.BARTID{Type: wire.BARTTypesBuddyIcon, BARTInfo: wire.BARTInfo{Hash: wire.GetClearIconHash()}})),
 						},
 					},
 				},

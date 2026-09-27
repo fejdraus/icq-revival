@@ -67,14 +67,34 @@ func TestSession_UserInfoFor_FlashAvatarStill(t *testing.T) {
 			wantAsked: []IdentScreenName{NewIdentScreenName("owner")},
 		},
 		{
-			name:   "another Flash avatar player keeps the owner's own icon",
-			player: true,
-			info:   infoWith(icon, flash),
-			want:   infoWith(icon, flash),
+			name:      "another Flash avatar player gets the still in place of the owner's own icon",
+			player:    true,
+			info:      infoWith(icon, flash),
+			want:      infoWith(still, flash),
+			wantAsked: []IdentScreenName{NewIdentScreenName("owner")},
 		},
 		{
-			name: "the owner's own icon stays and no still is asked for",
+			// ICQ 6 shows the Flash avatar over the owner's own icon
+			name:      "the still takes the place of the owner's own icon",
+			info:      infoWith(icon, flash),
+			want:      infoWith(still),
+			wantAsked: []IdentScreenName{NewIdentScreenName("owner")},
+		},
+		{
+			name: "ICQ 6 gets the owner's own icon and the Flash avatar",
+			icq6: true,
 			info: infoWith(icon, flash),
+			want: infoWith(icon, flash),
+		},
+		{
+			name:      "the owner's own icon stays while the still isn't ready",
+			info:      infoWith(icon, otherFlash),
+			want:      infoWith(icon),
+			wantAsked: []IdentScreenName{NewIdentScreenName("owner")},
+		},
+		{
+			name: "a removed Flash avatar leaves the owner's own icon",
+			info: infoWith(icon, wire.BARTID{Type: wire.BARTTypesFlashAvatar}),
 			want: infoWith(icon),
 		},
 		{

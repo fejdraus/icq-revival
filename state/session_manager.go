@@ -35,6 +35,9 @@ type InMemorySessionManager struct {
 	// flashAvatarStills is handed to every new session, see
 	// SetFlashAvatarStills.
 	flashAvatarStills FlashAvatarStillFinder
+	// normalisedBuddyIcons is handed to every new session, see
+	// SetNormalisedBuddyIcons.
+	normalisedBuddyIcons NormalisedBuddyIconFinder
 }
 
 const (
@@ -280,6 +283,7 @@ func (s *InMemorySessionManager) newSession(screenName DisplayScreenName, doMult
 
 	s.mapMutex.Lock()
 	sess.SetFlashAvatarStills(s.flashAvatarStills)
+	sess.SetNormalisedBuddyIcons(s.normalisedBuddyIcons)
 	s.store[instance.IdentScreenName()] = &sessionSlot{
 		session:      sess,
 		removed:      make(chan bool),

@@ -3,8 +3,9 @@ package state
 import "github.com/mk6i/open-oscar-server/wire"
 
 // FlashAvatarStillFinder finds the still picture the server shows in place of
-// a Flash avatar to the clients that can't play one (see
-// Session.SupportsFlashAvatars).
+// a Flash avatar to the clients that show a buddy icon instead (see
+// Session.NeedsFlashAvatarStill). The still takes the place of the owner's
+// own buddy icon too, since ICQ 6 shows the Flash avatar over it.
 type FlashAvatarStillFinder interface {
 	// FlashAvatarStill returns the buddy icon (wire.BARTTypesBuddyIcon)
 	// standing in for owner's Flash avatar item flash and reports whether one
@@ -30,29 +31,16 @@ func (s *InMemorySessionManager) SetFlashAvatarStills(stills FlashAvatarStillFin
 	s.flashAvatarStills = stills
 }
 
-// userInfoWithoutFlash returns info as a client that can't play Flash avatars
-// is sent it: without the Flash avatar and big icon items and, when info's
-// owner has a Flash avatar but no buddy icon of their own, with the still
-// that stills finds for the avatar as the buddy icon. stills may be nil.
-func userInfoWithoutFlash(info wire.TLVUserInfo, stills FlashAvatarStillFinder) wire.TLVUserInfo {
-	return withFlashAvatarStill(info.WithoutRelayedAvatarItems(), info, stills)
-}
-
-// withFlashAvatarStill returns to, with the still that stills finds for the
-// Flash avatar listed in info as the buddy icon, when info's owner has a
-// Flash avatar but no buddy icon of their own. to is info as it is sent, with
-// or without the Flash avatar items. stills may be nil.
-func withFlashAvatarStill(to, info wire.TLVUserInfo, stills FlashAvatarStillFinder) wire.TLVUserInfo {
-	if stills == nil || to.HasBuddyIcon() {
-		return to
+// flashAvatarStill returns the still that stills finds for the Flash avatar
+// listed in info and reports whether one is ready. It reports false when
+// info lists no Flash avatar that is set. stills may be nil.
+func flashAvatarStill(info wire.TLVUserInfo, stills FlashAvatarStillFinder) (wire.BARTID, bool) {
+	if stills == nil {
+		return wire.BARTID{}, false
 	}
 	flash, ok := info.FlashAvatarItem()
 	if !ok {
-		return to
+		return wire.BARTID{}, false
 	}
-	still, ok := stills.FlashAvatarStill(NewIdentScreenName(info.ScreenName), flash)
-	if !ok {
-		return to
-	}
-	return to.WithBuddyIcon(still)
+	return stills.FlashAvatarStill(NewIdentScreenName(info.ScreenName), flash)
 }
