@@ -31,6 +31,7 @@
     "  avatarfiles an animated avatar or its thumbnail from the avatars folder, by exact name",
     "  avatargallery the avatar gallery list (2007 XML) with our animated avatars",
     "  avatartester the avatar tester: any gallery avatar playing in the browser, with its faces and pictures",
+    "  avatarwork  the picture editor's working copy of an uploaded picture",
     "  avatarmaker the avatar constructor: an animated avatar from our own parts, its files made from its code",
     "  ruffle      Ruffle's web build from the ruffle folder, by exact name; the user card plays the animated avatar with it",
     "  files       a download of /icq/download from the files folder, by exact name",
@@ -217,6 +218,11 @@
       "path": "^/icq/avatar/upload",
       "action": "avatarupload",
       "note": "receives a picture from the picture page"
+    },
+    {
+      "path": "^/icq/avatar/work/",
+      "action": "avatarwork",
+      "note": "the picture editor's copy of an upload, by its random id, for a few minutes"
     },
     {
       "path": "^/icq/avatar/file/",

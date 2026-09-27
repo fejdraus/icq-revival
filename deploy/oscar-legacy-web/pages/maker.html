@@ -10,9 +10,7 @@
      preview shows the files of that code, and "Set as my avatar" hands the
      client the movie's address, as the picture page's Animated tab does. -->
 
-<!-- The Xtraz plugin object, the way back into the client (see avatar.html). -->
-<OBJECT CLASSID="clsid:8D18DFF4-0943-4347-8BCA-0C57033F6820" id="plugin" width="0" height="0">
-</OBJECT>
+{{PLUGIN_OBJECT}}
 
 <style>{{STYLE}}
 .stage { position: relative; background: #fff; border: 1px solid #cfe3d5; overflow: hidden; }
@@ -32,9 +30,13 @@ a.sw.on { border: 2px solid #1a1a1a; width: 11px; height: 11px; }
 }
 .moods a.mood.on { color: #fff; background: #3c6e1f; border-color: #35601a; }
 input.addr { width: 100%; font-size: 12px; }
+/* In the picture page's frame: part of that page, not a sheet of its own. */
+body.embed { background: #fff; padding: 0; }
+body.embed .window { border: 0; box-shadow: none; max-width: none; border-radius: 0; }
+body.embed .body { padding: 2px 0 0; }
 </style>
 </head>
-<body class="compact">
+<body class="compact{{BODY_CLASS}}">
 <main class="window">
   {{HEADER}}
   <div class="body">
@@ -52,8 +54,8 @@ input.addr { width: 100%; font-size: 12px; }
     <div class="actions">
       <button type="button" class="primary" id="mkSetBtn" style="display:none" onclick="mkApply()">{{mkSet}}</button>
       <button type="button" onclick="mkRandom()">{{mkRandom}}</button>
-      <a id="mkTry" href="{{TRY_URL}}" target="_blank">{{mkTry}}</a>
-      <a id="mkBack" href="#" style="display:none">{{mkBack}}</a>
+      <a id="mkTry" href="{{TRY_URL}}" target="_blank" onclick="return mkOutside(this.href);">{{mkTry}}</a>
+      <a id="mkBack" href="#" style="display:none">{{BACK_TEXT}}</a>
     </div>
     <div class="hint" id="mkStatus"></div>
 
@@ -76,6 +78,10 @@ var AVATAR_BASE = {{AVATAR_BASE}};
 var LANG = '{{LANG}}';
 var DIGITS = '0123456789abcdefghijklmnopqrstuvwxyz';
 var RUFFLE_SRC = {{RUFFLE_SRC}};
+// In a frame of the picture page inside the client (?embed=1): that page has
+// the plugin, and sets the avatar and opens links for this one.
+var EMBED = {{EMBED}};
+var host = null;
 var RUFFLE_CONFIG = {{RUFFLE_CONFIG}};
 var BART_ANIMATED = 8;
 var transaction = 0;
@@ -205,6 +211,16 @@ function startPlayer() {
 // passes it on); then it can set the avatar. Anywhere else it shows the
 // address instead.
 function connect() {
+  if (EMBED) {
+    try { if (parent !== window && parent.setAnimatedUrl) { host = parent; } } catch (e) { host = null; }
+  }
+  if (host) {
+    el('mkSetBtn').style.display = '';
+    el('mkBack').style.display = '';
+    el('mkBack').onclick = function () { host.closeMaker(); return false; };
+    refresh();
+    return;
+  }
   var m = /[?&]id=([^&]*)/.exec(window.location.search);
   if (m) {
     try {
@@ -227,7 +243,19 @@ function connect() {
 
 // The same call as the Animated tab's (avatar.html): the client is handed
 // the movie's address and uploads it as the owner's BART type 8.
+// A link for a real browser: see openOutside in avatar.html.
+function mkOutside(url) {
+  if (host) { return host.openOutside(url); }
+  if (!xtraId) { return true; }
+  try { plugin.OpenUrl(url); return false; } catch (e) { return true; }
+}
+
 function mkApply() {
+  if (host) {
+    say(T.mkSetting);
+    host.setAnimatedUrl(AVATAR_BASE + code() + '.swf', function (ok, message) { say(message); });
+    return;
+  }
   if (animPending) { return; }
   transaction = transaction + 1;
   animSet = transaction;

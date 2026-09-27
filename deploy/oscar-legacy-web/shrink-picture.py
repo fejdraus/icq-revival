@@ -14,6 +14,17 @@ show as an ordinary upright picture.
 
 Falls back to writing the input through unchanged if it cannot be decoded, so a
 format we do not understand is still the client's decision to make, not ours.
+
+The picture editor of the picture page uses two more modes:
+
+  shrink-picture.py work
+      The picture the editor works on: turned upright by its EXIF
+      orientation, flattened onto white, RGB, no longer than WORK_MAX on its
+      long side, as a JPEG. Exits with status 2, writing nothing, when the
+      input cannot be decoded.
+  shrink-picture.py crop <left> <top> <right> <bottom>
+      The buddy icon from a working copy: that box of it (picture pixels,
+      fractions allowed, from picture-crop.js) scaled to 52x64.
 """
 
 import io
@@ -28,10 +39,76 @@ import sys
 WIDTH = 52
 HEIGHT = 64
 TARGET = 48 * 1024  # buddy icons travel with presence, so keep them small
+# The editor's copy: plenty for a 52x64 cut even at the largest zoom, and
+# small enough to show in the page and keep for a few minutes.
+WORK_MAX = 800
+
+
+def finish(image):
+    """The icon as JPEG bytes: sharpened a little, as small as it can be."""
+    if image.mode not in ('RGB', 'L'):
+        image = image.convert('RGB')
+
+    # A little sharpening to survive what comes next. The client re-encodes the
+    # picture into a JPEG of its own before uploading, so the image is
+    # compressed twice however carefully it is prepared here; shrinking softens
+    # it and the second pass softens it again. PNG would avoid one of those
+    # passes, but the client silently refuses it - it downloads the file and
+    # uploads nothing - so JPEG at a high quality it is.
+    try:
+        from PIL import ImageFilter
+        image = image.filter(ImageFilter.UnsharpMask(radius=0.7, percent=70, threshold=2))
+    except Exception:
+        pass
+
+    for quality in (95, 90, 85, 75):
+        out = io.BytesIO()
+        image.save(out, 'JPEG', quality=quality, optimize=True, subsampling=0)
+        if out.tell() <= TARGET:
+            break
+    return out.getvalue()
+
+
+def work(raw):
+    from PIL import Image, ImageOps
+    try:
+        image = Image.open(io.BytesIO(raw))
+        image.load()
+    except Exception:
+        sys.exit(2)
+    try:
+        image = ImageOps.exif_transpose(image)
+    except Exception:
+        pass
+    if image.mode in ('RGBA', 'LA', 'P', 'PA'):
+        image = image.convert('RGBA')
+        flat = Image.new('RGB', image.size, (255, 255, 255))
+        flat.paste(image, mask=image.split()[3])
+        image = flat
+    elif image.mode != 'RGB':
+        image = image.convert('RGB')
+    image.thumbnail((WORK_MAX, WORK_MAX), Image.LANCZOS)
+    out = io.BytesIO()
+    image.save(out, 'JPEG', quality=90)
+    sys.stdout.buffer.write(out.getvalue())
+
+
+def crop(raw, box):
+    from PIL import Image
+    image = Image.open(io.BytesIO(raw))
+    image.load()
+    image = image.convert('RGB').resize((WIDTH, HEIGHT), Image.LANCZOS, box=box)
+    sys.stdout.buffer.write(finish(image))
 
 
 def main():
     raw = sys.stdin.buffer.read()
+    if len(sys.argv) > 1 and sys.argv[1] == 'work':
+        work(raw)
+        return
+    if len(sys.argv) == 6 and sys.argv[1] == 'crop':
+        crop(raw, tuple(float(v) for v in sys.argv[2:6]))
+        return
     try:
         from PIL import Image
         image = Image.open(io.BytesIO(raw))
@@ -54,29 +131,7 @@ def main():
         image = image.crop((0, top, width, top + keep))
 
     image = image.resize((WIDTH, HEIGHT), Image.LANCZOS)
-
-    if image.mode not in ('RGB', 'L'):
-        image = image.convert('RGB')
-
-    # A little sharpening to survive what comes next. The client re-encodes the
-    # picture into a JPEG of its own before uploading, so the image is
-    # compressed twice however carefully it is prepared here; shrinking softens
-    # it and the second pass softens it again. PNG would avoid one of those
-    # passes, but the client silently refuses it - it downloads the file and
-    # uploads nothing - so JPEG at a high quality it is.
-    try:
-        from PIL import ImageFilter
-        image = image.filter(ImageFilter.UnsharpMask(radius=0.7, percent=70, threshold=2))
-    except Exception:
-        pass
-
-    for quality in (95, 90, 85, 75):
-        out = io.BytesIO()
-        image.save(out, 'JPEG', quality=quality, optimize=True, subsampling=0)
-        if out.tell() <= TARGET:
-            break
-
-    sys.stdout.buffer.write(out.getvalue())
+    sys.stdout.buffer.write(finish(image))
 
 
 if __name__ == '__main__':

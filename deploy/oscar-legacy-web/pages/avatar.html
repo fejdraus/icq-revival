@@ -40,6 +40,28 @@ td.anim.on a { font-weight: bold; }
 /* The groups of avatars, switched like the tabs: the client's window has no
    scroll bar, and each group fits it on its own. */
 .grptabs a { font-size: 12px; padding: 1px 9px; }
+/* The picture editor: the picture in a frame of the icon's shape, 2.5 times
+   its 52x64, moved and zoomed by the script; and the same cut at the sizes
+   the client shows. Plain positioning, which the embedded IE draws too. */
+.edframe {
+  position: relative; overflow: hidden; width: 130px; height: 160px;
+  border: 1px solid #9a9a9a; background: #fff; cursor: move;
+}
+.edshot { position: relative; overflow: hidden; border: 1px solid #cfe3d5; background: #fff; }
+.edframe img, .edshot img { position: absolute; left: 0; top: 0; border: 0; }
+.edtools { margin: 6px 0 0; }
+.edtools button { padding: 1px 7px; margin: 0 2px 3px 0; font-size: 12px; min-width: 24px; }
+.edtrack {
+  position: relative; display: inline-block; *display: inline; zoom: 1; vertical-align: middle;
+  width: 110px; height: 6px; margin: 0 6px; border: 1px solid #9a9a9a; background: #eeeae1;
+  cursor: pointer; font-size: 1px; line-height: 1px;
+}
+.edknob {
+  position: absolute; top: -6px; left: 0; width: 10px; height: 16px;
+  border: 1px solid #35601a; background: #3c6e1f; font-size: 1px; line-height: 1px;
+}
+/* The constructor: a button in the Animated tab's top row. */
+.makecell { text-align: right; }
 </style>
 </head>
 <body class="compact">
@@ -52,9 +74,9 @@ td.anim.on a { font-weight: bold; }
     </div>
 
     <div id="pagePicture">
-    <p>{{picLead}}</p>
+    <p id="picLead">{{picLead}}</p>
 
-    <div class="panel">
+    <div class="panel" id="currentRow">
       <table cellpadding="0" cellspacing="0" border="0"><tr>
         <td class="shotcell" valign="middle"><img id="current" class="shot" src="" alt=""></td>
         <td valign="middle"><b>{{picCurrent}}</b><br><span class="dim">{{picCurrentNote}}</span></td>
@@ -77,19 +99,67 @@ td.anim.on a { font-weight: bold; }
       </div>
     </div>
 
+    <!-- The editor, once the server has the picture: drag it in the frame,
+         zoom it, and see it at the sizes the client shows it. -->
+    <div id="editRow" style="display:none">
+      <table cellpadding="0" cellspacing="0" border="0"><tr>
+        <td valign="top">
+          <div id="edFrame" class="edframe" unselectable="on"><img id="edImg" src="" alt="" galleryimg="no" unselectable="on"></div>
+        </td>
+        <td valign="top" style="padding-left:14px">
+          <b>{{picPreview}}</b>
+          <table cellpadding="0" cellspacing="0" border="0" style="margin-top:4px"><tr>
+            <td valign="bottom" style="padding-right:10px">
+              <div class="edshot" style="width:85px;height:106px"><img id="edBig" src="" alt=""></div>
+              <span class="dim">{{picInProfile}}</span></td>
+            <td valign="bottom">
+              <div class="edshot" style="width:52px;height:64px"><img id="edSmall" src="" alt=""></div>
+              <span class="dim">{{picInList}}</span></td>
+          </tr></table>
+          <div class="edtools">
+            <button type="button" title="{{picZoomOut}}" onclick="zoomBy(1 / 1.25)">&minus;</button><span
+              id="edTrack" class="edtrack" title="{{picZoom}}"><span id="edKnob" class="edknob"></span></span><button
+              type="button" title="{{picZoomIn}}" onclick="zoomBy(1.25)">+</button>
+          </div>
+          <div class="edtools">
+            <button type="button" title="{{picMoveLeft}}" onclick="nudge(-1, 0)">&larr;</button><button
+              type="button" title="{{picMoveUp}}" onclick="nudge(0, -1)">&uarr;</button><button
+              type="button" title="{{picMoveDown}}" onclick="nudge(0, 1)">&darr;</button><button
+              type="button" title="{{picMoveRight}}" onclick="nudge(1, 0)">&rarr;</button>
+            <button type="button" onclick="resetEdit()">{{picCentre}}</button>
+          </div>
+          <div class="hint">{{picEditHint}}</div>
+        </td>
+      </tr></table>
+      <div class="actions">
+        <button type="button" class="primary" onclick="apply()">{{picSetPicture}}</button>
+        <button type="button" onclick="cancel()">{{picCancel}}</button>
+      </div>
+    </div>
+
     <div class="hint" id="status"></div>
     </div>
 
+    <!-- Where a link for a real browser goes when the client cannot open one:
+         its address, to copy. -->
+    <div class="soft" id="outsideBox" style="display:none">
+      {{picOpenInBrowser}}<br>
+      <input type="text" id="outsideUrl" readonly value="" style="width:100%" onclick="this.select()">
+    </div>
+
     <div id="pageAnimated" style="display:none">
-      <p>{{picAnimLead}}
-        <a id="animMake" href="/icq/avatar/maker?lang={{LANG}}"><b>{{picAnimMake}}</b></a></p>
+    <div id="animBody">
+      <p>{{picAnimLead}}</p>
 
       <!-- The same frame as the picture tab's: what is set now, as contacts
            see it. -->
       <div class="panel" id="animNowRow">
-        <table cellpadding="0" cellspacing="0" border="0"><tr>
+        <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
           <td class="shotcell" valign="middle"><img id="animCurrent" class="shot" src="" alt=""></td>
           <td valign="middle"><b>{{picAnimNow}} <span id="animNow">{{picAnimNone}}</span></b><br><span class="dim">{{picCurrentNote}}</span></td>
+          <!-- The constructor: a button of its own, where the eye goes first. -->
+          <td valign="middle" class="makecell">
+            <button type="button" id="animMake" class="primary" onclick="makeOwn()">{{picAnimMake}}</button></td>
         </tr></table>
       </div>
 
@@ -97,7 +167,7 @@ td.anim.on a { font-weight: bold; }
         <table cellpadding="0" cellspacing="0" border="0"><tr>
           <td class="thumbcell" valign="middle"><img id="animPreview" src="" width="52" height="64" alt=""></td>
           <td valign="middle">{{picAnimChosen}} <b id="animTitle"></b><br>
-            <a id="animTry" href="/icq/avatar/tester?lang={{LANG}}" target="_blank">{{picAnimTry}}</a></td>
+            <a id="animTry" href="/icq/avatar/tester?lang={{LANG}}" target="_blank" onclick="return openOutside(this.href);">{{picAnimTry}}</a></td>
         </tr></table>
         <div class="actions">
           <button type="button" class="primary" onclick="applyAnimated()">{{picAnimSet}}</button>
@@ -109,14 +179,25 @@ td.anim.on a { font-weight: bold; }
       <div id="animList">
       {{ANIMATED}}
       <p><span class="dim">{{picAnimNote}}</span>
-        <a href="/icq/avatar/tester?lang={{LANG}}" target="_blank">{{picAnimTester}}</a></p>
+        <a href="/icq/avatar/tester?lang={{LANG}}" target="_blank" onclick="return openOutside(this.href);">{{picAnimTester}}</a></p>
       </div>
+    </div>
+
+    <!-- The constructor inside the client's window. The Xtra window must not
+         be navigated away (the client hands such a navigation to Internet
+         Explorer), so the constructor comes in a frame of this page, the way
+         ICQ's own Xtras switched their pages, and sets the avatar through
+         this page's plugin (setAnimatedUrl). -->
+    <div id="makerPanel" style="display:none">
+      <iframe id="makerFrame" name="makerFrame" src="about:blank" frameborder="0" scrolling="no"
+              style="width:100%;height:{{MAKER_FRAME_H}}px;border:0"></iframe>
+    </div>
     </div>
   </div>
   {{FOOTER}}
 </main>
 
-<iframe name="sink" id="sink" style="display:none" src="about:blank" onload="sinkLoaded()"></iframe>
+<iframe name="sink" id="sink" style="display:none" src="about:blank" onload="if (window.sinkLoaded) { sinkLoaded(); }"></iframe>
 
 <script type="text/javascript">
 // The messages, in the language the page was opened in.
@@ -127,6 +208,10 @@ var T = {{STRINGS}};
 var AVATARS = {{AVATARS}};
 var AVATAR_BASE = {{AVATAR_BASE}};
 var LANG = '{{LANG}}';
+// The Xtra's id, which the constructor needs to reach the client too.
+var XTRA_ID = '';
+// Whether the page reached the client (plugin.Initialize worked).
+var CONNECTED = false;
 
 // The picture is a BART item; the type library lists the kinds as
 // sbICQDevi1z = 1 and sbICQExtras = 8. ICQ 6 calls this picture a "devil".
@@ -179,14 +264,14 @@ function connect() {
   if (AVATARS.length && /[?&]tab=animated/.test(window.location.search)) { tab('animated'); }
   var m = /[?&]id=([^&]*)/.exec(window.location.search);
   if (!m) { say(T.picOnlyInIcq); return; }
-  // The constructor sets the avatar through the same Xtra: it gets the id.
-  document.getElementById('animMake').href = '/icq/avatar/maker?lang=' + LANG + '&id=' + m[1];
+  XTRA_ID = m[1];
   try {
     plugin.Initialize(m[1]);
   } catch (e) {
     say(T.picNoClient + e.message);
     return;
   }
+  CONNECTED = true;
   refresh();
   if (AVATARS.length) { readAnimated(); }
 }
@@ -200,7 +285,11 @@ function chosen() {
   say(T.picPreparing);
   waiting = true;
   try {
-    document.getElementById('form').submit();
+    // Which engine this is goes along, for the server's log.
+    var form = document.getElementById('form');
+    form.action = '/icq/avatar/upload?lang=' + LANG + '&dm=' + (document.documentMode
+      || (document.compatMode === 'CSS1Compat' ? 'std' : 'quirks'));
+    form.submit();
   } catch (e) {
     waiting = false;
     say(T.picSendFailed + e.message);
@@ -231,6 +320,7 @@ function uploaded(result) {
   waiting = false;
   clearPick();
   if (result.error) { say(T.picPrepareFailed + result.error); return; }
+  if (result.edit) { startEdit(result.edit); return; }
   // The preview comes over the page's own scheme; the client gets a plain
   // HTTP address, since its picture loader cannot do HTTPS.
   pending = result.clientUrl || result.url;
@@ -243,6 +333,7 @@ function uploaded(result) {
 // The client is not given the image itself: SetBartItem takes an address, and
 // ICQ fetches it and uploads it to the server under our name.
 function apply() {
+  if (EDIT) { applyEdit(); return; }
   if (!pending) { return; }
   transaction = transaction + 1;
   var sent = pending;
@@ -266,8 +357,205 @@ function apply() {
 function cancel() {
   pending = '';
   document.getElementById('previewRow').style.display = 'none';
+  endEdit();
   clearPick();
   say('');
+}
+
+// ------------------------------------------------------------ the editor
+//
+// The picture as the server keeps it (w x h), zoomed (Z) and moved so that
+// the point (U, V) of it - fractions of its width and height - is in the
+// middle of the frame. pictureCrop, the server's own function, turns that
+// into the part that is cut; the frame and both previews show exactly that
+// part, and the server cuts the same one from the same numbers.
+
+{{PICTURE_CROP}}
+
+var ICON_W = 52, ICON_H = 64, ZOOM_MAX = {{ZOOM_MAX}};
+var FRAME_W = 130, FRAME_H = 160;
+var EDIT = null;
+var Z = 1, U = 0.5, V = 0.5;
+var box = null;
+
+function el(id) { return document.getElementById(id); }
+function r4(x) { return Math.round(x * 10000) / 10000; }
+
+function startEdit(edit) {
+  EDIT = edit;
+  Z = 1; U = 0.5; V = 0.5;
+  var src = edit.work;
+  el('edImg').src = src; el('edBig').src = src; el('edSmall').src = src;
+  el('picLead').style.display = 'none';
+  el('currentRow').style.display = 'none';
+  el('form').style.display = 'none';
+  el('editRow').style.display = '';
+  draw();
+  say('');
+}
+
+function endEdit() {
+  if (!EDIT) { return; }
+  EDIT = null;
+  el('editRow').style.display = 'none';
+  el('picLead').style.display = '';
+  el('currentRow').style.display = '';
+  el('form').style.display = '';
+}
+
+// The picture in a box of the icon's shape, stretched kx and ky times.
+function place(img, kx, ky) {
+  var s = img.style;
+  s.width = (EDIT.w * box.scale * kx) + 'px';
+  s.height = (EDIT.h * box.scale * ky) + 'px';
+  s.left = (-box.left * box.scale * kx) + 'px';
+  s.top = (-box.top * box.scale * ky) + 'px';
+}
+
+function draw() {
+  box = pictureCrop(EDIT.w, EDIT.h, Z, U, V, ICON_W, ICON_H);
+  // Kept as the server will read them: rounded, and inside the picture.
+  U = r4(box.u); V = r4(box.v);
+  box = pictureCrop(EDIT.w, EDIT.h, Z, U, V, ICON_W, ICON_H);
+  place(el('edImg'), FRAME_W / ICON_W, FRAME_H / ICON_H);
+  // The profile window stretches the 52x64 to 85x106, and so does this.
+  place(el('edBig'), 85 / ICON_W, 106 / ICON_H);
+  place(el('edSmall'), 1, 1);
+  el('edKnob').style.left = Math.round((Z - 1) / (ZOOM_MAX - 1) * 100) + 'px';
+}
+
+function setZoom(z) {
+  if (!EDIT) { return; }
+  Z = r4(Math.min(ZOOM_MAX, Math.max(1, z)));
+  draw();
+}
+
+function zoomBy(f) { setZoom(Z * f); }
+
+// Moves the picture by dx, dy pixels of the frame.
+function moveBy(dx, dy) {
+  if (!EDIT) { return; }
+  var k = box.scale * FRAME_W / ICON_W;
+  U = U - dx / (EDIT.w * k);
+  V = V - dy / (EDIT.h * k);
+  draw();
+}
+
+function nudge(x, y) { moveBy(x * 5, y * 5); }
+
+function resetEdit() { Z = 1; U = 0.5; V = 0.5; draw(); }
+
+// Dragging, with the mouse (the embedded IE's events too) or a finger.
+var drag = null;
+
+function pointer(e) {
+  e = e || window.event;
+  if (e.touches && e.touches.length) { return { x: e.touches[0].clientX, y: e.touches[0].clientY }; }
+  return { x: e.clientX, y: e.clientY };
+}
+
+function noDefault(e) {
+  e = e || window.event;
+  if (e.preventDefault) { e.preventDefault(); }
+  e.returnValue = false;
+  return false;
+}
+
+function dragStart(e, kind) {
+  var p = pointer(e);
+  drag = { kind: kind, x: p.x, y: p.y };
+  if (kind === 'knob') { knobTo(p.x); }
+  var node = kind === 'knob' ? el('edTrack') : el('edFrame');
+  if (node.setCapture) { node.setCapture(); }
+  document.onmousemove = dragMove;
+  document.onmouseup = dragEnd;
+  return noDefault(e);
+}
+
+function dragMove(e) {
+  if (!drag) { return true; }
+  var p = pointer(e);
+  if (drag.kind === 'knob') {
+    knobTo(p.x);
+  } else {
+    moveBy(p.x - drag.x, p.y - drag.y);
+  }
+  drag.x = p.x; drag.y = p.y;
+  return noDefault(e);
+}
+
+function dragEnd() {
+  if (drag) {
+    var node = drag.kind === 'knob' ? el('edTrack') : el('edFrame');
+    if (node.releaseCapture) { node.releaseCapture(); }
+  }
+  drag = null;
+  document.onmousemove = null;
+  document.onmouseup = null;
+}
+
+// The zoom from a point on the slider's track.
+function knobTo(x) {
+  var r = el('edTrack').getBoundingClientRect();
+  var t = Math.min(1, Math.max(0, (x - r.left - 5) / 100));
+  setZoom(1 + t * (ZOOM_MAX - 1));
+}
+
+function setUpEditor() {
+  var frame = el('edFrame');
+  var img = el('edImg');
+  img.ondragstart = function () { return false; };
+  frame.onselectstart = function () { return false; };
+  frame.onmousedown = function (e) { return dragStart(e, 'move'); };
+  el('edTrack').onmousedown = function (e) { return dragStart(e, 'knob'); };
+  frame.onmousewheel = function (e) {
+    e = e || window.event;
+    zoomBy(e.wheelDelta > 0 ? 1.1 : 1 / 1.1);
+    return noDefault(e);
+  };
+  if (frame.addEventListener) {
+    frame.addEventListener('wheel', function (e) {
+      zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
+      e.preventDefault();
+    }, { passive: false });
+    frame.addEventListener('touchstart', function (e) { dragStart(e, 'move'); }, { passive: false });
+    frame.addEventListener('touchmove', function (e) { dragMove(e); }, { passive: false });
+    frame.addEventListener('touchend', function () { dragEnd(); }, false);
+    el('edTrack').addEventListener('touchstart', function (e) { dragStart(e, 'knob'); }, { passive: false });
+    el('edTrack').addEventListener('touchmove', function (e) { dragMove(e); }, { passive: false });
+    el('edTrack').addEventListener('touchend', function () { dragEnd(); }, false);
+  }
+}
+
+// "Set as my picture": the server cuts the icon from the numbers of the
+// preview, the page waits for it to be there, then hands the client its
+// plain HTTP address, as the page always did.
+function applyEdit() {
+  var query = '?z=' + Z + '&u=' + U + '&v=' + V;
+  var cut = new Image();
+  var sent = EDIT.clientFile + query;
+  pending = sent;
+  say(T.picPreparing);
+  cut.onload = function () {
+    if (pending !== sent) { return; }
+    transaction = transaction + 1;
+    say(T.picUploading);
+    try {
+      plugin.SetBartItem(transaction, BART_PICTURE, sent);
+    } catch (e) {
+      say(T.picRefused + e.message);
+      return;
+    }
+    setTimeout(function () {
+      if (pending === sent) { cancel(); say(T.picDone); }
+    }, 6000);
+  };
+  cut.onerror = function () {
+    if (pending !== sent) { return; }
+    pending = '';
+    say(T.picCutFailed);
+  };
+  cut.src = EDIT.file + query;
 }
 
 function refresh() {
@@ -286,6 +574,27 @@ function done() {
   if (!pending) { return; }
   cancel();
   say(T.picSaved);
+}
+
+// The constructor. Inside the client it opens in the frame below, in place
+// of the Animated tab's list; in a browser, as a page of its own (with the
+// player there).
+function makeOwn() {
+  if (!CONNECTED) {
+    window.location.href = '/icq/avatar/maker?lang=' + LANG;
+    return;
+  }
+  document.getElementById('animBody').style.display = 'none';
+  document.getElementById('makerPanel').style.display = '';
+  window.frames.makerFrame.location.replace('/icq/avatar/maker?embed=1&lang=' + LANG);
+}
+
+// Back from the constructor's frame to the Animated tab.
+function closeMaker() {
+  document.getElementById('makerPanel').style.display = 'none';
+  document.getElementById('animBody').style.display = '';
+  try { window.frames.makerFrame.location.replace('about:blank'); } catch (e) {}
+  readAnimated();
 }
 
 function show(source) {
@@ -340,11 +649,20 @@ function cancelAnimated() {
 // type 1) after the movie would take the movie away again. The contacts whose
 // clients cannot play it are shown a still of the same face by the server.
 function applyAnimated() {
-  if (!animChosen || animPending) { return; }
+  if (!animChosen) { return; }
+  setAnimatedUrl(AVATAR_BASE + animChosen, null);
+}
+
+// Sets the movie at this address as the owner's animated avatar. The
+// constructor's frame calls this too, with a callback(ok, message).
+var animCallback = null;
+
+function setAnimatedUrl(sent, callback) {
+  if (animPending) { return false; }
   transaction = transaction + 1;
   animSet = transaction;
-  var sent = AVATAR_BASE + animChosen;
   animPending = sent;
+  animCallback = callback || null;
   // Said before the call: the events may fire from inside it (see apply()).
   say(T.picAnimSetting);
   try {
@@ -352,11 +670,19 @@ function applyAnimated() {
   } catch (e) {
     animPending = '';
     say(T.picAnimRefused + e.message);
-    return;
+    animFinished(false, T.picAnimRefused + e.message);
+    return false;
   }
   setTimeout(function () {
     if (animPending === sent) { animDone(sent); }
   }, 6000);
+  return true;
+}
+
+function animFinished(ok, message) {
+  var cb = animCallback;
+  animCallback = null;
+  if (cb) { try { cb(ok, message); } catch (e) {} }
 }
 
 function animDone(data) {
@@ -366,6 +692,29 @@ function animDone(data) {
   cancelAnimated();
   showAnimated(data || sent);
   say(T.picAnimSaved);
+  animFinished(true, T.picAnimSaved);
+}
+
+function animFailed() {
+  animPending = '';
+  say(T.picAnimServerRefused);
+  animFinished(false, T.picAnimServerRefused);
+}
+
+// A link meant for a real browser (the tester). Inside the client the page
+// has it opened by the client in the default browser (OpenUrl without its
+// second argument: that one would pick Internet Explorer); a link followed
+// from here, or a new window, would open Internet Explorer. When even that
+// fails, the address is shown to copy. Elsewhere the link works as a link.
+function openOutside(url) {
+  if (!CONNECTED) { return true; }
+  try {
+    plugin.OpenUrl(url);
+    return false;
+  } catch (e) {}
+  document.getElementById('outsideUrl').value = url;
+  document.getElementById('outsideBox').style.display = '';
+  return false;
 }
 
 function readAnimated() {
@@ -415,7 +764,7 @@ function showAnimated(data) {
 
 <script for="plugin" event="OnBartOpFailed(transID)" language="JavaScript">
   if (transID == animRead) { showAnimated(''); }
-  else if (transID == animSet) { animPending = ''; say(T.picAnimServerRefused); }
+  else if (transID == animSet) { animFailed(); }
   // Reading fails when there is simply no picture, which is not worth a fuss;
   // only an upload that was asked for is reported as refused.
   else if (transID != picRead && pending) { say(T.picServerRefused); }
@@ -436,7 +785,7 @@ function showAnimated(data) {
 </script>
 
 <!-- Connected last, once the handlers above are in place. -->
-<script type="text/javascript">setTimeout(connect, 0);</script>
+<script type="text/javascript">setUpEditor(); setTimeout(connect, 0);</script>
 
 </body>
 </html>

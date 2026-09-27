@@ -36,6 +36,8 @@ const { createMirror } = require('./miranda-updates.js');
 // Avatars made in the constructor, /icq/avatar/maker: c-<code>.swf and its
 // pictures, drawn from the code on request (see maker/index.js).
 const maker = require('./maker');
+// The picture editor's geometry, shared with the page (see picture-crop.js).
+const { pictureCrop, parseCropParams, ICON_W, ICON_H, ZOOM_MAX } = require('./picture-crop.js');
 
 const PORT = Number(process.env.PORT || 8101);
 // Clients connect to the address written in their own config, so the service has
@@ -500,8 +502,23 @@ const I18N = {
     // The picture page ICQ 6.5 opens to set your buddy icon.
     picTitle: 'Your picture',
     picSub: 'shown next to your name',
-    picLead: 'Pick an image: its middle is taken in the shape the client draws '
-      + 'and scaled down for you. Nothing is sent until you say so.',
+    picLead: 'Pick an image, then move and zoom it in the frame. Nothing is sent '
+      + 'until you say so.',
+    // The picture editor.
+    picInProfile: 'profile',
+    picInList: 'list',
+    picZoom: 'Zoom',
+    picZoomIn: 'Zoom in',
+    picZoomOut: 'Zoom out',
+    picMoveLeft: 'Move left',
+    picMoveUp: 'Move up',
+    picMoveDown: 'Move down',
+    picMoveRight: 'Move right',
+    picCentre: 'Centre',
+    picEditHint: 'Drag the picture in the frame; the wheel or the slider zooms.',
+    picSetPicture: 'Set as my picture',
+    picCutFailed: 'The server could not cut the picture. Try uploading it again.',
+    picOpenInBrowser: 'The client could not open your browser. Copy this address into it:',
     picCurrent: 'Current picture',
     picCurrentNote: 'as your contacts see it now',
     picPreview: 'This is how it will look',
@@ -586,6 +603,7 @@ const I18N = {
     mkRandom: 'Surprise me',
     mkTry: 'Open in the tester',
     mkBack: 'Back to your picture',
+    mkBackShort: 'Back',
     mkShow: 'Show',
     mkAddress: 'The address of this avatar:',
     mkHowTo: 'To use it, open the constructor from ICQ 6.5 (your picture, the Animated tab, '
@@ -890,8 +908,22 @@ const I18N = {
     welcomeSub: 'стара ICQ знову в ефірі',
     picTitle: 'Ваша картинка',
     picSub: 'поруч із вашим імʼям',
-    picLead: 'Оберіть зображення: з нього береться середина у формі, яку малює '
-      + 'клієнт, і зменшується. Нічого не надсилається, доки ви не скажете.',
+    picLead: 'Оберіть зображення, потім посуньте й наблизьте його в рамці. Нічого не '
+      + 'надсилається, доки ви не скажете.',
+    picInProfile: 'профіль',
+    picInList: 'список',
+    picZoom: 'Масштаб',
+    picZoomIn: 'Наблизити',
+    picZoomOut: 'Віддалити',
+    picMoveLeft: 'Ліворуч',
+    picMoveUp: 'Угору',
+    picMoveDown: 'Униз',
+    picMoveRight: 'Праворуч',
+    picCentre: 'По центру',
+    picEditHint: 'Перетягніть зображення в рамці; коліщатко чи повзунок змінює масштаб.',
+    picSetPicture: 'Встановити як мою картинку',
+    picCutFailed: 'Сервер не зміг вирізати картинку. Спробуйте завантажити її знову.',
+    picOpenInBrowser: 'Клієнт не зміг відкрити ваш браузер. Скопіюйте цю адресу в нього:',
     picCurrent: 'Поточна картинка',
     picCurrentNote: 'такою її зараз бачать ваші контакти',
     picPreview: 'Ось як вона виглядатиме',
@@ -975,6 +1007,7 @@ const I18N = {
     mkRandom: 'Навмання',
     mkTry: 'Відкрити в перегляді',
     mkBack: 'Назад до картинки',
+    mkBackShort: 'Назад',
     mkShow: 'Показати',
     mkAddress: 'Адреса цього аватара:',
     mkHowTo: 'Щоб встановити його, відкрийте конструктор з ICQ 6.5 (ваша картинка, вкладка '
@@ -2573,6 +2606,10 @@ function avatarPage(u, req) {
     .replace('{{STRINGS}}', () => scriptJson(strings))
     .replace('{{AVATARS}}', () => scriptJson(avatars))
     .replace('{{AVATAR_BASE}}', () => scriptJson(`${plainBase(req)}/icq/avatars/`))
+    // The editor's geometry: the server's own function, as source.
+    .replace('{{PICTURE_CROP}}', () => pictureCrop.toString())
+    .replace('{{ZOOM_MAX}}', () => String(ZOOM_MAX))
+    .replace('{{MAKER_FRAME_H}}', () => String(MAKER_FRAME_H))
     .replace(/\{\{LANG\}\}/g, () => u.lang)
     .replace(/\{\{(pic[A-Za-z]+)\}\}/g, (m, k) => (typeof t[k] === 'string' ? escapeHtml(t[k]) : m));
 }
@@ -2877,12 +2914,13 @@ const MAKER_ROWS = [['head', 'skin'], ['hair', 'hairColor'], ['eyes', 'eyeColor'
 // The Xtra's instance id, passed on so the page can reach the client.
 const XTRA_ID = /^[A-Za-z0-9{}_.-]{1,80}$/;
 
-function makerPickers(params, lang, idParam) {
+function makerPickers(params, lang, idParam, embed = false) {
   const field = (key) => maker.FIELDS.find((f) => f.key === key);
   const name = (f) => f.name[lang] || f.name.en;
   const hidden = [`<input type="hidden" name="lang" value="${escapeHtml(lang)}">`];
   if (idParam) hidden.push(`<input type="hidden" name="id" value="${escapeHtml(idParam)}">`);
-  const extra = idParam ? `&id=${encodeURIComponent(idParam)}` : '';
+  if (embed) hidden.push('<input type="hidden" name="embed" value="1">');
+  const extra = (idParam ? `&id=${encodeURIComponent(idParam)}` : '') + (embed ? '&embed=1' : '');
   const rows = MAKER_ROWS.map((keys) => {
     const cells = keys.map((key) => {
       const f = field(key);
@@ -2906,15 +2944,23 @@ function makerPickers(params, lang, idParam) {
     <noscript><input type="submit" value="${escapeHtml(dict(lang).mkShow)}"></noscript></form>`;
 }
 
+// The constructor in a frame of the picture page, inside the client: no
+// frame of its own, no plugin, no address box (see avatar.html).
+const MAKER_FRAME_H = 330;
+const PLUGIN_OBJECT = `<!-- The Xtraz plugin object, the way back into the client (see avatar.html). -->
+<OBJECT CLASSID="clsid:8D18DFF4-0943-4347-8BCA-0C57033F6820" id="plugin" width="0" height="0">
+</OBJECT>`;
+
 function makerPage(u, req, url) {
   const t = u.t;
   const lang = u.lang;
+  const embed = url.searchParams.get('embed') === '1';
   const params = makerParams(url);
   const code = maker.encode(params);
   const askedMood = url.searchParams.get('emotion') || '';
   const emotion = maker.EMOTIONS.includes(askedMood) ? askedMood : 'stam';
   const idParam = XTRA_ID.test(url.searchParams.get('id') || '') ? url.searchParams.get('id') : '';
-  const extra = idParam ? `&id=${encodeURIComponent(idParam)}` : '';
+  const extra = (idParam ? `&id=${encodeURIComponent(idParam)}` : '') + (embed ? '&embed=1' : '');
   const strings = {};
   for (const k of Object.keys(t)) if (k.startsWith('mk') && typeof t[k] === 'string') strings[k] = t[k];
   const moodName = (l) => (t.tstMood && t.tstMood[l]) || l;
@@ -2928,9 +2974,13 @@ function makerPage(u, req, url) {
   const largeSrc = `/icq/avatars/${code}-large.png${emotion === 'stam' ? '' : `?emotion=${emotion}`}`;
   return makerTemplate
     .replace('{{STYLE}}', () => SHARED_STYLE)
-    .replace('{{HEADER}}', () => header(escapeHtml(t.mkTitle), escapeHtml(t.mkSub)))
-    .replace('{{FOOTER}}', () => footer({ langs: langSwitch(lang, u.selfUrl) }))
-    .replace('{{PICKERS}}', () => makerPickers(params, lang, idParam))
+    .replace('{{HEADER}}', () => (embed ? '' : header(escapeHtml(t.mkTitle), escapeHtml(t.mkSub))))
+    .replace('{{FOOTER}}', () => (embed ? '' : footer({ langs: langSwitch(lang, u.selfUrl) })))
+    .replace('{{PLUGIN_OBJECT}}', () => (embed ? '' : PLUGIN_OBJECT))
+    .replace('{{EMBED}}', () => (embed ? 'true' : 'false'))
+    .replace('{{BODY_CLASS}}', () => (embed ? ' embed' : ''))
+    .replace('{{BACK_TEXT}}', () => escapeHtml(embed ? t.mkBackShort : t.mkBack))
+    .replace('{{PICKERS}}', () => makerPickers(params, lang, idParam, embed))
     .replace('{{MOODS}}', () => `<span id="mkMoodList">${moods}</span>`)
     .replace('{{STRINGS}}', () => scriptJson(strings))
     .replace('{{FIELDS}}', () => scriptJson(fields))
@@ -2953,12 +3003,47 @@ function makerPage(u, req, url) {
 // minutes each. A picture is wanted exactly once - ICQ fetches the address it
 // was handed, uploads the image to the server under the user's name, and never
 // asks again - so nothing is written to disk.
+//
+// An upload the server can read is kept as its working copy only (upright,
+// at most 800 pixels long; the original is dropped at once), for the editor:
+// the page shows it, the user moves and zooms it, and the icon is cut from it
+// by the chosen zoom and centre when the page asks for it
+// (/icq/avatar/file/<id>?z=&u=&v=). One it cannot read goes through as it
+// came, as before, with no editor.
+//
+// The ids are random, nothing lists them, and the whole store is capped by
+// count and bytes, the oldest going first.
 const pictures = new Map();
-const PICTURE_TTL = 5 * 60 * 1000;
+const PICTURE_TTL = 15 * 60 * 1000;
+const PICTURE_COUNT_MAX = 64;
+const PICTURE_BYTES_MAX = 32 * 1024 * 1024;
+// The icons cut from one upload, kept in case the client asks again.
+const PICTURE_RENDERS_MAX = 8;
+const PICTURE_ID = /^[0-9a-f]{16}$/;
 // Generous: a photograph straight from a phone is a normal thing to pick, and
 // it is scaled down here anyway. The limit only guards against someone sending
 // something absurd.
 const PICTURE_MAX = 16 * 1024 * 1024;
+
+function pictureBytes(item) {
+  let n = (item.work || item.body).length;
+  if (item.renders) for (const b of item.renders.values()) n += b.length;
+  return n;
+}
+
+// Keeps a picture, dropping the oldest ones over the caps.
+function keepPicture(id, item) {
+  pictures.set(id, item);
+  let total = 0;
+  for (const it of pictures.values()) total += pictureBytes(it);
+  for (const [old, it] of pictures) {
+    if (pictures.size <= PICTURE_COUNT_MAX && total <= PICTURE_BYTES_MAX) break;
+    if (old === id) continue;
+    pictures.delete(old);
+    total -= pictureBytes(it);
+  }
+  setTimeout(() => { if (pictures.get(id) === item) pictures.delete(id); }, PICTURE_TTL).unref();
+}
 
 // The address a request reached us at, for links the client is sent back to
 // follow: the Xtraz entries, the uploaded picture. nginx serves these pages
@@ -3013,13 +3098,29 @@ function uploadPicture(ctx) {
     const data = body.slice(headEnd + 4, next - 2);
     if (!data.length) { send(ctx.res, 200, uploadReply('', t.picErrEmpty, '')); return; }
 
-    const small = shrink(data);
+    // Which engine the page runs in (the embedded IE's document mode), for
+    // the log: the editor is written for the oldest it may be.
+    const mode = String(ctx.url.searchParams.get('dm') || '').replace(/[^\w .;:()/-]/g, '').slice(0, 20);
+    console.log(`picture upload: ${data.length} bytes, document mode ${mode || '-'}, `
+      + `ua=${String(ctx.req.headers['user-agent'] || '-').slice(0, 80)}`);
     const id = crypto.randomBytes(8).toString('hex');
-    pictures.set(id, small.body === data
+    const self = selfBase(ctx.req);
+    const work = workingCopy(data);
+    if (work) {
+      keepPicture(id, { work: work.body, w: work.w, h: work.h, renders: new Map() });
+      const file = `/icq/avatar/file/${id}`;
+      send(ctx.res, 200, editReply({
+        id, w: work.w, h: work.h,
+        work: `${self}/icq/avatar/work/${id}`,
+        file: `${self}${file}`,
+        clientFile: `${plainBase(ctx.req)}${file}`,
+      }));
+      return;
+    }
+    const small = shrink(data);
+    keepPicture(id, small.body === data
       ? { body: data, type: (kind ? kind[1].trim() : 'image/jpeg') }
       : { body: small.body, type: pictureType(small.body) });
-    setTimeout(() => pictures.delete(id), PICTURE_TTL).unref();
-    const self = selfBase(ctx.req);
     // Two addresses for the same picture. The page shows it by the scheme the
     // page itself came in on. The client is handed a plain HTTP one: ICQ 6.5
     // downloads the picture with a loader of its own that does not speak HTTPS
@@ -3058,6 +3159,89 @@ function shrink(data) {
   }
 }
 
+// The editor's copy of an upload as { body, w, h }, or null when the
+// picture cannot be read (or there is no Python with Pillow here).
+function workingCopy(data) {
+  try {
+    const run = child_process.spawnSync('python3',
+      [path.join(__dirname, 'shrink-picture.py'), 'work'],
+      { input: data, maxBuffer: 8 * 1024 * 1024 });
+    if (run.status !== 0 || !run.stdout || !run.stdout.length) return null;
+    const size = imageSize(run.stdout);
+    if (!size || !size.w || !size.h) return null;
+    return { body: run.stdout, w: size.w, h: size.h };
+  } catch {
+    return null;
+  }
+}
+
+// The icon cut from a working copy by the editor's zoom and centre, the same
+// box the page previewed (pictureCrop), or null.
+function cutPicture(item, params) {
+  const key = `${params.z}/${params.u}/${params.v}`;
+  let body = item.renders.get(key);
+  if (body) return body;
+  const box = pictureCrop(item.w, item.h, params.z, params.u, params.v, ICON_W, ICON_H);
+  try {
+    const run = child_process.spawnSync('python3',
+      [path.join(__dirname, 'shrink-picture.py'), 'crop',
+        ...[box.left, box.top, box.left + box.width, box.top + box.height].map((v) => v.toFixed(4))],
+      { input: item.work, maxBuffer: 8 * 1024 * 1024 });
+    if (run.status !== 0 || !run.stdout || !run.stdout.length) return null;
+    body = run.stdout;
+  } catch {
+    return null;
+  }
+  if (item.renders.size >= PICTURE_RENDERS_MAX) item.renders.delete(item.renders.keys().next().value);
+  item.renders.set(key, body);
+  return body;
+}
+
+// GET /icq/avatar/file/<id>[?z=&u=&v=]: the icon of an upload. For one the
+// editor has, the zoom and centre choose the part (all three, in range, or a
+// 400); without them it is the middle of the picture at zoom 1, the crop the
+// page always made. One that went through as it came is handed out as it is.
+function servePictureFile(ctx) {
+  const id = ctx.path.split('/').pop();
+  const item = PICTURE_ID.test(id) ? pictures.get(id) : null;
+  const plain = (status, headers = {}) => { ctx.res.writeHead(status, { 'content-length': 0, ...headers }); ctx.res.end(); };
+  if (!item || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) { plain(404); return; }
+  let body = item.body;
+  let type = item.type;
+  if (item.work) {
+    const q = ctx.url.searchParams;
+    const any = q.has('z') || q.has('u') || q.has('v');
+    const params = any ? parseCropParams(q.get('z'), q.get('u'), q.get('v')) : { z: 1, u: 0.5, v: 0.5 };
+    if (!params) { plain(400); return; }
+    body = cutPicture(item, params);
+    type = 'image/jpeg';
+    if (!body) { plain(500); return; }
+  }
+  ctx.res.writeHead(200, { 'content-type': type, 'content-length': body.length, 'cache-control': 'no-store' });
+  ctx.res.end(ctx.req.method === 'HEAD' ? undefined : body);
+}
+
+// GET /icq/avatar/work/<id>: the working copy the editor shows.
+function serveWorkPicture(ctx) {
+  const id = ctx.path.split('/').pop();
+  const item = PICTURE_ID.test(id) ? pictures.get(id) : null;
+  if (!item || !item.work || (ctx.req.method !== 'GET' && ctx.req.method !== 'HEAD')) {
+    ctx.res.writeHead(404, { 'content-length': 0 });
+    ctx.res.end();
+    return;
+  }
+  ctx.res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': item.work.length, 'cache-control': 'no-store' });
+  ctx.res.end(ctx.req.method === 'HEAD' ? undefined : item.work);
+}
+
+// The reply for an upload the editor takes: the working copy, its size, and
+// the icon's address (the page adds the zoom and centre to it).
+function editReply(edit) {
+  return `<!DOCTYPE html><html><body><script>
+    parent.uploaded(${scriptJson({ edit, error: '', note: '' })});
+  </script></body></html>`;
+}
+
 // The reply lands in a hidden frame; it tells the page the address to hand to
 // the client, or what went wrong.
 function uploadReply(url, error, note, clientUrl) {
@@ -3081,13 +3265,12 @@ const ACTIONS = {
   // given an address, and ICQ downloads it and uploads it to the server itself.
   avatarupload: (ctx) => uploadPicture(ctx),
 
-  // Hands one back out. Short-lived, so nothing accumulates anywhere.
-  avatarfile: (ctx) => {
-    const item = pictures.get(ctx.path.split('/').pop());
-    if (!item) { ctx.res.writeHead(404, { 'content-length': 0 }); ctx.res.end(); return; }
-    ctx.res.writeHead(200, { 'content-type': item.type, 'content-length': item.body.length });
-    ctx.res.end(item.body);
-  },
+  // Hands one back out, cut as the editor chose. Short-lived, so nothing
+  // accumulates anywhere.
+  avatarfile: (ctx) => servePictureFile(ctx),
+
+  // The working copy the picture editor shows.
+  avatarwork: (ctx) => serveWorkPicture(ctx),
 
   drop: (ctx) => { ctx.res.writeHead(404, { 'content-length': 0 }); ctx.res.end(); },
 
