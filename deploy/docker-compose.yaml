@@ -47,9 +47,9 @@ services:
     restart: "no"
 
   # The IM server: OSCAR 5190, TOC 9898, Kerberos 1088, web API 8082, legacy
-  # ICQ UDP 4000, STUN UDP 3478 for ICQ 6 calls; the management API stays on
-  # 127.0.0.1:8090 and must never be reachable from outside - it has no
-  # authentication.
+  # ICQ UDP 4000, STUN and TURN on UDP 3478 and 49160-49199 for ICQ 6 calls;
+  # the management API stays on 127.0.0.1:8090 and must never be reachable
+  # from outside - it has no authentication.
   server:
     <<: *service
     build:
@@ -66,6 +66,10 @@ services:
       OSCAR_ADVERTISED_LISTENERS_SSL: LAN://${PUBLIC_HOST}:3143
       ENABLE_WEBAPI: "1"
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # ICQ 6.5 calls that cannot go directly are relayed here: STUN on UDP
+      # 3478, relayed ports on UDP 49160-49199, both open in the firewall.
+      TURN_ENABLED: "true"
+      TURN_PUBLIC_IP: ${PUBLIC_HOST}
     volumes:
       - oscar-data:/var/lib/open-oscar-server
     depends_on:
