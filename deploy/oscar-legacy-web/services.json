@@ -30,6 +30,7 @@
     "  tzer        a tZer movie or thumbnail from the tzers folder, by exact name",
     "  avatarfiles an animated avatar or its thumbnail from the avatars folder, by exact name",
     "  avatargallery the avatar gallery list (2007 XML) with our animated avatars",
+    "  avatartester the avatar tester: any gallery avatar playing in the browser, with its faces and pictures",
     "  ruffle      Ruffle's web build from the ruffle folder, by exact name; the user card plays the animated avatar with it",
     "  files       a download of /icq/download from the files folder, by exact name",
     "  miranda     Miranda NG's PluginUpdater list and packages: the upstream stable ones with our plugins in them",
@@ -200,6 +201,11 @@
       "path": "^/icq/ruffle/",
       "action": "ruffle",
       "note": "Ruffle's web build (the loader, its chunk and the WebAssembly), by exact file name; the user card loads it to play an animated avatar in a browser without Flash"
+    },
+    {
+      "path": "^/icq/avatar/tester",
+      "action": "avatartester",
+      "note": "the avatar tester: a gallery avatar played with Ruffle, a button per face, and its still, large and thumbnail pictures; the picture page and the user card link here"
     },
     {
       "path": "^/icq/avatar/upload",

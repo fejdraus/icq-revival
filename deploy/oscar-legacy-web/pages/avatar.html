@@ -95,7 +95,8 @@ td.anim.on a { font-weight: bold; }
       <div class="soft" id="animRow" style="display:none">
         <table cellpadding="0" cellspacing="0" border="0"><tr>
           <td class="thumbcell" valign="middle"><img id="animPreview" src="" width="52" height="64" alt=""></td>
-          <td valign="middle">{{picAnimChosen}} <b id="animTitle"></b></td>
+          <td valign="middle">{{picAnimChosen}} <b id="animTitle"></b><br>
+            <a id="animTry" href="/icq/avatar/tester?lang={{LANG}}" target="_blank">{{picAnimTry}}</a></td>
         </tr></table>
         <div class="actions">
           <button type="button" class="primary" onclick="applyAnimated()">{{picAnimSet}}</button>
@@ -106,7 +107,8 @@ td.anim.on a { font-weight: bold; }
 
       <div id="animList">
       {{ANIMATED}}
-      <p><span class="dim">{{picAnimNote}}</span></p>
+      <p><span class="dim">{{picAnimNote}}</span>
+        <a href="/icq/avatar/tester?lang={{LANG}}" target="_blank">{{picAnimTester}}</a></p>
       </div>
     </div>
   </div>
@@ -123,6 +125,7 @@ var T = {{STRINGS}};
 // address they are served from.
 var AVATARS = {{AVATARS}};
 var AVATAR_BASE = {{AVATAR_BASE}};
+var LANG = '{{LANG}}';
 
 // The picture is a BART item; the type library lists the kinds as
 // sbICQDevi1z = 1 and sbICQExtras = 8. ICQ 6 calls this picture a "devil".
@@ -313,6 +316,9 @@ function choose(file) {
   document.getElementById('animTitle').innerHTML = '';
   document.getElementById('animTitle').appendChild(document.createTextNode(a.title));
   document.getElementById('animRow').style.display = '';
+  // The tester plays it in a browser: this window cannot.
+  document.getElementById('animTry').href = '/icq/avatar/tester?name='
+    + encodeURIComponent(a.file.replace(/\.[a-z]+$/i, '')) + '&lang=' + LANG;
   say('');
 }
 

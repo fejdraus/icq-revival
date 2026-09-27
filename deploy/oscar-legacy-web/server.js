@@ -492,6 +492,35 @@ const I18N = {
     picAnimSaved: 'Set. Your contacts see it from now on.',
     picAnimRefused: 'The client refused the animation: ',
     picAnimServerRefused: 'The server did not take the animation.',
+    picAnimTry: 'See it move',
+    picAnimTester: 'Try every avatar in the tester',
+    // The avatar tester, /icq/avatar/tester.
+    tstTitle: 'Avatar tester',
+    tstSub: 'see a face move before you set it',
+    tstLead: 'The animated avatars of this server, played the way ICQ 6.5 plays them. '
+      + 'The buttons show how an avatar reacts to your mood and status.',
+    tstFaces: 'Faces:',
+    tstMood: {
+      stam: 'Idle', smile: 'Smile', sad: 'Sad', laugh: 'Laugh', mad: 'Angry',
+      cry: 'Cry', love: 'Love', busy: 'Busy', offline: 'Offline',
+    },
+    tstByIcq: 'by ICQ',
+    tstByUser: 'made by a user',
+    tstPictures: 'The pictures the server hands out for it',
+    tstStill: 'Still',
+    tstStillNote: 'contacts on other clients and older ICQ versions',
+    tstLarge: 'Large',
+    tstLargeNote: 'the user card on these pages',
+    tstThumb: 'Thumbnail',
+    tstThumbNote: 'the galleries in ICQ 6.5 and Miranda NG',
+    tstNoPlayer: 'This window cannot play Flash movies, so it shows the still picture. '
+      + 'To see the avatar move and try its faces, open this page in a current browser:',
+    tstPlayerFailed: 'The player could not start here, so the still picture is shown.',
+    tstHowToSet: 'To use an avatar, open your picture in ICQ 6.5 (the Animated tab), '
+      + 'or the avatar picker of the ICQ Revival plugin in Miranda NG.',
+    tstAll: 'All avatars',
+    tstNone: 'This server has no animated avatars.',
+    tstUnknown: 'There is no such avatar here; showing the first one.',
     picReduced: (from, to) => `${from} reduced to ${to}`,
     picBytes: (n) => (n < 1024 ? `${n} bytes` : `${Math.round(n / 1024)} KB`),
     signedInAs: (u) => `Signed in as <b>${u}</b>`,
@@ -831,6 +860,35 @@ const I18N = {
     picAnimSaved: 'Встановлено. Відтепер її бачать ваші контакти.',
     picAnimRefused: 'Клієнт не прийняв анімацію: ',
     picAnimServerRefused: 'Сервер не прийняв анімацію.',
+    picAnimTry: 'Подивитися в русі',
+    picAnimTester: 'Спробувати всі аватари',
+    tstTitle: 'Перегляд аватарів',
+    tstSub: 'подивіться, як рухається обличчя, перш ніж обрати',
+    tstLead: 'Анімовані аватари цього сервера, програні так, як їх програє ICQ 6.5. '
+      + 'Кнопки показують, як аватар відповідає на ваш настрій і статус.',
+    tstFaces: 'Обличчя:',
+    tstMood: {
+      stam: 'Спокій', smile: 'Усмішка', sad: 'Сум', laugh: 'Сміх', mad: 'Злість',
+      cry: 'Плач', love: 'Кохання', busy: 'Зайнятий', offline: 'Не в мережі',
+    },
+    tstByIcq: 'від ICQ',
+    tstByUser: 'створений користувачем',
+    tstPictures: 'Зображення, які сервер дає для нього',
+    tstStill: 'Нерухоме',
+    tstStillNote: 'контакти в інших клієнтах і старіших версіях ICQ',
+    tstLarge: 'Велике',
+    tstLargeNote: 'картка користувача на цих сторінках',
+    tstThumb: 'Мініатюра',
+    tstThumbNote: 'галереї в ICQ 6.5 і Miranda NG',
+    tstNoPlayer: 'Це вікно не програє Flash, тому показано нерухоме зображення. '
+      + 'Щоб побачити аватар у русі й спробувати його обличчя, відкрийте сторінку '
+      + 'в сучасному браузері:',
+    tstPlayerFailed: 'Програвач тут не запустився, тому показано нерухоме зображення.',
+    tstHowToSet: 'Щоб встановити аватар, відкрийте свою картинку в ICQ 6.5 (вкладка '
+      + '«Анімація») або вибір аватара в плагіні ICQ Revival для Miranda NG.',
+    tstAll: 'Усі аватари',
+    tstNone: 'На цьому сервері немає анімованих аватарів.',
+    tstUnknown: 'Такого аватара тут немає; показано перший.',
     picReduced: (from, to) => `${from} стиснуто до ${to}`,
     picBytes: (n) => (n < 1024 ? `${n} байт` : `${Math.round(n / 1024)} КБ`),
     signedInAs: (u) => `Ви увійшли як <b>${u}</b>`,
@@ -1703,8 +1761,9 @@ async function cardPicture(uin, t, lang) {
   if (avatar) {
     const stem = avatar.file.replace(/\.[a-z]+$/i, '');
     const title = (avatar.title && (avatar.title[lang] || avatar.title.en)) || stem;
+    // The title links to the tester, where the avatar shows all its faces.
     const label = `<div class="dim" style="font-size:11px;line-height:13px;margin-top:3px">`
-      + `${escapeHtml(t.cAnimatedAvatar(title))}</div>`;
+      + `${t.cAnimatedAvatar(`<a href="${escapeHtml(testerUrl(avatar, lang, ''))}">${escapeHtml(title)}</a>`)}</div>`;
     // The large still, when the folder has it; the gallery's thumbnail
     // otherwise, as before.
     const large = avatar.large && avatarFiles.get(String(avatar.large).toLowerCase());
@@ -2425,6 +2484,263 @@ function avatarPage(u, req) {
     .replace(/\{\{(pic[A-Za-z]+)\}\}/g, (m, k) => (typeof t[k] === 'string' ? escapeHtml(t[k]) : m));
 }
 
+// ---------------------------------------------------------------- avatar tester
+//
+// /icq/avatar/tester?name=<movie>: any avatar of the gallery playing in the
+// browser with Ruffle, with a button for each face its `face` clip has (its
+// labels), next to the pictures the server hands out for it. The picture page
+// and the user card link here. A face is shown by loading the copy of the
+// movie with that face preset (serveMoodMovie), which also starts the
+// gesture over every few seconds.
+//
+// The page itself works without scripts: a face button is a link to the same
+// page with &emotion=, and the script only saves the reload. Where Ruffle
+// cannot run - the client's embedded IE first of all - the stage keeps the
+// large still picture and a note says where the movie can be seen.
+
+// The stage is the movie's 53x65 drawn at four times its size, the large
+// still's own size twice over; Ruffle draws it sharp at any size.
+const TESTER_SCALE = 2;
+
+// The gallery entry by the movie's name, with or without .swf; null for a
+// name the gallery does not have.
+function galleryAvatar(name) {
+  const stem = String(name || '').toLowerCase().replace(/\.swf$/i, '');
+  if (!/^[a-z0-9_-]+$/.test(stem)) return null;
+  return avatarList.find((a) => a.file.toLowerCase() === `${stem}.swf`) || null;
+}
+
+function avatarStem(a) {
+  return a.file.replace(/\.[a-z]+$/i, '');
+}
+
+function avatarTitle(a, lang) {
+  return (a.title && (a.title[lang] || a.title.en)) || avatarStem(a);
+}
+
+// The address of the tester for one avatar (and one of its faces).
+function testerUrl(a, lang, emotion) {
+  return `/icq/avatar/tester?name=${encodeURIComponent(avatarStem(a))}`
+    + (emotion ? `&emotion=${encodeURIComponent(emotion)}` : '')
+    + `&lang=${encodeURIComponent(lang)}`;
+}
+
+// The movie address for one face: the preset copy when the movie has another
+// label to replay through (serveMoodMovie needs one), the movie as it is
+// otherwise.
+function testerMovie(a, emotion) {
+  const labels = a.labels || [];
+  return emotion && labels.length > 1 && labels.includes(emotion)
+    ? `/icq/avatars/${a.file}?emotion=${encodeURIComponent(emotion)}`
+    : `/icq/avatars/${a.file}`;
+}
+
+// The Ruffle setup of the card, with the movie's own screens off; the tester
+// only differs in the player it makes.
+const TESTER_RUFFLE_CONFIG = { ...CARD_RUFFLE_CONFIG, backgroundColor: '#FFFFFF', wmode: 'opaque' };
+
+// The script of the stage. Like the card's (cardAvatarScript), it has to be
+// harmless in the embedded IE: old JavaScript only, and it stops at once where
+// there is no WebAssembly - showing the note instead. The player is put over
+// the still picture once the movie has loaded; a face button then loads that
+// face's copy into the same player instead of reloading the page.
+function testerScript(movies, emotion) {
+  return `<script type="text/javascript">
+var avMood = (function () {
+  var MOVIES = ${scriptJson(movies)};
+  var current = ${scriptJson(emotion)};
+  var box = document.getElementById('avStage');
+  var player = null, api = null, shown = false;
+  function el(id) { return document.getElementById(id); }
+  function note(id) {
+    var n = el(id);
+    if (n) { n.style.display = ''; }
+    var m = el('avMoods');
+    if (m) { m.style.display = 'none'; }
+  }
+  function mark(label) {
+    for (var k in MOVIES) {
+      var b = el('mood-' + k);
+      if (b) { b.className = k === label ? 'mood on' : 'mood'; }
+    }
+  }
+  function giveUp() {
+    if (shown) { return; }
+    if (player) { try { box.removeChild(player); } catch (e) {} }
+    player = null; api = null;
+    note('avFailed');
+  }
+  if (!box || typeof WebAssembly != 'object' || typeof Promise == 'undefined'
+      || !window.fetch || !box.addEventListener) {
+    note('avNoPlayer');
+    return function () { return true; };
+  }
+  function start() {
+    if (!window.RufflePlayer || !window.RufflePlayer.newest) { giveUp(); return; }
+    player = window.RufflePlayer.newest().createPlayer();
+    var s = player.style;
+    s.position = 'absolute'; s.left = '0'; s.top = '0';
+    s.width = box.offsetWidth + 'px'; s.height = box.offsetHeight + 'px';
+    s.visibility = 'hidden';
+    box.appendChild(player);
+    player.addEventListener('loadeddata', function () {
+      setTimeout(function () {
+        if (!player) { return; }
+        shown = true;
+        player.style.visibility = 'visible';
+        var img = el('avStill');
+        if (img) { img.style.visibility = 'hidden'; }
+      }, 250);
+    });
+    api = player.ruffle ? player.ruffle() : player;
+    api.load({ url: MOVIES[current] }).then(null, giveUp);
+    setTimeout(giveUp, 20000);
+  }
+  window.RufflePlayer = window.RufflePlayer || {};
+  window.RufflePlayer.config = ${scriptJson(TESTER_RUFFLE_CONFIG)};
+  var script = document.createElement('script');
+  script.src = ${scriptJson(`/icq/ruffle/ruffle.js?v=${ruffleTag}`)};
+  script.onload = function () { try { start(); } catch (e) { giveUp(); } };
+  script.onerror = giveUp;
+  document.getElementsByTagName('head')[0].appendChild(script);
+  // A face button: false keeps the browser from following the link.
+  return function (label) {
+    if (!api || !MOVIES[label]) { return true; }
+    current = label;
+    mark(label);
+    api.load({ url: MOVIES[label] }).then(null, giveUp);
+    return false;
+  };
+})();
+</script>`;
+}
+
+function testerPage(u, req, url) {
+  const t = u.t;
+  const lang = u.lang;
+  const style = `<style>${SHARED_STYLE}
+.stage { position: relative; background: #fff; border: 1px solid #cfe3d5; overflow: hidden; }
+.moods { margin: 6px 0 4px; }
+.moods a.mood {
+  display: inline-block; padding: 2px 10px; margin: 0 5px 5px 0;
+  font-size: 13px; text-decoration: none; color: #1a1a1a;
+  border: 1px solid #9a9a9a; border-radius: 9px; background: #f2f0ea;
+}
+.moods a.mood.on { color: #fff; background: #3c6e1f; border-color: #35601a; }
+table.pics td { padding: 0 14px 0 0; font-size: 12px; line-height: 1.3; }
+table.pics img { border: 1px solid #cfe3d5; background: #fbfdfb; }
+/* The thumbnails wrap to the width there is, a phone's included; IE 6-7
+   learn inline-block from display:inline with layout (zoom). */
+.gallery a.anim {
+  display: inline-block; *display: inline; zoom: 1; vertical-align: top;
+  width: 84px; margin: 0 4px 8px 0; text-align: center;
+  font-size: 12px; line-height: 1.25; text-decoration: none; color: #1a1a1a;
+}
+.gallery a.anim img { border: 2px solid #e6e2d9; background: #fff; }
+.gallery a.anim.on img { border-color: #3c6e1f; }
+.gallery a.anim.on { font-weight: bold; }
+</style>`;
+  const shell = (bodyHtml) => `<!DOCTYPE html>
+<html lang="${lang}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(t.tstTitle)}</title>
+${style}
+</head>
+<body>
+<main class="window">
+  ${header(escapeHtml(t.tstTitle), escapeHtml(t.tstSub))}
+  <div class="body">${bodyHtml}</div>
+  ${footer({ langs: langSwitch(lang, u.selfUrl) })}
+</main>
+</body>
+</html>`;
+
+  if (!avatarList.length) return shell(`<p>${escapeHtml(t.tstNone)}</p>`);
+
+  const asked = url.searchParams.get('name') || '';
+  let avatar = galleryAvatar(asked);
+  const unknown = asked && !avatar;
+  if (!avatar) avatar = avatarList[0];
+  const stem = avatarStem(avatar);
+  const title = avatarTitle(avatar, lang);
+  const labels = (avatar.labels || []).filter((l) => /^[a-z0-9_]+$/i.test(l));
+  const askedMood = url.searchParams.get('emotion') || '';
+  const emotion = labels.includes(askedMood) ? askedMood
+    : labels.includes('stam') ? 'stam' : (labels[0] || '');
+
+  // The pictures, each at its own size; the large one also stands on the
+  // stage until the movie plays over it.
+  const still = avatar.still && avatarFiles.get(String(avatar.still).toLowerCase());
+  const large = avatar.large && avatarFiles.get(String(avatar.large).toLowerCase());
+  const thumb = avatarFiles.get(String(avatar.thumb).toLowerCase());
+  const stillSize = still && imageSize(still.body);
+  const largeSize = large && imageSize(large.body);
+  const thumbSize = (thumb && imageSize(thumb.body)) || { w: 52, h: 64 };
+  const stageImg = largeSize ? { src: avatar.large, ...largeSize }
+    : stillSize ? { src: avatar.still, ...stillSize } : { src: avatar.thumb, ...thumbSize };
+  const stage = { w: (largeSize ? largeSize.w : 104) * TESTER_SCALE, h: (largeSize ? largeSize.h : 127) * TESTER_SCALE };
+  const pic = (file, size, name, note) => (file && size ? `<td valign="bottom" align="center">`
+    + `<img src="/icq/avatars/${escapeHtml(file)}" width="${size.w}" height="${size.h}" alt=""><br>`
+    + `<b>${escapeHtml(name)}</b>, ${size.w}&times;${size.h}<br><span class="dim">${escapeHtml(note)}</span></td>` : '');
+
+  const playable = ruffleFiles.has('ruffle.js');
+  const movies = {};
+  for (const l of labels) movies[l] = testerMovie(avatar, l);
+  if (!labels.length) movies[''] = testerMovie(avatar, '');
+  const moodName = (l) => (t.tstMood && t.tstMood[l]) || l;
+  const moods = labels.map((l) => `<a href="${escapeHtml(testerUrl(avatar, lang, l))}" id="mood-${escapeHtml(l)}"`
+    + ` class="mood${l === emotion ? ' on' : ''}"`
+    + (playable ? ` onclick="return avMood(${escapeHtml(JSON.stringify(l))});"` : '') + '>'
+    + `${escapeHtml(moodName(l))}</a>`).join('');
+  const openHere = `${selfBase(req)}${testerUrl(avatar, lang, emotion)}`;
+
+  const group = (author, heading) => {
+    const items = avatarList.filter((a) => a.author === author);
+    if (!items.length) return '';
+    const cells = items.map((a) => `<a class="anim${a === avatar ? ' on' : ''}" href="${escapeHtml(testerUrl(a, lang, ''))}">`
+      + `<img src="/icq/avatars/${escapeHtml(a.thumb)}" width="52" height="64" alt="" border="0"><br>`
+      + `${escapeHtml(avatarTitle(a, lang))}</a>`);
+    return `<h2>${escapeHtml(heading)} (${items.length})</h2>
+    <div class="gallery">${cells.join('\n')}</div>`;
+  };
+
+  return shell(`
+    ${unknown ? `<p class="warn">${escapeHtml(t.tstUnknown)}</p>` : ''}
+    <p>${escapeHtml(t.tstLead)}</p>
+    <table cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+      <td valign="top" width="${stage.w + 16}">
+        <div id="avStage" class="stage" style="width:${stage.w}px;height:${stage.h}px">
+          <table width="${stage.w}" height="${stage.h}" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td align="center" valign="middle"><img id="avStill" src="/icq/avatars/${escapeHtml(stageImg.src)}"`
+              + ` width="${stageImg.w}" height="${stageImg.h}" alt="${escapeHtml(title)}" border="0"></td>
+          </tr></table>
+        </div>
+      </td>
+      <td valign="top">
+        <h2 style="margin-top:0">${escapeHtml(title)}</h2>
+        <p class="dim">${escapeHtml(avatar.author === 'user' ? t.tstByUser : t.tstByIcq)}
+          &middot; ${escapeHtml(avatar.file)}${avatar.size ? `, ${escapeHtml(t.picBytes(avatar.size))}` : ''}</p>
+        ${labels.length ? `<div id="avMoods"${playable ? '' : ' style="display:none"'}><b>${escapeHtml(t.tstFaces)}</b>
+        <div class="moods">${moods}</div></div>` : ''}
+        <div id="avNoPlayer" class="soft" style="display:none">${escapeHtml(t.tstNoPlayer)}<br>
+          <a href="${escapeHtml(openHere)}" target="_blank">${escapeHtml(openHere)}</a></div>
+        <div id="avFailed" class="soft"${playable ? ' style="display:none"' : ''}>${escapeHtml(t.tstPlayerFailed)}</div>
+        <p class="hint">${escapeHtml(t.tstHowToSet)}</p>
+      </td>
+    </tr></table>
+    <h2>${escapeHtml(t.tstPictures)}</h2>
+    <table class="pics" cellpadding="0" cellspacing="0" border="0"><tr>
+      ${pic(avatar.still, stillSize, t.tstStill, t.tstStillNote)}
+      ${pic(avatar.large, largeSize, t.tstLarge, t.tstLargeNote)}
+      ${pic(avatar.thumb, thumbSize, t.tstThumb, t.tstThumbNote)}
+    </tr></table>
+    ${group('icq', `${t.tstAll}: ${t.picAnimIcq}`)}
+    ${group('user', `${t.tstAll}: ${t.picAnimUser}`)}
+    ${playable ? testerScript(movies, labels.length ? emotion : '') : ''}`);
+}
+
 
 // Pictures on their way from the page to the client, held in memory for a few
 // minutes each. A picture is wanted exactly once - ICQ fetches the address it
@@ -2546,6 +2862,9 @@ function uploadReply(url, error, note, clientUrl) {
 
 const ACTIONS = {
   avatarpage: (ctx) => send(ctx.res, 200, avatarPage(ctx.u, ctx.req)),
+
+  // Any gallery avatar playing in the browser, with its faces and pictures.
+  avatartester: (ctx) => send(ctx.res, 200, testerPage(ctx.u, ctx.req, ctx.url)),
 
   // Receives a picture from the page and keeps it just long enough for the
   // client to fetch it. The client does not take image data: SetBartItem is
