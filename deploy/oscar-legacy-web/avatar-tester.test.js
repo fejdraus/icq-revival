@@ -91,8 +91,8 @@ test('avatar tester with the player', async (t) => {
 
   await t.test('the picture page links each chosen avatar and the whole tester', async () => {
     const { text } = await get(srv.base, '/icq/avatar?lang=en');
-    assert.match(text, /id="animTry" href="\/icq\/avatar\/tester\?lang=en"/);
-    assert.match(text, /href="\/icq\/avatar\/tester\?lang=en" target="_blank" onclick="return openOutside\(this\.href\);">Try every avatar in the tester/);
+    assert.match(text, /id="animTry" class="outside" href="\/icq\/avatar\/tester\?lang=en"/);
+    assert.match(text, /class="outside" href="\/icq\/avatar\/tester\?lang=en" target="_blank">Try every avatar in the tester/);
     assert.match(text, /'\/icq\/avatar\/tester\?name='/);
   });
 

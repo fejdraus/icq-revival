@@ -12,7 +12,6 @@
      MISBDhtmlXtraWrapper, described in the type library inside MISB.dll; this
      class id is the one the original ICQ.com packages used. -->
 <OBJECT CLASSID="clsid:8D18DFF4-0943-4347-8BCA-0C57033F6820" id="plugin" width="0" height="0">
-  OBJECT NOT SET
 </OBJECT>
 
 <style>{{STYLE}}
@@ -79,7 +78,8 @@ td.anim.on a { font-weight: bold; }
     <div class="panel" id="currentRow">
       <table cellpadding="0" cellspacing="0" border="0"><tr>
         <td class="shotcell" valign="middle"><img id="current" class="shot" src="" alt=""></td>
-        <td valign="middle"><b>{{picCurrent}}</b><br><span class="dim">{{picCurrentNote}}</span></td>
+        <td valign="middle"><b>{{picCurrent}}</b><br><span class="dim">{{picCurrentNote}}</span>
+          <div class="dim" id="currentAnimNote" style="display:none;font-size:12px;margin-top:3px">{{picCurrentAnimNote}}</div></td>
       </tr></table>
     </div>
 
@@ -140,13 +140,6 @@ td.anim.on a { font-weight: bold; }
     <div class="hint" id="status"></div>
     </div>
 
-    <!-- Where a link for a real browser goes when the client cannot open one:
-         its address, to copy. -->
-    <div class="soft" id="outsideBox" style="display:none">
-      {{picOpenInBrowser}}<br>
-      <input type="text" id="outsideUrl" readonly value="" style="width:100%" onclick="this.select()">
-    </div>
-
     <div id="pageAnimated" style="display:none">
     <div id="animBody">
       <p>{{picAnimLead}}</p>
@@ -167,7 +160,7 @@ td.anim.on a { font-weight: bold; }
         <table cellpadding="0" cellspacing="0" border="0"><tr>
           <td class="thumbcell" valign="middle"><img id="animPreview" src="" width="52" height="64" alt=""></td>
           <td valign="middle">{{picAnimChosen}} <b id="animTitle"></b><br>
-            <a id="animTry" href="/icq/avatar/tester?lang={{LANG}}" target="_blank" onclick="return openOutside(this.href);">{{picAnimTry}}</a></td>
+            <a id="animTry" class="outside" href="/icq/avatar/tester?lang={{LANG}}" target="_blank">{{picAnimTry}}</a></td>
         </tr></table>
         <div class="actions">
           <button type="button" class="primary" onclick="applyAnimated()">{{picAnimSet}}</button>
@@ -179,7 +172,7 @@ td.anim.on a { font-weight: bold; }
       <div id="animList">
       {{ANIMATED}}
       <p><span class="dim">{{picAnimNote}}</span>
-        <a href="/icq/avatar/tester?lang={{LANG}}" target="_blank" onclick="return openOutside(this.href);">{{picAnimTester}}</a></p>
+        <a class="outside" href="/icq/avatar/tester?lang={{LANG}}" target="_blank">{{picAnimTester}}</a></p>
       </div>
     </div>
 
@@ -272,6 +265,7 @@ function connect() {
     return;
   }
   CONNECTED = true;
+  hideOutsideLinks();
   refresh();
   if (AVATARS.length) { readAnimated(); }
 }
@@ -572,8 +566,21 @@ function refresh() {
 // saying "Uploading..." for ever.
 function done() {
   if (!pending) { return; }
+  // A picture set here replaces the animated avatar.
+  animStill = '';
+  showCurrent();
   cancel();
   say(T.picSaved);
+}
+
+// Links for a real browser (the tester) are left out inside the client: its
+// window hands a new window to Internet Explorer, and the constructor's own
+// face buttons show every face anyway.
+function hideOutsideLinks() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/(^| )outside( |$)/.test(links[i].className)) { links[i].style.display = 'none'; }
+  }
 }
 
 // The constructor. Inside the client it opens in the frame below, in place
@@ -597,9 +604,25 @@ function closeMaker() {
   readAnimated();
 }
 
+// What contacts see as the picture. While one of our animated avatars is
+// set, the server hands every client but ICQ 6 that avatar's still instead
+// of the owner's own picture (which stays stored, hidden, until a picture is
+// chosen here again - that makes ICQ drop the animated one). So the frame
+// shows the still then, with a note.
+var ownPicture = '';
+var animStill = '';
+
 function show(source) {
   if (!source) { return; }
-  document.getElementById('current').src = source;
+  ownPicture = source;
+  showCurrent();
+}
+
+function showCurrent() {
+  var img = document.getElementById('current');
+  if (animStill) { img.src = animStill; }
+  else if (ownPicture) { img.src = ownPicture; }
+  document.getElementById('currentAnimNote').style.display = animStill ? '' : 'none';
 }
 
 // ------------------------------------------------------------ animated faces
@@ -701,21 +724,6 @@ function animFailed() {
   animFinished(false, T.picAnimServerRefused);
 }
 
-// A link meant for a real browser (the tester). Inside the client the page
-// has it opened by the client in the default browser (OpenUrl without its
-// second argument: that one would pick Internet Explorer); a link followed
-// from here, or a new window, would open Internet Explorer. When even that
-// fails, the address is shown to copy. Elsewhere the link works as a link.
-function openOutside(url) {
-  if (!CONNECTED) { return true; }
-  try {
-    plugin.OpenUrl(url);
-    return false;
-  } catch (e) {}
-  document.getElementById('outsideUrl').value = url;
-  document.getElementById('outsideBox').style.display = '';
-  return false;
-}
 
 function readAnimated() {
   transaction = transaction + 1;
@@ -738,10 +746,14 @@ function showAnimated(data) {
     a = m ? findAvatar(m[1]) : null;
     // One made in the constructor: its code is its name.
     if (!a && m && /^c-[0-9a-z]+\.swf$/i.test(m[1])) {
-      a = { title: T.picAnimOwn, thumb: m[1].replace(/\.swf$/i, '.png') };
+      a = { title: T.picAnimOwn, thumb: m[1].replace(/\.swf$/i, '.png'),
+        large: m[1].replace(/\.swf$/i, '-large.png') };
     }
     text = a ? a.title : T.picAnimOther;
   }
+  // Ours (gallery or constructor): contacts see its still as the picture.
+  animStill = a && a.large ? '/icq/avatars/' + a.large : '';
+  showCurrent();
   var now = document.getElementById('animNow');
   now.innerHTML = '';
   now.appendChild(document.createTextNode(text));

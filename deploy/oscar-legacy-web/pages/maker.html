@@ -30,6 +30,18 @@ a.sw.on { border: 2px solid #1a1a1a; width: 11px; height: 11px; }
 }
 .moods a.mood.on { color: #fff; background: #3c6e1f; border-color: #35601a; }
 input.addr { width: 100%; font-size: 12px; }
+/* The action row: buttons the size of the tabs and the language switch, not
+   the sheet's large ones. */
+table.bar { margin-top: 8px; }
+table.bar button {
+  font-size: 13px; padding: 2px 12px; margin: 0 0 0 6px; border-radius: 9px; line-height: 1.4;
+}
+table.bar td:first-child button { margin: 0 6px 0 0; }
+/* The face buttons: never broken over two lines, and their text stays put
+   when the pointer is over them. */
+.moods a.mood { white-space: nowrap; line-height: 1.4; }
+.moods a.mood:hover { color: #1a1a1a; background: #e8e5dd; }
+.moods a.mood.on:hover { color: #fff; background: #3c6e1f; }
 /* In the picture page's frame: part of that page, not a sheet of its own. */
 body.embed { background: #fff; padding: 0; }
 body.embed .window { border: 0; box-shadow: none; max-width: none; border-radius: 0; }
@@ -51,12 +63,18 @@ body.embed .body { padding: 2px 0 0; }
 
     <div class="moods"><b>{{mkFaces}}</b> {{MOODS}}</div>
 
-    <div class="actions">
-      <button type="button" class="primary" id="mkSetBtn" style="display:none" onclick="mkApply()">{{mkSet}}</button>
-      <button type="button" onclick="mkRandom()">{{mkRandom}}</button>
-      <a id="mkTry" href="{{TRY_URL}}" target="_blank" onclick="return mkOutside(this.href);">{{mkTry}}</a>
-      <a id="mkBack" href="#" style="display:none">{{BACK_TEXT}}</a>
-    </div>
+    <!-- The actions: Back on the left (inside the client), the rest on the
+         right; the tester only in a browser. -->
+    <table class="bar" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+      <td valign="middle">
+        <button type="button" id="mkBack" style="display:none">{{BACK_TEXT}}</button>
+        <a id="mkTry" href="{{TRY_URL}}" target="_blank">{{mkTry}}</a>
+      </td>
+      <td valign="middle" align="right" nowrap>
+        <button type="button" onclick="mkRandom()">{{mkRandom}}</button><button
+          type="button" class="primary" id="mkSetBtn" style="display:none" onclick="mkApply()">{{mkSet}}</button>
+      </td>
+    </tr></table>
     <div class="hint" id="mkStatus"></div>
 
     <div id="mkAddrBox" class="soft" style="display:none">
@@ -218,6 +236,8 @@ function connect() {
     el('mkSetBtn').style.display = '';
     el('mkBack').style.display = '';
     el('mkBack').onclick = function () { host.closeMaker(); return false; };
+    // Inside the client there is no browser to send the tester to.
+    el('mkTry').style.display = 'none';
     refresh();
     return;
   }
@@ -233,7 +253,10 @@ function connect() {
   if (xtraId) {
     el('mkSetBtn').style.display = '';
     el('mkBack').style.display = '';
-    el('mkBack').href = '/icq/avatar?id=' + encodeURIComponent(xtraId) + '&tab=animated&lang=' + LANG;
+    el('mkBack').onclick = function () {
+      window.location.href = '/icq/avatar?id=' + encodeURIComponent(xtraId) + '&tab=animated&lang=' + LANG;
+    };
+    el('mkTry').style.display = 'none';
   } else {
     el('mkAddrBox').style.display = '';
   }
@@ -243,13 +266,6 @@ function connect() {
 
 // The same call as the Animated tab's (avatar.html): the client is handed
 // the movie's address and uploads it as the owner's BART type 8.
-// A link for a real browser: see openOutside in avatar.html.
-function mkOutside(url) {
-  if (host) { return host.openOutside(url); }
-  if (!xtraId) { return true; }
-  try { plugin.OpenUrl(url); return false; } catch (e) { return true; }
-}
-
 function mkApply() {
   if (host) {
     say(T.mkSetting);

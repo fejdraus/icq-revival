@@ -518,9 +518,10 @@ const I18N = {
     picEditHint: 'Drag the picture in the frame; the wheel or the slider zooms.',
     picSetPicture: 'Set as my picture',
     picCutFailed: 'The server could not cut the picture. Try uploading it again.',
-    picOpenInBrowser: 'The client could not open your browser. Copy this address into it:',
     picCurrent: 'Current picture',
     picCurrentNote: 'as your contacts see it now',
+    picCurrentAnimNote: 'While an animated avatar is set, contacts see this still of it. '
+      + 'Choosing a picture here replaces the animated avatar.',
     picPreview: 'This is how it will look',
     picUpload: 'Upload to the server',
     picCancel: 'Cancel',
@@ -923,9 +924,10 @@ const I18N = {
     picEditHint: 'Перетягніть зображення в рамці; коліщатко чи повзунок змінює масштаб.',
     picSetPicture: 'Встановити як мою картинку',
     picCutFailed: 'Сервер не зміг вирізати картинку. Спробуйте завантажити її знову.',
-    picOpenInBrowser: 'Клієнт не зміг відкрити ваш браузер. Скопіюйте цю адресу в нього:',
     picCurrent: 'Поточна картинка',
     picCurrentNote: 'такою її зараз бачать ваші контакти',
+    picCurrentAnimNote: 'Поки встановлено анімований аватар, контакти бачать цей його кадр. '
+      + 'Якщо обрати картинку тут, вона замінить анімований аватар.',
     picPreview: 'Ось як вона виглядатиме',
     picUpload: 'Завантажити на сервер',
     picCancel: 'Скасувати',
@@ -2595,6 +2597,8 @@ function avatarPage(u, req) {
     file: a.file,
     title: (a.title && (a.title[u.lang] || a.title.en)) || a.file,
     thumb: a.thumb,
+    // The still contacts see while it is set, drawn large (see showCurrent).
+    large: a.large || '',
   }));
   const hasAnimated = avatars.length > 0;
   return avatarTemplate
@@ -3373,7 +3377,7 @@ const ACTIONS = {
     const html = `<html>
 <head>
 <title>Xtraz</title>
-<OBJECT CLASSID="clsid:8D18DFF4-0943-4347-8BCA-0C57033F6820" id="plugin">OBJECT NOT SET</OBJECT>
+<OBJECT CLASSID="clsid:8D18DFF4-0943-4347-8BCA-0C57033F6820" id="plugin"></OBJECT>
 <script language="VBScript">
 	Sub plugin_OnInitData ( owner, sequence, buddies, initialData )
 	End Sub

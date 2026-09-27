@@ -231,14 +231,15 @@ test('the picture page', async (t) => {
     assert.match(code, /setCapture/);
   });
 
-  await t.test('inside the client nothing leaves the Xtra window: real-browser links go through OpenUrl', async () => {
+  await t.test('inside the client nothing leaves the Xtra window', async () => {
     const { text } = await get(srv.base, '/icq/avatar?lang=en');
-    // Every link for a new window is handed to the client instead.
+    // The tester links are plain links for a browser, hidden once the page
+    // has reached the client; nothing calls OpenUrl or opens a window.
     const blank = [...text.matchAll(/<a [^>]*target="_blank"[^>]*>/g)].map((m) => m[0]);
     assert.ok(blank.length >= 2);
-    for (const a of blank) assert.match(a, /onclick="return openOutside\(this\.href\);"/, a);
-    // The default browser: OpenUrl with the address only (true would pick IE).
-    assert.match(text, /plugin\.OpenUrl\(url\);/);
+    for (const a of blank) assert.match(a, /class="outside"/, a);
+    assert.match(text, /CONNECTED = true;\s+hideOutsideLinks\(\);/);
+    assert.doesNotMatch(text, /OpenUrl|window\.open\(/);
     // The constructor comes in a frame of this page, and the page is never
     // navigated away inside the client.
     assert.match(text, /<iframe id="makerFrame" name="makerFrame"/);
@@ -251,12 +252,26 @@ test('the picture page', async (t) => {
     assert.match(text, /var EMBED = true;/);
     assert.match(text, /<body class="compact embed">/);
     assert.match(text, /host\.setAnimatedUrl\(/);
+    // Back is a button on the left of the action row; no tester in the client.
+    assert.match(text, /<table class="bar"[^>]*><tr>\s*<td valign="middle">\s*<button type="button" id="mkBack"/);
+    assert.match(text, /el\('mkTry'\)\.style\.display = 'none';/);
+    assert.doesNotMatch(text, /OpenUrl|window\.open\(/);
     assert.doesNotMatch(text, /class="titlebar"/);
     assert.match(text, /<input type="hidden" name="embed" value="1">/);
     assert.doesNotMatch(scripts(text).join('\n'), MODERN_JS);
     const full = (await get(srv.base, '/icq/avatar/maker?lang=en')).text;
     assert.match(full, /<OBJECT CLASSID="clsid:8D18DFF4/);
     assert.match(full, /var EMBED = false;/);
+  });
+
+  await t.test('with an animated avatar set, the current picture is its still, with a note', async () => {
+    const { text } = await get(srv.base, '/icq/avatar?lang=en');
+    assert.match(text, /id="currentAnimNote" style="display:none[^"]*">While an animated avatar is set, contacts see this still of it\./);
+    assert.match(text, /animStill = a && a\.large \? '\/icq\/avatars\/' \+ a\.large : '';/);
+    // The gallery hands the page each movie's large still.
+    const avatars = JSON.parse(/var AVATARS = (\[[^\n]*\]);/.exec(text)[1]);
+    assert.ok(avatars.length > 0 && avatars.every((a) => /-large\.png$/.test(a.large)));
+    assert.match((await get(srv.base, '/icq/avatar?lang=uk')).text, /Поки встановлено анімований аватар/);
   });
 
   await t.test('the constructor is a button in the Animated tab', async () => {
