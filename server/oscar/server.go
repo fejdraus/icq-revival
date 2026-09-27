@@ -168,6 +168,10 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn, endpointCf
 		_ = conn.Close()
 		s.connWg.Done()
 	}()
+	if endpointCfg.IsSSL {
+		// the SSL terminator names the client it carries
+		conn = withProxyHeader(conn)
+	}
 	ctx = middleware.WithIP(ctx, conn.RemoteAddr().String())
 	if err := s.handler(ctx, conn, endpointCfg); err != nil {
 		s.logger.InfoContext(ctx, "user session failed", "err", err.Error())
