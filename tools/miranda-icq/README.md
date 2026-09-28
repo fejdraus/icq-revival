@@ -35,7 +35,7 @@ The file name is deliberately not `ICQ.dll`. `PluginUpdater` compares **the hash
 every file** with the list on the update server (`DlgUpdate.cpp`,
 `CalculateModuleHash`) and does not look at the version number at all. The Miranda NG
 list does not know our build, so under the name `ICQ.dll` it always shows as
-"Outdated!", and "Update" replaces it with the server's build, that is, the version
+"Deprecated!", and "Update" replaces it with the server's build, that is, the version
 with the banned UUID, after which the plugin silently stops loading.
 
 ### Updates through our server
@@ -167,8 +167,8 @@ files, and a newer `Dummy.dll`):
   our address survived two restarts.
 
 HTTPS: by default `PluginUpdater` does not check the certificate at all, and with the
-check enabled ("Network → PluginUpdater → validate SSL", `NLValidateSSL`) it accepts
-the Let's Encrypt chain (tested on `valid-isrgrootx1.letsencrypt.org`) and rejects a
+check enabled ("Network → PluginUpdater → Validate SSL certificates",
+`NLValidateSSL`) it accepts the Let's Encrypt chain (tested on `valid-isrgrootx1.letsencrypt.org`) and rejects a
 self-signed one (`800b0109`). Port 8102 is nginx with the same certificate as for
 Miranda and browsers.
 
@@ -597,7 +597,7 @@ The `PROTO_INTERFACE` virtual function table did not change between these versio
 Core 0.96 receives an incoming file as `DB::FILE_BLOB`, and passes the transfer
 pointer back to `FileAllow`/`FileDeny`/`FileCancel` only from
 `FILE_BLOB::setUserInfo` (previously `PROTORECVFILE.lParam`). The port lost this, and
-"Accept" on any incoming file ended with "Unable to start the transfer": `FileAllow`
+"Accept" on any incoming file ended with "Unable to initiate transfer.": `FileAllow`
 got a null pointer and silently returned an error, and it never got as far as
 connecting. The original 0.95.8.1 does not work on this core either, for the same
 reason. Now the transfer is stored in the event (`oscar_filetransfer.cpp`,
