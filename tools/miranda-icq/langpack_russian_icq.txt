@@ -499,6 +499,8 @@ xСтатус "%s"
 Отдел:
 [Depressed]
 Подавленный
+[Details]
+Подробности
 [Diego Garcia]
 Диего Гарсия
 [Direct connections]

@@ -50,3 +50,7 @@
 Miranda не смогла определить числовой адрес сервера по его имени. Чаще всего это означает, что пропала связь с сетью — например, отключился модем. Если вы работаете через прокси, может понадобиться включить «Разрешать имена через прокси» в «Настройки -> Сеть».
 [Miranda was unable to allocate a port to listen for direct peer-to-peer connections between clients. You will be able to use most of the ICQ network without problems but you may be unable to send or receive files.\n\nIf you have a firewall this may be blocking Miranda, in which case you should configure your firewall to leave some ports open and tell Miranda which ports to use in Options -> Network -> ICQ client-to-client connections.]
 Miranda не смогла занять порт для приёма прямых соединений между клиентами. Почти всё в сети ICQ будет работать как обычно, но приём и отправка файлов могут не работать.\n\nВозможно, Miranda блокирует межсетевой экран. Тогда откройте в нём несколько портов и укажите их в «Настройки -> Сеть -> Прямые соединения ICQ».
+; The title of the user info tab (userinfotab.cpp); the stock pack has no
+; translation for it.
+[Details]
+Подробности
