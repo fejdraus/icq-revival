@@ -497,8 +497,8 @@ async function mgmtBytes(apiPath) {
 const I18N = {
   en: {
     poweredBy: 'powered by ICQ Revival',
-    welcomeTitle: 'Welcome',
-    welcomeSub: 'the old ICQ, back on the air',
+    welcomeTitle: 'Welcome to ICQ Revival',
+    welcomeSub: 'the old clients, back on the air',
     // The picture page ICQ 6.5 opens to set your buddy icon.
     picTitle: 'Your picture',
     picSub: 'shown next to your name',
@@ -619,8 +619,8 @@ const I18N = {
     dirDown: 'the server directory is not answering',
     nobodyElse: 'nobody else is online',
     othersOnline: (n) => `<b>${n}</b> other${n === 1 ? '' : 's'} online`,
-    intro: 'A private ICQ server: the same protocol and the same clients you '
-      + 'remember, talking to something that answers again. Contact list, offline '
+    intro: 'ICQ Revival is a private server for the classic ICQ: the same protocol '
+      + 'and the same clients you remember, talking to something that answers again. Contact list, offline '
       + 'messages, statuses, search and file transfer all work. ICQ.com itself is '
       + 'long gone, so the menu items that pointed there now point here.',
     lnkToday: 'Who is online right now',
@@ -640,7 +640,7 @@ const I18N = {
     loadFailed: (e) => `Could not load the list: ${e}`,
 
     findTitle: 'Find a User',
-    icqNumber: 'ICQ number:',
+    icqNumber: 'ICQ Revival number:',
     searchBtn: 'Search',
     notRegistered: (u) => `Number <b>${u}</b> is not registered on this server.`,
     serverSilent: (e) => `The server did not respond: ${e}`,
@@ -788,7 +788,7 @@ const I18N = {
       + 'and AIM clients: ICQ Pro 2003b, ICQ 6.5, Miranda NG, AIM and the others '
       + 'that speak the OSCAR protocol. The old clients sign in, keep their contact '
       + 'lists and talk to each other again.',
-    aboutP2: 'It is independent: not affiliated with, endorsed by or connected to '
+    aboutP2: 'ICQ Revival is independent: not affiliated with, endorsed by or connected to '
       + 'ICQ, AOL, Yahoo or VK. ICQ and AIM are trademarks of their owners and are '
       + 'named here only to say which clients the server works with.',
     aboutP3: (href) => 'No advertising and no fees. The software is open source, '
@@ -905,8 +905,8 @@ const I18N = {
 
   uk: {
     poweredBy: 'працює на ICQ Revival',
-    welcomeTitle: 'Ласкаво просимо',
-    welcomeSub: 'стара ICQ знову в ефірі',
+    welcomeTitle: 'Ласкаво просимо до ICQ Revival',
+    welcomeSub: 'старі клієнти знову в ефірі',
     picTitle: 'Ваша картинка',
     picSub: 'поруч із вашим імʼям',
     picLead: 'Оберіть зображення, потім посуньте й наблизьте його в рамці. Нічого не '
@@ -1025,8 +1025,8 @@ const I18N = {
     dirDown: 'каталог сервера не відповідає',
     nobodyElse: 'більше нікого немає в мережі',
     othersOnline: (n) => `<b>${n}</b> ${n === 1 ? 'інший' : 'інших'} у мережі`,
-    intro: 'Приватний сервер ICQ: той самий протокол і ті самі клієнти, що ви '
-      + 'пам’ятаєте, знову мають із ким розмовляти. Список контактів, повідомлення '
+    intro: 'ICQ Revival — приватний сервер для класичної ICQ: той самий протокол '
+      + 'і ті самі клієнти, що ви пам’ятаєте, знову мають із ким розмовляти. Список контактів, повідомлення '
       + 'офлайн, статуси, пошук і передавання файлів працюють. Самої ICQ.com давно '
       + 'немає, тож пункти меню, які вели туди, тепер ведуть сюди.',
     lnkToday: 'Хто зараз у мережі',
@@ -1046,7 +1046,7 @@ const I18N = {
     loadFailed: (e) => `Не вдалося отримати список: ${e}`,
 
     findTitle: 'Пошук користувача',
-    icqNumber: 'Номер ICQ:',
+    icqNumber: 'Номер ICQ Revival:',
     searchBtn: 'Знайти',
     notRegistered: (u) => `Номер <b>${u}</b> не зареєстрований на цьому сервері.`,
     serverSilent: (e) => `Сервер не відповів: ${e}`,
@@ -1195,7 +1195,7 @@ const I18N = {
       + 'ICQ та AIM: ICQ Pro 2003b, ICQ 6.5, Miranda NG, AIM та інших, що говорять '
       + 'протоколом OSCAR. Старі клієнти знову входять, зберігають списки контактів '
       + 'і спілкуються між собою.',
-    aboutP2: 'Сервіс незалежний: не повʼязаний з ICQ, AOL, Yahoo чи VK і не '
+    aboutP2: 'ICQ Revival — незалежний сервіс: не повʼязаний з ICQ, AOL, Yahoo чи VK і не '
       + 'схвалений ними. ICQ та AIM — торговельні марки їхніх власників; тут вони '
       + 'згадуються лише для того, щоб назвати клієнти, з якими працює сервер.',
     aboutP3: (href) => 'Без реклами й без плати. Програмне забезпечення відкрите, '
@@ -1359,14 +1359,17 @@ function escapeHtml(s) {
 // One shell for everybody, the same as registration and the admin page. The only
 // difference is density: inside the client the window is small, so body gets the
 // compact class and the shared style sheet tightens the spacing.
+// The tab title carries the service's name, unless the page title already does.
 function page(title, bodyHtml, subtitle, compact, u) {
   const langs = u ? langSwitch(u.lang, u.selfUrl) : '';
+  const name = config.serverName;
+  const docTitle = title.includes(name) ? title : `${title} — ${name}`;
   return `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)}</title>
+<title>${escapeHtml(docTitle)}</title>
 ${FAVICON}
 <style>${SHARED_STYLE}</style>
 </head>

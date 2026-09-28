@@ -22,7 +22,7 @@ const CODES = JSON.parse(fs.readFileSync(path.join(__dirname, 'icq-codes.json'),
 
 const STRINGS = {
   en: {
-    pfDocTitle: 'ICQ profile',
+    pfDocTitle: 'Profile — ICQ Revival',
     pfWinTitle: 'Profile',
     pfHeroTitle: 'Your profile',
     pfHeroText: 'Sign in with your number and password to see and change what this account holds.',
@@ -96,7 +96,7 @@ const STRINGS = {
     pfNone: '— not chosen —',
   },
   uk: {
-    pfDocTitle: 'Профіль ICQ',
+    pfDocTitle: 'Профіль — ICQ Revival',
     pfWinTitle: 'Профіль',
     pfHeroTitle: 'Ваш профіль',
     pfHeroText: 'Увійдіть за номером і паролем, щоб побачити та змінити те, що зберігає обліковий запис.',

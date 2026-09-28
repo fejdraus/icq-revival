@@ -18,7 +18,7 @@ const MODE = process.env.SMTP_MODE || (PORT === 465 ? 'implicit' : 'starttls');
 const USER = process.env.SMTP_USER || '';
 const SECRET = process.env.SMTP_SECRET || '';
 const FROM = process.env.SMTP_FROM || USER;
-const FROM_NAME = process.env.SMTP_FROM_NAME || 'ICQ';
+const FROM_NAME = process.env.SMTP_FROM_NAME || 'ICQ Revival';
 const TIMEOUT_MS = Number(process.env.SMTP_TIMEOUT_MS || 20000);
 
 function mailConfigured() {

@@ -40,8 +40,8 @@ const FALLBACK_LANG = 'en';
 const I18N = {
   en: {
     name: 'English',
-    docTitle: 'Server administration',
-    loginTitle: 'Sign in to administration',
+    docTitle: 'Server administration — ICQ Revival',
+    loginTitle: 'Sign in to ICQ Revival administration',
     loginUser: 'Login',
     loginPass: 'Password',
     loginBtn: 'Sign in',
@@ -113,8 +113,8 @@ const I18N = {
   },
   uk: {
     name: 'Українська',
-    docTitle: 'Керування сервером',
-    loginTitle: 'Вхід до керування сервером',
+    docTitle: 'Керування сервером — ICQ Revival',
+    loginTitle: 'Вхід до керування ICQ Revival',
     loginUser: 'Логін',
     loginPass: 'Пароль',
     loginBtn: 'Увійти',
