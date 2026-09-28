@@ -330,6 +330,8 @@ function renderLoginPage(lang, error) {
 <title>${esc(t.loginTitle)}</title>
 ${FAVICON}
 <style>${STYLE}
+  /* The sign-in box in the middle of the window, both ways. */
+  body { min-height: 100vh; box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
   .login { max-width: 360px; margin: 0 auto; padding: 16px; }
   .login label { display: block; margin: 10px 0 4px; }
   .login input { width: 100%; box-sizing: border-box; }
