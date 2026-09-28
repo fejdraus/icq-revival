@@ -235,7 +235,7 @@ function checkRow(id, labelKey, t, hintKey) {
 
 // deps: всё, что страница берёт у сервиса, — оформление, словарь, языки.
 function renderProfilePage(lang, deps) {
-  const { STYLE, header, footer, I18N, LANGS, PASS_MAX, EMAIL_MAX, serializeI18N, adminLink } = deps;
+  const { STYLE, FAVICON, header, footer, I18N, LANGS, PASS_MAX, EMAIL_MAX, serializeI18N, adminLink } = deps;
   const t = I18N[lang];
 
   const basic = BASIC_TEXT.map(([k, l, m]) => textRow('b', k, l, m, t)).join('\n');
@@ -281,6 +281,7 @@ function renderProfilePage(lang, deps) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(t.pfDocTitle)}</title>
+${FAVICON}
 <style>${STYLE}</style>
 </head>
 <body>

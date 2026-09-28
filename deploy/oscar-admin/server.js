@@ -8,7 +8,7 @@
 const http = require('http');
 const crypto = require('crypto');
 // Оформление — общее для всех сервисов проекта, см. ui.js.
-const { STYLE, flowerImg, header, footer, serveAsset } = require('./ui.js');
+const { STYLE, flowerImg, header, footer, serveAsset, FAVICON } = require('./ui.js');
 
 const API = process.env.API_BASE || 'http://127.0.0.1:8090';
 const PORT = Number(process.env.PORT || 8100);
@@ -328,6 +328,7 @@ function renderLoginPage(lang, error) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>${esc(t.loginTitle)}</title>
+${FAVICON}
 <style>${STYLE}
   .login { max-width: 360px; margin: 0 auto; padding: 16px; }
   .login label { display: block; margin: 10px 0 4px; }
@@ -418,6 +419,7 @@ function renderPage(lang) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${t.docTitle}</title>
+${FAVICON}
 <style>${STYLE}
   /* A table of every account wants the whole browser window, not the
      narrow ICQ window the forms of the other pages use. */

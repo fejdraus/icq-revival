@@ -54,6 +54,25 @@ const FLOWER_ASSET = '/ui/flower.png';
 const FLOWER_TAG = require('node:crypto')
   .createHash('sha1').update(FLOWER_PNG).digest('hex').slice(0, 8);
 
+// Иконка сайта — тот же цветок. Браузеры спрашивают /favicon.ico сами, даже
+// без ссылки в <head>, поэтому он отдаётся и там: файл .ico с этим PNG внутри
+// (так умеют все браузеры начиная с Vista). Ссылка FAVICON в <head> каждой
+// страницы показывает на PNG.
+const FAVICON_ICO = (() => {
+  const head = Buffer.alloc(22);
+  head.writeUInt16LE(0, 0);      // reserved
+  head.writeUInt16LE(1, 2);      // an icon
+  head.writeUInt16LE(1, 4);      // one image
+  head.writeUInt8(FLOWER_PNG.readUInt32BE(16) & 0xff, 6);  // width, 0 = 256
+  head.writeUInt8(FLOWER_PNG.readUInt32BE(20) & 0xff, 7);  // height
+  head.writeUInt16LE(1, 10);     // planes
+  head.writeUInt16LE(32, 12);    // bits per pixel
+  head.writeUInt32LE(FLOWER_PNG.length, 14);
+  head.writeUInt32LE(22, 18);    // the PNG follows the header
+  return Buffer.concat([head, FLOWER_PNG]);
+})();
+const FAVICON = `<link rel="icon" type="image/png" href="${FLOWER_ASSET}?v=${FLOWER_TAG}">`;
+
 function flowerImg(size) {
   return `<img src="${FLOWER_ASSET}?v=${FLOWER_TAG}" width="${size}" height="${size}" alt=""`
     + ` style="border:0;vertical-align:middle">`;
@@ -62,13 +81,17 @@ function flowerImg(size) {
 // Сервисы зовут это первым делом в обработчике запроса: вернёт true, если
 // запрос был за картинкой и уже обслужен.
 function serveAsset(req, res) {
-  if (String(req.url).split('?')[0] !== FLOWER_ASSET) return false;
+  const url = String(req.url).split('?')[0];
+  const asset = url === FLOWER_ASSET ? { type: 'image/png', body: FLOWER_PNG }
+    : url === '/favicon.ico' ? { type: 'image/x-icon', body: FAVICON_ICO }
+      : null;
+  if (!asset) return false;
   res.writeHead(200, {
-    'content-type': 'image/png',
-    'content-length': FLOWER_PNG.length,
+    'content-type': asset.type,
+    'content-length': asset.body.length,
     'cache-control': 'public, max-age=86400',
   });
-  res.end(FLOWER_PNG);
+  res.end(asset.body);
   return true;
 }
 
@@ -391,5 +414,5 @@ function pickLang(header) {
 module.exports = {
   STYLE, TOKENS, FONT_STACK,
   LANGS, FALLBACK_LANG, pickLang, langLabel,
-  header, footer, flowerImg, serveAsset,
+  header, footer, flowerImg, serveAsset, FAVICON,
 };

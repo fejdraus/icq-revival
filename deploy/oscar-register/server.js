@@ -845,7 +845,7 @@ function serializeI18N() {
 }
 
 // Оформление — общее для всех сервисов проекта, см. ui.js.
-const { STYLE, flowerImg, header, footer, langLabel, serveAsset } = require('./ui.js');
+const { STYLE, flowerImg, header, footer, langLabel, serveAsset, FAVICON } = require('./ui.js');
 
 // Страница профиля живёт отдельным файлом: разметка большая. Её строки
 // подмешиваем в общий словарь, иначе переключатель языка на ней не сработает.
@@ -862,6 +862,7 @@ function renderPage(lang) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${t.docTitle}</title>
+${FAVICON}
 <style>${STYLE}</style>
 </head>
 <body>
@@ -1130,6 +1131,7 @@ function renderRecoverPage(lang, token) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${t.rcDocTitle}</title>
+${FAVICON}
 <style>${STYLE}</style>
 </head>
 <body>
@@ -1353,6 +1355,7 @@ function renderVerifyPage(lang, uin, failText) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${t.rcDocTitle}</title>
+${FAVICON}
 <style>${STYLE}</style>
 </head>
 <body>
@@ -1393,6 +1396,7 @@ function renderAccountPage(lang) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${t.acDocTitle}</title>
+${FAVICON}
 <style>${STYLE}</style>
 </head>
 <body>
@@ -1688,7 +1692,7 @@ const server = http.createServer(async (req, res) => {
         Vary: 'Accept-Language',
       });
       res.end(renderProfilePage(lang, {
-        STYLE, header, footer, I18N, LANGS, PASS_MAX, EMAIL_MAX, serializeI18N, adminLink,
+        STYLE, FAVICON, header, footer, I18N, LANGS, PASS_MAX, EMAIL_MAX, serializeI18N, adminLink,
       }));
       return;
     }

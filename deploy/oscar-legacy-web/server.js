@@ -30,7 +30,7 @@ const child_process = require('node:child_process');
 const zlib = require('node:zlib');
 // The shared look of the project, the same as registration and the admin page.
 const { STYLE: SHARED_STYLE, LANGS, FALLBACK_LANG, pickLang,
-  langLabel, header, footer, serveAsset } = require('./ui.js');
+  langLabel, header, footer, serveAsset, FAVICON } = require('./ui.js');
 // Miranda NG's PluginUpdater through this server, with our plugins in its list.
 const { createMirror } = require('./miranda-updates.js');
 // Avatars made in the constructor, /icq/avatar/maker: c-<code>.swf and its
@@ -1367,6 +1367,7 @@ function page(title, bodyHtml, subtitle, compact, u) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
+${FAVICON}
 <style>${SHARED_STYLE}</style>
 </head>
 <body${compact ? ' class="compact"' : ''}>
@@ -2603,6 +2604,7 @@ function avatarPage(u, req) {
   const hasAnimated = avatars.length > 0;
   return avatarTemplate
     .replace('{{STYLE}}', () => SHARED_STYLE)
+    .replace('{{FAVICON}}', () => FAVICON)
     .replace('{{HEADER}}', () => header(escapeHtml(t.picTitle), escapeHtml(t.picSub)))
     .replace('{{FOOTER}}', () => footer({ langs: langSwitch(u.lang, u.selfUrl) }))
     .replace('{{TABS_STYLE}}', () => (hasAnimated ? '' : 'display:none'))
@@ -2780,6 +2782,7 @@ table.pics img { border: 1px solid #cfe3d5; background: #fbfdfb; }
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(t.tstTitle)}</title>
+${FAVICON}
 ${style}
 </head>
 <body>
@@ -2978,6 +2981,7 @@ function makerPage(u, req, url) {
   const largeSrc = `/icq/avatars/${code}-large.png${emotion === 'stam' ? '' : `?emotion=${emotion}`}`;
   return makerTemplate
     .replace('{{STYLE}}', () => SHARED_STYLE)
+    .replace('{{FAVICON}}', () => FAVICON)
     .replace('{{HEADER}}', () => (embed ? '' : header(escapeHtml(t.mkTitle), escapeHtml(t.mkSub))))
     .replace('{{FOOTER}}', () => (embed ? '' : footer({ langs: langSwitch(lang, u.selfUrl) })))
     .replace('{{PLUGIN_OBJECT}}', () => (embed ? '' : PLUGIN_OBJECT))
