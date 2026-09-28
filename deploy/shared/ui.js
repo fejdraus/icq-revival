@@ -43,9 +43,11 @@ const TOKENS = {
 
 const FONT_STACK = 'Tahoma, "MS Sans Serif", Geneva, Verdana, sans-serif';
 
-// Логотип ICQ лежит рядом отдельным файлом: держать 18 КБ картинки строкой
-// в коде незачем. При развёртывании flower.png кладётся в каталог сервиса
-// вместе с ui.js. Отдаётся по адресу /ui/flower.png, см. serveAsset.
+// Значок сервиса — росток, свой рисунок, а не цветок ICQ (это чужой товарный
+// знак). Исходник — sprout.svg, flower.png — он же, 96×96 с прозрачным фоном;
+// имя файла осталось прежним. Лежит рядом отдельным файлом и при развёртывании
+// кладётся в каталог сервиса вместе с ui.js. Отдаётся по адресу
+// /ui/flower.png, см. serveAsset.
 const FLOWER_PNG = fs.readFileSync(path.join(__dirname, 'flower.png'));
 
 const FLOWER_ASSET = '/ui/flower.png';
@@ -54,7 +56,7 @@ const FLOWER_ASSET = '/ui/flower.png';
 const FLOWER_TAG = require('node:crypto')
   .createHash('sha1').update(FLOWER_PNG).digest('hex').slice(0, 8);
 
-// Иконка сайта — тот же цветок. Браузеры спрашивают /favicon.ico сами, даже
+// Иконка сайта — тот же росток. Браузеры спрашивают /favicon.ico сами, даже
 // без ссылки в <head>, поэтому он отдаётся и там: файл .ico с этим PNG внутри
 // (так умеют все браузеры начиная с Vista). Ссылка FAVICON в <head> каждой
 // страницы показывает на PNG.

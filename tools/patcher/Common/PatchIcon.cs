@@ -18,9 +18,10 @@ namespace IcqRevival.Patch
     {
         public static Color ColorOf(string hex) { return ColorTranslator.FromHtml(hex); }
 
-        // A flower of eight petals on a rounded tile in the colour of the client
-        // version. From 48 pixels up the version is written under the flower, so
-        // the exe of each patch can be told apart at a glance in Explorer.
+        // A sprout - the service's own sign, not ICQ's flower - on a rounded tile
+        // in the colour of the client version. From 48 pixels up the version is
+        // written under the sprout, so the exe of each patch can be told apart
+        // at a glance in Explorer.
         public static Bitmap Draw(int size, string badge, string top, string bottom)
         {
             var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
@@ -50,22 +51,25 @@ namespace IcqRevival.Patch
                 bool withText = size >= 48;
                 double cx = size / 2.0;
                 double cy = withText ? size * 0.40 : size / 2.0;
-                double petalLen = withText ? size * 0.19 : size * 0.25;
-                double petalWid = petalLen * 0.72;
+                // The sprout of the site's icon (deploy/shared/sprout.svg), in
+                // white: drawn in its 64-unit box, around the point (32, 31).
+                double k = (withText ? size * 0.50 : size * 0.78) / 44.0;
+                Func<double, double, PointF> at = (x, y) => new PointF((float)(cx + (x - 32) * k), (float)(cy + (y - 31) * k));
                 using (var white = new SolidBrush(Color.FromArgb(250, 255, 255, 255)))
+                using (var stem = new Pen(Color.FromArgb(250, 255, 255, 255), (float)(4.5 * k)))
                 {
-                    for (int i = 0; i < 8; i++)
+                    stem.StartCap = stem.EndCap = LineCap.Round;
+                    g.DrawLine(stem, at(32, 50), at(32, 30));
+                    g.DrawBezier(stem, at(18, 51), at(27.3, 47), at(36.7, 47), at(46, 51));
+                    using (var leaves = new GraphicsPath())
                     {
-                        GraphicsState state = g.Save();
-                        g.TranslateTransform((float)cx, (float)cy);
-                        g.RotateTransform(45 * i);
-                        g.FillEllipse(white, (float)(-petalWid / 2), (float)(-petalLen * 1.55), (float)petalWid, (float)(petalLen * 1.1));
-                        g.Restore(state);
-                    }
-                    double heart = petalLen * 0.62;
-                    using (var heartBrush = new SolidBrush(ColorOf(bottom)))
-                    {
-                        g.FillEllipse(heartBrush, (float)(cx - heart / 2), (float)(cy - heart / 2), (float)heart, (float)heart);
+                        leaves.AddBezier(at(32, 33), at(18, 34), at(12, 24), at(13, 15));
+                        leaves.AddBezier(at(13, 15), at(24, 14), at(32, 20), at(32, 33));
+                        leaves.CloseFigure();
+                        leaves.AddBezier(at(32, 29), at(45, 30), at(52, 21), at(51, 11));
+                        leaves.AddBezier(at(51, 11), at(39, 10), at(32, 17), at(32, 29));
+                        leaves.CloseFigure();
+                        g.FillPath(white, leaves);
                     }
 
                     if (withText)
