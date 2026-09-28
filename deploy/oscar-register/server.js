@@ -83,7 +83,8 @@ const I18N = {
     setupPortSsl: 'SSL port',
     setupNote:
       'Clients of that era knew no encryption — ICQ 2000b–5.1, QIP 2005/2010/2012, Pidgin need the plain port with SSL switched off. If your client does support SSL (Miranda NG, for one), turn it on and use the SSL port.',
-    setupNote2: 'Even without SSL nothing leaves your network: the server is only reachable inside your Tailscale network.',
+    setupDownload: 'The patches for ICQ 2003b and ICQ 6.5 and our ICQ plugin for Miranda NG:',
+    linkToDownload: 'Clients and patches',
     statusReady: '',
     statusSuggesting: 'Looking for a free number…',
     statusSuggested: (u) => `Number ${u} is free`,
@@ -221,7 +222,8 @@ const I18N = {
     setupPortSsl: 'Порт із SSL',
     setupNote:
       'Клієнти тих років шифрування не знали — ICQ 2000b–5.1, QIP 2005/2010/2012, Pidgin: їм потрібен звичайний порт і вимкнений SSL. Якщо клієнт уміє SSL (наприклад, Miranda NG), увімкніть його та вкажіть порт із SSL.',
-    setupNote2: 'Навіть без SSL листування не виходить назовні: сервер доступний лише всередині вашої мережі Tailscale.',
+    setupDownload: 'Патчі для ICQ 2003b та ICQ 6.5 і наш плагін ICQ для Miranda NG:',
+    linkToDownload: 'Клієнти та патчі',
     statusReady: '',
     statusSuggesting: 'Підбираю вільний номер…',
     statusSuggested: (u) => `Номер ${u} вільний`,
@@ -913,11 +915,14 @@ function renderPage(lang) {
         <span data-i18n="setupPort">${t.setupPort}</span>: <code>${OSCAR_PORT}</code> &nbsp;
         <span data-i18n="setupPortSsl">${t.setupPortSsl}</span>: <code>${OSCAR_PORT_SSL}</code><br>
         <span data-i18n="setupNote">${t.setupNote}</span><br>
-        <span data-i18n="setupNote2">${t.setupNote2}</span>
+        <span data-i18n="setupDownload">${t.setupDownload}</span>
+        <a href="/icq/download" data-i18n="linkToDownload">${t.linkToDownload}</a>
       </div>
     </fieldset>
 
     <div class="nav">
+      <a href="/icq/download" data-i18n="linkToDownload">${t.linkToDownload}</a>
+      &nbsp;·&nbsp;
       <a href="/profile" id="nav-link" data-i18n="linkToProfile">${t.linkToProfile}</a>
       &nbsp;·&nbsp;
       <a href="/recover" data-i18n="linkToRecover">${t.linkToRecover}</a>
