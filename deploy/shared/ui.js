@@ -43,9 +43,11 @@ const TOKENS = {
 
 const FONT_STACK = 'Tahoma, "MS Sans Serif", Geneva, Verdana, sans-serif';
 
-// Логотип ICQ лежит рядом отдельным файлом: держать 18 КБ картинки строкой
-// в коде незачем. При развёртывании flower.png кладётся в каталог сервиса
-// вместе с ui.js. Отдаётся по адресу /ui/flower.png, см. serveAsset.
+// Значок ICQ Revival — цветок из логотипа (logo.png рядом, с надписью), без
+// надписи, 192×192 с прозрачным фоном. Лежит рядом отдельным файлом: держать
+// картинку строкой в коде незачем. При развёртывании flower.png кладётся в
+// каталог сервиса вместе с ui.js. Отдаётся по адресу /ui/flower.png, см.
+// serveAsset.
 const FLOWER_PNG = fs.readFileSync(path.join(__dirname, 'flower.png'));
 
 const FLOWER_ASSET = '/ui/flower.png';
