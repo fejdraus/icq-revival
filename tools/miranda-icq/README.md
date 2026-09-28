@@ -15,9 +15,11 @@ address substitution.
 | `build/x64/IcqOscarJ.dll` | the same for `miranda64.exe` |
 | `IcqRevivalFlash/` | source of the plugin for ICQ 6 animated avatars and tZers (`FlashAvatars` before 1.1), see below |
 | `langpack_russian_icqrevivalflash.txt` | its Russian translation, including the tZer names from ICQ 6.5 |
+| `langpack_ukrainian_icqrevivalflash.txt` | its Ukrainian translation, same keys |
 | `build/x32/IcqRevivalFlash.dll`, `build/x64/IcqRevivalFlash.dll` | the same plugin, built for core 0.96.7 |
 | `langpack_russian_icq.txt` | Russian translation of the plugin, ready to install |
-| `langpack-extra-ru.txt` | strings that are in no pack at all; input for the builder |
+| `langpack_ukrainian_icq.txt` | Ukrainian translation of the plugin, ready to install |
+| `langpack-extra-ru.txt`, `langpack-extra-uk.txt` | strings that are in no pack at all; input for the builder |
 | `make-langpack.py` | rebuilds the translation |
 | `make-update-packages.py` | packages and hashes for `PluginUpdater` on our server, see "Updates through our server" |
 | `Install-IcqRevival.ps1` | installs into a Miranda folder with a backup: plugins, translation, skin patch |
@@ -64,7 +66,8 @@ The server's list is built so that `PluginUpdater` updates our files with our ow
 builds and never with someone else's:
 
 - the lines for `Plugins\IcqOscarJ.dll`, `Plugins\IcqRevivalFlash.dll`,
-  `Libs\FlashPlayerControl.dll` and our two translations are ours, with the hashes
+  `Libs\FlashPlayerControl.dll` and our four translations (Russian and Ukrainian,
+  one per plugin) are ours, with the hashes
   of our builds; the other lines are as in Miranda NG. There are no Miranda NG lines
   under our names, including the old ones, even when our packages are missing from
   the server;
@@ -75,8 +78,11 @@ builds and never with someone else's:
 - the main `langpack_russian.txt` is as in Miranda NG, but with the lines
   `#include langpack_russian_icq.txt` and `#include langpack_russian_icqrevivalflash.txt`
   appended (and without `#include langpack_russian_flashavatars.txt`); otherwise
-  updating it would cut off the plugins' translations. If its package could not be
-  downloaded, there is no line for it at all, and the file stays as it is;
+  updating it would cut off the plugins' translations. The main
+  `langpack_ukrainian.txt` gets `#include langpack_ukrainian_icq.txt` and
+  `#include langpack_ukrainian_icqrevivalflash.txt` the same way (there is no old
+  name to drop). If a pack's package could not be downloaded, there is no line for
+  it at all, and the file stays as it is;
 - other packages are served byte for byte from the Miranda NG server, and only those
   that are in its current list.
 
@@ -99,6 +105,14 @@ for itself, `libs\flashplayercontrol.dll` and
 `languages\langpack_russian_icqrevivalflash.txt`. A module under a different name
 (say, `ICQ.dll`) is always protected: the list would bring someone else's file under
 that name.
+
+The Ukrainian translations (`langpack_ukrainian_icq.txt`,
+`langpack_ukrainian_icqrevivalflash.txt`) carry no mark and need none: the
+Miranda NG list does not name them, and `PluginUpdater` leaves a file the list does
+not name alone (`ScanFolder`: "Not found on server, skipping"; the
+`"langpack_*.txt": "Languages\\*"` rule keeps them where they are). Our list names
+them, so with it they are updated like the rest; no mark was ever set on them that
+would have to be cleared.
 
 ### Old name: FlashAvatars.dll
 
@@ -214,12 +228,19 @@ does not find one, falls back to strings not tied to any plugin. The current pac
 have no section for the ICQ protocol, it was removed together with the plugin, so
 only about half of the strings get translated, and in a haphazard mix.
 
-`langpack_russian_icq.txt` brings that section back. Installation:
+`langpack_russian_icq.txt` and `langpack_ukrainian_icq.txt` bring that section back,
+each for its own main pack (`langpack_russian.txt`, `langpack_ukrainian.txt`).
+Installation:
 
 1. put the file into `Languages\` next to the main pack;
-2. append the line `#include langpack_russian_icq.txt` to the **very end** of the
-   main pack;
+2. append the line `#include langpack_russian_icq.txt` (or
+   `#include langpack_ukrainian_icq.txt`) to the **very end** of the main pack;
 3. restart Miranda.
+
+The same goes for the Flash plugin's `langpack_<language>_icqrevivalflash.txt`.
+`Install-IcqRevival.ps1` puts in all four files and adds the lines to whichever of
+the two main packs is installed; `PluginUpdater` pointed at our server does it for
+the main pack when it updates it.
 
 It must be the end: `#include` is processed in place, and our file sets `#muuid`, so
 everything in the main pack after that line would be assigned to our plugin. The
@@ -229,12 +250,52 @@ must be in lower case.
 When the pack is updated, the main file is overwritten and the `#include` line has to
 be appended again.
 
+### Switching Miranda to Ukrainian
+
+Our download (`icq-revival-miranda.zip`) carries only our plugins' translations,
+not Miranda NG's own main packs, in either language: those come with Miranda or
+from its update server. To get the Ukrainian one:
+
+1. main menu → "Available components list" (`PluginUpdater`), group "Languages",
+   tick `Languages\langpack_ukrainian.txt`, "Download". With `PluginUpdater`
+   pointed at our server (IcqOscarJ does that, see "Updates through our server")
+   the file comes with our two `#include` lines already in it. Without
+   `PluginUpdater`: take `langpacks/ukrainian/Langpack_ukrainian.txt` from the
+   `0_96_7` branch of the miranda-ng repository, save it as
+   `Languages\langpack_ukrainian.txt` and append the two lines by hand (or run
+   `Install-IcqRevival.ps1`, which appends them);
+2. "Options" → "Customize" → "Languages": in the list pick
+   `Українська [langpack_ukrainian.txt]`, then "OK". The list shows every
+   `Languages\langpack_*.txt`, ours included, so `Українська
+   [langpack_ukrainian_icq.txt]` and the like are there too: those are only
+   sections of the main pack and must not be picked.
+
+Miranda reloads the pack at once; restart it so that every window picks up the new
+language. The IcqRevivalFlash avatar gallery then shows the Ukrainian avatar names
+(it goes by the pack's `Locale: 0422`).
+
 ### Building the translation
 
 ```
 python make-langpack.py <plugin-directory> langpack_russian_icq.txt \
     langpack-extra-ru.txt <current langpack> [<old langpack>]
+python make-langpack.py --lang uk <plugin-directory> langpack_ukrainian_icq.txt \
+    langpack-extra-uk.txt <Deprecated/ICQ.txt> <Langpack_ukrainian.txt>
 ```
+
+`--lang` (`ru` by default, or `uk`) only sets the header of the result: the
+language name, the locale and the heading of the untranslated part.
+
+The Ukrainian sources are both in the miranda-ng repository, branch `0_96_7`:
+`langpacks/ukrainian/Deprecated/ICQ.txt`, the Ukrainian section of the ICQ
+protocol as it was when the plugin was removed, and
+`langpacks/ukrainian/Langpack_ukrainian.txt`, the current full pack (version
+0.96.7, the one `PluginUpdater` delivers). The ICQ section goes first here: its
+wording is the ICQ one (the moods, for example, read as ICQ's first-person
+phrases rather than the generic adjectives other plugins use), and the full pack
+only fills in what it lacks. With
+`langpack-extra-uk.txt` in front, 912 of 914 strings are translated; the two left
+are `ICQ` and `Slider1`, as in Russian. The third-party packs are not kept in git.
 
 The script extracts the translatable strings from the source (`Translate*`,
 `LPGEN*`) and from the resource, then looks for an existing translation for them in
@@ -470,7 +531,7 @@ Three files and a translation; Miranda must be closed:
 | `build/x32/IcqOscarJ.dll` (or x64) | `Plugins\IcqOscarJ.dll`, over the old one |
 | `build/x32/IcqRevivalFlash.dll` (or x64) | `Plugins\IcqRevivalFlash.dll` |
 | `FlashPlayerControl.dll` from `tools/icq65/flashplayer`, same bitness | `Libs\FlashPlayerControl.dll` |
-| `langpack_russian_icqrevivalflash.txt` | `Languages\`, plus `#include` in the main pack (see "tZers") |
+| `langpack_russian_icqrevivalflash.txt`, `langpack_ukrainian_icqrevivalflash.txt` | `Languages\`, plus `#include` in the main pack of that language (see "tZers") |
 
 If the plugin was installed under the old name, delete `Plugins\FlashAvatars.dll` and
 `Languages\langpack_russian_flashavatars.txt`, and in `langpack_russian.txt` replace
@@ -561,6 +622,11 @@ engine again and share the cache with the first.
 The Russian tZer names, taken from ICQ 6.5's `TzerLabels.dtd`, are in
 `langpack_russian_icqrevivalflash.txt`: put it into `Languages\` and append
 `#include langpack_russian_icqrevivalflash.txt` to the end of the main pack.
+ICQ 6.5 has no Ukrainian resources, so the Ukrainian names in
+`langpack_ukrainian_icqrevivalflash.txt` are our own, made after the Russian ones;
+as there, Gangsta', Booooo, Akitaka and L8R stay in English. It is hooked up the
+same way, with `#include langpack_ukrainian_icqrevivalflash.txt` at the end of
+`langpack_ukrainian.txt`.
 
 ## Why two checks break the plugin silently
 

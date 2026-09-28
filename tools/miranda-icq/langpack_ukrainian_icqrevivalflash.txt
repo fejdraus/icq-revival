@@ -1,0 +1,73 @@
+Miranda Language Pack Version 1
+Language: Українська
+Locale: 0422
+
+;============================================================
+;  File: IcqRevivalFlash.dll
+;  Plugin: ICQ Revival Flash (ICQ 6 animated avatars and tZers)
+;  tZer titles: ICQ 6.5 has no Ukrainian resources, so these are
+;  our own, after its ru-RU TzerLabels.dtd; the same four stay
+;  in English as there
+;============================================================
+#muuid {3E5C9A2B-7D41-4F08-B6E2-91A4C7D3F5E8}
+
+[ICQ Revival Flash]
+ICQ Revival: Flash-аватари та tZers
+[tZers]
+tZers
+[Send a tZer]
+Надіслати tZer
+[The tZer could not be sent: the account is offline or the contact is not an ICQ contact.]
+tZer не надіслано: обліковий запис не в мережі або це не контакт ICQ.
+
+[Can't Hear U]
+Вас не чути
+[Scratch]
+Подряпина
+[Kisses]
+Поцілунки
+[Chill Out]
+Розслабтеся
+[Hilaaarious]
+Сміхотааа
+[Like Duh!]
+Ото дурень!
+[Like U!]
+Ти мені подобаєшся
+[I'm Sorry]
+Мені дуже шкода
+
+[Animated avatar]
+Анімований аватар
+[Preview]
+Перегляд
+[Set]
+Встановити
+[Remove animated avatar]
+Прибрати анімований аватар
+[Close]
+Закрити
+[Official]
+Офіційні
+[User created]
+Користувацькі
+[Loading the server's gallery...]
+Завантаження галереї сервера...
+[The server's gallery could not be loaded.]
+Не вдалося завантажити галерею сервера.
+[No animated avatar is set.]
+Анімований аватар не встановлено.
+[Now set: %s]
+Зараз: %s
+[Now set: an animated avatar from elsewhere.]
+Зараз: анімований аватар не з галереї.
+[The animated avatar was set.]
+Анімований аватар встановлено.
+[The animated avatar was removed.]
+Анімований аватар прибрано.
+[The account is offline.]
+Обліковий запис не в мережі.
+[The account did not take this avatar.]
+Обліковий запис не прийняв цей аватар.
+[The account has no sign-in server set.]
+В обліковому записі не вказано сервер входу.

@@ -50,6 +50,8 @@ const LANGPACK = Buffer.from('Miranda Language Pack Version 1\r\n[Hello]\r\nПр
 const STOCK_ICQ = writeZip([['Plugins/IcqOscarJ.dll', Buffer.from('stock')]]);
 const DUMMY = writeZip([['Plugins/Dummy.dll', Buffer.from('dummy v2')]]);
 const LANGPACK_ZIP = writeZip([['Languages/langpack_russian.txt', LANGPACK]]);
+const LANGPACK_UK = Buffer.from('Miranda Language Pack Version 1\r\n[Hello]\r\nПривіт\r\n', 'utf8');
+const LANGPACK_UK_ZIP = writeZip([['Languages/langpack_ukrainian.txt', LANGPACK_UK]]);
 
 function upstreamFiles() {
   const hashes = [
@@ -57,6 +59,9 @@ function upstreamFiles() {
     `Plugins\\Dummy.dll 11111111111111111111111111111111 ${crcHex(DUMMY)}`,
     `Plugins\\IcqOscarJ.dll 22222222222222222222222222222222 ${crcHex(STOCK_ICQ)}`,
     `Languages\\langpack_russian.txt 33333333333333333333333333333333 ${crcHex(LANGPACK_ZIP)}`,
+    `Languages\\langpack_ukrainian.txt 55555555555555555555555555555555 ${crcHex(LANGPACK_UK_ZIP)}`,
+    // a stock line under the name of one of ours never goes out
+    'Languages\\langpack_ukrainian_icq.txt 66666666666666666666666666666666 00000000',
     'Core\\StdMsg.dll 44444444444444444444444444444444 00000000',
   ].join('\r\n') + '\r\n';
   const rules = {
@@ -70,6 +75,7 @@ function upstreamFiles() {
     ['/x32/Plugins/dummy.zip', DUMMY],
     ['/x32/Plugins/icqoscarj.zip', STOCK_ICQ],
     ['/x32/Languages/langpack_russian.zip', LANGPACK_ZIP],
+    ['/x32/Languages/langpack_ukrainian.zip', LANGPACK_UK_ZIP],
   ]);
 }
 
@@ -78,7 +84,8 @@ function ourPackages() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mirpkg-'));
   const files = [];
   for (const [name, data] of [['Plugins\\IcqOscarJ.dll', 'our icq'], ['Plugins\\IcqRevivalFlash.dll', 'our flash'],
-    ['Languages\\langpack_russian_icqrevivalflash.txt', 'our translation']]) {
+    ['Languages\\langpack_russian_icqrevivalflash.txt', 'our translation'],
+    ['Languages\\langpack_ukrainian_icqrevivalflash.txt', 'our Ukrainian translation']]) {
     const rel = `${name.replace(/\.[^.]+$/, '').replace(/\\/g, '/')}.zip`;
     const body = writeZip([[name.replace(/\\/g, '/'), Buffer.from(data)]]);
     fs.mkdirSync(path.join(dir, 'x32', path.dirname(rel)), { recursive: true });
@@ -91,6 +98,9 @@ function ourPackages() {
       'Languages\\langpack_russian.txt': {
         add: ['#include langpack_russian_icq.txt', '#include langpack_russian_icqrevivalflash.txt'],
         drop: ['#include langpack_russian_flashavatars.txt'],
+      },
+      'Languages\\langpack_ukrainian.txt': {
+        add: ['#include langpack_ukrainian_icq.txt', '#include langpack_ukrainian_icqrevivalflash.txt'],
       },
     },
   }));
@@ -189,6 +199,18 @@ test('the list: our lines in, stock ones out, rules cleaned, translation patched
   assert.ok(text.toString('utf8').endsWith(
     'Привіт\r\n#include langpack_russian_icq.txt\r\n#include langpack_russian_icqrevivalflash.txt\r\n'));
 
+  // The Ukrainian one the same way; our Ukrainian translation is ours.
+  assert.ok(lines.includes(`Languages\\langpack_ukrainian_icqrevivalflash.txt ${files[3].hash} ${files[3].crc}`));
+  assert.ok(!lines.some((l) => l.includes('66666666')), 'no stock line under our name');
+  const lpUk = lines.find((l) => l.startsWith('Languages\\langpack_ukrainian.txt '));
+  const [, hashUk, crcUk] = lpUk.split(' ');
+  const pkgUk = await get(`${srv.url}/x32/Languages/langpack_ukrainian.zip`);
+  assert.equal(crcHex(pkgUk.body), crcUk);
+  const textUk = readZip(pkgUk.body).get('Languages/langpack_ukrainian.txt');
+  assert.equal(md5(textUk), hashUk);
+  assert.equal(textUk.toString('utf8'), 'Miranda Language Pack Version 1\r\n[Hello]\r\nПривіт\r\n'
+    + '#include langpack_ukrainian_icq.txt\r\n#include langpack_ukrainian_icqrevivalflash.txt\r\n');
+
   // Our package, whatever the case of the file name.
   const ours = await get(`${srv.url}/x32/Plugins/icqoscarj.zip`);
   assert.equal(crcHex(ours.body), files[0].crc);
@@ -243,6 +265,22 @@ test('a stale list is served while upstream is down; none at all is a 503', asyn
   const srv2 = await mirrorServer(empty);
   t.after(() => srv2.server.close());
   assert.equal((await get(`${srv2.url}/x32/hashes.zip`)).status, 503);
+});
+
+test('without our packages both main translations still get our include lines', async (t) => {
+  const up = await upstreamServer(upstreamFiles());
+  const mirror = createMirror({ upstream: up.url, dir: null, log: () => {} });
+  const srv = await mirrorServer(mirror);
+  t.after(() => { up.server.close(); srv.server.close(); });
+  const lines = readZip((await get(`${srv.url}/x32/hashes.zip`)).body).get('hashes.txt').toString('latin1');
+  assert.ok(!lines.includes('langpack_ukrainian_icq.txt'), 'the stock line of ours is left out');
+  const ru = readZip((await get(`${srv.url}/x32/Languages/langpack_russian.zip`)).body)
+    .get('Languages/langpack_russian.txt').toString('utf8');
+  assert.ok(ru.endsWith('Привіт\r\n#include langpack_russian_icq.txt\r\n#include langpack_russian_icqrevivalflash.txt\r\n'));
+  assert.ok(!ru.includes('flashavatars'));
+  const uk = readZip((await get(`${srv.url}/x32/Languages/langpack_ukrainian.zip`)).body)
+    .get('Languages/langpack_ukrainian.txt').toString('utf8');
+  assert.ok(uk.endsWith('Привіт\r\n#include langpack_ukrainian_icq.txt\r\n#include langpack_ukrainian_icqrevivalflash.txt\r\n'));
 });
 
 test('a translation package that cannot be fetched leaves its line out', async (t) => {

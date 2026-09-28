@@ -24,10 +24,22 @@ $files = [ordered]@{
   'Libs\FlashPlayerControl.dll'                   = "$repo\tools\icq65\flashplayer\target\$triple\release\FlashPlayerControl.dll"
   'Languages\langpack_russian_icqrevivalflash.txt' = "$repo\tools\miranda-icq\langpack_russian_icqrevivalflash.txt"
   'Languages\langpack_russian_icq.txt'            = "$repo\tools\miranda-icq\langpack_russian_icq.txt"
+  'Languages\langpack_ukrainian_icqrevivalflash.txt' = "$repo\tools\miranda-icq\langpack_ukrainian_icqrevivalflash.txt"
+  'Languages\langpack_ukrainian_icq.txt'          = "$repo\tools\miranda-icq\langpack_ukrainian_icq.txt"
 }
 $remove = @('Plugins\FlashAvatars.dll', 'Languages\langpack_russian_flashavatars.txt')
-$includeAdd = @('#include langpack_russian_icq.txt', '#include langpack_russian_icqrevivalflash.txt')
-$includeDrop = @('#include langpack_russian_flashavatars.txt')
+# Per main pack: the #include lines our translations need, and the old ones to
+# take out. There was no Ukrainian translation under the old name.
+$includes = [ordered]@{
+  'Languages\langpack_russian.txt' = @{
+    Add  = @('#include langpack_russian_icq.txt', '#include langpack_russian_icqrevivalflash.txt')
+    Drop = @('#include langpack_russian_flashavatars.txt')
+  }
+  'Languages\langpack_ukrainian.txt' = @{
+    Add  = @('#include langpack_ukrainian_icq.txt', '#include langpack_ukrainian_icqrevivalflash.txt')
+    Drop = @()
+  }
+}
 
 $backup = Join-Path $Miranda ('_revival-backup\' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 $manifest = [System.Collections.Generic.List[string]]::new()
@@ -62,10 +74,14 @@ foreach ($rel in $remove) {
   $manifest.Add("REMOVED  $rel (old name) -> undo: copy $rel from this folder back")
 }
 
-# The Russian strings of the plugins: included at the end of the main pack.
-# The file is edited as UTF-8, keeping its BOM (or its lack of one) and CRLF.
-$pack = Join-Path $Miranda 'Languages\langpack_russian.txt'
-if (Test-Path -LiteralPath $pack) {
+# The Russian and Ukrainian strings of the plugins: included at the end of the
+# main pack of that language, if it is installed. The file is edited as UTF-8,
+# keeping its BOM (or its lack of one) and CRLF.
+foreach ($packRel in $includes.Keys) {
+  $includeAdd = $includes[$packRel].Add
+  $includeDrop = $includes[$packRel].Drop
+  $pack = Join-Path $Miranda $packRel
+  if (-not (Test-Path -LiteralPath $pack)) { continue }
   $bytes = [IO.File]::ReadAllBytes($pack)
   $bom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
   $text = [Text.UTF8Encoding]::new($false).GetString($bytes, $(if ($bom) { 3 } else { 0 }), $bytes.Length - $(if ($bom) { 3 } else { 0 }))
@@ -81,10 +97,10 @@ if (Test-Path -LiteralPath $pack) {
     while ($kept.Count -and $kept[$kept.Count - 1] -eq '') { $kept.RemoveAt($kept.Count - 1) }
     foreach ($l in $missing) { $kept.Add($l) }
     $new = ($kept -join $eol) + $eol
-    Save-Backup 'Languages\langpack_russian.txt'
+    Save-Backup $packRel
     $out = [Text.UTF8Encoding]::new($bom).GetPreamble() + [Text.UTF8Encoding]::new($false).GetBytes($new)
     [IO.File]::WriteAllBytes($pack, $out)
-    $manifest.Add("CHANGED  Languages\langpack_russian.txt (includes: $dropped old removed, $($missing.Count) added) -> undo: copy it from this folder back")
+    $manifest.Add("CHANGED  $packRel (includes: $dropped old removed, $($missing.Count) added) -> undo: copy it from this folder back")
   }
 }
 

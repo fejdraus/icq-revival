@@ -30,8 +30,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
 ENGINE = os.path.join(ROOT, 'tools', 'icq65', 'flashplayer', 'target')
 
-# Lines the server appends to the main langpack_russian.txt when they are
-# missing: without them the core does not read the plugins' translations, and
+# Lines the server appends to the main langpack_russian.txt and
+# langpack_ukrainian.txt when they are missing: without them the core does not read the plugins' translations, and
 # updating the langpack from the Miranda NG server wipes them out. drop lists
 # lines with old names that the server removes (before 1.1 the Flash plugin was
 # called FlashAvatars.dll).
@@ -42,6 +42,13 @@ LANGPACK_INCLUDES = {
             '#include langpack_russian_icqrevivalflash.txt',
         ],
         'drop': ['#include langpack_russian_flashavatars.txt'],
+    },
+    # Nothing to drop: our Ukrainian translations came after the rename.
+    'Languages\\langpack_ukrainian.txt': {
+        'add': [
+            '#include langpack_ukrainian_icq.txt',
+            '#include langpack_ukrainian_icqrevivalflash.txt',
+        ],
     },
 }
 
@@ -203,9 +210,10 @@ def sources(platform, engine):
         ('Plugins\\IcqOscarJ.dll', os.path.join(build, 'IcqOscarJ.dll')),
         ('Plugins\\IcqRevivalFlash.dll', os.path.join(build, 'IcqRevivalFlash.dll')),
         ('Libs\\FlashPlayerControl.dll', engine),
-        ('Languages\\langpack_russian_icq.txt', os.path.join(HERE, 'langpack_russian_icq.txt')),
-        ('Languages\\langpack_russian_icqrevivalflash.txt',
-         os.path.join(HERE, 'langpack_russian_icqrevivalflash.txt')),
+    ] + [
+        (f'Languages\\{name}', os.path.join(HERE, name))
+        for lang in ('russian', 'ukrainian')
+        for name in (f'langpack_{lang}_icq.txt', f'langpack_{lang}_icqrevivalflash.txt')
     ]
 
 

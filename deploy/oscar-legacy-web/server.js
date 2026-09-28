@@ -900,7 +900,8 @@ const I18N = {
       + '<code>Miranda64</code> folder. With Miranda closed, copy the contents of the '
       + 'one for your Miranda over its folder, restart it and create an ICQ account '
       + 'with this server as the login server. From then on the plugin updater keeps '
-      + 'our plugins up to date from this server.',
+      + 'our plugins up to date from this server. The plugins come with Ukrainian and '
+      + 'Russian translations, used when Miranda itself is switched to that language.',
   },
 
   uk: {
@@ -1306,7 +1307,8 @@ const I18N = {
       + '<code>Miranda64</code>. Закрийте Miranda, скопіюйте вміст теки своєї '
       + 'розрядності поверх її теки, перезапустіть і створіть обліковий запис ICQ '
       + 'з цим сервером як сервером входу. Далі засіб оновлення плагінів сам '
-      + 'оновлює наші плагіни з цього сервера.',
+      + 'оновлює наші плагіни з цього сервера. Плагіни мають український і '
+      + 'російський переклади, які діють, коли саму Miranda перемкнено на цю мову.',
   },
 };
 

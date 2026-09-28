@@ -7,7 +7,7 @@
 # of it gets translated.
 #
 # The script pulls the translatable strings out of the plugin's sources and
-# resource and pairs them with the ready Russian translation of the same English
+# resource and pairs them with the ready translation of the same English
 # strings from any section of an existing langpack. Whatever is not found is
 # written at the end, commented out, to be filled in by hand.
 #
@@ -15,13 +15,34 @@
 # makes sense to put the current langpack first (modern wording) and the old
 # one, from the Miranda IM days when the ICQ section still existed, after it.
 #
-#   python make-langpack.py <plugin-dir> <output-file> <langpack...>
+#   python make-langpack.py [--lang ru|uk] <plugin-dir> <output-file> <langpack...>
+#
+# --lang picks the header of the output (language name, locale, the build
+# note and the heading of the untranslated part); Russian is the default.
 import io
 import os
 import re
 import sys
 
 MUUID = '{A5B4A32D-D2A8-4925-AE3E-1480E41A07B3}'
+
+# Per target language: the header lines of the pack as Miranda NG's own pack
+# for that language has them (=HEAD=.txt), the build note, and the heading of
+# the commented-out untranslated strings.
+LANGS = {
+    'ru': {
+        'language': 'Русский',
+        'locale': '0419',
+        'built': 'Собрано make-langpack.py',
+        'missing': 'без перевода',
+    },
+    'uk': {
+        'language': 'Українська',
+        'locale': '0422',
+        'built': 'Зібрано make-langpack.py',
+        'missing': 'без перекладу',
+    },
+}
 
 # Translate("x"), TranslateT("x"), LPGEN("x"), LPGENW("x") and the other wrappers.
 RE_CODE = re.compile(r'\b(?:LPGENW?|Translate[TWU]?)\s*\(\s*"((?:[^"\\]|\\.)*)"')
@@ -113,16 +134,37 @@ def normalize(s):
     return s.lower()
 
 
-def main():
-    if len(sys.argv) < 4:
-        print('python make-langpack.py <plugin-dir> <output-file> <langpack...>')
-        return 1
+def parse_args(argv):
+    """--lang <code> (or --lang=<code>) anywhere; the rest positional."""
+    lang, rest = 'ru', []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == '--lang' and i + 1 < len(argv):
+            lang = argv[i + 1]
+            i += 2
+            continue
+        if a.startswith('--lang='):
+            lang = a.split('=', 1)[1]
+        else:
+            rest.append(a)
+        i += 1
+    return lang, rest
 
-    plugin_dir, out_path = sys.argv[1], sys.argv[2]
+
+def main():
+    lang, args = parse_args(sys.argv[1:])
+    if len(args) < 3 or lang not in LANGS:
+        print('python make-langpack.py [--lang %s] <plugin-dir> <output-file> <langpack...>'
+              % '|'.join(LANGS))
+        return 1
+    meta = LANGS[lang]
+
+    plugin_dir, out_path = args[0], args[1]
     strings = collect(plugin_dir)
 
     table = {}
-    for src in sys.argv[3:]:
+    for src in args[2:]:
         before = len(table)
         load_langpack(src, table)
         print('%-60s strings: +%d' % (os.path.basename(src), len(table) - before))
@@ -138,13 +180,13 @@ def main():
 
     out = [
         'Miranda Language Pack Version 1',
-        'Language: Русский',
-        'Locale: 0419',
+        'Language: ' + meta['language'],
+        'Locale: ' + meta['locale'],
         '',
         ';============================================================',
         ';  File: IcqOscarJ.dll',
         ';  Plugin: ICQ protocol',
-        ';  Собрано make-langpack.py',
+        ';  ' + meta['built'],
         ';============================================================',
         '#muuid ' + MUUID,
         '',
@@ -154,7 +196,7 @@ def main():
         out.append(value)
 
     if missing:
-        out += ['', ';--- без перевода ---', '']
+        out += ['', ';--- %s ---' % meta['missing'], '']
         for text, _ in missing:
             out.append(';[%s]' % text)
 

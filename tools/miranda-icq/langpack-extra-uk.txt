@@ -1,0 +1,54 @@
+;============================================================
+;  Strings that are in neither the current Ukrainian langpack
+;  of Miranda NG nor its old ICQ section (langpacks/ukrainian/
+;  Deprecated/ICQ.txt): some were added by our port, some were
+;  never translated. The Ukrainian counterpart of
+;  langpack-extra-ru.txt, with every string it has.
+;
+;  make-langpack.py takes this file as the first source, so a
+;  rebuild keeps them. The client does not need it by itself.
+;
+;  Not translated on purpose: ICQ (the same word), Slider1
+;  (an internal control name, never shown to the user).
+;============================================================
+
+;  A translation cannot start with '#': the loader takes such a
+;  line for a directive (#muuid, #include) and skips it, so the
+;  hashes are dropped from the heading below.
+
+[# Custom Status Icons #]
+Значки xСтатусів
+[bytes]
+байт
+[File from %s]
+Файл від %s
+[GB]
+ГБ
+[KB]
+КБ
+[MB]
+МБ
+[Animated avatar...]
+Анімований аватар…
+[Barbuda]
+Барбуда
+[Expand string edit]
+Розгорнути поле введення
+[OK]
+OK
+[Server address for registration and password recovery links:]
+Адреса сервера для посилань на реєстрацію та відновлення пароля:
+[Tinian Island]
+о. Тініан
+[Web Pages]
+Веб-сторінки
+[The server to which you are trying to connect does not exist. Check your spelling in Options -> Network -> ICQ.]
+Сервер, до якого ви намагаєтеся підключитися, не існує. Перевірте правильність адреси в «Налаштування -> Мережа -> ICQ».
+[You have not entered an ICQ number.\nConfigure this in Options -> Network -> ICQ and try again.]
+Не вказано номер ICQ.\nВкажіть його в «Налаштування -> Мережа -> ICQ» і спробуйте ще раз.
+[Your proxy rejected the user name and password that you provided. Please check them in Options -> Network.]
+Проксі-сервер відхилив указані ім'я користувача та пароль. Перевірте їх у «Налаштування -> Мережа».
+[Miranda was unable to resolve the name of a server to its numeric address. This is most likely caused by a catastrophic loss of your network connection (for example, your modem has disconnected), but if you are behind a proxy, you may need to use the 'Resolve hostnames through proxy' option in Options -> Network.]
+Miranda не змогла визначити числову адресу сервера за його ім'ям. Найчастіше це означає, що зникло з'єднання з мережею — наприклад, відключився модем. Якщо ви працюєте через проксі, можливо, треба ввімкнути «Надсилати запити DNS через проксі» в «Налаштування -> Мережа».
+[Miranda was unable to allocate a port to listen for direct peer-to-peer connections between clients. You will be able to use most of the ICQ network without problems but you may be unable to send or receive files.\n\nIf you have a firewall this may be blocking Miranda, in which case you should configure your firewall to leave some ports open and tell Miranda which ports to use in Options -> Network -> ICQ client-to-client connections.]
+Miranda не змогла зайняти порт для прийому прямих з'єднань між клієнтами. Майже все в мережі ICQ працюватиме як звичайно, але надсилання й отримання файлів може не працювати.\n\nМожливо, Miranda блокує брандмауер. Тоді відкрийте в ньому кілька портів і вкажіть їх у «Налаштування -> Мережа -> З'єднання між користувачами ICQ».

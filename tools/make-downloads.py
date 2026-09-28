@@ -8,7 +8,9 @@
 #                           next to it as the patch expects
 #   icq-revival-miranda.zip Miranda NG: Miranda32/ and Miranda64/, each laid
 #                           out like a Miranda folder (Plugins, Libs,
-#                           Languages) to be copied over one
+#                           Languages) to be copied over one; Languages holds
+#                           the Russian and Ukrainian translations of our two
+#                           plugins, not Miranda NG's own langpacks
 #
 #   python tools/make-downloads.py [--out deploy/downloads]
 #
@@ -44,6 +46,10 @@ MIRANDA = {
 }
 
 
+# The languages our Miranda plugins are translated into (tools/miranda-icq).
+LANGUAGES = ('russian', 'ukrainian')
+
+
 def add(z, path, name):
     z.write(path, name, compress_type=zipfile.ZIP_DEFLATED)
 
@@ -67,8 +73,11 @@ def main():
             add(z, src(mi, 'build', bits, 'IcqOscarJ.dll'), f'{folder}/Plugins/IcqOscarJ.dll')
             add(z, src(mi, 'build', bits, 'IcqRevivalFlash.dll'), f'{folder}/Plugins/IcqRevivalFlash.dll')
             add(z, engine(target), f'{folder}/Libs/FlashPlayerControl.dll')
-            add(z, src(mi, 'langpack_russian_icq.txt'), f'{folder}/Languages/langpack_russian_icq.txt')
-            add(z, src(mi, 'langpack_russian_icqrevivalflash.txt'), f'{folder}/Languages/langpack_russian_icqrevivalflash.txt')
+            # Our plugins' translations only; the main langpack_<language>.txt
+            # of Miranda NG itself comes with Miranda or through PluginUpdater.
+            for lang in LANGUAGES:
+                for name in (f'langpack_{lang}_icq.txt', f'langpack_{lang}_icqrevivalflash.txt'):
+                    add(z, src(mi, name), f'{folder}/Languages/{name}')
 
     for name in sorted(os.listdir(out)):
         print(f'{name}: {os.path.getsize(os.path.join(out, name))} bytes')

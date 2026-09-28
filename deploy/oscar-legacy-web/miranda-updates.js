@@ -19,8 +19,8 @@
 //     A rename rule of ours moves the old file and its translation to the new
 //     names instead (RENAMES); PluginUpdater only updates files that are in
 //     place, so a rename is what carries an existing install over;
-//   - the main Russian translation is served with the #include lines of our
-//     translations appended (and the one for the old name taken out), since
+//   - the main Russian and Ukrainian translations are served with the
+//     #include lines of our translations appended (and the one for the old name taken out), since
 //     the stock one does not have them and an update would otherwise cut our
 //     plugins' translations off. When its package cannot be fetched, its line
 //     is left out and the installed file is kept as it is.
@@ -60,6 +60,8 @@ const OUR_FILES = [
   'Libs\\FlashPlayerControl.dll',
   'Languages\\langpack_russian_icq.txt',
   'Languages\\langpack_russian_icqrevivalflash.txt',
+  'Languages\\langpack_ukrainian_icq.txt',
+  'Languages\\langpack_ukrainian_icqrevivalflash.txt',
   // the old names, up to 1.0 of the Flash plugin
   'Plugins\\FlashAvatars.dll',
   'Languages\\langpack_russian_flashavatars.txt',
@@ -82,6 +84,14 @@ const LANGPACK_INCLUDES = {
       '#include langpack_russian_icqrevivalflash.txt',
     ],
     drop: ['#include langpack_russian_flashavatars.txt'],
+  },
+  // Nothing to take out: our Ukrainian translations came after the rename,
+  // and Miranda NG's Ukrainian pack has no #include lines of its own.
+  'Languages\\langpack_ukrainian.txt': {
+    add: [
+      '#include langpack_ukrainian_icq.txt',
+      '#include langpack_ukrainian_icqrevivalflash.txt',
+    ],
   },
 };
 
