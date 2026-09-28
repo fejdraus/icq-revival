@@ -1,30 +1,50 @@
 // The Ukrainian interface the patch carries - the port of
-// tools\patcher\Icq2003b\Translation.cs: every translated resource of the
-// client's programs, the texts that live in a program's data or in the skin,
-// and the blank "Send By:" in both languages.
+// tools\patcher\Icq2003b\Translation.cs: a recipe of what to change in the
+// client's menus, dialogs and string tables, the texts that live in a
+// program's data or in the skin, the text files written whole, and where the
+// "Send By:" words sit.
 //
-// The source is tools\icq2003b\patch\ICQ-2003b-uk-UA.txt (JSON, gzip,
-// base64, as icq2003b\translate\build.py writes it). The C# exe carried that
-// file as it is; this one carries it decoded at build time
-// (Convert-Translation.ps1) into two plain resources - the raw bytes of every
-// item one after another, and a UTF-8 text index of them - so nothing packed
-// or encoded sits in the exe. How the payload is stored is known to one
-// function only, LoadPayload in Translation.cpp.
+// The recipe is tools\icq2003b\patch\ICQ-2003b-uk-UA.json, written by the
+// translation tools (translate\build.py) from the translator's uk-UA.json. It
+// is embedded in the exe as it is - one RCDATA resource of readable UTF-8
+// text, nothing packed or encoded. The patch rebuilds each translated
+// resource itself, from the client's own English resource, following the
+// recipe (ResourceCodec), so a resource comes out exactly as before. How the
+// recipe is stored is known to one function only, LoadRecipe in
+// Translation.cpp.
+//
+// A resource is only translated when the client's original matches the one the
+// recipe was built from: each record carries the SHA-256 of that original.
 
 #pragma once
 
+#include "ResourceCodec.h"
 #include "../common/PatchFiles.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
-struct TrItem
+// One resource to translate: its key and the SHA-256 of the English
+// original, and the change - replaced strings, menu items or the dialog's
+// caption, control captions and control widths, by index.
+struct ResRecipe
 {
-    std::wstring Key;  // "type|name|lang"
-    Bytes Data;        // the translated data
-    std::wstring From; // SHA-256 of the English data
+    int Type = 0;
+    std::wstring Key;  // "type|name|lang", a numeric name written "#123"
+    std::wstring From;
+    std::optional<IndexedTexts> Strings;
+    std::optional<IndexedTexts> Items;
+    OptStr Caption;
+    std::optional<IndexedTexts> Controls;
+    std::optional<IndexedWidths> Widths;
+
+    // The translated resource, built from the English original's bytes.
+    Bytes Build(const Bytes& original) const;
 };
 
+// A text in a program's data or in the skin, written over the English one:
+// the bytes to write, and the original bytes, for telling the state.
 struct TrPlace
 {
     int Offset = 0;
@@ -36,21 +56,44 @@ struct TrFile
 {
     std::wstring Rel;
     long long Size = 0;
-    std::vector<TrItem> Items;
+    std::vector<ResRecipe> Resources;
     std::vector<TrPlace> Inplace;
-    // A text file written whole, and the SHA-256 of the English one.
+    // A text file written whole (a datafile), and the SHA-256 of the English one.
     bool HasWhole = false;
     Bytes Whole;
     std::wstring WholeFrom;
 };
 
+// Where the "Send By:" words live, and how to blank them.
 struct TrSendBy
 {
     std::wstring File;
     std::wstring Key;
     std::wstring From;
-    Bytes BlankEn;
-    Bytes BlankUk;
+    int Index = 0;
+    std::wstring Blank;
+};
+
+// One translated resource on a given client: its key, the bytes built from
+// the client's original, and the SHA-256 of the English original the recipe
+// was made from.
+struct MatItem
+{
+    std::wstring Key;
+    Bytes Data;
+    std::wstring From;
+};
+
+// What one file's resources come to on a given client: the translated bytes
+// by key, and the send-by table blanked in either language (for Icq.exe).
+struct MatFile
+{
+    std::vector<MatItem> Items;
+    std::optional<Bytes> BlankEn;
+    std::optional<Bytes> BlankUk;
+
+    // The first item of the key (ignoring case), or nothing.
+    const Bytes* ByKey(const std::wstring& key) const;
 };
 
 class Translation
@@ -62,6 +105,10 @@ public:
 
     // The file's entry, or nothing; the first one of a name wins.
     const TrFile* File(const std::wstring& rel) const;
+
+    // Everything one file's resources come to on this client, built from the
+    // English original's bytes.
+    MatFile Materialize(const TrFile& file, const Bytes& originalFileBytes) const;
 
     // Loaded once, on first use.
     static const Translation& Get();

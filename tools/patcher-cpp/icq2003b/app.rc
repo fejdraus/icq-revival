@@ -9,11 +9,10 @@
 
 1 24 "app.manifest"
 
-// Written from tools\icq2003b\patch\ICQ-2003b-uk-UA.txt by
-// Convert-Translation.ps1 into the build folder, which the resource
-// compiler searches (see Translation.cpp).
-TRINDEX RCDATA "translation.idx"
-TRDATA RCDATA "translation.dat"
+// The recipe of the Ukrainian interface, as it is: readable UTF-8 text (see
+// Translation.cpp). A change to it rebuilds the resources: the resource
+// compiler's tracking lists the file among what it read.
+TRANSLATION RCDATA "..\\..\\icq2003b\\patch\\ICQ-2003b-uk-UA.json"
 
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION 1,0,0,0

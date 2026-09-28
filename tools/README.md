@@ -13,7 +13,7 @@ and can put everything back.
 | `icq65/flashplayer/` | ICQ 6.5 | `FlashPlayerControl.dll` on Ruffle, the tZers player without Adobe Flash (Rust; see its README). |
 | `icq65/tzers/` | ICQ 6.5 | `make_tzers.py` - rebuilds the twelve tZers the server hands out (`deploy/oscar-legacy-web/tzers/`) from the Wayback Machine, and copies their thumbnails from the client. |
 | `patcher/` | every patch | The patches as C# WinForms programs (.NET Framework 4.8, one exe each): `Common/` - the window, the icon, the job list, backups and the command line all patches share, compiled into each exe as source; `Icq65/` and `Icq2003b/` - the patches for ICQ 6.5 and ICQ Pro 2003b. |
-| `patcher-cpp/` | ICQ Pro 2003b | The same 2003b patch in C++ on the plain Win32 API, for Windows XP SP3 to 11 with nothing to install (`Build.ps1`, toolset v141_xp). Not yet moved to the text recipe of the translation, so it does not build until it is. |
+| `patcher-cpp/` | ICQ Pro 2003b | The same 2003b patch in C++ on the plain Win32 API, for Windows XP SP3 to 11 with nothing to install (`Build.ps1`, toolset v141_xp). It carries the same text recipe of the translation and builds the translated resources from it the same way. |
 | `common/` | every patch | `Build-Patches.ps1` - builds every patch's exe from `patcher/` (the .NET SDK); `Check-VirusTotal.ps1` - checks the built exes on VirusTotal (key in `VT_API_KEY`). |
 | `miranda-icq/` | Miranda NG | The ICQ protocol plugin brought back to the current Miranda NG API: the patch, build output and language pack. |
 

@@ -378,25 +378,26 @@ namespace
     // A byte array in an if.
     bool IsTrue(const std::optional<Bytes>& b) { return b && ps::IsTrue(&*b); }
 
+    // Everything one file's resources come to on this client, built from its
+    // English original (the backup, or the file while it has none).
+    MatFile Materialize(const std::wstring& rel, const std::wstring& path)
+    {
+        return Tr().Materialize(*Tr().File(rel), PatchFiles::ReadAllBytes(OriginalPath(path)));
+    }
+
+    // Two resources the same; nothing is the same as nothing else.
+    bool Same(const std::optional<Bytes>& a, const std::optional<Bytes>& b) { return b && IcqResources::Same(a, *b); }
+
     // The "Send By:" words: blank in either language, or as they came.
     std::wstring SendByState(const std::wstring& path)
     {
         const TrSendBy& sb = Tr().SendBy;
         std::optional<Bytes> cur = ReadResources(path, { sb.Key })[0];
-        if (IcqResources::Same(cur, sb.BlankEn) || IcqResources::Same(cur, sb.BlankUk)) return L"patched";
+        MatFile mat = Materialize(sb.File, path);
+        if (Same(cur, mat.BlankEn) || Same(cur, mat.BlankUk)) return L"patched";
         if (IsTrue(cur) && ps::Eq(Translation::Sha(*cur), sb.From)) return L"original";
-        const TrFile* file = Tr().File(sb.File);
-        if (file != nullptr)
-        {
-            for (const TrItem& i : file->Items)
-            {
-                if (ps::Eq(i.Key, sb.Key))
-                {
-                    if (IcqResources::Same(cur, i.Data)) return L"original";
-                    break;
-                }
-            }
-        }
+        const Bytes* table = mat.ByKey(sb.Key);
+        if (table != nullptr && IcqResources::Same(cur, *table)) return L"original";
         return L"unknown";
     }
 
@@ -716,19 +717,21 @@ namespace
         const TrFile& entry = *Tr().File(rel);
         if (PatchFiles::Length(OriginalPath(path)) != entry.Size) return L"other version";
         const TrSendBy& sb = Tr().SendBy;
+        MatFile mat = Tr().Materialize(entry, PatchFiles::ReadAllBytes(OriginalPath(path)));
+        const std::vector<MatItem>& items = mat.Items;
         int done = 0, orig = 0;
-        if (!entry.Items.empty())
+        if (!items.empty())
         {
             std::vector<std::wstring> keys;
-            for (const TrItem& i : entry.Items) keys.push_back(i.Key);
+            for (const MatItem& i : items) keys.push_back(i.Key);
             std::vector<std::optional<Bytes>> cur = ReadResources(path, keys);
-            for (size_t i = 0; i < entry.Items.size(); i++)
+            for (size_t i = 0; i < items.size(); i++)
             {
-                const TrItem& it = entry.Items[i];
+                const MatItem& it = items[i];
                 const std::optional<Bytes>& c = cur[i];
                 bool isSendBy = ps::Eq(rel, sb.File) && ps::Eq(it.Key, sb.Key);
-                bool blankUk = isSendBy && IcqResources::Same(c, sb.BlankUk);
-                bool blankEn = isSendBy && IcqResources::Same(c, sb.BlankEn);
+                bool blankUk = isSendBy && Same(c, mat.BlankUk);
+                bool blankEn = isSendBy && Same(c, mat.BlankEn);
                 if (IcqResources::Same(c, it.Data) || blankUk) done++;
                 else if (blankEn || (IsTrue(c) && ps::Eq(Translation::Sha(*c), it.From))) orig++;
             }
@@ -744,7 +747,7 @@ namespace
                 else if (c == pl.Original) orig++;
             }
         }
-        size_t all = entry.Items.size() + entry.Inplace.size();
+        size_t all = items.size() + entry.Inplace.size();
         if (entry.HasWhole)
         {
             // A text file written whole.
@@ -796,6 +799,9 @@ namespace
         std::wstring path = PatchFiles::Join(root, rel);
         if (!PatchFiles::Exists(path)) return false;
         Bytes bytes = PatchFiles::ReadAllBytes(OriginalPath(path));
+        // The English original, kept aside: the translated resources are
+        // built from it, whatever the code patches change in these bytes.
+        const Bytes pristine = bytes;
 
         for (const CodePatch& p : Patches())
         {
@@ -843,10 +849,12 @@ namespace
         };
         const TrFile* entry = Tr().File(rel);
         bool ukrainian = entry != nullptr && jobs.IsWanted(skip, L"uk:" + rel) && (long long)bytes.size() == entry->Size;
+        MatFile mat;
+        if (entry != nullptr) mat = Tr().Materialize(*entry, pristine);
         if (ukrainian && entry->HasWhole) bytes = entry->Whole;
         if (ukrainian)
         {
-            for (const TrItem& it : entry->Items) put(it.Key, it.Data);
+            for (const MatItem& it : mat.Items) put(it.Key, it.Data);
             for (const TrPlace& pl : entry->Inplace) Put(bytes, pl.Offset, pl.Data);
         }
         const CodePatch* words = nullptr;
@@ -861,7 +869,8 @@ namespace
         const TrSendBy& sb = Tr().SendBy;
         if (ps::Eq(rel, sb.File) && jobs.IsWanted(skip, words->What) && (long long)bytes.size() == words->Size)
         {
-            put(sb.Key, ukrainian ? sb.BlankUk : sb.BlankEn);
+            const std::optional<Bytes>& blank = ukrainian ? mat.BlankUk : mat.BlankEn;
+            if (blank) put(sb.Key, *blank);
         }
 
         // The resources are laid into the file's own bytes, in memory: the

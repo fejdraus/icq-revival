@@ -67,10 +67,6 @@
       <AdditionalDependencies>kernel32.lib;user32.lib;gdi32.lib;advapi32.lib;shell32.lib;ole32.lib;comctl32.lib;gdiplus.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
     </Link>
-    <ResourceCompile>
-      <!-- The translation, written there by ConvertTranslation below. -->
-      <AdditionalIncludeDirectories>$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-    </ResourceCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\common\ClientFolder.cpp" />
@@ -88,6 +84,7 @@
     <ClCompile Include="IcqResources.cpp" />
     <ClCompile Include="Main.cpp" />
     <ClCompile Include="RegistryPath.cpp" />
+    <ClCompile Include="ResourceCodec.cpp" />
     <ClCompile Include="Translation.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -105,24 +102,15 @@
     <ClInclude Include="Icq2003bClient.h" />
     <ClInclude Include="IcqResources.h" />
     <ClInclude Include="RegistryPath.h" />
+    <ClInclude Include="ResourceCodec.h" />
     <ClInclude Include="Translation.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="app.rc" />
     <None Include="app.manifest" />
-    <None Include="Convert-Translation.ps1" />
+    <!-- Compiled into app.rc as it is; the resource compiler's tracking
+         rebuilds the resources when it changes. -->
+    <None Include="..\..\icq2003b\patch\ICQ-2003b-uk-UA.json" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-
-  <!-- The Ukrainian interface: tools\icq2003b\patch\ICQ-2003b-uk-UA.txt stays
-       the source; it is decoded into plain resources before they are
-       compiled in, and again only when it changes. -->
-  <PropertyGroup>
-    <TranslationSource>$(MSBuildThisFileDirectory)..\..\icq2003b\patch\ICQ-2003b-uk-UA.txt</TranslationSource>
-  </PropertyGroup>
-  <Target Name="ConvertTranslation" BeforeTargets="ResourceCompile"
-          Inputs="$(TranslationSource);$(MSBuildThisFileDirectory)Convert-Translation.ps1"
-          Outputs="$(IntDir)translation.idx;$(IntDir)translation.dat">
-    <Exec Command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)Convert-Translation.ps1&quot; -Source &quot;$(TranslationSource)&quot; -OutDir &quot;$(IntDir.TrimEnd('\'))&quot;" />
-  </Target>
 </Project>
