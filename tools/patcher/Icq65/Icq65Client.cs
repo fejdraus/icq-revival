@@ -320,7 +320,9 @@ namespace IcqRevival.Patch
             // Inside translated sentences: only the address, not the words or the
             // punctuation after it ("http://www.icq.com/Download," in German).
             InText(Resources + @"\*\AboutDlg.dtd", "http://www\\.icq\\.com/legal\\b/?", "/icq/legal/"),
-            InText(Resources + @"\*\MsgSessionPanel.dtd", "(?i)http://www\\.icq\\.com/download(?:[\\w/-]|\\.(?=[\\w/]))*", "/icq/download"),
+            // The Russian and Belarusian texts send people to ICQ's Russian site
+            // instead ("http://www.icq.rambler.ru." - the dot ends the sentence).
+            InText(Resources + @"\*\MsgSessionPanel.dtd", "(?i)http://www\\.icq\\.(?:com/download(?:[\\w/-]|\\.(?=[\\w/]))*|rambler\\.ru\\b/?)", "/icq/download"),
             InText(Resources + @"\*\SMS.dtd", "http://www\\.icq\\.com/sms\\b", "/icq/stub/sms.html"),
         };
 
