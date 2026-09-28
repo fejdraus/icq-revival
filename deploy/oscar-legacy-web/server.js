@@ -1358,10 +1358,8 @@ function escapeHtml(s) {
 //           window: tables instead of blocks, a pixel flower instead of SVG.
 // One shell for everybody, the same as registration and the admin page. The only
 // difference is density: inside the client the window is small, so body gets the
-// compact class and the shared style sheet tightens the spacing. wide lets
-// the sheet take the whole width of the browser window, for a page built
-// around a table.
-function page(title, bodyHtml, subtitle, compact, u, wide = false) {
+// compact class and the shared style sheet tightens the spacing.
+function page(title, bodyHtml, subtitle, compact, u) {
   const langs = u ? langSwitch(u.lang, u.selfUrl) : '';
   return `<!DOCTYPE html>
 <html>
@@ -1369,11 +1367,10 @@ function page(title, bodyHtml, subtitle, compact, u, wide = false) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
-<style>${SHARED_STYLE}
-main.window.wide { max-width: none; }</style>
+<style>${SHARED_STYLE}</style>
 </head>
 <body${compact ? ' class="compact"' : ''}>
-<main class="window${wide ? ' wide' : ''}">
+<main class="window">
   ${header(escapeHtml(title), subtitle)}
   <div class="body">${bodyHtml}</div>
   ${footer({ langs })}
@@ -2442,7 +2439,7 @@ function downloadPage(u) {
     <p><span class="dim">${t.dlMirandaNote}</span></p>
 
     <h2>${t.helpMore}</h2>
-    ${infoLinks('/download', u)}`, t.dlSub, false, u, true);
+    ${infoLinks('/download', u)}`, t.dlSub, false, u);
 }
 
 function stubPage(topic, u, compact = false) {

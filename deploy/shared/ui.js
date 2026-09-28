@@ -116,10 +116,10 @@ body.compact .statusbar td { padding-top: 4px; padding-bottom: 4px; }
 body.compact p { margin: 0 0 5px; }
 body.compact h2 { margin: 7px 0 3px; }
 
-/* Лист. Прежнее имя .window сохранено, но рамки окна больше нет. */
+/* Лист. Прежнее имя .window сохранено, но рамки окна больше нет. Во всю
+   ширину окна браузера: поля отступа даёт body. */
 .window {
   width: 100%;
-  max-width: 680px;
   background: ${TOKENS.sheet};
   border: 1px solid ${TOKENS.line};
   border-radius: 6px;
