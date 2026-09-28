@@ -72,24 +72,20 @@ namespace PatchIcon
             bool withText = size >= 48;
             double cx = size / 2.0;
             double cy = withText ? size * 0.40 : size / 2.0;
-            // The sprout of the site's icon (deploy/shared/sprout.svg), in
-            // white: drawn in its 64-unit box, around the point (32, 31).
-            double k = (withText ? size * 0.50 : size * 0.78) / 44.0;
-            auto at = [&](double x, double y) { return PointF((REAL)(cx + (x - 32) * k), (REAL)(cy + (y - 31) * k)); };
+            double petalLen = withText ? size * 0.19 : size * 0.25;
+            double petalWid = petalLen * 0.72;
             SolidBrush white(Color(250, 255, 255, 255));
-            Pen stem(Color(250, 255, 255, 255), (REAL)(4.5 * k));
-            stem.SetStartCap(LineCapRound);
-            stem.SetEndCap(LineCapRound);
-            g.DrawLine(&stem, at(32, 50), at(32, 30));
-            g.DrawBezier(&stem, at(18, 51), at(27.3, 47), at(36.7, 47), at(46, 51));
-            GraphicsPath leaves;
-            leaves.AddBezier(at(32, 33), at(18, 34), at(12, 24), at(13, 15));
-            leaves.AddBezier(at(13, 15), at(24, 14), at(32, 20), at(32, 33));
-            leaves.CloseFigure();
-            leaves.AddBezier(at(32, 29), at(45, 30), at(52, 21), at(51, 11));
-            leaves.AddBezier(at(51, 11), at(39, 10), at(32, 17), at(32, 29));
-            leaves.CloseFigure();
-            g.FillPath(&white, &leaves);
+            for (int i = 0; i < 8; i++)
+            {
+                GraphicsState state = g.Save();
+                g.TranslateTransform((REAL)cx, (REAL)cy);
+                g.RotateTransform((REAL)(45 * i));
+                g.FillEllipse(&white, (REAL)(-petalWid / 2), (REAL)(-petalLen * 1.55), (REAL)petalWid, (REAL)(petalLen * 1.1));
+                g.Restore(state);
+            }
+            double heart = petalLen * 0.62;
+            SolidBrush heartBrush(GdipColor(bottom));
+            g.FillEllipse(&heartBrush, (REAL)(cx - heart / 2), (REAL)(cy - heart / 2), (REAL)heart, (REAL)heart);
 
             if (withText)
             {

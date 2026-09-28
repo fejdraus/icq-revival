@@ -22,10 +22,9 @@ namespace PatchIcon
     // #RRGGBB as a GDI colour.
     COLORREF ColorOf(const std::wstring& hex);
 
-    // A sprout - the service's own sign, not ICQ's flower - on a rounded tile
-    // in the colour of the client version. From 48 pixels up the version is
-    // written under the sprout, so the exe of each patch can be told apart
-    // at a glance in Explorer.
+    // A flower of eight petals on a rounded tile in the colour of the client
+    // version. From 48 pixels up the version is written under the flower, so
+    // the exe of each patch can be told apart at a glance in Explorer.
     // The caller deletes the bitmap; GDI+ must be started.
     Gdiplus::Bitmap* Draw(int size, const std::wstring& badge, const std::wstring& top, const std::wstring& bottom);
 
