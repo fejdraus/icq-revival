@@ -16,9 +16,6 @@
 				<xtraId id="game_center" priority="96"/>
 				<xtraId id="hpv" priority="95"/>
 				<xtraId id="icq_tv" priority="99"/>
-				<xtraId id="mobile_content" priority="75"/>
-				<xtraId id="rambler_audio" priority="73"/>
-				<xtraId id="rambler_vision" priority="74"/>
 				<xtraId id="p7de_topmodel" priority="95"/>
 				<xtraId id="s1de_horoscope" priority="94"/>
 				<xtraId id="p7de_mobileshop" priority="93"/>
@@ -391,53 +388,6 @@
 				excludedPartnerIds="32,8,17,10,9,3,16,14,23"
 			>
 			</xtra>
-			<xtra 
-				id="mobile_content"
-			   version="2"
-			   url="http://icq-extra.plasticmedia.ru/"
-			   iconsUrl="http://c.icq.com/xtraz2/img/rambler/mobile/mobile.zip"
-			   name="JAVA-ИГРЫ"
-			   desc="Игры для мобильного телефона"
-			   resizable="false"
-			   width="800"
-			   height="600"                
-			   type="dhtml"   
-			   includedCountries="7"
-			/>
-			<xtra 
-				id="rambler_audio"
-				version="1"
-				url="http://audio.rambler.ru/export/radio_player_xtraz.html"
-				name="Rambler Aудио"
-				iconsUrl="http://c.icq.com/xtraz2/img/rambler/audio/audio.zip"
-				desc="Послушать радио"
-				width="525"
-				resizable="false"
-				minWidth="525"
-				height="209"
-				minHeight="209"
-				type="dhtml"
-				includedCountries="7"
-				excludedPartnerIds="32,8,17,18,10,9,16,14,21,30,23,26"
-			>
-			</xtra>
-			<xtra 
-				id="rambler_vision"
-				version="1"
-				url="http://vision.rambler.ru/newxtraz/"
-				name="Rambler Vision"
-				iconsUrl="http://c.icq.com/xtraz2/img/rambler/vision/vision.zip"
-				desc="Посмотреть видео"
-				width="732"
-				resizable="false"
-				minWidth="732"
-				height="434"
-				minHeight="434"
-				type="dhtml"
-				includedCountries="7"
-				excludedPartnerIds="32,8,17,18,10,9,16,14,21,30,23,26"
-			>
-		</xtra>
 			<xtra 
 				id="backgammon"
 				version="1"
