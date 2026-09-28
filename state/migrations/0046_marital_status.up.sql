@@ -1,12 +1,12 @@
--- Семейное положение из анкеты ICQ.
+-- Marital status from the ICQ profile.
 --
--- В директорном диалекте это метка 0x012C, и клиенты её заполняют: QIP 2012
--- шлёт двумя байтами, Miranda — словом (icqosc_svcs.cpp, ppackTLVWord 0x12C).
--- Места под него в анкете не было, поэтому значение молча пропадало.
+-- In the directory dialect this is tag 0x012C, and clients fill it in: QIP 2012
+-- sends it as two bytes, Miranda as a word (icqosc_svcs.cpp, ppackTLVWord 0x12C).
+-- The profile had no place for it, so the value was silently dropped.
 --
--- Коды берутся из справочника клиента (10 — холост, 11 — в отношениях,
--- 12 — помолвлен, 20 — женат, 30 — разведён, 31 — раздельно, 40 — вдовец).
--- Ноль означает «не указано».
+-- The codes come from the client's reference list (10 - single, 11 - in a
+-- relationship, 12 - engaged, 20 - married, 30 - divorced, 31 - separated,
+-- 40 - widowed). Zero means "not specified".
 
 ALTER TABLE users
     ADD COLUMN icq_moreInfo_maritalStatus INTEGER NOT NULL DEFAULT 0;

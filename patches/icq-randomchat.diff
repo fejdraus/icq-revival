@@ -6,7 +6,7 @@ index fe1d997..f13257c 100644
  		c.inMemorySessionManager,
  		c.sqLiteUserStore,
  	)
-+	// Случайный чат подбирает собеседника среди живых сессий.
++	// Random chat picks a partner among the live sessions.
 +	c.icqService.BridgeSessionLister(c.inMemorySessionManager)
  
  	c.feedbagSvc.BridgeICBMService(c.icbmSvc)
@@ -38,7 +38,7 @@ index 9dd4fbb..020e2a0 100644
  	timeNow               func() time.Time
  	offlineMessageManager OfflineMessageManager
  	forwardICQAuthEvents  func(ctx context.Context, sender state.IdentScreenName, recipient state.IdentScreenName, authMsg wire.ICBMCh4Message) error
-+	// Случайный чат: кто в какой группе. Живёт в памяти, см. patch-randomchat.py.
++	// Random chat: who is in which group. Kept in memory, see patch-randomchat.py.
 +	sessionLister    ICQSessionLister
 +	randomChatMu     sync.Mutex
 +	randomChatGroups map[state.IdentScreenName]uint16
@@ -49,22 +49,22 @@ index 9dd4fbb..020e2a0 100644
  	}, requestID, 0)
  }
  
-+// --------------------------------------------------------------- случайный чат
++// ------------------------------------------------------------------ random chat
 +
-+// ICQSessionLister отдаёт все живые сессии. Нужен только случайному чату:
-+// собеседник ищется среди тех, кто сейчас в сети.
++// ICQSessionLister returns every live session. Only random chat needs it: a
++// partner is picked among the users who are online right now.
 +type ICQSessionLister interface {
 +	AllSessions() []*state.Session
 +}
 +
-+// BridgeSessionLister включает случайный чат. Без него запросы обслуживаются,
-+// но собеседник не находится никогда.
++// BridgeSessionLister enables random chat. Without it the requests are still
++// served, but a partner is never found.
 +func (s *ICQService) BridgeSessionLister(lister ICQSessionLister) {
 +	s.sessionLister = lister
 +}
 +
-+// SetRandomChatGroup запоминает, в какой группе пользователь готов общаться.
-+// Ноль означает «не участвую».
++// SetRandomChatGroup records the group the user is willing to chat in. Zero
++// means they are not taking part.
 +func (s *ICQService) SetRandomChatGroup(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat, seq uint16) error {
 +	s.randomChatMu.Lock()
 +	if inBody.Group == 0 {
@@ -79,8 +79,8 @@ index 9dd4fbb..020e2a0 100644
 +	return s.reqAck(ctx, instance, seq, wire.ICQDBQueryMetaReplySetRandomChat, inFrame.RequestID)
 +}
 +
-+// RandomChatSearch подбирает собеседника из той же группы среди тех, кто
-+// сейчас в сети. Себя не предлагаем.
++// RandomChatSearch picks a partner from the same group among the users who are
++// online. The caller is never offered to themselves.
 +func (s *ICQService) RandomChatSearch(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch, seq uint16) error {
 +	match := s.pickRandomChatPartner(instance.IdentScreenName(), inBody.Group)
 +	if match == nil {
@@ -108,7 +108,7 @@ index 9dd4fbb..020e2a0 100644
 +		Success:    wire.ICQStatusCodeOK,
 +		UIN:        match.UIN(),
 +		Group:      inBody.Group,
-+		// Соединение идёт через сервер: прямое между клиентами мы не сводим.
++		// The conversation goes through the server; no peer-to-peer link is set up.
 +		Mode:    0x04,
 +		Version: 0x000A,
 +	}
@@ -123,7 +123,7 @@ index 9dd4fbb..020e2a0 100644
 +	return s.reply(ctx, instance, wire.ICQMessageReplyEnvelope{Message: resp}, inFrame.RequestID, 0)
 +}
 +
-+// pickRandomChatPartner возвращает случайную живую сессию из той же группы.
++// pickRandomChatPartner returns a random live session from the same group.
 +func (s *ICQService) pickRandomChatPartner(me state.IdentScreenName, group uint16) *state.Session {
 +	if s.sessionLister == nil || group == 0 {
 +		return nil
@@ -158,8 +158,8 @@ index 9dd4fbb..020e2a0 100644
 +	return candidates[rand.IntN(len(candidates))]
 +}
 +
-+// randomChatAddr — адрес собеседника в том виде, в каком его ждёт клиент:
-+// четыре байта в обратном порядке относительно остального тела ответа.
++// randomChatAddr is the partner's address in the form the client expects: four
++// bytes in the opposite order from the rest of the reply body.
 +func randomChatAddr(sess *state.Session) *[4]byte {
 +	for _, inst := range sess.Instances() {
 +		ap := inst.RemoteAddr()
@@ -317,7 +317,7 @@ index 933e734..70fc50f 100644
  	ICQDBQueryMetaReqStat0ad7          uint16 = 0x0AD7
  	ICQDBQueryMetaReqDirectoryQuery    uint16 = 0x0FA0
  	ICQDBQueryMetaReqDirectoryUpdate   uint16 = 0x0FD2
-+	// Случайный чат: записаться в группу и попросить собеседника.
++	// Random chat: join a group and ask for a partner.
 +	ICQDBQueryMetaReqRandomSearch  uint16 = 0x074E
 +	ICQDBQueryMetaReqSetRandomChat uint16 = 0x0758
  
@@ -336,22 +336,22 @@ index 933e734..70fc50f 100644
  	} `oscar:"optional"`
  }
  
-+// ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat — клиент записывается в группу
-+// случайного чата. При ненулевой группе клиент дописывает свой адрес и версию;
-+// нам они не нужны, поэтому читаем только номер группы.
++// ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat joins a random chat group. For
++// a non-zero group the client appends its address and version; the server does
++// not need them, so only the group number is read.
 +type ICQ_0x07D0_0x0758_DBQueryMetaReqSetRandomChat struct {
 +	Group uint16
 +}
 +
-+// ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch — клиент просит подобрать
-+// собеседника из указанной группы.
++// ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch asks for a partner from the
++// given group.
 +type ICQ_0x07D0_0x074E_DBQueryMetaReqRandomSearch struct {
 +	Group uint16
 +}
 +
-+// ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound — найденный собеседник.
-+// Адреса лежат в обратном порядке байт относительно остального тела, поэтому
-+// они объявлены массивами: так их не развернёт кодировщик.
++// ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound carries the partner that was
++// found. The addresses use the opposite byte order from the rest of the body,
++// so they are declared as arrays to keep the marshaller from swapping them.
 +type ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound struct {
 +	ICQMetadata
 +	ReqSubType uint16
@@ -382,7 +382,7 @@ index 933e734..70fc50f 100644
 +	BUCPRegisterRequest  uint16 = 0x0004
 +	BUCPRegisterResponse uint16 = 0x0005
 +
-+	// ICQTLVTagsRegistration — TLV с блоком регистрации нового номера.
++	// ICQTLVTagsRegistration holds the registration block for a new number.
 +	ICQTLVTagsRegistration       uint16 = 0x0001
  	BUCPChallengeRequest         uint16 = 0x0006
  	BUCPChallengeResponse        uint16 = 0x0007

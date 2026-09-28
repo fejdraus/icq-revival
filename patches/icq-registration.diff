@@ -7,36 +7,36 @@ index 06087c4..ae77588 100644
  }
  
 +
-+// Смещения внутри блока ICQ-регистрации (TLV 0x0001 запроса SNAC(0x17,0x04)).
-+// Весь блок записан в обратном порядке байт, в отличие от самих SNAC.
++// Offsets inside the ICQ registration block (TLV 0x0001 of SNAC(0x17,0x04)).
++// The whole block is little-endian, unlike the SNACs around it.
 +const (
 +	icqRegCookieOffset   = 16
 +	icqRegPasswordOffset = 40
 +	icqRegMinLen         = icqRegPasswordOffset + 2
 +)
 +
-+// Диапазон, из которого выдаются номера. Начинаем со 100000 — так же, как это
-+// делали настоящие серверы ICQ, и как подбирает номер наша страница
-+// регистрации.
++// The range numbers are handed out from. It starts at 100000, the way the real
++// ICQ servers did and the way our own registration page picks a
++// number.
 +const (
 +	icqUINFirst = 100000
 +	icqUINLast  = 2147483646
 +)
 +
-+// BUCPRegister выдаёт новый номер ICQ и заводит под него учётную запись.
++// BUCPRegister hands out a new ICQ number and creates an account for it.
 +//
-+// Клиент шлёт SNAC(0x17,0x04) с выбранным паролем и случайным cookie, сервер
-+// отвечает SNAC(0x17,0x05) с присвоенным номером. Формат блока — ICQ v8,
-+// описание: https://kingant.net/oscar/?family=0x0017&subtype=0x0005
++// The client sends SNAC(0x17,0x04) with the chosen password and a random cookie;
++// the server answers SNAC(0x17,0x05) with the assigned number. The block is ICQ v8,
++// described at https://kingant.net/oscar/?family=0x0017&subtype=0x0005
 +func (s AuthService) BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wire.SNACMessage, error) {
 +	block := wire.TLVRestBlock{}
 +	if err := wire.UnmarshalBE(&block, bytes.NewReader(snacPayloadIn)); err != nil {
-+		return wire.SNACMessage{}, fmt.Errorf("разбор запроса регистрации: %w", err)
++		return wire.SNACMessage{}, fmt.Errorf("parsing registration request: %w", err)
 +	}
 +
 +	reg, ok := block.Bytes(wire.ICQTLVTagsRegistration)
 +	if !ok || len(reg) < icqRegMinLen {
-+		return wire.SNACMessage{}, errors.New("в запросе регистрации нет блока с данными")
++		return wire.SNACMessage{}, errors.New("registration request carries no data block")
 +	}
 +
 +	cookie := binary.LittleEndian.Uint32(reg[icqRegCookieOffset:])
@@ -44,9 +44,9 @@ index 06087c4..ae77588 100644
 +	passLen := int(binary.LittleEndian.Uint16(reg[icqRegPasswordOffset:]))
 +	from := icqRegPasswordOffset + 2
 +	if passLen == 0 || from+passLen > len(reg) {
-+		return wire.SNACMessage{}, errors.New("в запросе регистрации нет пароля")
++		return wire.SNACMessage{}, errors.New("registration request carries no password")
 +	}
-+	// Клиент передаёт пароль со завершающим нулём, он в длину включён.
++	// The client sends the password with a trailing NUL counted in the length.
 +	password := strings.TrimRight(string(reg[from:from+passLen]), "\x00")
 +
 +	uin, err := s.nextFreeUIN(ctx)
@@ -58,11 +58,11 @@ index 06087c4..ae77588 100644
 +	if err := s.createAccount(ctx, screenName, password); err != nil {
 +		switch {
 +		case errors.Is(err, state.ErrPasswordInvalid):
-+			// Клиент сам проверяет длину 6–8 символов, но подстрахуемся.
++			// The client checks the 6-8 character length itself; guard anyway.
 +			s.logger.InfoContext(ctx, "registration rejected: bad password", "uin", uin)
 +			return wire.SNACMessage{}, err
 +		default:
-+			return wire.SNACMessage{}, fmt.Errorf("создание учётной записи %d: %w", uin, err)
++			return wire.SNACMessage{}, fmt.Errorf("creating account %d: %w", uin, err)
 +		}
 +	}
 +
@@ -81,30 +81,30 @@ index 06087c4..ae77588 100644
 +	}, nil
 +}
 +
-+// nextFreeUIN подбирает первый свободный номер, начиная со 100000.
++// nextFreeUIN picks the first free number starting at 100000.
 +func (s AuthService) nextFreeUIN(ctx context.Context) (int, error) {
 +	for uin := icqUINFirst; uin <= icqUINLast; uin++ {
 +		u, err := s.userManager.User(ctx, state.NewIdentScreenName(strconv.Itoa(uin)))
 +		if err != nil {
-+			return 0, fmt.Errorf("поиск свободного номера: %w", err)
++			return 0, fmt.Errorf("looking for a free number: %w", err)
 +		}
 +		if u == nil {
 +			return uin, nil
 +		}
 +	}
-+	return 0, errors.New("свободных номеров не осталось")
++	return 0, errors.New("no free numbers left")
 +}
 +
-+// icqRegistrationReply собирает тело ответа о регистрации. Все поля — в
-+// обратном порядке байт; постоянные значения взяты из описания протокола.
++// icqRegistrationReply builds the body of the registration reply. Every field
++// is little-endian; the constants come from the protocol description.
 +func icqRegistrationReply(uin uint32, cookie uint32) []byte {
 +	buf := make([]byte, 0, 52)
 +	put16 := func(v uint16) { buf = binary.LittleEndian.AppendUint16(buf, v) }
 +	put32 := func(v uint32) { buf = binary.LittleEndian.AppendUint32(buf, v) }
 +
-+	put16(0x0003) // версия блока
++	put16(0x0003) // block version
 +	put32(0)
-+	put16(0x002d) // длина остатка, значение из описания протокола
++	put16(0x002d) // length of the rest, a constant from the protocol description
 +	put16(0x0003)
 +	put16(0x0000)
 +	put16(0x58ff)
@@ -112,12 +112,12 @@ index 06087c4..ae77588 100644
 +	put16(0xbaa7)
 +	put16(0x0000)
 +	put16(0x0004)
-+	put32(cookie) // cookie из запроса, клиент сверяет его с отправленным
++	put32(cookie) // cookie from the request; the client matches it with its own
 +	put32(0)
 +	put32(0)
 +	put32(0)
 +	put32(0)
-+	put32(uin) // выданный номер
++	put32(uin) // the number handed out
 +	put32(cookie)
 +	put16(0x0000)
 +
@@ -150,7 +150,7 @@ index 1cfcb03..d64835d 100644
 +				if err := flapc.SendSNAC(outSNAC.Frame, outSNAC.Body); err != nil {
 +					return err
 +				}
-+				// Пустой FLAP канала 4 — сигнал клиенту закрыть соединение.
++				// An empty channel 4 FLAP tells the client to close the connection.
 +				return flapc.NewSignoff(wire.TLVRestBlock{})
  			case fr.FoodGroup == wire.BUCP && fr.SubGroup == wire.BUCPLoginRequest:
  				loginRequest := wire.SNAC_0x17_0x02_BUCPLoginRequest{}
@@ -177,7 +177,7 @@ index 933e734..d39f220 100644
  	BUCPRegisterRequest          uint16 = 0x0004
 +	BUCPRegisterResponse         uint16 = 0x0005
 +
-+	// ICQTLVTagsRegistration — TLV с блоком регистрации нового номера.
++	// ICQTLVTagsRegistration holds the registration block for a new number.
 +	ICQTLVTagsRegistration uint16 = 0x0001
  	BUCPChallengeRequest         uint16 = 0x0006
  	BUCPChallengeResponse        uint16 = 0x0007

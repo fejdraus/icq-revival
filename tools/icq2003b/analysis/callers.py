@@ -16,11 +16,11 @@ for i in range(start, start + size - 5):
     dst_rva = src_rva + 5 + rel
     if dst_rva == target_rva:
         found += 1
-        print(f'\n--- вызов из файла 0x{i:x} (RVA 0x{src_rva:x}) ---')
+        print(f'\n--- call from file offset 0x{i:x} (RVA 0x{src_rva:x}) ---')
         chunk = data[max(start, i-90):i+40]
         cva = base + text.VirtualAddress + (max(start, i-90) - start)
         for ins in md.disasm(bytes(chunk), cva):
-            mark = '  <<< вызов' if ins.address == base + src_rva else ''
+            mark = '  <<< call' if ins.address == base + src_rva else ''
             raw = ' '.join(f'{b:02x}' for b in ins.bytes)
-            print(f'  файл 0x{start + (ins.address - base - text.VirtualAddress):05x}  {raw:<18}  {ins.mnemonic} {ins.op_str}{mark}')
-print(f'\nвсего вызовов: {found}')
+            print(f'  file 0x{start + (ins.address - base - text.VirtualAddress):05x}  {raw:<18}  {ins.mnemonic} {ins.op_str}{mark}')
+print(f'\ntotal calls: {found}')

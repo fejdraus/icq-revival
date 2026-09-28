@@ -1,72 +1,72 @@
-# Заплатка к скину IEView «MirandaFinal»
+# Patch for the IEView skin "MirandaFinal"
 
-Скин `Skins\IEView\MirandaFinal` приходит со сборкой MirandaFinal; чей он и под
-какой лицензией — неизвестно. Поэтому здесь лежит не скин, а только заплатка
-к нему, которую `..\Install-IcqRevival.ps1` накладывает на месте, сохранив
-прежние файлы в `_revival-backup\<время>\`. `PluginUpdater` в `Skins\` не
-заглядывает, так что доставляет её только установщик.
+The `Skins\IEView\MirandaFinal` skin comes with the MirandaFinal build; who made it
+and under what license is unknown. So this directory holds not the skin but only a
+patch for it, which `..\Install-IcqRevival.ps1` applies in place after saving the
+previous files into `_revival-backup\<time>\`. `PluginUpdater` does not look into
+`Skins\`, so only the installer delivers it.
 
-| Файл | Что это |
+| File | What it is |
 |------|---------|
-| `Patch-MirandaFinal.ps1` | правит `MirandaFinal.ivt`, кладёт скрипт и картинки; сам по себе: `-Miranda <папка> -Backup <папка>` |
-| `revival-tzers.js` | картинка tZer'а рядом с сообщением «tZer: <название>» |
-| `tzers\*.png` | 12 картинок tZers ICQ 6.5 (те же, что `deploy/oscar-legacy-web/tzers/`), кладутся в `images\tzers\` скина |
+| `Patch-MirandaFinal.ps1` | edits `MirandaFinal.ivt`, puts in the script and the pictures; standalone: `-Miranda <folder> -Backup <folder>` |
+| `revival-tzers.js` | the tZer picture next to the "tZer: <name>" message |
+| `tzers\*.png` | 12 ICQ 6.5 tZer pictures (the same as `deploy/oscar-legacy-web/tzers/`), placed into the skin's `images\tzers\` |
 
-## Что было опасно
+## What was dangerous
 
-IEView подставляет `%text%` уже экранированным для HTML (`& < > "`, переводы
-строк → `<br>`), но **не для JavaScript**. Скин же отдавал текст каждого
-сообщения прямо в код — в двенадцати местах шаблона:
+IEView substitutes `%text%` already escaped for HTML (`& < > "`, line breaks →
+`<br>`), but **not for JavaScript**. The skin, however, passed the text of every
+message straight into code, in twelve places in the template:
 
 ```
 <script>getitall('%\text%','%\name%','%\uin%','%\base%',meldungsart[0]);</script><script>mailru('%\text%');</script>
 ```
 
-- Текст собеседника становился строковым литералом внутри `<script>`.
-  Форма `%\text%` экранирует только `\ ' " \n \r \t \b \f`; U+2028/U+2029,
-  которые для старых движков JavaScript — конец строки, она не трогает, и
-  защита целиком держится на том, что IEView ничего не упустил.
-- Дальше `getitall()` и его помощники из `!tools\skripte\` (tzerausgabe,
-  convert, videos, parser) разбирали этот текст и **собирали из него разметку
-  строками**: адреса, атрибуты, обработчики и вставку Flash-объектов
-  (ActiveX) по ссылкам из сообщения. `mailru()` так же вставлял Flash-объект,
-  найдя в тексте `id=flash_NN`.
-- Страница IEView — `about:blank` в зоне «Мой компьютер»: скрипты и ActiveX
-  там разрешены. Любая ошибка в этой цепочке — выполнение кода из сообщения
-  с правами Miranda.
+- The contact's text became a string literal inside `<script>`. The `%\text%` form
+  escapes only `\ ' " \n \r \t \b \f`; it does not touch U+2028/U+2029, which old
+  JavaScript engines treat as a line end, and the protection rests entirely on
+  IEView having missed nothing.
+- Then `getitall()` and its helpers from `!tools\skripte\` (tzerausgabe, convert,
+  videos, parser) parsed this text and **built markup from it as strings**:
+  addresses, attributes, handlers, and the insertion of Flash objects (ActiveX) from
+  links in the message. `mailru()` likewise inserted a Flash object when it found
+  `id=flash_NN` in the text.
+- The IEView page is `about:blank` in the "My Computer" zone: scripts and ActiveX
+  are allowed there. Any mistake in this chain means running code from a message
+  with Miranda's privileges.
 
-На наших пробах (кавычки, `\`, `</script>`, `<img onerror>`, переводы строк,
-U+2028/2029, `javascript:`, такой же ник) исходный скин ничего не выполнил —
-но только потому, что совпало экранирование; сама поверхность была.
+In our tests (quotes, `\`, `</script>`, `<img onerror>`, line breaks, U+2028/2029,
+`javascript:`, the same in a nickname) the original skin executed nothing, but only
+because the escaping happened to line up; the attack surface was there.
 
-## Что меняет заплатка
+## What the patch changes
 
-В каждом из 12 тел сообщений:
+In each of the 12 message bodies:
 
 ```
 <span class="rt-text">%text%</span><script>revivalTzers()</script>
 ```
 
-и в заголовке `<script src="mailru.js"></script>` → `<script src="revival-tzers.js"></script>`
-плюс одно правило CSS для картинки.
+and in the header `<script src="mailru.js"></script>` → `<script src="revival-tzers.js"></script>`,
+plus one CSS rule for the picture.
 
-- Текст остаётся HTML, который IEView уже сделал безопасным, и больше ничем
-  не разбирается. Ссылки и смайлы работают как раньше — их строит сам IEView.
-- `revivalTzers()` вызывается **без аргументов**: читает `innerText` новых
-  `span.rt-text` и, если текст ровно «tZer: <название>» и название есть в
-  таблице (12 английских — как шлёт ICQ 6.5, и русские из её ru-RU
-  `TzerLabels.dtd`), добавляет `<img src="images/tzers/<id>.png">`. Адрес
-  картинки берётся из таблицы, из сообщения — ничего. Сети нет.
-- Незнакомое название остаётся простым текстом.
-- Внешний вид прежний: те же шапки, время, цвета.
+- The text stays HTML that IEView has already made safe, and nothing else parses it.
+  Links and smileys work as before; IEView itself builds them.
+- `revivalTzers()` is called **without arguments**: it reads the `innerText` of new
+  `span.rt-text` elements and, if the text is exactly "tZer: <name>" and the name is
+  in the table (12 English ones, as ICQ 6.5 sends them, and the Russian ones from its
+  ru-RU `TzerLabels.dtd`), adds `<img src="images/tzers/<id>.png">`. The picture
+  address comes from the table, nothing from the message. No network access.
+- An unknown name stays plain text.
+- The look is unchanged: the same headers, times and colours.
 
-Файлы `!tools\skripte\*`, `config.js`, `mailru.js` не трогаются: после
-заплатки их функции разбора текста никто не вызывает.
+The files `!tools\skripte\*`, `config.js`, `mailru.js` are not touched: after the
+patch nothing calls their text-parsing functions.
 
-## Установка и откат
+## Installation and rollback
 
-`Install-IcqRevival.ps1 -Miranda <папка>` при закрытой Miranda. Повторный
-запуск ничего не меняет. Нет скина или шаблон не тот, что знает заплатка, —
-строка `SKIPPED` и никаких изменений. Настройку журнала (IEView/другой) не
-трогает. Откат — по `MANIFEST.txt` в папке резервной копии: вернуть
-`MirandaFinal.ivt`, удалить `revival-tzers.js` и `images\tzers\`.
+`Install-IcqRevival.ps1 -Miranda <folder>` with Miranda closed. Running it again
+changes nothing. If there is no skin, or the template is not the one the patch knows,
+it prints a `SKIPPED` line and changes nothing. It does not touch the log setting
+(IEView or another). Rollback follows `MANIFEST.txt` in the backup folder: restore
+`MirandaFinal.ivt`, delete `revival-tzers.js` and `images\tzers\`.

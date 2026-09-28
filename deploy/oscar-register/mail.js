@@ -1,11 +1,11 @@
 'use strict';
 
-// Отправка писем без внешних зависимостей — короткий SMTP-клиент.
-// Сценарий ровно один: письмо со ссылкой, поэтому из протокола реализованы
-// только EHLO, STARTTLS, AUTH LOGIN, MAIL/RCPT/DATA и QUIT.
+// Sends mail without external dependencies: a short SMTP client.
+// There is exactly one use case, a message with a link, so only EHLO,
+// STARTTLS, AUTH LOGIN, MAIL/RCPT/DATA and QUIT are implemented.
 //
-// Настройки берутся из окружения; пароль ящика держим в отдельном
-// EnvironmentFile с правами 600, чтобы он не лежал в юните.
+// Settings come from the environment; the mailbox password lives in a separate
+// EnvironmentFile with mode 600 so that it is not kept in the unit.
 
 const net = require('net');
 const tls = require('tls');
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 
 const HOST = process.env.SMTP_HOST || '';
 const PORT = Number(process.env.SMTP_PORT || 465);
-// implicit — TLS с первого байта (порт 465), starttls — апгрейд после EHLO (587).
+// implicit: TLS from the first byte (port 465); starttls: upgrade after EHLO (587).
 const MODE = process.env.SMTP_MODE || (PORT === 465 ? 'implicit' : 'starttls');
 const USER = process.env.SMTP_USER || '';
 const SECRET = process.env.SMTP_SECRET || '';
@@ -25,8 +25,8 @@ function mailConfigured() {
   return Boolean(HOST && FROM);
 }
 
-// Ответ SMTP может занимать несколько строк: «250-РАСШИРЕНИЕ», затем «250 OK».
-// Считаем ответ завершённым, когда встретили строку с пробелом после кода.
+// An SMTP reply can span several lines: "250-EXTENSION", then "250 OK".
+// The reply is complete once we see a line with a space after the code.
 function makeReader(socket) {
   let buffer = '';
   let pending = null;
@@ -58,7 +58,7 @@ function makeReader(socket) {
     settle();
   });
   socket.on('close', () => {
-    failure = failure || new Error('SMTP: соединение закрыто');
+    failure = failure || new Error('SMTP: connection closed');
     settle();
   });
 
@@ -69,7 +69,7 @@ function makeReader(socket) {
         settle();
       });
     },
-    // Читатель переносим на TLS-сокет после STARTTLS.
+    // The reader moves over to the TLS socket after STARTTLS.
     detach() {
       socket.removeAllListeners('data');
     },
@@ -78,7 +78,7 @@ function makeReader(socket) {
 
 function withTimeout(promise, what) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`SMTP: таймаут на ${what}`)), TIMEOUT_MS);
+    const timer = setTimeout(() => reject(new Error(`SMTP: timeout on ${what}`)), TIMEOUT_MS);
     promise.then(
       (v) => {
         clearTimeout(timer);
@@ -127,13 +127,13 @@ function upgrade(socket) {
   });
 }
 
-// Тема письма — UTF-8, поэтому кодируем по RFC 2047.
+// The subject is UTF-8, so it is encoded per RFC 2047.
 function encodeHeader(value) {
   if (/^[\x20-\x7e]*$/.test(value)) return value;
   return `=?UTF-8?B?${Buffer.from(value, 'utf8').toString('base64')}?=`;
 }
 
-// Тело шлём base64: это разом решает и UTF-8, и точку в начале строки.
+// The body is sent as base64: that handles both UTF-8 and a leading dot at once.
 function encodeBody(text) {
   const b64 = Buffer.from(text.replace(/\r?\n/g, '\r\n'), 'utf8').toString('base64');
   return (b64.match(/.{1,76}/g) || []).join('\r\n');
@@ -156,15 +156,15 @@ function buildMessage({ to, subject, text }) {
 }
 
 async function sendMail({ to, subject, text }) {
-  if (!mailConfigured()) throw new Error('SMTP не настроен');
+  if (!mailConfigured()) throw new Error('SMTP is not configured');
 
-  let socket = await withTimeout(connect(MODE === 'implicit'), 'подключение');
+  let socket = await withTimeout(connect(MODE === 'implicit'), 'connect');
   let reader = makeReader(socket);
 
   const expect = async (want, what) => {
     const reply = await withTimeout(reader.read(), what);
     if (!want.includes(reply.code)) {
-      throw new Error(`SMTP: на «${what}» пришло ${reply.text.split('\n')[0]}`);
+      throw new Error(`SMTP: got ${reply.text.split('\n')[0]} on "${what}"`);
     }
     return reply;
   };
@@ -172,7 +172,7 @@ async function sendMail({ to, subject, text }) {
   let finished = false;
 
   try {
-    await expect([220], 'приветствие');
+    await expect([220], 'greeting');
     say(`EHLO ${FROM.includes('@') ? FROM.split('@')[1] : 'localhost'}`);
     let hello = await expect([250], 'EHLO');
 
@@ -180,23 +180,23 @@ async function sendMail({ to, subject, text }) {
       say('STARTTLS');
       await expect([220], 'STARTTLS');
       reader.detach();
-      socket = await withTimeout(upgrade(socket), 'TLS-рукопожатие');
+      socket = await withTimeout(upgrade(socket), 'TLS handshake');
       reader = makeReader(socket);
       say(`EHLO ${FROM.includes('@') ? FROM.split('@')[1] : 'localhost'}`);
-      hello = await expect([250], 'EHLO после STARTTLS');
+      hello = await expect([250], 'EHLO after STARTTLS');
     }
 
     if (USER) {
-      // AUTH LOGIN понимают все, с кем этот сервис реально столкнётся.
+      // Every server this service will realistically meet understands AUTH LOGIN.
       if (!/AUTH[ -=].*LOGIN/i.test(hello.text)) {
-        throw new Error('SMTP: сервер не предлагает AUTH LOGIN');
+        throw new Error('SMTP: server does not offer AUTH LOGIN');
       }
       say('AUTH LOGIN');
       await expect([334], 'AUTH LOGIN');
       say(Buffer.from(USER, 'utf8').toString('base64'));
-      await expect([334], 'имя пользователя');
+      await expect([334], 'username');
       say(Buffer.from(SECRET, 'utf8').toString('base64'));
-      await expect([235], 'вход');
+      await expect([235], 'login');
     }
 
     say(`MAIL FROM:<${FROM}>`);
@@ -207,8 +207,8 @@ async function sendMail({ to, subject, text }) {
     await expect([354], 'DATA');
     socket.write(buildMessage({ to, subject, text }));
     say('.');
-    await expect([250], 'приём письма');
-    // Прощаемся по-человечески: QUIT и закрытие записи, без обрыва сокета.
+    await expect([250], 'message acceptance');
+    // Say goodbye properly: QUIT and close the write side, without dropping the socket.
     finished = true;
     socket.end('QUIT\r\n');
   } finally {

@@ -2,8 +2,9 @@
 Description=ICQ Revival - IM server (OSCAR, TOC, Kerberos, legacy ICQ)
 After=network-online.target
 Wants=network-online.target
-# Страницы регистрации бесполезны без сервера, но и отставать от него не
-# должны: Upholds поднимает их следом, PartOf в их юните гасит вместе с ним.
+# The registration pages are useless without the server, but must not lag
+# behind it either: Upholds starts them after it, PartOf in their unit stops
+# them together with it.
 Upholds=oscar-register.service
 Upholds=oscar-legacy-web.service
 

@@ -1,23 +1,23 @@
 'use strict';
 
-// Страница профиля: показывает и правит анкету ICQ, пароль и адрес почты.
+// Profile page: shows and edits the ICQ profile, the password and the mail address.
 //
-// Отдельным файлом, потому что разметка большая, а server.js и без неё не
-// маленький. Строки словаря отдаются наружу и подмешиваются в общий I18N —
-// иначе переключение языка на странице работать не будет.
+// A separate file because the markup is large, and server.js is not small
+// even without it. The dictionary strings are exported and merged into the
+// shared I18N; otherwise switching the language on the page would not work.
 //
-// Анкета читается и пишется через управляющий API (`/user/{uin}/icq`), а не
-// прямо в базу: тогда правки с этой страницы проходят те же проверки, что и
-// правки из клиента, включая «один адрес — одна учётная запись».
+// The profile is read and written through the management API (`/user/{uin}/icq`),
+// not directly in the database: that way edits from this page pass the same
+// checks as edits from the client, including "one address, one account".
 //
-// Часового пояса в форме нет намеренно: в каком виде ICQ хранит GMTOffset, по
-// коду сервера не видно, а записать наугад — испортить анкету. Его по-прежнему
-// ставит клиент.
+// The form deliberately has no time zone: how ICQ stores GMTOffset is not clear
+// from the server code, and writing a guess would corrupt the profile. The
+// client still sets it.
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Справочники кодов взяты из файлов самого клиента (DataFiles/*.fld, *.txt).
+// The code lists are taken from the client's own files (DataFiles/*.fld, *.txt).
 const CODES = JSON.parse(fs.readFileSync(path.join(__dirname, 'icq-codes.json'), 'utf8'));
 
 const STRINGS = {
@@ -171,9 +171,9 @@ const STRINGS = {
   },
 };
 
-// Поля, которые страница показывает как обычный текстовый ввод: ключ в JSON
-// управляющего API, ключ подписи, максимальная длина (та же, что проверяет
-// сервер, — чтобы отказ не приходил после отправки).
+// Fields the page shows as plain text inputs: the key in the management API
+// JSON, the label key, and the maximum length (the same one the server checks,
+// so the rejection does not arrive only after submitting).
 const BASIC_TEXT = [
   ['nickname', 'pfNickname', 20],
   ['first_name', 'pfFirstName', 64],
@@ -233,7 +233,7 @@ function checkRow(id, labelKey, t, hintKey) {
     </div>`;
 }
 
-// deps: всё, что страница берёт у сервиса, — оформление, словарь, языки.
+// deps: everything the page takes from the service: styling, dictionary, languages.
 function renderProfilePage(lang, deps) {
   const { STYLE, FAVICON, header, footer, I18N, LANGS, PASS_MAX, EMAIL_MAX, serializeI18N, adminLink } = deps;
   const t = I18N[lang];
@@ -439,8 +439,8 @@ try {
 } catch {}
 let t = I18N[lang];
 
-// Пароль живёт только в памяти вкладки: каждый запрос к серверу подписывается
-// им заново, хранить его негде и незачем.
+// The password lives only in the tab's memory: every request to the server is
+// signed with it afresh, and there is neither a place nor a reason to store it.
 let session = null;
 let lastMessage = null;
 
@@ -477,8 +477,8 @@ function renderMessage() {
   msgEl.hidden = false;
 }
 
-// Страница длинная: без этого ответ остался бы за верхним краем экрана.
-// Только на новый ответ — при смене языка дёргать прокрутку незачем.
+// The page is long: without this the reply would stay above the top of the screen.
+// Only for a new reply; there is no reason to jump the scroll on a language switch.
 function reveal() {
   try { msgEl.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch {}
 }
@@ -486,7 +486,7 @@ function reveal() {
 function ok(title, text, arg) { lastMessage = { kind: 'ok', title, text, arg }; renderMessage(); reveal(); }
 function fail(payload, offline) { lastMessage = { kind: 'err', payload, offline }; renderMessage(); reveal(); }
 
-// Выпадающие списки заполняются справочниками клиента; 0 значит «не выбрано».
+// Drop-down lists are filled from the client's code lists; 0 means "not selected".
 function fillSelect(el, table, extra) {
   el.innerHTML = '';
   const none = document.createElement('option');
@@ -561,7 +561,7 @@ function showProfile(p) {
   $('x_allow_spam').checked = Boolean(p.permissions.allow_spam);
 }
 
-// Собираем целиком: управляющий API принимает анкету одним PUT.
+// Build it in full: the management API takes the profile in a single PUT.
 function collectProfile(uin) {
   const basic = { country_code: getNumber('b_country_code'), publish_email: $('x_publish_email').checked };
   for (const key of BASIC_TEXT) basic[key] = getValue('b_' + key);
@@ -691,7 +691,7 @@ $('secret').addEventListener('click', async () => {
       next: next, next2: $('next2').value, lang: lang,
     });
     if (!res.ok) { fail(payload); return; }
-    // Пароль сменился — прежний больше не подпишет запросы.
+    // The password has changed; the old one will no longer sign requests.
     session.current = next;
     $('next').value = '';
     $('next2').value = '';

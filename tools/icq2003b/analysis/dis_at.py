@@ -10,4 +10,4 @@ md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
 for ins in md.disasm(bytes(data), va):
     fo = off + (ins.address - va)
     raw = ' '.join(f'{b:02x}' for b in ins.bytes)
-    print(f'  файл 0x{fo:05x}  0x{ins.address:08x}  {raw:<20}  {ins.mnemonic} {ins.op_str}')
+    print(f'  file 0x{fo:05x}  0x{ins.address:08x}  {raw:<20}  {ins.mnemonic} {ins.op_str}')

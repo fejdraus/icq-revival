@@ -1,7 +1,7 @@
-# Справочники кодов ICQ — из файлов самого клиента, а не придуманные.
+# ICQ code lists, taken from the client's own files rather than made up.
 #
 # .fld:  <item><code=100><icon=00><name="Art"></item>
-# .txt:  код<TAB>название
+# .txt:  code<TAB>name
 import io
 import json
 import re
@@ -59,8 +59,8 @@ for key, table in codes.items():
     sample = list(table.items())[:3]
     print('   ', sample)
 
-# Ключи JSON — строки; выдерживаем порядок по коду, чтобы файл читался глазами.
+# JSON keys are strings; keep them in code order so the file is easy to read.
 ordered = {k: {str(c): n for c, n in sorted(v.items())} for k, v in codes.items()}
 io.open(OUT, 'w', encoding='utf-8', newline='\n').write(
     json.dumps(ordered, ensure_ascii=False, indent=1) + '\n')
-print('записано в', OUT)
+print('written to', OUT)

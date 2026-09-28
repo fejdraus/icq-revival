@@ -1,20 +1,21 @@
-# Собирает наши файлы для PluginUpdater в том виде, в каком он их качает.
+# Builds our files for PluginUpdater in the form it downloads them.
 #
-# Сервер (deploy/oscar-legacy-web, /miranda/stable/x32 и /x64) отдаёт список
-# обновлений Miranda NG со своими строками для наших файлов и сами пакеты.
-# Строка списка — "<путь> <хэш> <crc32 пакета>", пакет — zip с тем же путём
-# от папки Miranda внутри. Хэш — не MD5 файла, а CalculateModuleHash из
-# PluginUpdater (checksum.cpp): MD5 данных секций PE после обнуления меток
-# времени отладки, экспорта и ресурсов и приведения релокаций к базе 0; не-PE
-# (переводы) — MD5 всего файла. Поэтому хэши считает этот скрипт, а сервер
-# берёт готовые из manifest.json.
+# The server (deploy/oscar-legacy-web, /miranda/stable/x32 and /x64) serves the
+# Miranda NG update list with its own lines for our files, and the packages
+# themselves. A list line is "<path> <hash> <package crc32>"; a package is a zip
+# holding the file under the same path, relative to the Miranda folder. The hash
+# is not the file's MD5 but PluginUpdater's CalculateModuleHash (checksum.cpp):
+# the MD5 of the PE section data after the debug, export and resource
+# timestamps are zeroed and the relocations are rebased to 0; for non-PE files
+# (translations) it is the MD5 of the whole file. That is why this script
+# computes the hashes and the server takes them ready-made from manifest.json.
 #
-#   python make-update-packages.py <выходной-каталог> [--engine32 dll] [--engine64 dll]
-#   python make-update-packages.py --hash <файл...>      только хэши, для сверки
+#   python make-update-packages.py <output-dir> [--engine32 dll] [--engine64 dll]
+#   python make-update-packages.py --hash <file...>      hashes only, for checking
 #
-# Результат — <каталог>/x32 и <каталог>/x64: Plugins/IcqOscarJ.zip,
-# Plugins/IcqRevivalFlash.zip, Libs/FlashPlayerControl.zip, Languages/*.zip и
-# manifest.json. Этот каталог и кладётся на сервер (см. README).
+# The result is <dir>/x32 and <dir>/x64: Plugins/IcqOscarJ.zip,
+# Plugins/IcqRevivalFlash.zip, Libs/FlashPlayerControl.zip, Languages/*.zip and
+# manifest.json. This directory is what goes onto the server (see README).
 import argparse
 import hashlib
 import io
@@ -29,10 +30,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
 ENGINE = os.path.join(ROOT, 'tools', 'icq65', 'flashplayer', 'target')
 
-# Строки, которые сервер дописывает в основной langpack_russian.txt, если их там
-# нет: без них ядро не прочтёт переводы плагинов, а обновление langpack с
-# сервера Miranda NG их стирает. drop — строки старых имён, которые сервер
-# убирает (до 1.1 Flash-плагин назывался FlashAvatars.dll).
+# Lines the server appends to the main langpack_russian.txt when they are
+# missing: without them the core does not read the plugins' translations, and
+# updating the langpack from the Miranda NG server wipes them out. drop lists
+# lines with old names that the server removes (before 1.1 the Flash plugin was
+# called FlashAvatars.dll).
 LANGPACK_INCLUDES = {
     'Languages\\langpack_russian.txt': {
         'add': [
@@ -45,7 +47,7 @@ LANGPACK_INCLUDES = {
 
 
 def module_hash(path):
-    """CalculateModuleHash из PluginUpdater 0.96.7, байт в байт."""
+    """CalculateModuleHash from PluginUpdater 0.96.7, byte for byte."""
     with open(path, 'rb') as f:
         b = bytearray(f.read())
     size = len(b)
@@ -75,9 +77,9 @@ def module_hash(path):
     magic = u16(nt + 24)
     if not sections:
         raise ValueError('no sections: ' + path)
-    # как в исходнике: e_lfanew + SizeOfOptionalHeader + sizeof(IMAGE_NT_HEADERS)
-    # - sizeof(IMAGE_OPTIONAL_HEADER); последние два — от той разрядности, под
-    # которую собран сам PluginUpdater, но разность у обеих одна: 24
+    # as in the source: e_lfanew + SizeOfOptionalHeader + sizeof(IMAGE_NT_HEADERS)
+    # - sizeof(IMAGE_OPTIONAL_HEADER); the last two depend on the bitness
+    # PluginUpdater itself is built for, but the difference is the same for both: 24
     offset = nt + opt_size + 24
     if machine == 0x14C and opt_size >= 224 and magic == 0x10B:
         dd = nt + 24 + 96
@@ -109,7 +111,7 @@ def module_hash(path):
         va, raw_size, _ = sec
         return addr >= va and addr + length <= va + raw_size
 
-    dbg = None      # смещение первой записи отладки в файле
+    dbg = None      # file offset of the first debug entry
     reloc = None
     for i in range(sections):
         sec = section(i)
@@ -167,7 +169,7 @@ def module_hash(path):
                             else:
                                 v = struct.unpack_from('<Q', b, at)[0]
                                 struct.pack_into('<Q', b, at, (v - base) & 0xFFFFFFFFFFFFFFFF)
-                        elif typ == 0:   # ABSOLUTE: конец блока
+                        elif typ == 0:   # ABSOLUTE: end of block
                             length = 0
                         length -= 2
                         pw += 2
@@ -180,10 +182,11 @@ def module_hash(path):
 
 
 def package(rel_path, data):
-    """Zip, какой ждёт PluginUpdater: один файл, путь от папки Miranda.
+    """A zip the way PluginUpdater expects it: one file, path relative to the Miranda folder.
 
-    Атрибуты — как у файла DOS (архивный): PluginUpdater передаёт их в
-    CreateFile как есть, и права Unix в старших битах стали бы флагами."""
+    The attributes are those of a DOS file (archive): PluginUpdater passes them
+    to CreateFile as they are, and Unix permissions in the high bits would turn
+    into flags."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         info = zipfile.ZipInfo(rel_path.replace('\\', '/'), date_time=(2026, 1, 1, 0, 0, 0))
@@ -210,7 +213,7 @@ def build(out, platform, engine):
     files = []
     for rel, src in sources(platform, engine):
         if not os.path.isfile(src):
-            raise SystemExit(f'нет файла {src}')
+            raise SystemExit(f'no such file: {src}')
         with open(src, 'rb') as f:
             data = f.read()
         body = package(rel, data)
@@ -245,7 +248,7 @@ def main():
             print(module_hash(p), p)
         return
     if not a.out:
-        ap.error('нужен выходной каталог')
+        ap.error('an output directory is required')
     build(a.out, 'x32', a.engine32)
     build(a.out, 'x64', a.engine64)
 

@@ -46,7 +46,7 @@ async function get(url) {
   return { status: res.status, body: Buffer.from(await res.arrayBuffer()) };
 }
 
-const LANGPACK = Buffer.from('Miranda Language Pack Version 1\r\n[Hello]\r\nПривет\r\n#include langpack_russian_flashavatars.txt\r\n', 'utf8');
+const LANGPACK = Buffer.from('Miranda Language Pack Version 1\r\n[Hello]\r\nПривіт\r\n#include langpack_russian_flashavatars.txt\r\n', 'utf8');
 const STOCK_ICQ = writeZip([['Plugins/IcqOscarJ.dll', Buffer.from('stock')]]);
 const DUMMY = writeZip([['Plugins/Dummy.dll', Buffer.from('dummy v2')]]);
 const LANGPACK_ZIP = writeZip([['Languages/langpack_russian.txt', LANGPACK]]);
@@ -187,7 +187,7 @@ test('the list: our lines in, stock ones out, rules cleaned, translation patched
   const text = readZip(pkg.body).get('Languages/langpack_russian.txt');
   assert.equal(md5(text), hash);
   assert.ok(text.toString('utf8').endsWith(
-    'Привет\r\n#include langpack_russian_icq.txt\r\n#include langpack_russian_icqrevivalflash.txt\r\n'));
+    'Привіт\r\n#include langpack_russian_icq.txt\r\n#include langpack_russian_icqrevivalflash.txt\r\n'));
 
   // Our package, whatever the case of the file name.
   const ours = await get(`${srv.url}/x32/Plugins/icqoscarj.zip`);

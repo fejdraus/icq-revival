@@ -1,7 +1,7 @@
 #!/bin/bash
-# Резервное копирование базы Open OSCAR Server.
-# Используется команда SQLite .backup — она делает согласованную копию
-# на работающем сервере, без остановки сервиса.
+# Backs up the Open OSCAR Server database.
+# Uses SQLite's VACUUM INTO (through node:sqlite, below): it makes a consistent
+# copy of a running server without stopping the service.
 set -euo pipefail
 
 # Both can be overridden, which is how the container runs it; the defaults are
@@ -14,7 +14,7 @@ mkdir -p "$DEST"
 stamp=$(date +%Y%m%d-%H%M)
 out="$DEST/oscar-$stamp.sqlite"
 
-# node:sqlite умеет VACUUM INTO — согласованная копия без блокировки записи
+# node:sqlite can do VACUUM INTO: a consistent copy without blocking writes
 node -e "
 const {DatabaseSync} = require('node:sqlite');
 const db = new DatabaseSync('$DB', {readOnly: true});
@@ -29,7 +29,7 @@ if id oscar >/dev/null 2>&1 && [ "$(id -u)" = 0 ]; then
     chown -R oscar:oscar "$DEST"
 fi
 
-# Ротация: удаляем копии старше KEEP_DAYS дней
+# Rotation: delete copies older than KEEP_DAYS days
 find "$DEST" -name 'oscar-*.sqlite.gz' -type f -mtime +"$KEEP_DAYS" -delete
 
 count=$(find "$DEST" -name 'oscar-*.sqlite.gz' -type f | wc -l)

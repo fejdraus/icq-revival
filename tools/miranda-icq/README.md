@@ -1,660 +1,676 @@
-# Плагин ICQ для Miranda NG
+# ICQ plugin for Miranda NG
 
-Протокол ICQ (`IcqOscarJ`) удалён из Miranda NG и лежит в её репозитории как
-`NotWorkingStuff/Deprecated/IcqOscarJ` — он не собирается против нынешнего API.
-`IcqOscarJ.diff` переносит его на актуальные заголовки и переводит зашитые
-ссылки на наш сервер. Правки минимальные: только то, без чего не собирается,
-плюс подстановка адреса.
+The ICQ protocol (`IcqOscarJ`) was removed from Miranda NG and sits in its repository
+as `NotWorkingStuff/Deprecated/IcqOscarJ`; it does not build against the current API.
+`IcqOscarJ.diff` ports it to the current headers and points the hard-coded links at
+our server. The changes are minimal: only what it will not build without, plus the
+address substitution.
 
-## Что лежит рядом
+## What is here
 
-| Файл | Что это |
+| File | What it is |
 |------|---------|
-| `IcqOscarJ.diff` | заплатка к `NotWorkingStuff/Deprecated/IcqOscarJ`, 41 файл |
-| `build/x32/IcqOscarJ.dll` | собрано под ядро 0.96.7, для `miranda32.exe` |
-| `build/x64/IcqOscarJ.dll` | то же для `miranda64.exe` |
-| `IcqRevivalFlash/` | исходники плагина анимированных аватаров и tZers ICQ 6 (до 1.1 — `FlashAvatars`), см. ниже |
-| `langpack_russian_icqrevivalflash.txt` | его русский перевод, в том числе названия tZers из ICQ 6.5 |
-| `build/x32/IcqRevivalFlash.dll`, `build/x64/IcqRevivalFlash.dll` | он же, собранный под ядро 0.96.7 |
-| `langpack_russian_icq.txt` | русский перевод плагина, готовый к установке |
-| `langpack-extra-ru.txt` | строки, которых нет ни в одном паке, — источник для сборщика |
-| `make-langpack.py` | собирает перевод заново |
-| `make-update-packages.py` | пакеты и хэши для `PluginUpdater` на нашем сервере, см. «Обновления через наш сервер» |
-| `Install-IcqRevival.ps1` | установка в папку Miranda с резервной копией: плагины, перевод, заплатка скина |
-| `ieview-mirandafinal/` | заплатка скина IEView «MirandaFinal»: текст сообщений вне JavaScript, картинки tZers, см. его README |
+| `IcqOscarJ.diff` | patch for `NotWorkingStuff/Deprecated/IcqOscarJ`, 41 files |
+| `build/x32/IcqOscarJ.dll` | built for core 0.96.7, for `miranda32.exe` |
+| `build/x64/IcqOscarJ.dll` | the same for `miranda64.exe` |
+| `IcqRevivalFlash/` | source of the plugin for ICQ 6 animated avatars and tZers (`FlashAvatars` before 1.1), see below |
+| `langpack_russian_icqrevivalflash.txt` | its Russian translation, including the tZer names from ICQ 6.5 |
+| `build/x32/IcqRevivalFlash.dll`, `build/x64/IcqRevivalFlash.dll` | the same plugin, built for core 0.96.7 |
+| `langpack_russian_icq.txt` | Russian translation of the plugin, ready to install |
+| `langpack-extra-ru.txt` | strings that are in no pack at all; input for the builder |
+| `make-langpack.py` | rebuilds the translation |
+| `make-update-packages.py` | packages and hashes for `PluginUpdater` on our server, see "Updates through our server" |
+| `Install-IcqRevival.ps1` | installs into a Miranda folder with a backup: plugins, translation, skin patch |
+| `ieview-mirandafinal/` | patch for the IEView skin "MirandaFinal": message text outside JavaScript, tZer pictures, see its README |
 
-## Установка
+## Installation
 
-Положить нужную разрядность в `Plugins\` рядом с остальными — или, при
-закрытой Miranda, `Install-IcqRevival.ps1 -Miranda <папка>`: он кладёт обе
-сборки нужной разрядности и движок Flash, подключает перевод, накладывает
-заплатку на скин MirandaFinal (если он есть) и всё заменённое сохраняет в
-`_revival-backup\<время>\` с `MANIFEST.txt`.
+Put the build of the right bitness into `Plugins\` next to the others. Or, with
+Miranda closed, run `Install-IcqRevival.ps1 -Miranda <folder>`: it puts in both
+builds of the right bitness and the Flash engine, hooks up the translation, patches
+the MirandaFinal skin (if it is there), and saves everything it replaces into
+`_revival-backup\<time>\` with a `MANIFEST.txt`.
 
-Имя файла намеренно не `ICQ.dll`. `PluginUpdater` сверяет **хэш каждого файла**
-со списком на сервере обновлений (`DlgUpdate.cpp`, `CalculateModuleHash`), номер
-версии он не смотрит вовсе. Список Miranda NG нашей сборки не знает, поэтому под
-именем `ICQ.dll` она вечно значится «Устарело!», а «Обновить» заменяет её
-серверной — то есть версией с запрещённым UUID, после чего плагин молча
-перестаёт грузиться.
+The file name is deliberately not `ICQ.dll`. `PluginUpdater` compares **the hash of
+every file** with the list on the update server (`DlgUpdate.cpp`,
+`CalculateModuleHash`) and does not look at the version number at all. The Miranda NG
+list does not know our build, so under the name `ICQ.dll` it always shows as
+"Outdated!", and "Update" replaces it with the server's build, that is, the version
+with the banned UUID, after which the plugin silently stops loading.
 
-### Обновления через наш сервер
+### Updates through our server
 
-Сервер входа отдаёт тот же список Miranda NG, но с нашими файлами
-(`deploy/oscar-legacy-web/miranda-updates.js`, адрес
-`https://<сервер>:8102/miranda/stable/x32` и `/x64`). IcqOscarJ при запуске
-направляет туда `PluginUpdater`: режим «свой адрес» (`PluginUpdater/UpdateMode`
-= 0), `UpdateURL` = `https://<хост из OscarServer первой включённой учётной
-записи ICQ>:8102/miranda/stable/x%platform%`; `%platform%` сам `PluginUpdater`
-заменяет на 32 или 64 по своей разрядности. Домен не зашит, порт и путь
-подставляет плагин. Записанный адрес запоминается в `IcqRevival/UpdateURL`:
+The sign-in server serves the same Miranda NG list, but with our files
+(`deploy/oscar-legacy-web/miranda-updates.js`, address
+`https://<server>:8102/miranda/stable/x32` and `/x64`). On startup IcqOscarJ points
+`PluginUpdater` there: the "custom address" mode (`PluginUpdater/UpdateMode` = 0),
+`UpdateURL` = `https://<host from OscarServer of the first enabled ICQ
+account>:8102/miranda/stable/x%platform%`; `PluginUpdater` itself replaces
+`%platform%` with 32 or 64 according to its bitness. The domain is not hard-coded;
+the plugin fills in the port and path. The address it wrote is remembered in
+`IcqRevival/UpdateURL`:
 
-- адреса ещё не ставили, а у `PluginUpdater` уже свой адрес — он пользовательский,
-  не трогаем;
-- ставили, и `PluginUpdater` смотрит туда же — обновляем, если сменился сервер
-  входа;
-- ставили, а пользователь потом выбрал другое (свой адрес или «стабильные») —
-  больше не трогаем.
+- the address has not been set yet, but `PluginUpdater` already has its own address:
+  that one is the user's, leave it alone;
+- it was set, and `PluginUpdater` still points to the same place: update it if the
+  sign-in server has changed;
+- it was set, but the user later chose something else (their own address or
+  "stable"): do not touch it again.
 
-Скрытая `IcqRevival/UpdateBase` (полный адрес без `/x..`) заменяет выведенный —
-для проверки на своём стенде.
+The hidden `IcqRevival/UpdateBase` (the full address without `/x..`) overrides the
+derived one, for testing on your own test setup.
 
-Список сервера составлен так, что `PluginUpdater` обновляет наши файлы нашими же
-сборками и никогда — чужими:
+The server's list is built so that `PluginUpdater` updates our files with our own
+builds and never with someone else's:
 
-- строки `Plugins\IcqOscarJ.dll`, `Plugins\IcqRevivalFlash.dll`,
-  `Libs\FlashPlayerControl.dll` и двух наших переводов — наши, с хэшами наших
-  сборок, остальные строки — как у Miranda NG; строк Miranda NG под нашими
-  именами, в том числе старыми, нет, даже когда наших пакетов на сервере нет;
-- правила `rules.txt`, которые удалили бы наши файлы или унесли их в другое
-  место, и зависимости наших модулей выброшены; правило, оставляющее файл где
-  он есть (`"langpack_*.txt": "Languages\\*"` у Miranda NG), остаётся;
-- впереди правил — наши переименования старых имён (см. ниже);
-- основной `langpack_russian.txt` — как у Miranda NG, но с дописанными строками
-  `#include langpack_russian_icq.txt` и `#include langpack_russian_icqrevivalflash.txt`
-  (и без `#include langpack_russian_flashavatars.txt`), иначе его обновление
-  отрезало бы переводы плагинов; не удалось скачать его пакет — строки нет
-  вовсе, и файл остаётся как есть;
-- прочие пакеты отдаются с сервера Miranda NG байт в байт, только те, что есть в
-  его текущем списке.
+- the lines for `Plugins\IcqOscarJ.dll`, `Plugins\IcqRevivalFlash.dll`,
+  `Libs\FlashPlayerControl.dll` and our two translations are ours, with the hashes
+  of our builds; the other lines are as in Miranda NG. There are no Miranda NG lines
+  under our names, including the old ones, even when our packages are missing from
+  the server;
+- the `rules.txt` rules that would delete our files or move them elsewhere, and the
+  dependencies of our modules, are dropped; a rule that leaves a file where it is
+  (`"langpack_*.txt": "Languages\\*"` in Miranda NG) stays;
+- our renames of old names come before the rules (see below);
+- the main `langpack_russian.txt` is as in Miranda NG, but with the lines
+  `#include langpack_russian_icq.txt` and `#include langpack_russian_icqrevivalflash.txt`
+  appended (and without `#include langpack_russian_flashavatars.txt`); otherwise
+  updating it would cut off the plugins' translations. If its package could not be
+  downloaded, there is no line for it at all, and the file stays as it is;
+- other packages are served byte for byte from the Miranda NG server, and only those
+  that are in its current list.
 
-Хэш в списке — не MD5 файла, а `CalculateModuleHash` из `checksum.cpp`: MD5
-данных секций PE после обнуления меток времени (отладка, экспорт, ресурсы) и
-приведения релокаций к базе 0; у переводов — MD5 всего файла. Его считает
-`make-update-packages.py`; на 125 файлах (x86 и x64, PE и текст) он совпал с
-самим `checksum.cpp`, собранным отдельно под обе разрядности.
+The hash in the list is not the file's MD5 but `CalculateModuleHash` from
+`checksum.cpp`: the MD5 of the PE section data after zeroing the timestamps (debug,
+export, resources) and rebasing the relocations to 0; for translations it is the MD5
+of the whole file. `make-update-packages.py` computes it; on 125 files (x86 and x64,
+PE and text) it matched `checksum.cpp` itself, built separately for both bitnesses.
 
-Пока `PluginUpdater` берёт список с нашего сервера, он должен и обновлять наши
-файлы. Иначе они исключены: модуль `PluginUpdaterFiles`, параметр — путь файла
-от папки Miranda строчными (`plugins\icqoscarj.dll`; ключ — `wszBuf +
-cbBaseLen`, без начальной косой черты), тип BYTE, значение `2`. Такой файл
-`PluginUpdater` не обновляет и не удаляет (`ScanFolder`, после разбора правил) и
-не распаковывает (`unzipfile.cpp`, `IsFilteredFile`). Плагины ставят `2`, когда
-список чужой, и снимают его, когда список наш; пишут, только если значение
-меняется. IcqOscarJ отвечает за себя, `languages\langpack_russian_icq.txt` и
-файлы IcqRevivalFlash, IcqRevivalFlash — за себя, `libs\flashplayercontrol.dll`
-и `languages\langpack_russian_icqrevivalflash.txt`. Модуль под чужим именем
-(скажем, `ICQ.dll`) защищён всегда: список принёс бы под этим именем чужой файл.
+While `PluginUpdater` takes the list from our server, it should update our files as
+well. Otherwise they are excluded: module `PluginUpdaterFiles`, setting name is the
+file path relative to the Miranda folder in lower case (`plugins\icqoscarj.dll`; the
+key is `wszBuf + cbBaseLen`, without a leading slash), type BYTE, value `2`.
+`PluginUpdater` does not update or delete such a file (`ScanFolder`, after the rules
+are parsed) and does not unpack it (`unzipfile.cpp`, `IsFilteredFile`). The plugins
+set `2` when the list is someone else's and clear it when the list is ours; they
+write only when the value changes. IcqOscarJ is responsible for itself,
+`languages\langpack_russian_icq.txt` and the IcqRevivalFlash files; IcqRevivalFlash
+for itself, `libs\flashplayercontrol.dll` and
+`languages\langpack_russian_icqrevivalflash.txt`. A module under a different name
+(say, `ICQ.dll`) is always protected: the list would bring someone else's file under
+that name.
 
-### Старое имя: FlashAvatars.dll
+### Old name: FlashAvatars.dll
 
-До 1.1 Flash-плагин назывался `FlashAvatars.dll`, а это имя занято: в
-`rules.txt` Miranda NG (x32 и x64) есть `"flashavatars.dll": null` — так она
-удаляет свой одноимённый плагин, убранный в 2014 году. Обычный `PluginUpdater`
-стёр бы наш. Поэтому теперь он `IcqRevivalFlash.dll`, модуль настроек и
-пользователь журнала — `IcqRevivalFlash`, перевод —
-`langpack_russian_icqrevivalflash.txt`; UUID и capability прежние, настройки
-контактов (`FlashAvatarHash`/`FlashAvatarUrl` в модуле учётки ICQ) тоже.
+Before 1.1 the Flash plugin was called `FlashAvatars.dll`, and that name is taken:
+the Miranda NG `rules.txt` (x32 and x64) contains `"flashavatars.dll": null`, which
+is how it deletes its own plugin of the same name, removed in 2014. A regular
+`PluginUpdater` would erase ours. So it is now `IcqRevivalFlash.dll`, the settings
+module and the log user are `IcqRevivalFlash`, and the translation is
+`langpack_russian_icqrevivalflash.txt`; the UUID and capability are unchanged, and so
+are the contact settings (`FlashAvatarHash`/`FlashAvatarUrl` in the ICQ account
+module).
 
-Как переезжают старые установки:
+How old installations move over:
 
-- **через наш список.** `PluginUpdater` обновляет только те файлы, что лежат на
-  месте, поэтому сервер кладёт в начало `rules.txt` переименования
-  `"FlashAvatars.dll": "Plugins\\IcqRevivalFlash.dll"` и
+- **through our list.** `PluginUpdater` only updates files that are in place, so the
+  server puts the renames
+  `"FlashAvatars.dll": "Plugins\\IcqRevivalFlash.dll"` and
   `"langpack_russian_flashavatars.txt": "Languages\\langpack_russian_icqrevivalflash.txt"`
-  (только если пакет нового имени есть). `PluginUpdater` берёт первое
-  совпавшее правило, сверяет старый файл со строкой нового имени, при
-  «Обновить» уносит старый в резервную копию и распаковывает новый
-  (`DlgUpdate.cpp`, `ApplyUpdates`). Отметку `PluginUpdaterFiles` он проверяет
-  по старому пути — её снимают сборки 2e228c7, пока список наш;
-- **вручную** — положить новые файлы, старые убрать, в `langpack_russian.txt`
-  заменить `#include langpack_russian_flashavatars.txt` на
+  at the start of `rules.txt` (only if a package under the new name exists).
+  `PluginUpdater` takes the first matching rule, compares the old file with the line
+  for the new name, and on "Update" moves the old file into the backup and unpacks
+  the new one (`DlgUpdate.cpp`, `ApplyUpdates`). It checks the `PluginUpdaterFiles`
+  mark by the old path; builds 2e228c7 clear it while the list is ours;
+- **by hand**: put in the new files, remove the old ones, and in
+  `langpack_russian.txt` replace `#include langpack_russian_flashavatars.txt` with
   `#include langpack_russian_icqrevivalflash.txt`.
 
-Новый плагин и IcqOscarJ снимают отметки со старых путей, когда список наш или
-старого файла уже нет; старый файл при чужом списке остаётся защищённым, иначе
-Miranda NG его удалила бы. Один раз при запуске настройки модуля `FlashAvatars`
-(в том числе журнала) переносятся в `IcqRevivalFlash` — то, что уже задано под
-новым именем, не трогается, — вместе с местом кнопки tZers на панели окна
-сообщений (`SRMM_Toolbar`/`TabSRMM_Toolbar`, `FlashAvatars_1`) и своей иконкой
-tZers (`SkinIcons/FlashAvatars_tzer`).
+The new plugin and IcqOscarJ clear the marks from the old paths when the list is ours
+or the old file is already gone; with someone else's list the old file stays
+protected, otherwise Miranda NG would delete it. Once, on startup, the settings of
+the `FlashAvatars` module (including the log) are moved to `IcqRevivalFlash`
+(anything already set under the new name is left alone), together with the position
+of the tZers button on the message window toolbar (`SRMM_Toolbar`/`TabSRMM_Toolbar`,
+`FlashAvatars_1`) and the custom tZers icon (`SkinIcons/FlashAvatars_tzer`).
 
-Проверено на копии 0.96.7 с установленными сборками 2e228c7
-(`FlashAvatars.dll`, его перевод, `#include` старого имени) и настоящими
-списками Miranda NG stable x32 (в подменённой строке только
-`langpack_russian.txt`: его пакета здесь нет, он собран из перевода копии):
-`PluginUpdater` предложил `IcqOscarJ.dll`, `FlashAvatars.dll`,
-`langpack_russian_flashavatars.txt` и `langpack_russian.txt`; после
-«Обновить» и перезапуска `FlashAvatars.dll` и старого перевода нет,
-`IcqRevivalFlash.dll` и новый перевод на месте, хэши совпадают со списком, в
-`langpack_russian.txt` только новые `#include`, плагин загрузился (движок,
-capability). Перенос настроек: `FlashAvatars/NLlog` и `SRMM_Toolbar/FlashAvatars_1`
-оказались под новыми именами, модуль `FlashAvatars` удалён.
+Tested on a copy of 0.96.7 with builds 2e228c7 installed (`FlashAvatars.dll`, its
+translation, the `#include` of the old name) and the real Miranda NG stable x32 lists
+(with only the `langpack_russian.txt` line replaced: its package is not here, it was
+built from the copy's translation): `PluginUpdater` offered `IcqOscarJ.dll`,
+`FlashAvatars.dll`, `langpack_russian_flashavatars.txt` and `langpack_russian.txt`;
+after "Update" and a restart `FlashAvatars.dll` and the old translation were gone,
+`IcqRevivalFlash.dll` and the new translation were in place, the hashes matched the
+list, `langpack_russian.txt` had only the new `#include` lines, and the plugin loaded
+(engine, capability). Settings migration: `FlashAvatars/NLlog` and
+`SRMM_Toolbar/FlashAvatars_1` ended up under the new names, and the `FlashAvatars`
+module was deleted.
 
-Сборки, вышедшие до этого, ставят `2` всегда, поэтому до первой ручной установки
-нынешних `PluginUpdater` их не обновит.
+Builds released before this always set `2`, so `PluginUpdater` will not update them
+until the current ones are installed by hand once.
 
-Проверено на копии 0.96.7 с сервером на своей машине и подменой сервера
-Miranda NG (список с чужим хэшем `IcqOscarJ.dll`, правилами удаления наших файлов
-и более новым `Dummy.dll`):
+Tested on a copy of 0.96.7 with the server on a local machine and a substituted
+Miranda NG server (a list with a foreign hash for `IcqOscarJ.dll`, rules deleting our
+files, and a newer `Dummy.dll`):
 
-- `PluginUpdater` сам получил наш адрес и спросил `/miranda/stable/x32/hashes.zip`;
-- предложил `FlashAvatars.dll` (так тогда звался Flash-плагин; стояла сборка
-  0.9, на сервере 1.0), `Dummy.dll`
-  с сервера Miranda NG, `langpack_russian.txt` и наш перевод;
-  `IcqOscarJ.dll` — нет;
-- после «Обновить» и перезапуска все файлы совпали со списком, `FlashAvatars.dll`
-  побайтно равна сборке, в конце `langpack_russian.txt` — строки `#include`;
-- со своим адресом пользователя (чужой список) — отметки `2` вернулись, из наших
-  файлов не предложено ничего, правила удаления не сработали; выбор
-  «стабильные» после нашего адреса пережил два перезапуска.
+- `PluginUpdater` picked up our address by itself and requested
+  `/miranda/stable/x32/hashes.zip`;
+- it offered `FlashAvatars.dll` (that is what the Flash plugin was called then;
+  build 0.9 was installed, the server had 1.0), `Dummy.dll` from the Miranda NG
+  server, `langpack_russian.txt` and our translation; it did not offer
+  `IcqOscarJ.dll`;
+- after "Update" and a restart all files matched the list, `FlashAvatars.dll` was
+  byte for byte equal to the build, and `langpack_russian.txt` ended with the
+  `#include` lines;
+- with the user's own address (someone else's list) the `2` marks came back, none of
+  our files were offered, and the delete rules did not fire; choosing "stable" after
+  our address survived two restarts.
 
-HTTPS: `PluginUpdater` по умолчанию сертификат не проверяет вовсе, а с
-включённой проверкой («Сеть → PluginUpdater → проверять SSL», `NLValidateSSL`)
-принимает цепочку Let's Encrypt (проверено на `valid-isrgrootx1.letsencrypt.org`)
-и отвергает самоподписанный (`800b0109`). Порт 8102 — nginx с тем же
-сертификатом, что для Miranda и браузеров.
+HTTPS: by default `PluginUpdater` does not check the certificate at all, and with the
+check enabled ("Network → PluginUpdater → validate SSL", `NLValidateSSL`) it accepts
+the Let's Encrypt chain (tested on `valid-isrgrootx1.letsencrypt.org`) and rejects a
+self-signed one (`800b0109`). Port 8102 is nginx with the same certificate as for
+Miranda and browsers.
 
-### Пакеты для сервера
+### Packages for the server
 
 ```
-python make-update-packages.py <каталог>
+python make-update-packages.py <directory>
 ```
 
-берёт `build/x32`, `build/x64`, оба движка из
-`tools/icq65/flashplayer/target/*/release` и переводы и кладёт в
-`<каталог>/x32` и `/x64` пакеты в том виде, в каком их качает `PluginUpdater`
-(`Plugins/IcqOscarJ.zip` с `Plugins/IcqOscarJ.dll` внутри и т. д.), и
-`manifest.json` с хэшами и crc32. Этот каталог копируется на сервер в
-`deploy/miranda-updates` (в git не лежит: движок — 15 МБ) и перечитывается по
-`SIGHUP` или перезапуском `legacy-web`. `--hash <файлы>` печатает хэши
-`PluginUpdater`, для сверки.
+takes `build/x32`, `build/x64`, both engines from
+`tools/icq65/flashplayer/target/*/release` and the translations, and puts into
+`<directory>/x32` and `/x64` the packages in the form `PluginUpdater` downloads them
+(`Plugins/IcqOscarJ.zip` with `Plugins/IcqOscarJ.dll` inside, and so on), plus
+`manifest.json` with the hashes and crc32. This directory is copied to the server
+into `deploy/miranda-updates` (it is not in git: the engine is 15 MB) and is reread on
+`SIGHUP` or when `legacy-web` restarts. `--hash <files>` prints the `PluginUpdater`
+hashes, for comparison.
 
-## Ссылки на свой сервер
+## Links to your own server
 
-Зашитые адреса icq.com заменяются на свои через `IcqWebUrl()`: она читает
-настройку `ICQ/WebBase` и подставляет к ней путь. Пусто — остаются прежние
-адреса, то есть поведение не меняется, пока настройку не заполнят.
+The hard-coded icq.com addresses are replaced with your own through `IcqWebUrl()`: it
+reads the `ICQ/WebBase` setting and appends the path to it. Empty means the old
+addresses stay, that is, the behaviour does not change until the setting is filled
+in.
 
-Поле для неё — `Настройки → Сеть → ICQ → Features`, группа **Web Pages**.
+Its field is under `Options → Network → ICQ → Features`, group **Web Pages**.
 
-| Место в клиенте | Путь |
+| Place in the client | Path |
 |-----------------|------|
-| «Create a new ICQ account» в настройках и при первом запуске | `/icq/register` |
-| «Retrieve a lost password» | `/icq/password` |
-| «Open ICQ profile» в меню контакта | `/icq/whitepages?icq=<номер>` |
+| "Create a new ICQ account" in the options and on first start | `/icq/register` |
+| "Retrieve a lost password" | `/icq/password` |
+| "Open ICQ profile" in the contact menu | `/icq/whitepages?icq=<number>` |
 
-Эти пути обслуживает `oscar-legacy-web` (см. `deploy/oscar-legacy-web/services.json`),
-так что значение настройки — адрес именно этой службы, например
-`http://192.168.1.43:8101`.
+These paths are served by `oscar-legacy-web` (see
+`deploy/oscar-legacy-web/services.json`), so the setting's value is the address of
+that service, for example `http://192.168.1.43:8101`.
 
-## Перевод
+## Translation
 
-Переводы в Miranda привязаны к плагину меткой `#muuid`: `LangPackTranslateString`
-ищет раздел с UUID плагина, а не найдя — откатывается на строки без привязки.
-Раздела для протокола ICQ в нынешних паках нет, его удалили вместе с самим
-плагином, поэтому переводится примерно половина строк, причём вперемешку.
+Miranda ties translations to a plugin with a `#muuid` marker:
+`LangPackTranslateString` looks for the section with the plugin's UUID and, if it
+does not find one, falls back to strings not tied to any plugin. The current packs
+have no section for the ICQ protocol, it was removed together with the plugin, so
+only about half of the strings get translated, and in a haphazard mix.
 
-`langpack_russian_icq.txt` этот раздел возвращает. Установка:
+`langpack_russian_icq.txt` brings that section back. Installation:
 
-1. положить файл в `Languages\` рядом с основным паком;
-2. дописать **в самый конец** основного пака строку
-   `#include langpack_russian_icq.txt`;
-3. перезапустить Miranda.
+1. put the file into `Languages\` next to the main pack;
+2. append the line `#include langpack_russian_icq.txt` to the **very end** of the
+   main pack;
+3. restart Miranda.
 
-Именно в конец: `#include` обрабатывается на месте, а наш файл выставляет
-`#muuid`, и всё, что идёт в основном паке после этой строки, оказалось бы
-приписано нашему плагину. Имя файла загрузчик приводит к нижнему регистру
-(`strlwr` перед разбором директивы), так что оно должно быть строчным.
+It must be the end: `#include` is processed in place, and our file sets `#muuid`, so
+everything in the main pack after that line would be assigned to our plugin. The
+loader lower-cases the file name (`strlwr` before parsing the directive), so the name
+must be in lower case.
 
-При обновлении пака основной файл перезапишется и строку `#include` придётся
-дописать снова.
+When the pack is updated, the main file is overwritten and the `#include` line has to
+be appended again.
 
-### Сборка перевода
+### Building the translation
 
 ```
-python make-langpack.py <каталог-плагина> langpack_russian_icq.txt \
-    langpack-extra-ru.txt <нынешний langpack> [<старый langpack>]
+python make-langpack.py <plugin-directory> langpack_russian_icq.txt \
+    langpack-extra-ru.txt <current langpack> [<old langpack>]
 ```
 
-Скрипт вытаскивает переводимые строки из исходников (`Translate*`, `LPGEN*`) и
-из ресурса, затем ищет к ним готовый перевод в указанных паках по порядку.
-Совпадение сначала точное, потом с послаблениями: без акселератора `&`, без
-учёта регистра, с точностью до хвостовых двоеточия и многоточия.
+The script extracts the translatable strings from the source (`Translate*`,
+`LPGEN*`) and from the resource, then looks for an existing translation for them in
+the given packs, in order. Matching is exact first, then relaxed: without the `&`
+accelerator, case-insensitive, ignoring a trailing colon or ellipsis.
 
-Один только нынешний пак закрывает 59% строк. Остальное нашлось в паке времён
-Miranda IM — там раздел `ICQ.dll / IcqOscarJ protocol` ещё на месте, и с ним
-выходит 100%: из 907 строк без перевода остаются две, `ICQ` (совпадает с
-оригиналом) и `Slider1` (служебное имя элемента). Если такого пака под рукой
-нет, непереведённое выписывается в конец файла закомментированным.
+The current pack alone covers 59% of the strings. The rest was found in a pack from
+the Miranda IM days, where the `ICQ.dll / IcqOscarJ protocol` section is still there,
+and with it coverage is 100%: of 907 strings only two stay untranslated, `ICQ` (same
+as the original) and `Slider1` (an internal control name). If no such pack is at
+hand, the untranslated strings are written, commented out, at the end of the file.
 
-Две тонкости формата, на которые легко налететь:
+Two format details that are easy to trip over:
 
-- в исходнике кавычка внутри строки экранирована (`\"`), а в паке пишется
-  обычной: загрузчик сам разбирает escape-последовательности, и ключ должен
-  совпадать с тем, что видит программа после компиляции. `\n` и `\t`, наоборот,
-  остаются в файле как есть;
-- перевод не может начинаться с `#` — проверка на директиву идёт раньше, и такая
-  строка будет пропущена.
+- in the source a quote inside a string is escaped (`\"`), but in the pack it is
+  written plain: the loader parses escape sequences itself, and the key must match
+  what the program sees after compilation. `\n` and `\t`, on the other hand, stay in
+  the file as they are;
+- a translation cannot start with `#`: the check for a directive comes first, and
+  such a line will be skipped.
 
-## Сборка
+## Build
 
-Нужны исходники miranda-ng **той же версии, что и установленное ядро**, — это
-не пожелание, а жёсткое требование, см. ниже.
+You need the miranda-ng source **of the same version as the installed core**. This is
+not a suggestion but a hard requirement, see below.
 
 ```
 git clone --filter=blob:none https://github.com/miranda-ng/miranda-ng
 cd miranda-ng
-cp -r <репозиторий-с-Deprecated>/NotWorkingStuff/Deprecated/IcqOscarJ protocols/
+cp -r <repository-with-Deprecated>/NotWorkingStuff/Deprecated/IcqOscarJ protocols/
 patch --binary -p1 -d protocols/IcqOscarJ < IcqOscarJ.diff
 MSBuild.exe protocols/IcqOscarJ/icqoscar8.vcxproj \
   -p:Configuration=Release -p:Platform=Win32 -p:PlatformToolset=v143
 ```
 
-`--binary` обязателен: исходники Miranda хранятся с CRLF, и без него `patch`
-отвергает все куски с «different line endings». Проверено — заплатка накладывается
-без отказов, и результат побайтово совпадает с деревом, из которого собраны
-библиотеки в `build/`.
+`--binary` is required: the Miranda source is stored with CRLF, and without it
+`patch` rejects every hunk with "different line endings". Tested: the patch applies
+without rejects, and the result matches byte for byte the tree the libraries in
+`build/` were built from.
 
-`include/m_version.h` в git не хранится, он генерируется `build/make_ver.bat` из
-`build/build.no`. Числа версии должны совпасть с ядром: файл задаёт
-`MIRANDA_VERSION_COREVERSION`, а из него `version.rc` берёт `PRODUCTVERSION`
-плагина.
+`include/m_version.h` is not kept in git; `build/make_ver.bat` generates it from
+`build/build.no`. The version numbers must match the core: the file sets
+`MIRANDA_VERSION_COREVERSION`, and `version.rc` takes the plugin's `PRODUCTVERSION`
+from it.
 
-### Как подобрать срез исходников
+### How to find the matching source snapshot
 
-Сторонние сборки (FinalPack и подобные) собраны из своего дерева, и их хэш
-коммита в miranda-ng не найдётся. Срез подбирается по отпечатку — числу записей
-в таблицах экспорта:
+Third-party builds (FinalPack and the like) are built from their own tree, and their
+commit hash will not be found in miranda-ng. The snapshot is found by a fingerprint:
+the number of entries in the export tables:
 
 ```python
-# сколько экспортирует установленное ядро
+# how many exports the installed core has
 pe = pefile.PE(r'...\libs\mir_app.mir'); pe.parse_data_directories([0])
 len(pe.DIRECTORY_ENTRY_EXPORT.symbols)
 ```
 
-и то же число для `mir_core.mir`. Дальше ищется коммит, где столько же строк
-вида `имя @номер` в `src/mir_app/src/mir_app.def` и `src/mir_core/src/mir_core.def`.
-Номера Miranda задаёт явно и не переиспользует, поэтому совпадение счётчиков
-означает совпадение соответствия «номер → функция», а плагины импортируют ядро
-исключительно по номерам.
+and the same number for `mir_core.mir`. Then look for the commit with the same number
+of lines of the form `name @ordinal` in `src/mir_app/src/mir_app.def` and
+`src/mir_core/src/mir_core.def`. Miranda assigns the ordinals explicitly and never
+reuses them, so matching counts mean a matching "ordinal → function" mapping, and
+plugins import the core by ordinal only.
 
-Для `D:\MirandaFinal — копия` (0.96.7 #28845, `cc32e41`) это `mir_app` = 1026,
-`mir_core` = 1595, что даёт коммит `9e8deb06` от 22.06.2026. При этом
-`build/build.no` там уже `0 96 8`, а версию пришлось выставить `0 96 7` вручную
-— пак держит своё число.
+For a copy of `D:\MirandaFinal` (0.96.7 #28845, `cc32e41`) this is `mir_app` = 1026,
+`mir_core` = 1595, which gives commit `9e8deb06` of 22.06.2026. There,
+`build/build.no` is already `0 96 8`, and the version had to be set to `0 96 7` by
+hand, since the pack keeps its own number.
 
-Проще: `cc32e41` — вершина ветки `0_96_7` (`cc32e4168`), и
-`build/make_ver_stable.bat` на ней пишет в `include/m_version.h` ровно
-`0.96.7.28845.cc32e41`. Тег `v0.96.7` старше: у `mir_core` там 1592 экспорта.
-Для IcqRevivalFlash хватает разреженной выгрузки `build/`, `include/`, `libs/`
-(готовые `mir_app.lib`, `mir_core.lib`, `libjson.lib`), `src/mir_app/`,
-`src/mir_core/`, `utils/`, `plugins/ExternalAPI/` и `*.props`. Сборка из этого
-среза (MSBuild VS 2022 Build Tools, v143) дала хэши `PluginUpdater`, равные
-лежавшим в `build/x32` и `build/x64`.
+Simpler: `cc32e41` is the tip of the `0_96_7` branch (`cc32e4168`), and
+`build/make_ver_stable.bat` on it writes exactly `0.96.7.28845.cc32e41` into
+`include/m_version.h`. The `v0.96.7` tag is older: `mir_core` has 1592 exports there.
+For IcqRevivalFlash a sparse checkout of `build/`, `include/`, `libs/` (the prebuilt
+`mir_app.lib`, `mir_core.lib`, `libjson.lib`), `src/mir_app/`, `src/mir_core/`,
+`utils/`, `plugins/ExternalAPI/` and `*.props` is enough. A build from this snapshot
+(MSBuild VS 2022 Build Tools, v143) gave `PluginUpdater` hashes equal to those of the
+files in `build/x32` and `build/x64`.
 
-## Анимированные аватары ICQ 6 («дьяволы»)
+## ICQ 6 animated avatars ("devils")
 
-ICQ 6 держит у пользователя Flash-аватар: элемент BART типа 8 — маленький
-XML `<DOCUMENT><RESSET><URL>…swf</URL>`, — у которого клип `face` меняет
-выражение по свойству `emotion` (`stam`, `smile`, `sad`, `laugh`, `mad`,
-`cry`, `love`, `busy`, `offline`). В Miranda их показывал плагин
-FlashAvatars (Big Muscle, 2006) через Adobe Flash; из Miranda NG его убрали в
-2014 году (`NotWorkingStuff/Deprecated/FlashAvatars` в репозитории
-`miranda-ng/deprecated`), его UUID внесён в `pluginBannedList`, а переименованный
-`flashavatars.dll` PluginUpdater удалял (правило в `rules.txt` stable есть и
-сейчас — поэтому наш плагин называется иначе, см. «Старое имя»).
+ICQ 6 keeps a Flash avatar for the user: BART item type 8, a small XML
+`<DOCUMENT><RESSET><URL>…swf</URL>`, whose `face` clip changes expression by the
+`emotion` property (`stam`, `smile`, `sad`, `laugh`, `mad`, `cry`, `love`, `busy`,
+`offline`). In Miranda they were shown by the FlashAvatars plugin (Big Muscle, 2006)
+through Adobe Flash; it was removed from Miranda NG in 2014
+(`NotWorkingStuff/Deprecated/FlashAvatars` in the `miranda-ng/deprecated`
+repository), its UUID was put into `pluginBannedList`, and PluginUpdater deleted a
+renamed `flashavatars.dll` (the rule is still in the stable `rules.txt` today, which
+is why our plugin has a different name, see "Old name").
 
-**Кто вызывал его сервисы.** `FlashAvatar/Make`, `/Destroy`, `/Resize`,
-`/SetPos`, `/GetInfo`, `/SetEmoFace`, `/SetBkColor` (`m_flash.h`) звали
-элемент аватара AVS, окна сообщений и список контактов. В исходниках 0.96.7 и
-в бинарниках FinalPack (`AVS.dll`, `TabSRMM.dll`, `Clist_modern.dll`, ядро)
-этих вызовов больше нет ни одного — осталась только заготовка
-`plugins/Popup/src/avatars_flash.h`. Поэтому возвращать старые сервисы
-бессмысленно: их никто не позовёт.
+**Who called its services.** `FlashAvatar/Make`, `/Destroy`, `/Resize`, `/SetPos`,
+`/GetInfo`, `/SetEmoFace`, `/SetBkColor` (`m_flash.h`) were called by the AVS avatar
+control, the message windows and the contact list. In the 0.96.7 source and in the
+FinalPack binaries (`AVS.dll`, `TabSRMM.dll`, `Clist_modern.dll`, the core) not one
+of these calls remains; only the stub `plugins/Popup/src/avatars_flash.h` is left.
+So bringing back the old services is pointless: nobody would call them.
 
-**Как сделано теперь.** `IcqRevivalFlash/` («ICQ Revival Flash», до 1.1 —
-`FlashAvatars.dll`) — новый плагин по мотивам старого:
+**How it is done now.** `IcqRevivalFlash/` ("ICQ Revival Flash", `FlashAvatars.dll`
+before 1.1) is a new plugin modelled on the old one:
 
-- Подменяет оконную процедуру класса `MAvatarControlClass` (элемент аватара
-  AVS, `SetClassLongPtr` при загрузке модулей). Этот элемент показывает
-  аватары почти везде: в tabSRMM (панель сверху и картинка у поля ввода), в
-  Scriver, в простом окне сообщений, в окне сведений. Если у контакта есть
-  Flash-аватар, элемент рисует фильм вместо картинки (безоконно,
-  `IViewObject::Draw` в свой буфер поверх фона родителя), пока фильм не
-  загрузился — прежнюю картинку. Список контактов и всплывающие окна
-  по-прежнему показывают картинку: они рисуют аватары сами, не через элемент.
-- Фильм играет наш движок на Ruffle, `Libs\FlashPlayerControl.dll`
-  (`tools/icq65/flashplayer`), — объект ShockwaveFlash создаётся прямо через
-  его `DllGetClassObject`, без реестра, так что регистрация ICQ 6.5 не
-  затрагивается. Нет файла — берётся зарегистрированный в системе
-  ShockwaveFlash.
-- Фильм скачивается один раз через Netlib (настройки прокси действуют) в
-  `<кэш аватаров>\Flash\<md5 адреса>.swf`; только http/https, не больше 4 МБ,
-  только файлы с подписью SWF.
-- Выражение лица: смайлик во входящем сообщении — у аватара собеседника, в
-  исходящем — у своего (таблица кодов из старого плагина плюс `:D`, `:(`,
-  `<3`, `*LOL*`…); статус — `stam` в сети, `busy` в прочих, `offline` не в сети.
-  Сообщения старше 5 минут (история, офлайн-сообщения при входе) не считаются.
-- Лицо смайлика держится 9 секунд — столько же, сколько на странице проверки
-  дьяволов из набора ICQ (`devils.zip`), — потом возвращается лицо статуса.
-  Новый смайлик начинает отсчёт заново, смена статуса ставит своё лицо сразу.
-  Срок — скрытая настройка `IcqRevivalFlash/SmileyFaceSeconds` (WORD, секунды;
-  `0` — лицо смайлика остаётся до следующего смайлика или статуса). Сам фильм
-  назад не возвращается: анимация выражения играет один раз и стоит на
-  последнем кадре. Движок умеет возвращать лицо сам (для ICQ 6.5, которая
-  этого не делает, см. README движка), но плагин выключает это
-  (`FPCSetFaceReturn(0)`) и отсчитывает сам — так же и с системным
-  ShockwaveFlash.
-- Для каждой учётной записи ICQ плагин объявляет через `/IcqAddCapability`
-  capability `{B9E03A0C-B33E-4B18-BC0B-7BB5903129AE}` («ICQ Revival: Flash
-  avatars»). Сервер (`wire.CapFlashAvatarPlayer`, `HasFlashAvatarCaps`) шлёт
-  элементы 8 и 12 только ICQ 6 и клиентам с этой capability; Miranda без
-  плагина её не шлёт и получает только картинку. Короткая `0x134C` (devils)
-  не годится: IcqOscarJ шлёт её всегда, когда включены аватары.
+- It replaces the window procedure of the `MAvatarControlClass` class (the AVS
+  avatar control, `SetClassLongPtr` when modules load). This control shows avatars
+  almost everywhere: in tabSRMM (the top panel and the picture by the input field),
+  in Scriver, in the plain message window, in the info window. If the contact has a
+  Flash avatar, the control draws the movie instead of the picture (windowless,
+  `IViewObject::Draw` into its own buffer over the parent's background), and the
+  previous picture until the movie has loaded. The contact list and popups still
+  show the picture: they draw avatars themselves, not through the control.
+- The movie is played by our Ruffle-based engine, `Libs\FlashPlayerControl.dll`
+  (`tools/icq65/flashplayer`); the ShockwaveFlash object is created directly through
+  its `DllGetClassObject`, without the registry, so the ICQ 6.5 registration is not
+  touched. If the file is missing, the ShockwaveFlash registered in the system is
+  used.
+- The movie is downloaded once through Netlib (proxy settings apply) into
+  `<avatar cache>\Flash\<md5 of the address>.swf`; http/https only, no more than
+  4 MB, only files with the SWF signature.
+- Facial expression: a smiley in an incoming message goes to the contact's avatar,
+  in an outgoing one to your own (the code table from the old plugin plus `:D`,
+  `:(`, `<3`, `*LOL*`…); status: `stam` when online, `busy` in other statuses,
+  `offline` when offline. Messages older than 5 minutes (history, offline messages
+  at sign-in) are not counted.
+- The smiley face is held for 9 seconds, as long as on the devils test page from the
+  ICQ set (`devils.zip`), and then the status face comes back. A new smiley restarts
+  the countdown; a status change sets its face at once. The duration is the hidden
+  setting `IcqRevivalFlash/SmileyFaceSeconds` (WORD, seconds; `0` means the smiley
+  face stays until the next smiley or status). The movie itself does not return: the
+  expression animation plays once and stops on its last frame. The engine can return
+  the face by itself (for ICQ 6.5, which does not do it, see the engine's README),
+  but the plugin turns that off (`FPCSetFaceReturn(0)`) and counts itself; the same
+  goes for the system ShockwaveFlash.
+- For each ICQ account the plugin announces, through `/IcqAddCapability`, the
+  capability `{B9E03A0C-B33E-4B18-BC0B-7BB5903129AE}` ("ICQ Revival: Flash
+  avatars"). The server (`wire.CapFlashAvatarPlayer`, `HasFlashAvatarCaps`) sends
+  items 8 and 12 only to ICQ 6 and to clients with this capability; Miranda without
+  the plugin does not send it and gets only the picture. The short `0x134C`
+  (devils) will not do: IcqOscarJ always sends it when avatars are enabled.
 
-**Что поменялось в IcqOscarJ.** Раньше плагин выбирал из BART-элементов один
-и Flash предпочитал картинке — и AVS получал XML, который не умеет рисовать.
-Теперь элемент 8 идёт отдельно (`handleFlashAvatarHash` в `icq_avatar.cpp`):
-картинкой остаются типы 1/12, а XML запрашивается у сервера аватаров своим
-запросом, из него берётся `<URL>` и пишется в настройку контакта
-`FlashAvatarUrl` (рядом `FlashAvatarHash`); удалил аватар — обе стираются.
-Учёт идущих запросов разделён на «картинка» и «Flash», иначе второй запрос
-того же контакта отбрасывался как дубликат. Проверка MD5 (`StrictAvatarCheck`)
-к XML не применяется.
+**What changed in IcqOscarJ.** Previously the plugin chose one of the BART items and
+preferred Flash to the picture, so AVS got XML it cannot draw. Now item 8 is handled
+separately (`handleFlashAvatarHash` in `icq_avatar.cpp`): types 1/12 remain the
+picture, and the XML is requested from the avatar server with a separate request;
+`<URL>` is taken from it and written into the contact setting `FlashAvatarUrl` (next
+to `FlashAvatarHash`); when the avatar is removed, both are erased. Tracking of
+pending requests is split into "picture" and "Flash"; otherwise a second request for
+the same contact was dropped as a duplicate. The MD5 check (`StrictAvatarCheck`) is
+not applied to the XML.
 
-Свой Flash-аватар учётной записи (поставленный, например, из ICQ 6.5) тоже
-показывается: при разборе списка на сервере элемент BART `8` из группы 0
-больше не принимается за «свой аватар» (раньше его id запоминался в
-`SrvAvatarID`, и обновление своей картинки перезаписало бы этот элемент
-картинкой), а его хэш идёт в тот же `handleFlashAvatarHash` для `hContact = 0`.
-После отправки capabilities плагин ещё раз запрашивает свою анкету (SNAC 1,0E)
-— в ней сервер теперь перечисляет тип 8, — а элемент 8 в данных сессии
-(SNAC 1,21) обрабатывается так же и никогда не выдаётся за картинку. Итог —
-`FlashAvatarUrl` у самой учётной записи; IcqRevivalFlash рисует его в
-элементах своего аватара (своя картинка в окне сообщений). Кроме страницы
-AVS «О пользователе Владелец → Аватар»: там выбирают картинку для всех
-протоколов, и она показывает картинку, как без плагина (элементы, созданные
-диалогами самого AVS, для своего аватара фильм не рисуют). Загружаемая на
-сервер картинка (тип 1) остаётся локальной картинкой Miranda: отображение
-Flash её не трогает.
+The account's own Flash avatar (set, for example, from ICQ 6.5) is shown too: when
+the server-side list is parsed, BART item `8` from group 0 is no longer taken as "own
+avatar" (its id used to be remembered in `SrvAvatarID`, and updating your own picture
+would overwrite this item with the picture), and its hash goes to the same
+`handleFlashAvatarHash` for `hContact = 0`. After sending the capabilities the plugin
+requests its own profile once more (SNAC 1,0E), in which the server now lists type 8,
+and item 8 in the session data (SNAC 1,21) is handled the same way and never passed
+off as the picture. The result is `FlashAvatarUrl` on the account itself;
+IcqRevivalFlash draws it in its own avatar controls (your own picture in the message
+window). The exception is the AVS page "User info for Owner → Avatar": the picture
+for all protocols is chosen there, and it shows the picture as it would without the
+plugin (controls created by AVS's own dialogs do not draw the movie for your own
+avatar). The picture uploaded to the server (type 1) remains Miranda's local picture:
+the Flash display does not touch it.
 
-Картинка контакта: при наличии Flash-аватара берётся тип 1 (кадр, который
-сервер держит в соответствии с текущим Flash), а не тип 12 — большая иконка
-может остаться от прежнего аватара. И при получении картинки в `AvatarSaved`
-записывается хэш полученной, а не текущий `AvatarHash`: если контакт сменил
-картинку, пока шёл запрос (второй запрос того же контакта в это время
-отбрасывается как дубликат), старая картинка больше не выдаётся за новую —
-новая запрашивается сразу (`requestCurrentAvatar`).
+The contact's picture: when there is a Flash avatar, type 1 is used (a frame the
+server keeps in step with the current Flash), not type 12, since the large icon may
+be left over from the previous avatar. And when a picture arrives, `AvatarSaved`
+records the hash of the picture received, not the current `AvatarHash`: if the
+contact changed their picture while the request was in flight (a second request for
+the same contact is dropped as a duplicate during that time), the old picture is no
+longer passed off as the new one; the new one is requested at once
+(`requestCurrentAvatar`).
 
-**Удаление контакта.** TabSRMM при удалении контакта обнуляет у окна
-сообщений данные контакта (`CContactCache::deletedHandler`, `m_cache = nullptr`)
-и закрывает окно позже, отложенным `WM_CLOSE`. Любая перерисовка окна в этом
-промежутке падает в `CInfoPanel::RenderIPNickname` (фон окна рисует
-инфопанель, а та читает `m_cache`) — это ошибка самого TabSRMM, в падении
-CrashDumper покажет адрес чтения `0000015C`. Чтобы её не задевать:
+**Deleting a contact.** When a contact is deleted, TabSRMM clears the contact data of
+the message window (`CContactCache::deletedHandler`, `m_cache = nullptr`) and closes
+the window later, with a deferred `WM_CLOSE`. Any repaint of the window in between
+crashes in `CInfoPanel::RenderIPNickname` (the info panel paints the window
+background and reads `m_cache`). This is a bug in TabSRMM itself; in the crash,
+CrashDumper shows the read address `0000015C`. To stay clear of it:
 
-- IcqRevivalFlash на `ME_DB_CONTACT_DELETED` сразу прячет окно сообщений этого
-  контакта (скрытое окно не перерисовывается) и останавливает его фильмы;
-  фон под фильмом берётся у родителя один раз на размер, а не на каждом кадре;
-- IcqOscarJ запоминает удаляемые контакты (`OnContactDeleted`) и не находит,
-  не кэширует и не пишет им настройки из сетевых потоков, пока контакт ещё
-  лежит в базе.
+- IcqRevivalFlash, on `ME_DB_CONTACT_DELETED`, immediately hides that contact's
+  message window (a hidden window is not repainted) and stops its movies; the
+  background under the movie is taken from the parent once per size, not on every
+  frame;
+- IcqOscarJ remembers contacts being deleted (`OnContactDeleted`) and does not look
+  them up, cache them or write settings for them from network threads while the
+  contact is still in the database.
 
-### Свой анимированный аватар: выбор
+### Your own animated avatar: choosing one
 
-Выбрать или убрать свой анимированный аватар можно в меню учётной записи ICQ
-(меню статуса → учётная запись → «Анимированный аватар…»). Пункт добавляет
-сам IcqOscarJ (`OnBuildProtoMenu`), пока IcqRevivalFlash предлагает сервис
-`IcqRevivalFlash/AvatarPicker`; страницу AVS «Аватар» ни один из плагинов не
-трогает. Окно (`IcqRevivalFlash/src/avatars.cpp`):
+You can choose or remove your own animated avatar in the ICQ account menu (status
+menu → account → "Animated avatar..."). IcqOscarJ itself adds the item
+(`OnBuildProtoMenu`) as long as IcqRevivalFlash offers the
+`IcqRevivalFlash/AvatarPicker` service; neither plugin touches the AVS "Avatar" page.
+The window (`IcqRevivalFlash/src/avatars.cpp`):
 
-- галерея сервера, как на странице `avatar.html`: вкладки «Официальные» и
-  «Пользовательские», миниатюры, названия из `avatars.json` галереи —
-  украинские при украинском языковом пакете, иначе английские (русских у
-  аватаров нет, ICQ их никак не называла);
-- просмотр выбранного — наш движок, тот же, что рисует аватары, с жестами
-  лица раз в 4 секунды, как на карточке;
-- «Установить» и «Убрать анимированный аватар»; строка «Сейчас: …» — что
-  стоит у учётной записи.
+- the server gallery, as on the `avatar.html` page: "Official" and "User created"
+  tabs, thumbnails, names from the gallery's `avatars.json`, in Ukrainian with the
+  Ukrainian language pack and in English otherwise (the avatars have no Russian
+  names; ICQ never named them in Russian);
+- a preview of the selected one: our engine, the same one that draws avatars, with a
+  facial gesture every 4 seconds, as on the gallery card;
+- "Set" and "Remove animated avatar"; the "Now set: ..." line shows what the account
+  has.
 
-Галерея берётся с веб-страниц сервера входа, как tZers:
-`http://<сервер входа>:8101/icq/avatars/list.json` (скрытая настройка
-учётной записи `AvatarBase` заменяет адрес папки для тестов). Формат —
-`avatars.json` без лишнего: `{"avatars": [{"file", "thumb", "author": "icq"|"user",
+The gallery is taken from the sign-in server's web pages, like the tZers:
+`http://<sign-in server>:8101/icq/avatars/list.json` (the hidden account setting
+`AvatarBase` replaces the folder address for testing). The format is `avatars.json`
+without the extras: `{"avatars": [{"file", "thumb", "author": "icq"|"user",
 "title": {"en", "uk"}}]}`.
 
-Ставит аватар IcqOscarJ, сервис `/SetFlashAvatar` (`m_icq.h`,
-`PS_ICQ_SETFLASHAVATAR`), так же, как это делает галерея ICQ 6.5: адрес фильма
-заворачивается в `<DOCUMENT><RESSET TYPE="ICQ_EXTRAS"><URL>…</URL></RESSET></DOCUMENT>`,
-MD5 документа становится элементом `8` списка на сервере (свой id —
-`SrvFlashAvatarID`, отдельно от картинки `SrvAvatarID`), а когда сервер
-отвечает, что такого документа у него нет (флаг `0x40` в SNAC 1,21), документ
-загружается на сервер аватаров как BART типа 8. Документ строится из адреса,
-поэтому загрузить его можно и после перезапуска. «Убрать» ставит элементу
-стандартный хэш «нет иконки» (`02 01 D2 04 72`). Своя `FlashAvatarUrl`
-меняется сразу, и свои элементы аватара переключаются, не дожидаясь сервера.
-Картинку (тип 1) этот сервис не трогает; адрес — только http(s), печатный
-ASCII, без `< > " ' &`.
+IcqOscarJ sets the avatar, through the `/SetFlashAvatar` service (`m_icq.h`,
+`PS_ICQ_SETFLASHAVATAR`), the same way the ICQ 6.5 gallery does: the movie address is
+wrapped in `<DOCUMENT><RESSET TYPE="ICQ_EXTRAS"><URL>…</URL></RESSET></DOCUMENT>`, the
+document's MD5 becomes item `8` of the server-side list (its own id,
+`SrvFlashAvatarID`, separate from the picture's `SrvAvatarID`), and when the server
+replies that it does not have such a document (flag `0x40` in SNAC 1,21), the
+document is uploaded to the avatar server as BART type 8. The document is built from
+the address, so it can be uploaded after a restart too. "Remove" sets the item to the
+standard "no icon" hash (`02 01 D2 04 72`). Your own `FlashAvatarUrl` changes at once,
+and your own avatar controls switch without waiting for the server. This service does
+not touch the picture (type 1); the address must be http(s), printable ASCII, without
+`< > " ' &`.
 
-Что видят контакты: ICQ 6.5 — сам фильм (тип 8, картинки-заместителя не
-получает); Miranda с IcqRevivalFlash — фильм и картинку; остальные — картинку
-(свою картинку владельца, а без неё — кадр аватара из галереи, `-still.jpg`,
-который подставляет сервер).
+What contacts see: ICQ 6.5 sees the movie itself (type 8; it does not get a
+placeholder picture); Miranda with IcqRevivalFlash sees the movie and the picture;
+the rest see the picture (the owner's own picture, or without one, a still frame of
+the gallery avatar, `-still.jpg`, which the server substitutes).
 
-### Установка
+### Installation
 
-Три файла и перевод, Miranda должна быть закрыта:
+Three files and a translation; Miranda must be closed:
 
-| Файл | Куда |
+| File | Where |
 |------|------|
-| `build/x32/IcqOscarJ.dll` (или x64) | `Plugins\IcqOscarJ.dll`, поверх прежнего |
-| `build/x32/IcqRevivalFlash.dll` (или x64) | `Plugins\IcqRevivalFlash.dll` |
-| `FlashPlayerControl.dll` из `tools/icq65/flashplayer` той же разрядности | `Libs\FlashPlayerControl.dll` |
-| `langpack_russian_icqrevivalflash.txt` | `Languages\`, и `#include` в основной пак (см. «tZers») |
+| `build/x32/IcqOscarJ.dll` (or x64) | `Plugins\IcqOscarJ.dll`, over the old one |
+| `build/x32/IcqRevivalFlash.dll` (or x64) | `Plugins\IcqRevivalFlash.dll` |
+| `FlashPlayerControl.dll` from `tools/icq65/flashplayer`, same bitness | `Libs\FlashPlayerControl.dll` |
+| `langpack_russian_icqrevivalflash.txt` | `Languages\`, plus `#include` in the main pack (see "tZers") |
 
-Стоял плагин под старым именем — удалить `Plugins\FlashAvatars.dll` и
-`Languages\langpack_russian_flashavatars.txt`, а `#include` старого перевода в
-`langpack_russian.txt` заменить на новый (см. «Старое имя: FlashAvatars.dll»).
+If the plugin was installed under the old name, delete `Plugins\FlashAvatars.dll` and
+`Languages\langpack_russian_flashavatars.txt`, and in `langpack_russian.txt` replace
+the `#include` of the old translation with the new one (see "Old name:
+FlashAvatars.dll").
 
-Движок в git не лежит (15 МБ), собирается `cargo build --release` в
-`tools/icq65/flashplayer` (32 бита, `target\i686-pc-windows-msvc\release`), для
-`miranda64.exe` — `--target x86_64-pc-windows-msvc`, см. README движка.
-Регистрировать его (`regsvr32`) для Miranda не нужно.
+The engine is not in git (15 MB); it is built with `cargo build --release` in
+`tools/icq65/flashplayer` (32-bit, `target\i686-pc-windows-msvc\release`), and for
+`miranda64.exe` with `--target x86_64-pc-windows-msvc`, see the engine's README.
+There is no need to register it (`regsvr32`) for Miranda.
 
-Сборка плагина — так же, как IcqOscarJ, в дереве miranda-ng той же версии:
+The plugin is built the same way as IcqOscarJ, in a miranda-ng tree of the same
+version:
 
 ```
 cp -r IcqRevivalFlash <miranda-ng>/plugins/
 MSBuild.exe <miranda-ng>/plugins/IcqRevivalFlash/IcqRevivalFlash.vcxproj   -p:Configuration=Release -p:Platform=Win32 -p:PlatformToolset=v143
 ```
 
-`src/flash.tlb` — копия `tools/icq65/flashplayer/typelib/flash.tlb`, из неё
-`#import` берёт `IShockwaveFlash`.
+`src/flash.tlb` is a copy of `tools/icq65/flashplayer/typelib/flash.tlb`; `#import`
+takes `IShockwaveFlash` from it.
 
-Проверка: «Настройки → Плагины» — «ICQ Revival Flash»; журнал — «Настройки →
-Сеть → Журнал», пользователь «ICQ Revival Flash», или файл из переменной
-окружения `ICQREVIVALFLASH_LOG`. Убрать — удалить `IcqRevivalFlash.dll`: картинки остаются, а
-сервер перестаёт присылать Flash-элементы после следующего входа.
+Checking: "Options → Plugins" shows "ICQ Revival Flash"; the log is under "Options →
+Network → Log", user "ICQ Revival Flash", or in the file named by the
+`ICQREVIVALFLASH_LOG` environment variable. To remove it, delete
+`IcqRevivalFlash.dll`: the pictures stay, and the server stops sending the Flash items
+after the next sign-in.
 
 ## tZers
 
-tZer — короткий Flash-ролик со звуком, который ICQ 6.5 проигрывает поверх окна
-сообщений. Формат снят с настоящего tZer из ICQ 6.5:
+A tZer is a short Flash clip with sound that ICQ 6.5 plays over the message window.
+The format was taken from a real tZer sent by ICQ 6.5:
 
-- канал 2 (rendezvous) с capability «ICQ server relay» `{09461349-…}`, в
-  TLV 0x2711 — расширенное сообщение ICQ типа `MTYPE_PLUGIN` (0x1A);
-- plugin-заголовок: длина `0x30`, GUID `{4FA6F34C-09B7-FD48-9208-7E857AE07330}`,
-  функция 0, имя `Send Tzer`, 17 нулевых байт; затем две длины (dword,
-  little endian: «до конца» = тело + 4, и тело) и само тело:
-  `<tzerRoot id="cantH" url="http://…/icq/tzers/canthearu.swf" thumb="http://…/icq/tzers/canthearu.png" name=" Вас не слышно" freeData=""/>\r\n`;
-- `id` — из `ConfigFiles\tzer.xml` ICQ 6.5 (gangSh, cantH, scratch, boo,
-  kisses, rasta, arakiri, laugh, da, beback, ilikeu, `sorry ` с пробелом), `name`
-  — в UTF-8 на языке отправителя (может начинаться с пробела). Получатель
-  проигрывает ролик по `url`.
+- channel 2 (rendezvous) with the "ICQ server relay" capability `{09461349-…}`, and
+  in TLV 0x2711 an extended ICQ message of type `MTYPE_PLUGIN` (0x1A);
+- plugin header: length `0x30`, GUID `{4FA6F34C-09B7-FD48-9208-7E857AE07330}`,
+  function 0, name `Send Tzer`, 17 zero bytes; then two lengths (dword, little
+  endian: "to the end" = body + 4, and the body) and the body itself:
+  `<tzerRoot id="cantH" url="http://…/icq/tzers/canthearu.swf" thumb="http://…/icq/tzers/canthearu.png" name=" Can't Hear U" freeData=""/>\r\n`;
+- `id` comes from ICQ 6.5's `ConfigFiles\tzer.xml` (gangSh, cantH, scratch, boo,
+  kisses, rasta, arakiri, laugh, da, beback, ilikeu, `sorry ` with a space); `name`
+  is in UTF-8, in the sender's language (it may start with a space). The recipient
+  plays the clip from `url`.
 
-**IcqOscarJ** (`src/icq_tzer.cpp`) узнаёт этот плагин и пишет в историю
-обычное сообщение «tZer: <название>» — без ссылки, так что его одинаково
-видят встроенный журнал tabSRMM, IEView и History++, в том числе без плагина
-IcqRevivalFlash. Адрес ролика отдаётся событием `<учётка>/Tzer` (`ME_ICQ_TZER`,
-`m_icq.h`). Отправка — сервис `<учётка>/SendTzer` (`PS_ICQ_SENDTZER`) тем же
-форматом (заголовок 0x2711 — обычный мирандовский, как у запросов Xtraz;
-plugin-часть и тело совпадают с ICQ 6.5 байт в байт); отправленный tZer тоже
-пишется в историю.
+**IcqOscarJ** (`src/icq_tzer.cpp`) recognizes this plugin and writes an ordinary
+message "tZer: <name>" into the history, without a link, so the built-in tabSRMM log,
+IEView and History++ all show it the same way, including without the IcqRevivalFlash
+plugin. The clip address is passed on through the `<account>/Tzer` event
+(`ME_ICQ_TZER`, `m_icq.h`). Sending is the `<account>/SendTzer` service
+(`PS_ICQ_SENDTZER`) with the same format (the 0x2711 header is the usual Miranda one,
+as for Xtraz requests; the plugin part and the body match ICQ 6.5 byte for byte); a
+sent tZer is written into the history too.
 
-**IcqRevivalFlash** (`src/tzer.cpp`) играет tZer так же, как ICQ 6.5: окно класса
-`FlashPlayerControl` нашего движка (слоистое, прозрачное, со звуком) на весь
-видимую рамку окна, в котором окно сообщений (у tabSRMM — контейнера; без
-невидимых рамок изменения размера, что Windows 10/11 добавляет к
-`GetWindowRect` слева, справа и снизу — по `DWMWA_EXTENDED_FRAME_BOUNDS`), — как в
-ICQ 6.5 (`MUIMessage`: `GetWindowRect` окна, поверх которого играет, и
-`CreateWindowEx` класса ровно с этим прямоугольником и этим окном-владельцем).
-Движок вписывает сцену 755×560 целиком (ShowAll) по центру и без полос по краям,
-поэтому нарисованное за краем сцены — фигура, входящая сбоку, — видно, а не
-обрезано. Окно не поверх всех: обычное окно, принадлежащее контейнеру, — чужое
-окно поверх переписки закрывает и tZer, свёрнутый контейнер прячет его, при
-перемещении и изменении размера контейнера tZer следует за ним. Закрывается по окончании ролика
-(`fscommand("animEnd")`), по щелчку или через 40 секунд. Пришёл tZer, а окна
-нет — сыграет, когда окно откроется (в течение двух минут). Ролики кэшируются
-вместе с аватарами (`<кэш аватаров>\Flash\`), те же ограничения: http/https,
-до 4 МБ, подпись SWF.
+**IcqRevivalFlash** (`src/tzer.cpp`) plays a tZer the same way ICQ 6.5 does: a window
+of our engine's `FlashPlayerControl` class (layered, transparent, with sound) covering
+the whole visible frame of the window that holds the message window (for tabSRMM, the
+container; without the invisible resize borders that Windows 10/11 adds to
+`GetWindowRect` on the left, right and bottom, going by
+`DWMWA_EXTENDED_FRAME_BOUNDS`), as in ICQ 6.5 (`MUIMessage`: `GetWindowRect` of the
+window it plays over, and `CreateWindowEx` of the class with exactly that rectangle
+and that window as owner). The engine fits the whole 755×560 stage (ShowAll),
+centred and without bars at the edges, so whatever is drawn beyond the stage edge (a
+figure coming in from the side) is visible rather than cut off. The window is not
+always on top: it is an ordinary window owned by the container, so another window
+over the conversation covers the tZer too, a minimized container hides it, and when
+the container is moved or resized the tZer follows it. It closes when the clip ends
+(`fscommand("animEnd")`), on a click, or after 40 seconds. If a tZer arrives and there
+is no window, it plays when the window opens (within two minutes). Clips are cached
+together with the avatars (`<avatar cache>\Flash\`), with the same limits: http/https,
+up to 4 MB, SWF signature.
 
-Отправить — кнопка на панели окна сообщений (только для контактов ICQ):
-меню из двенадцати tZers нашего сервера с картинками; выбранный играет и у
-отправителя. Ничего заполнять не нужно: адрес строится, как у ICQ 6.5, из
-сервера входа учётной записи (`ICQ/OscarServer`, без порта) —
-`http://<сервер>:8101/icq/tzers/<файл>.swf` и `.png`; домен в коде не зашит,
-IP-адрес или localhost тоже годятся. Скрытая настройка `ICQ/TzerBase` (полный
-адрес папки, например `http://127.0.0.1:18101/icq/tzers`) переопределяет его
-для тестового стенда. `ICQ/WebBase` берётся, только если сервер входа не задан:
-это может быть адрес локальной сети, недоступный получателю.
-Плагин объявляет capability tZers `{B2EC8F16-7C6F-451B-BD79-DC58497888B9}`,
-по которой ICQ 6 предлагает tZers контакту.
+To send one, use the button on the message window toolbar (ICQ contacts only): a
+menu of our server's twelve tZers with pictures; the chosen one plays for the sender
+too. Nothing needs to be filled in: the address is built, as in ICQ 6.5, from the
+account's sign-in server (`ICQ/OscarServer`, without the port):
+`http://<server>:8101/icq/tzers/<file>.swf` and `.png`; the domain is not hard-coded
+in the code, and an IP address or localhost works too. The hidden setting
+`ICQ/TzerBase` (the full folder address, for example
+`http://127.0.0.1:18101/icq/tzers`) overrides it for a test setup. `ICQ/WebBase` is
+used only if the sign-in server is not set: it may be a local network address the
+recipient cannot reach. The plugin announces the tZers capability
+`{B2EC8F16-7C6F-451B-BD79-DC58497888B9}`, by which ICQ 6 offers tZers to the contact.
 
-Почему в том же плагине, а не отдельном: движок, загрузчик и кэш роликов,
-сетевой пользователь и журнал общие; второй плагин загружал бы тот же движок
-ещё раз и делил бы с первым кэш.
+Why in the same plugin and not a separate one: the engine, the loader and the clip
+cache, the network user and the log are shared; a second plugin would load the same
+engine again and share the cache with the first.
 
-Русские названия tZers — из `TzerLabels.dtd` ICQ 6.5 — в
-`langpack_russian_icqrevivalflash.txt`: положить в `Languages\` и дописать в
-конец основного пака `#include langpack_russian_icqrevivalflash.txt`.
+The Russian tZer names, taken from ICQ 6.5's `TzerLabels.dtd`, are in
+`langpack_russian_icqrevivalflash.txt`: put it into `Languages\` and append
+`#include langpack_russian_icqrevivalflash.txt` to the end of the main pack.
 
-## Почему две проверки ломают плагин молча
+## Why two checks break the plugin silently
 
-**Версия продукта.** `src/mir_app/src/dll_sniffer.cpp`, `GetPluginInterfaces()`
-сверяет `dwProductVersion` из ресурса файла с `MIRANDA_VERSION_COREVERSION`
-ядра. Не совпало — `bIsPlugin = false`, и файл вообще перестаёт считаться
-плагином: его нет ни в списке плагинов, ни в загрузке, и никакого сообщения не
-выводится.
+**Product version.** `src/mir_app/src/dll_sniffer.cpp`, `GetPluginInterfaces()`,
+compares `dwProductVersion` from the file's resource with the core's
+`MIRANDA_VERSION_COREVERSION`. If they do not match, `bIsPlugin = false`, and the
+file is no longer considered a plugin at all: it is not in the plugin list, it is not
+loaded, and no message is shown.
 
-**Запрещённые UUID.** `src/mir_app/src/newplugins.cpp` держит `pluginBannedList`,
-и UUID исходного `icqoscar8` (`{73A9615C-7D4E-4555-BADB-EE05DC928EFF}`) внесён
-туда явно. `checkAPI()` доходит до `isPluginBanned()`, помечает плагин сбойным и
-выгружает библиотеку. Поэтому у порта свой UUID —
+**Banned UUIDs.** `src/mir_app/src/newplugins.cpp` holds `pluginBannedList`, and the
+UUID of the original `icqoscar8` (`{73A9615C-7D4E-4555-BADB-EE05DC928EFF}`) is listed
+there explicitly. `checkAPI()` reaches `isPluginBanned()`, marks the plugin as failed
+and unloads the library. That is why the port has its own UUID,
 `{A5B4A32D-D2A8-4925-AE3E-1480E41A07B3}`.
 
-Вдобавок `OpenPlugin()` вставляет запись в `pluginList` без проверки на
-повторы, а `Plugin_Uninit()` удаляет её через `List_RemovePtr` — двоичный поиск
-**по имени файла**, не по указателю. Если включить галочкой плагин, который уже
-есть в списке, появляются две записи с одним именем: ядро вычёркивает одну, а
-освобождает другую, и на оставшемся висячем указателе падает при выходе. Отсюда
-совет не переключать галочку, а класть файл и перезапускать.
+On top of that, `OpenPlugin()` inserts an entry into `pluginList` without checking
+for duplicates, and `Plugin_Uninit()` removes it through `List_RemovePtr`, a binary
+search **by file name**, not by pointer. If you tick a plugin that is already in the
+list, two entries with the same name appear: the core removes one from the list but
+frees the other, and crashes on exit on the dangling pointer that remains. Hence the
+advice not to toggle the check box but to put the file in place and restart.
 
-## Правки под 0.96.7
+## Changes for 0.96.7
 
-Заплатка сделана под это ядро. Если собирать под более свежее, разойдётся
-`db_add_contact`: в 0.96.7 это `db_add_contact(void)`, а с 0.96.8 —
-`db_add_contact(const char *szModule, int flags = 0)`. Два места в
-`src/utilities.cpp`, `Proto_AddToContact` рядом вызывается в обоих случаях.
+The patch is made for this core. If you build for a newer one, `db_add_contact` will
+differ: in 0.96.7 it is `db_add_contact(void)`, and from 0.96.8 on it is
+`db_add_contact(const char *szModule, int flags = 0)`. There are two places in
+`src/utilities.cpp`; `Proto_AddToContact` is called right next to them in both cases.
 
-Таблица виртуальных функций `PROTO_INTERFACE` между этими версиями не менялась.
+The `PROTO_INTERFACE` virtual function table did not change between these versions.
 
-## Приём файлов
+## Receiving files
 
-Ядро 0.96 получает входящий файл как `DB::FILE_BLOB`, и указатель на передачу
-возвращает в `FileAllow`/`FileDeny`/`FileCancel` только из
-`FILE_BLOB::setUserInfo` (раньше — `PROTORECVFILE.lParam`). Перенос это
-потерял, и «Принять» на любом входящем файле кончалось «Невозможно начать
-передачу»: `FileAllow` получал пустой указатель и молча возвращал ошибку, до
-соединения дело не доходило. Так же не работает и исходная 0.95.8.1 на этом
-ядре. Теперь передача кладётся в событие (`oscar_filetransfer.cpp`,
+Core 0.96 receives an incoming file as `DB::FILE_BLOB`, and passes the transfer
+pointer back to `FileAllow`/`FileDeny`/`FileCancel` only from
+`FILE_BLOB::setUserInfo` (previously `PROTORECVFILE.lParam`). The port lost this, and
+"Accept" on any incoming file ended with "Unable to start the transfer": `FileAllow`
+got a null pointer and silently returned an error, and it never got as far as
+connecting. The original 0.95.8.1 does not work on this core either, for the same
+reason. Now the transfer is stored in the event (`oscar_filetransfer.cpp`,
 `icq_filerequests.cpp`).
 
-Соединение: сначала к адресам отправителя — все, что есть в предложении:
-TLV 2 (предложенный адрес, если это не прокси), TLV 3 (свой адрес клиента —
-наш сервер ставит туда внешний, когда концы приходят к нему с разных адресов)
-и TLV 4 (адрес, который видел сервер); локальные (10/8, 172.16/12,
-192.168/16, 100.64/10, 169.254/16) — первыми, по 3 секунды, внешние — по 6.
-Совпадение внешних адресов больше не решает, где собеседник: VPN или пул
-CGNAT дают одной локальной сети разные внешние. При неудаче — обратное (Miranda слушает порт и шлёт предложение с
-номером запроса 2; ICQ 6.5 так умеет). Файлового прокси AOL (`ars.oscar`)
-больше нет, и у нашего сервера его нет: этапы прокси не пробуются; если ни
-прямое, ни обратное соединение невозможно или собеседник просит свой прокси
-(запрос 3/4), передача сразу завершается ошибкой и собеседнику уходит отмена.
+Connecting: first to the sender's addresses, all the ones in the proposal: TLV 2 (the
+proposed address, if it is not a proxy), TLV 3 (the client's own address; our server
+puts the external one there when the two ends reach it from different addresses) and
+TLV 4 (the address the server saw); local ones (10/8, 172.16/12, 192.168/16,
+100.64/10, 169.254/16) first, 3 seconds each, external ones 6 seconds each. Matching
+external addresses no longer decides where the peer is: a VPN or a CGNAT pool gives
+one local network different external addresses. If that fails, the reverse
+connection is tried (Miranda listens on a port and sends a proposal with request
+number 2; ICQ 6.5 supports this). The AOL file proxy (`ars.oscar`) is gone, and our
+server does not have one either: the proxy stages are not tried; if neither a direct
+nor a reverse connection is possible, or the peer asks for its own proxy (request
+3/4), the transfer fails at once and a cancel is sent to the peer.
 
-**Запрос при открытом окне.** Ядро ставит на входящий файл событие списка
-контактов с ключом — событием базы; через него открывается окно «Входящий
-файл». IEView, рисуя журнал, снимает все события с этим ключом
-(`DB::EventInfo::wipeNotify` в `HTMLBuilder.cpp` — для каждого сообщения и
-файла, при каждой перерисовке журнала). При открытом окне беседы запрос
-оставался только строкой в журнале, и принять его было нечем. Встроенный
-журнал TabSRMM файлы не снимает. Теперь IcqOscarJ сразу заменяет событие
-ядра своим (`TakeOverFileRequestNotify`, `oscar_filetransfer.cpp`) с ключом,
-которого журналы не трогают: мигает так же, открывает то же окно «Входящий
-файл», убирается, когда запрос принят, отклонён или отменён.
+**The request while the window is open.** For an incoming file the core sets a
+contact list event keyed by the database event; through it the "Incoming file" window
+opens. IEView, when drawing the log, removes all events with that key
+(`DB::EventInfo::wipeNotify` in `HTMLBuilder.cpp`, for every message and file, on
+every log redraw). With the conversation window open, the request remained only a
+line in the log, and there was no way to accept it. The built-in TabSRMM log does not
+remove file events. Now IcqOscarJ immediately replaces the core's event with its own
+(`TakeOverFileRequestNotify`, `oscar_filetransfer.cpp`) with a key the logs do not
+touch: it flashes the same way, opens the same "Incoming file" window, and goes away
+when the request is accepted, declined or cancelled.
 
-Описание: ICQ 6.5 текст к файлу не шлёт, и вместо «Без описания» показывается
-размер (TLV 2711/2713), например «240.5 КБ».
+Description: ICQ 6.5 sends no text with a file, so instead of "No description given"
+the size is shown (TLV 2711/2713), for example "240.5 KB".
 
-## Страницы сведений о пользователе
+## User info pages
 
-Вкладки «Details» и «Account» ядро больше не создаёт из `OPTIONSDIALOGPAGE` с
-оконной процедурой: `USERINFOPAGE` требует объект `CUserInfoPageDlg`. Обе наши
-процедуры (`IcqDlgProc`, `ChangeInfoDlgProc`) оставлены как есть, а между ними и
-ядром стоит переходник `CIcqUserInfoPage` в `src/userinfotab.cpp`. Он отдаёт
-сообщения процедуре без изменений и добавляет то, чего новое ядро не шлёт:
+The core no longer creates the "Details" and "Account" tabs from an
+`OPTIONSDIALOGPAGE` with a window procedure: `USERINFOPAGE` requires a
+`CUserInfoPageDlg` object. Both of our procedures (`IcqDlgProc`,
+`ChangeInfoDlgProc`) are kept as they are, and between them and the core sits the
+`CIcqUserInfoPage` adapter in `src/userinfotab.cpp`. It passes messages to the
+procedure unchanged and adds what the new core does not send:
 
-- указатель на протокол в `lParam` у `WM_INITDIALOG` — раньше он приходил
-  отдельным уведомлением `PSN_PARAMCHANGED`, которого в ядре больше нет;
-- `PSN_INFOCHANGED` из `OnRefresh()` — окно сведений вызывает его после создания
-  страницы и по `PSM_FORCECHANGED`. Само `PSN_INFOCHANGED` при этом процедуре не
-  пересылается, иначе страница заполнялась бы дважды.
+- the protocol pointer in `lParam` of `WM_INITDIALOG`; it used to come in a separate
+  `PSN_PARAMCHANGED` notification, which the core no longer has;
+- `PSN_INFOCHANGED` from `OnRefresh()`; the info window calls it after creating the
+  page and on `PSM_FORCECHANGED`. `PSN_INFOCHANGED` itself is not forwarded to the
+  procedure, otherwise the page would be filled twice.
 
-`m_autoClose = 0`: иначе `CDlgBase` закрывал бы страницу по `IDCANCEL`, тогда как
-Esc должен закрывать всё окно сведений — это делает сама процедура, пересылая
-команду родителю.
+`m_autoClose = 0`: otherwise `CDlgBase` would close the page on `IDCANCEL`, whereas
+Esc must close the whole info window; the procedure itself does that by forwarding
+the command to the parent.
 
-`Resizer()` обязателен: окно сведений тянет страницу по своему размеру, но
-раскладку по шаблону пересчитывает только этот обработчик — без него содержимое
-остаётся в левом верхнем углу неизменной рамкой. Список настроек на «Account»
-растягивается в обе стороны, кнопка «Сохранить изменения» держится правого
-нижнего угла, на «Details» подписи стоят на месте, а значения тянутся по ширине.
+`Resizer()` is required: the info window stretches the page to its own size, but only
+this handler recalculates the template layout; without it the contents stay in the
+top left corner as a fixed frame. The settings list on "Account" stretches in both
+directions, the "Save changes" button sticks to the bottom right corner, and on
+"Details" the labels stay in place while the values stretch across the width.
 
-**Своя анкета не запрашивается ядром.** Окно сведений зовёт `PS_GETINFO` через
-`CallContactService`, а тот при `hContact == 0` не находит учётную запись
-(`Proto_GetContactAccount(0) == nullptr`) и молча возвращает «успех». Окно
-начинает ждать подтверждения, которого никто не пришлёт: отсюда вечная бегущая
-надпись «Обновление» и серая кнопка «Обновить». Плагин запрашивает свою анкету
-сам из `OnUserInfoInit`, а если запрос не ушёл — закрывает ожидание отложенным
-`ProtoBroadcastAsync(0, ACKTYPE_GETINFO, ACKRESULT_FAILED, nullptr, 0)`.
-Отложенным потому, что синхронный отказ пришёл бы раньше, чем окно вообще
-запустит ожидание. Кнопка «Обновить» для своей анкеты всё равно ничего не
-делает — `onClick_Update` в ядре пропускает нулевой контакт.
+**The core does not request your own profile.** The info window calls `PS_GETINFO`
+through `CallContactService`, which, for `hContact == 0`, does not find the account
+(`Proto_GetContactAccount(0) == nullptr`) and silently returns "success". The window
+starts waiting for an acknowledgement that nobody will send: hence the endless
+scrolling "Updating" caption and the greyed-out "Update" button. The plugin requests
+its own profile itself from `OnUserInfoInit`, and if the request was not sent, it
+ends the wait with a deferred
+`ProtoBroadcastAsync(0, ACKTYPE_GETINFO, ACKRESULT_FAILED, nullptr, 0)`. Deferred
+because a synchronous failure would arrive before the window even starts waiting. The
+"Update" button still does nothing for your own profile: `onClick_Update` in the core
+skips the null contact.
 
-`PSN_KILLACTIVE` и `PSN_APPLY` идут к процедуре напрямую: ответ страницы ядро
-читает как результат `SendMessage`, а `DefDlgProc` возвращает `DWLP_MSGRESULT`,
-поэтому `PSNRET_INVALID_NOCHANGEPAGE` из «Account» работает по-прежнему.
+`PSN_KILLACTIVE` and `PSN_APPLY` go to the procedure directly: the core reads the
+page's answer as the result of `SendMessage`, and `DefDlgProc` returns
+`DWLP_MSGRESULT`, so `PSNRET_INVALID_NOCHANGEPAGE` from "Account" works as before.
 
-## Что осталось незакрытым
+## What is still open
 
-- Собственный номер версии в `src/version.h` — прежний, `0.95.8.1`.
+- The plugin's own version number in `src/version.h` is the old one, `0.95.8.1`.

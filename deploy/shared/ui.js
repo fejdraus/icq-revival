@@ -1,23 +1,23 @@
-// Общее оформление всех веб-страниц проекта.
+// Shared look for every web page of the project.
 //
-// Раньше у регистрации с админкой было одно оформление (окно Windows 98 на
-// бирюзовом фоне), а у страниц, которые открывает клиент, другое. Здесь одна
-// тема на всех: зелёная шапка с цветком ICQ и белый лист.
+// Registration and the admin panel used to have one look (a Windows 98 window
+// on a teal background) and the pages the client opens had another. Here there
+// is one theme for all: a green header with the ICQ flower and a white sheet.
 //
-// Файл подключают три сервиса — oscar-register, oscar-admin и
-// oscar-legacy-web, — поэтому при развёртывании он кладётся в каталог каждого
-// из них. Зависимостей нет.
+// Three services use this file - oscar-register, oscar-admin and
+// oscar-legacy-web - so on deployment it is copied into the directory of each
+// of them. It has no dependencies.
 //
-// Имена классов оставлены прежними (window, titlebar, body, hero, msg,
-// statusbar, toolbar и прочие), чтобы разметку сервисов не переписывать:
-// меняется только их вид.
+// The class names are kept as they were (window, titlebar, body, hero, msg,
+// statusbar, toolbar and the rest) so the services' markup does not have to
+// be rewritten: only their appearance changes.
 
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-// Палитра. Одно место, где задаются цвета проекта.
+// The palette. The one place where the project's colours are set.
 const TOKENS = {
   green: '#3c6e1f',
   greenLight: '#4a8526',
@@ -43,23 +43,25 @@ const TOKENS = {
 
 const FONT_STACK = 'Tahoma, "MS Sans Serif", Geneva, Verdana, sans-serif';
 
-// Значок ICQ Revival — цветок из логотипа (logo.png рядом, с надписью), без
-// надписи, 192×192 с прозрачным фоном. Лежит рядом отдельным файлом: держать
-// картинку строкой в коде незачем. При развёртывании flower.png кладётся в
-// каталог сервиса вместе с ui.js. Отдаётся по адресу /ui/flower.png, см.
-// serveAsset.
+// The ICQ Revival badge - the flower from the logo (logo.png next to this
+// file, with the lettering), without the lettering, 192x192 on a transparent
+// background. It sits alongside as a separate file: there is no reason to keep
+// the image as a string in the code. On deployment flower.png is copied into
+// the service's directory together with ui.js. It is served at
+// /ui/flower.png, see serveAsset.
 const FLOWER_PNG = fs.readFileSync(path.join(__dirname, 'flower.png'));
 
 const FLOWER_ASSET = '/ui/flower.png';
-// Версия по содержимому: заголовок кэширования у картинки суточный, и без
-// этого браузер продолжал бы показывать прежний логотип после замены файла.
+// A version derived from the content: the image is cached for a day, and
+// without this the browser would keep showing the old logo after the file is
+// replaced.
 const FLOWER_TAG = require('node:crypto')
   .createHash('sha1').update(FLOWER_PNG).digest('hex').slice(0, 8);
 
-// Иконка сайта — тот же цветок. Браузеры спрашивают /favicon.ico сами, даже
-// без ссылки в <head>, поэтому он отдаётся и там: файл .ico с этим PNG внутри
-// (так умеют все браузеры начиная с Vista). Ссылка FAVICON в <head> каждой
-// страницы показывает на PNG.
+// The site icon is the same flower. Browsers ask for /favicon.ico on their
+// own, even with no link in <head>, so it is served there too: an .ico file
+// with this PNG inside (every browser since Vista can read that). The FAVICON
+// link in the <head> of every page points to the PNG.
 const FAVICON_ICO = (() => {
   const head = Buffer.alloc(22);
   head.writeUInt16LE(0, 0);      // reserved
@@ -80,8 +82,8 @@ function flowerImg(size) {
     + ` style="border:0;vertical-align:middle">`;
 }
 
-// Сервисы зовут это первым делом в обработчике запроса: вернёт true, если
-// запрос был за картинкой и уже обслужен.
+// Services call this first thing in their request handler: it returns true if
+// the request was for an image and has already been served.
 function serveAsset(req, res) {
   const url = String(req.url).split('?')[0];
   const asset = url === FLOWER_ASSET ? { type: 'image/png', body: FLOWER_PNG }
@@ -100,9 +102,9 @@ function serveAsset(req, res) {
 
 
 const STYLE = `
-/* Переменные оставлены для удобства правки в браузере. Опираться на них
-   в правилах нельзя: встроенный движок клиента var() не понимает и
-   выбрасывает всё объявление целиком. Значения подставляются из TOKENS. */
+/* The variables are kept for convenient editing in the browser. Rules must
+   not rely on them: the client's built-in engine does not understand var()
+   and drops the whole declaration. The values are filled in from TOKENS. */
 :root {
   --green: ${TOKENS.green};
   --green-light: ${TOKENS.greenLight};
@@ -130,9 +132,9 @@ body {
   color: ${TOKENS.ink};
   background: ${TOKENS.page};
 }
-/* Колонка по центру без flexbox: его встроенный движок клиента не знает. */
+/* A centred column without flexbox: the client's built-in engine lacks it. */
 .window { margin: 0 auto; }
-/* Окно клиента маленькое — те же правила, но плотнее. */
+/* The client's window is small - the same rules, but tighter. */
 body.compact { padding: 6px; font-size: 13px; line-height: 1.45; }
 body.compact .titlebar td { padding-top: 5px; padding-bottom: 5px; }
 body.compact .label { font-size: 16px; }
@@ -141,8 +143,9 @@ body.compact .statusbar td { padding-top: 4px; padding-bottom: 4px; }
 body.compact p { margin: 0 0 5px; }
 body.compact h2 { margin: 7px 0 3px; }
 
-/* Лист. Прежнее имя .window сохранено, но рамки окна больше нет. Во всю
-   ширину окна браузера: поля отступа даёт body. */
+/* The sheet. The old name .window is kept, but there is no window frame any
+   more. It spans the full width of the browser window: body gives the
+   margins. */
 .window {
   width: 100%;
   background: ${TOKENS.sheet};
@@ -152,15 +155,15 @@ body.compact h2 { margin: 7px 0 3px; }
   overflow: hidden;
 }
 
-/* Шапка с цветком вместо синего заголовка окна. */
+/* A header with the flower instead of the blue window title bar. */
 .titlebar {
   background: ${TOKENS.green};
   background-image: linear-gradient(${TOKENS.greenLight}, ${TOKENS.greenDark});
   border-bottom: 4px solid ${TOKENS.greenRule};
 }
 .titlebar td { padding: 9px 4px 9px 0; }
-/* Внутри шапки и подвала есть вложенные таблицы (цветок): отступы
-   внешних ячеек к ним применяться не должны, иначе их распирает. */
+/* The header and footer contain nested tables (the flower): the padding of
+   the outer cells must not apply to them, or they get stretched. */
 .titlebar td td, .statusbar td td { padding: 0; }
 .titlebar td.flowercell { padding-left: 12px; }
 .titlebar td:last-child { padding-right: 12px; }
@@ -248,8 +251,8 @@ button.danger { color: #fff; background: ${TOKENS.bad}; border-color: #8f0000; }
   padding: 0 3px;
 }
 
-/* Таблицы данных (списки админки). Класс обязателен: иначе правила
-   наезжают на таблицы, которыми размечены карточки и списки ссылок. */
+/* Data tables (the admin panel's lists). The class is required: otherwise the
+   rules spill onto the tables used to lay out cards and link lists. */
 table.data { width: 100%; border-collapse: collapse; }
 table.data thead th {
   text-align: left;
@@ -294,7 +297,7 @@ table.data tbody tr:hover td { background: #f7f5f0; }
 .langs a, .langs b, .langs button { margin-left: 5px; }
 .langs button { padding: 2px 8px; font-size: 13px; border-radius: 9px; }
 .langs button[aria-current="true"] { color: #fff; background: ${TOKENS.green}; border-color: ${TOKENS.greenDark}; }
-/* В сервисах без сценариев переключатель — ссылки, а не кнопки. Вид общий. */
+/* In services without scripts the switcher is links, not buttons. Same look. */
 .langs a, .langs b {
   display: inline-block;
   padding: 2px 9px;
@@ -339,7 +342,7 @@ h2 { margin: 14px 0 6px; font-size: 16px; }
 a, .nav a { color: ${TOKENS.link}; }
 a:hover { color: #a01010; }
 
-/* Узкий экран: таблицы админки и колонки не должны разъезжаться. */
+/* Narrow screen: the admin tables and columns must not spread apart. */
 @media (max-width: 520px) {
   body { padding: 10px 8px; }
   .titlebar { font-size: 16px; padding: 8px 10px; }
@@ -348,18 +351,19 @@ a:hover { color: #a01010; }
 }
 `;
 
-// --------------------------------------------------------------- шапка и подвал
+// ---------------------------------------------------------- header and footer
 //
-// Разметка шапки и подвала живёт здесь, а не в каждом сервисе: иначе они
-// неизбежно расходятся в мелочах вроде регистра букв в переключателе языка.
+// The header and footer markup lives here rather than in each service:
+// otherwise they inevitably drift apart in small things like the letter case
+// in the language switcher.
 
-// Подпись языка в переключателе. Везде одинаковая: UK, EN.
+// The language label in the switcher. The same everywhere: UK, EN.
 function langLabel(code) {
   return String(code).toUpperCase();
 }
 
-// title и subtitle подставляются как есть, поэтому экранирует их вызывающий.
-// attrs — для сервисов, которые переводят страницу на лету (data-i18n).
+// title and subtitle are inserted as is, so the caller escapes them.
+// attrs is for services that translate the page on the fly (data-i18n).
 function header(title, subtitle, attrs) {
   return `<table class="titlebar" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr>
@@ -370,8 +374,8 @@ function header(title, subtitle, attrs) {
 </table>`;
 }
 
-// status — слева, extra — произвольная вставка перед языками (счётчики),
-// langs — готовая разметка переключателя либо id для сборки сценарием.
+// status goes on the left, extra is any insert before the languages
+// (counters), langs is ready switcher markup or an id for a script to fill.
 function footer(opts) {
   const o = opts || {};
   const statusId = o.statusId ? ` id="${o.statusId}"` : '';
@@ -385,12 +389,12 @@ function footer(opts) {
 </table>`;
 }
 
-// ---------------------------------------------------------------------- языки
+// ------------------------------------------------------------------ languages
 
 const LANGS = ['uk', 'en'];
 const FALLBACK_LANG = 'en';
 
-// Выбор языка по заголовку Accept-Language с учётом весов q.
+// Picks the language from the Accept-Language header, honouring q weights.
 function pickLang(header) {
   if (!header) return FALLBACK_LANG;
   const ranked = String(header)

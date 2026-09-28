@@ -18,7 +18,7 @@ import (
 // function, followed by a document such as
 //
 //	<tzerRoot id="cantH" url="http://.../canthearu.swf"
-//	    thumb="http://.../canthearu.png" name=" Вас не слышно" freeData=""/>
+//	    thumb="http://.../canthearu.png" name=" Вас не чути" freeData=""/>
 //
 // with the name in UTF-8, in the sender's language.
 var (

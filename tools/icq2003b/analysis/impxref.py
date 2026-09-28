@@ -1,5 +1,5 @@
-# Находит в модуле вызовы импортированной функции по имени и печатает код вокруг.
-#   python impxref.py <модуль> <подстрока имени импорта>
+# Finds the calls to an imported function (by name) in a module and prints the code around them.
+#   python impxref.py <module> <import name substring>
 
 import os
 import sys
@@ -22,15 +22,15 @@ for entry in pe.DIRECTORY_ENTRY_IMPORT:
             targets.append((imp.address, dll, imp.name.decode('latin1')))
 
 if not targets:
-    print('импорт не найден')
+    print('import not found')
     raise SystemExit
 
 text = next(s for s in pe.sections if s.Name.rstrip(b'\0') == b'.text')
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
 
 for iat_va, dll, name in targets:
-    print(f'\n=== {name}  из {dll}, IAT 0x{iat_va:x} ===')
-    # call dword ptr [iat_va]  ->  FF 15 <адрес>
+    print(f'\n=== {name}  from {dll}, IAT 0x{iat_va:x} ===')
+    # call dword ptr [iat_va]  ->  FF 15 <address>
     pattern = b'\xff\x15' + iat_va.to_bytes(4, 'little')
     pos = text.PointerToRawData
     end = pos + text.SizeOfRawData
@@ -44,11 +44,11 @@ for iat_va, dll, name in targets:
         chunk = data[start:pos + 40]
         cva = base + text.VirtualAddress + (start - text.PointerToRawData)
         call_va = base + text.VirtualAddress + (pos - text.PointerToRawData)
-        print(f'\n  --- вызов #{count}, файл 0x{pos:x} ---')
+        print(f'\n  --- call #{count}, file 0x{pos:x} ---')
         for ins in md.disasm(bytes(chunk), cva):
             mark = '  <<<' if ins.address == call_va else ''
             fo = start + (ins.address - cva)
-            print(f'    файл 0x{fo:05x}  0x{ins.address:08x}  {ins.mnemonic} {ins.op_str}{mark}')
+            print(f'    file 0x{fo:05x}  0x{ins.address:08x}  {ins.mnemonic} {ins.op_str}{mark}')
         pos += 1
     if count == 0:
-        print('  прямых вызовов не найдено')
+        print('  no direct calls found')

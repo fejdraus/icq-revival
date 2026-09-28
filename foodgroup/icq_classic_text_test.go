@@ -12,8 +12,8 @@ import (
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
-// "Сергей" as ICQ 2003b sends it on a Cyrillic Windows.
-const sergeyCP1251 = "\xd1\xe5\xf0\xe3\xe5\xe9"
+// "Сергій" as ICQ 2003b sends it on a Cyrillic Windows.
+const sergeyCP1251 = "\xd1\xe5\xf0\xe3\xb3\xe9"
 
 func TestClassicText(t *testing.T) {
 	tests := []struct {
@@ -28,15 +28,15 @@ func TestClassicText(t *testing.T) {
 			name:     "code page text becomes UTF-8 and back",
 			codePage: "windows-1251",
 			in:       sergeyCP1251,
-			wantIn:   "Сергей",
-			out:      "Сергей",
+			wantIn:   "Сергій",
+			out:      "Сергій",
 			wantOut:  sergeyCP1251,
 		},
 		{
 			name:     "UTF-8 from a newer client is kept as it is",
 			codePage: "windows-1251",
-			in:       "Сергій",
-			wantIn:   "Сергій",
+			in:       "Олексій",
+			wantIn:   "Олексій",
 		},
 		{
 			name:     "ASCII is the same both ways",
@@ -63,8 +63,8 @@ func TestClassicText(t *testing.T) {
 			codePage: "",
 			in:       sergeyCP1251,
 			wantIn:   sergeyCP1251,
-			out:      "Сергей",
-			wantOut:  "Сергей",
+			out:      "Сергій",
+			wantOut:  "Сергій",
 		},
 	}
 	for _, tt := range tests {
@@ -89,7 +89,7 @@ func TestClassicText_Structs(t *testing.T) {
 	// A request: every text field converted in place.
 	req := wire.ICQ_0x07D0_0x03EA_DBQueryMetaReqSetBasicInfo{FirstName: sergeyCP1251, Nickname: "Serg", CountryCode: 804}
 	ct.inAll(&req)
-	assert.Equal(t, "Сергей", req.FirstName)
+	assert.Equal(t, "Сергій", req.FirstName)
 	assert.Equal(t, "Serg", req.Nickname)
 	assert.Equal(t, uint16(804), req.CountryCode)
 
@@ -97,21 +97,21 @@ func TestClassicText_Structs(t *testing.T) {
 	first := sergeyCP1251
 	criteria := state.ICQUserSearchCriteria{FirstName: &first}
 	ct.inAll(&criteria)
-	assert.Equal(t, "Сергей", *criteria.FirstName)
+	assert.Equal(t, "Сергій", *criteria.FirstName)
 
 	// A reply: a converted copy, the original left alone.
-	reply := wire.ICQ_0x07DA_0x00C8_DBQueryMetaReplyBasicInfo{FirstName: "Сергей", City: "Kyiv"}
+	reply := wire.ICQ_0x07DA_0x00C8_DBQueryMetaReplyBasicInfo{FirstName: "Сергій", City: "Kyiv"}
 	got := ct.outAll(reply).(wire.ICQ_0x07DA_0x00C8_DBQueryMetaReplyBasicInfo)
 	assert.Equal(t, sergeyCP1251, got.FirstName)
 	assert.Equal(t, "Kyiv", got.City)
-	assert.Equal(t, "Сергей", reply.FirstName)
+	assert.Equal(t, "Сергій", reply.FirstName)
 }
 
 func TestICQService_ClassicCodePage(t *testing.T) {
 	updater := newMockICQUserUpdater(t)
 	updater.EXPECT().
 		SetBasicInfo(mock.Anything, state.NewIdentScreenName("100003"), mock.MatchedBy(func(d state.ICQBasicInfo) bool {
-			return d.FirstName == "Сергей" && d.Nickname == "Serg"
+			return d.FirstName == "Сергій" && d.Nickname == "Serg"
 		})).
 		Return(nil)
 	relayer := newMockMessageRelayer(t)

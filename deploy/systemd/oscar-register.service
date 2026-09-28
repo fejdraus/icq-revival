@@ -16,16 +16,17 @@ Environment="OSCAR_HOST=icq.example.com"
 Environment="OSCAR_PORT=5190"
 Environment="OSCAR_PORT_SSL=5193"
 Environment="DB_PATH=/var/lib/open-oscar-server/oscar.sqlite"
-# База сервера открывается на чтение (сверка пароля), а после удаления учётки —
-# на запись: DELETE /user оставляет контакт-лист и профиль сиротами, и без
-# уборки они достались бы следующему владельцу освободившегося номера.
+# The server's database is opened for reading (password check) and, after an
+# account is deleted, for writing: DELETE /user leaves the contact list and
+# profile orphaned, and without cleanup they would pass to the next owner of
+# the freed number.
 ReadWritePaths=/var/lib/open-oscar-server
-# Адреса восстановления и одноразовые ссылки — в своей базе,
-# каталог создаёт сам systemd и отдаёт его сервису на запись.
+# Recovery addresses and one-time links live in their own database; systemd
+# creates the directory itself and gives the service write access to it.
 StateDirectory=oscar-register
 Environment="RECOVERY_DB=/var/lib/oscar-register/recovery.sqlite"
 Environment="PUBLIC_BASE_URL=https://icq.example.com:8444"
-# Пароль почтового ящика держим отдельно, с правами 600.
+# The mailbox password is kept separately, with mode 600.
 EnvironmentFile=-/etc/oscar-register/mail.env
 ExecStart=/usr/bin/node /opt/oscar-register/server.js
 Restart=on-failure

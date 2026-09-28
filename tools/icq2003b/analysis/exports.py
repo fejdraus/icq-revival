@@ -1,6 +1,6 @@
-# Ищем в экспортах модулей ICQ функции, связанные с баннером и поиском.
-# Эти DLL экспортируют декорированные имена C++, поэтому по именам можно
-# сразу выйти на адреса нужных функций и дизассемблировать их.
+# Looks through the exports of the ICQ modules for functions related to the banner and search.
+# These DLLs export decorated C++ names, so the names lead straight to the
+# addresses of the functions we need, which can then be disassembled.
 
 import os
 import re
@@ -13,7 +13,7 @@ PATTERN = re.compile(sys.argv[1] if len(sys.argv) > 1 else 'Banner', re.I)
 
 
 def demangle_hint(name):
-    """Грубо вытаскиваем имя функции и класса из декорированного имени MSVC."""
+    """Roughly pulls the function and class name out of a decorated MSVC name."""
     m = re.match(r'\?(\w+)@(\w+)@', name)
     if m:
         return f'{m.group(2)}::{m.group(1)}'
@@ -43,7 +43,7 @@ for entry in sorted(os.listdir(ICQ)):
         if PATTERN.search(name):
             hits.append((exp.address, name))
     if hits:
-        print(f'\n=== {entry} — совпадений {len(hits)} ===')
+        print(f'\n=== {entry} - {len(hits)} matches ===')
         for rva, name in hits[:40]:
             print(f'  RVA 0x{rva:06x}  {demangle_hint(name)}')
             print(f'             {name}')

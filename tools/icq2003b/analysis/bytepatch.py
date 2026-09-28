@@ -1,6 +1,6 @@
-# Точечная замена байтов в файле с проверкой того, что лежит на месте.
-#   python bytepatch.py <файл> <смещение hex> <ожидаемые байты hex> <новые байты hex>
-# Перед первой правкой рядом создаётся копия <файл>.antibanner-backup.
+# Replaces bytes at one spot in a file, after checking what is there now.
+#   python bytepatch.py <file> <offset hex> <expected bytes hex> <new bytes hex>
+# Before the first change a copy, <file>.antibanner-backup, is made next to it.
 
 import os
 import shutil
@@ -14,14 +14,14 @@ new = bytes.fromhex(new_hex.replace(' ', ''))
 backup = path + '.antibanner-backup'
 if not os.path.exists(backup):
     shutil.copy2(path, backup)
-    print(f'создана копия: {os.path.basename(backup)}')
+    print(f'copy made: {os.path.basename(backup)}')
 
 with open(path, 'rb') as f:
     data = bytearray(f.read())
 
 current = bytes(data[offset:offset + len(expect)])
 if current != expect:
-    print(f'на месте {current.hex(" ")}, ожидалось {expect.hex(" ")} — ничего не меняю')
+    print(f'found {current.hex(" ")}, expected {expect.hex(" ")} - changing nothing')
     raise SystemExit(1)
 
 data[offset:offset + len(new)] = new

@@ -10,13 +10,13 @@ User=oscar
 Group=oscar
 WorkingDirectory=/opt/oscar-legacy-web
 Environment="PORT=8101"
-# Слушаем все адреса: за этой службой стоит nginx с TLS на 8102, а в клиенте
-# ссылки ведут на имя хоста, а не на 127.0.0.1.
+# Listen on all addresses: nginx with TLS on 8102 sits in front of this
+# service, and links in the client point at the host name, not 127.0.0.1.
 Environment="BIND=0.0.0.0"
 Environment="MGMT_API=http://127.0.0.1:8090"
 Environment="REGISTER_BASE=https://icq.example.com:8444"
 ExecStart=/usr/bin/node /opt/oscar-legacy-web/server.js
-# Перечитать services.json и topics.json можно без перезапуска.
+# services.json and topics.json can be reloaded without a restart.
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5

@@ -59,7 +59,7 @@ func tzerProposal(t *testing.T, capability [16]byte, svc []byte) wire.TLV {
 }
 
 const tzerDoc = `<tzerRoot id="cantH" url="http://example.com:8101/icq/tzers/canthearu.swf" ` +
-	`thumb="http://example.com:8101/icq/tzers/canthearu.png" name=" Вас не слышно" freeData=""/>` + "\r\n"
+	`thumb="http://example.com:8101/icq/tzers/canthearu.png" name=" Вас не чути" freeData=""/>` + "\r\n"
 
 func TestTzerText(t *testing.T) {
 	tzer := tzerProposal(t, wire.CapICQCh2Extended, tzerSvcData(tzerDoc))
@@ -85,7 +85,7 @@ func TestTzerText(t *testing.T) {
 			name:     "a tZer to a client that can't play it",
 			inBody:   withTLVs(wire.ICBMChannelRendezvous, tzer),
 			recip:    plainRecipient,
-			wantText: "tZer: Вас не слышно",
+			wantText: "tZer: Вас не чути",
 			wantTzer: true,
 		},
 		{
@@ -138,7 +138,7 @@ func TestTzerText(t *testing.T) {
 }
 
 func TestTextFragments(t *testing.T) {
-	for _, text := range []string{"tZer: Kisses", "tZer: Вас не слышно"} {
+	for _, text := range []string{"tZer: Kisses", "tZer: Вас не чути"} {
 		frags, err := textFragments(text)
 		assert.NoError(t, err)
 		b, err := wire.MarshalICBMFragmentList(frags)
@@ -164,7 +164,7 @@ func TestICBMService_ChannelMsgToHost_TzerAsText(t *testing.T) {
 		RetrieveSession(state.NewIdentScreenName("100002")).
 		Return(recipSess)
 
-	frags, err := textFragments("tZer: Вас не слышно")
+	frags, err := textFragments("tZer: Вас не чути")
 	assert.NoError(t, err)
 	messageRelayer := newMockMessageRelayer(t)
 	messageRelayer.EXPECT().

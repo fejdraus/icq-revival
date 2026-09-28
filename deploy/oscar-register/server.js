@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-// Регистрация ICQ-аккаунтов для Open OSCAR Server.
-// Тонкая обёртка над management API: форма -> POST /user.
-// Язык страницы определяется по Accept-Language, переключается вручную.
+// ICQ account registration for Open OSCAR Server.
+// A thin wrapper over the management API: form -> POST /user.
+// The page language is picked from Accept-Language and can be switched by hand.
 
 const http = require('http');
 const crypto = require('crypto');
@@ -17,13 +17,13 @@ const PORT = Number(process.env.PORT || 8099);
 const HOST = process.env.HOST || '0.0.0.0';
 const OSCAR_HOST = process.env.OSCAR_HOST || '192.168.1.43';
 const OSCAR_PORT = process.env.OSCAR_PORT || '5190';
-// Порт TLS-фронта с сертификатом Tailscale — для клиентов, которые умеют SSL.
+// Port of the TLS front with the Tailscale certificate, for clients that can do SSL.
 const OSCAR_PORT_SSL = process.env.OSCAR_PORT_SSL || '5193';
 const DB_PATH = process.env.DB_PATH || '/var/lib/open-oscar-server/oscar.sqlite';
 
-// Своя база — для адресов восстановления и одноразовых ссылок.
-// В базу сервера их класть нельзя: поле почты в профиле ICQ ищется
-// через каталог, то есть адрес стал бы публичным.
+// A database of our own, for recovery addresses and one-time links.
+// They must not go into the server's database: the mail field of the ICQ
+// profile is searchable through the directory, so the address would become public.
 const RECOVERY_DB = process.env.RECOVERY_DB || '/var/lib/oscar-register/recovery.sqlite';
 // The admin panel, linked at the foot of every page when set: /admin/ of the
 // same host, which nginx passes to it (deploy/nginx/conf.d/register.conf).
@@ -39,19 +39,19 @@ function adminLink(t) {
 
 const PUBLIC_BASE = (process.env.PUBLIC_BASE_URL || `http://${OSCAR_HOST}:${PORT}`).replace(/\/+$/, '');
 const TOKEN_TTL_MS = 30 * 60 * 1000;
-// Письма шлём редко: не чаще раза в минуту и трёх раз в час на номер.
+// Mail is sent sparingly: no more than once a minute and three times an hour per number.
 const MAIL_COOLDOWN_MS = 60 * 1000;
 const MAIL_PER_HOUR = 3;
 const EMAIL_MAX = 320;
 
-// Смена пароля требует проверки текущего, а management API этого не умеет —
-// сверяем хеш сами, читая базу сервера только на чтение.
+// Changing the password requires checking the current one, which the management
+// API cannot do, so we compare the hash ourselves, opening the server's database read-only.
 const HASH_SUFFIX = 'AOL Instant Messenger (SM)';
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000;
 const attempts = new Map();
 
-// Ограничения самого Open OSCAR Server (state/user.go).
+// Limits of Open OSCAR Server itself (state/user.go).
 const UIN_MIN = 10000;
 const UIN_MAX = 2147483646;
 const PASS_MIN = 6;
@@ -60,8 +60,8 @@ const PASS_MAX = 8;
 const LANGS = ['uk', 'en'];
 const FALLBACK_LANG = 'en';
 
-// Переводы живут и на сервере (для <html lang> и <title>), и в браузере —
-// переключение языка не перезагружает страницу.
+// Translations live both on the server (for <html lang> and <title>) and in the
+// browser, so switching the language does not reload the page.
 const I18N = {
   en: {
     name: 'English',
@@ -366,8 +366,8 @@ function pickLang(header) {
   return FALLBACK_LANG;
 }
 
-// Ошибки возвращаются кодом, а не текстом: переводит их браузер,
-// поэтому смена языка не требует повторного запроса.
+// Errors are returned as codes, not text: the browser translates them,
+// so switching the language does not need another request.
 function validate({ uin, password, password2 }) {
   if (!/^\d+$/.test(String(uin || '').trim())) {
     return { code: 'uin_not_number' };
@@ -386,11 +386,11 @@ function validate({ uin, password, password2 }) {
   return null;
 }
 
-// Анкета ICQ — только через управляющий API: так правки со страницы проходят
-// те же проверки, что и правки из клиента.
+// The ICQ profile goes only through the management API: that way edits from the
+// page pass the same checks as edits from the client.
 async function fetchProfile(uin) {
   const res = await fetch(`${API}/user/${encodeURIComponent(uin)}/icq`);
-  if (!res.ok) throw new Error(`management API вернул ${res.status}`);
+  if (!res.ok) throw new Error(`management API returned ${res.status}`);
   return res.json();
 }
 
@@ -405,7 +405,7 @@ async function saveProfile(uin, profile) {
 
 async function listUsers() {
   const res = await fetch(`${API}/user`);
-  if (!res.ok) throw new Error(`management API вернул ${res.status}`);
+  if (!res.ok) throw new Error(`management API returned ${res.status}`);
   return res.json();
 }
 
@@ -413,7 +413,7 @@ function md5(buf) {
   return crypto.createHash('md5').update(buf).digest();
 }
 
-// Повторяет wire/user.go: weak = MD5(authKey + pass + suffix),
+// Mirrors wire/user.go: weak = MD5(authKey + pass + suffix),
 // strong = MD5(authKey + MD5(pass) + suffix).
 function weakHash(pass, authKey) {
   return md5(Buffer.concat([Buffer.from(authKey), Buffer.from(pass), Buffer.from(HASH_SUFFIX)]));
@@ -430,7 +430,7 @@ function hexEqual(hex, digest) {
   return crypto.timingSafeEqual(a, digest);
 }
 
-// Возвращает: null — нет такого пользователя, false — пароль не подошёл.
+// Returns null if there is no such user, false if the password does not match.
 function verifyCurrentSecret(uin, value) {
   let db;
   try {
@@ -495,8 +495,8 @@ async function createUser(uin, password) {
   return { ok: res.ok, status: res.status, text };
 }
 
-// После сброса выкидываем активную сессию: если номером кто-то завладел,
-// он должен потерять соединение сразу, а не досидеть до вечера.
+// After a reset the active session is kicked: if someone has taken over the number,
+// they must lose the connection at once rather than stay on until evening.
 async function dropSessions(uin) {
   try {
     await fetch(`${API}/session/${encodeURIComponent(uin)}`, { method: 'DELETE' });
@@ -516,11 +516,11 @@ async function deleteUser(uin) {
 }
 
 // ---------------------------------------------------------------------------
-// Переезд на другой номер и удаление учётной записи
+// Moving to another number and deleting the account
 // ---------------------------------------------------------------------------
 
-// Анкета ICQ переносится как есть: GET и PUT принимают одну и ту же структуру,
-// меняется только поле uin.
+// The ICQ profile is carried over as is: GET and PUT take the same structure,
+// only the uin field changes.
 async function copyProfile(from, to) {
   const res = await fetch(`${API}/user/${encodeURIComponent(from)}/icq`);
   if (!res.ok) return false;
@@ -534,8 +534,8 @@ async function copyProfile(from, to) {
   return put.ok;
 }
 
-// Контакт-лист переносим группами: сначала создаём группу под новым номером
-// (сервер сам выдаёт ей идентификатор), затем добавляем в неё контакты.
+// The contact list is moved group by group: first the group is created under the
+// new number (the server assigns its ID itself), then the contacts are added to it.
 async function copyContacts(from, to) {
   const res = await fetch(`${API}/feedbag/${encodeURIComponent(from)}/group`);
   if (!res.ok) return 0;
@@ -560,10 +560,10 @@ async function copyContacts(from, to) {
   return moved;
 }
 
-// DELETE /user убирает только строку в users. Контакт-лист, профиль и настройки
-// видимости остаются сиротами (внешних ключей у этих таблиц нет), и следующий
-// владелец освободившегося номера получил бы чужой контакт-лист. Поэтому
-// подчищаем сами — строки уже никому не принадлежат, так что писать безопасно.
+// DELETE /user removes only the row in users. The contact list, profile and
+// visibility settings are left orphaned (these tables have no foreign keys), and the
+// next owner of the freed number would get someone else's contact list. So we
+// clean up ourselves; the rows no longer belong to anyone, so writing is safe.
 function purgeLeftovers(uin) {
   let db;
   try {
@@ -586,7 +586,7 @@ function purgeLeftovers(uin) {
 }
 
 // ---------------------------------------------------------------------------
-// Восстановление по почте
+// Recovery by mail
 // ---------------------------------------------------------------------------
 
 fs.mkdirSync(path.dirname(RECOVERY_DB), { recursive: true });
@@ -612,11 +612,11 @@ store.exec(`
   );
 `);
 
-// Перенос при старте: на сервере, где адреса подтвердили раньше, чем появилась
-// таблица входа, иначе она так и осталась бы пустой до первой правки адреса.
+// Migration at startup: on a server where addresses were confirmed before the login
+// table appeared, it would otherwise stay empty until the first address edit.
 process.nextTick(syncLoginEmail);
 
-// Адрес проверяем консервативно: одна «собака», точка в домене, без пробелов.
+// The address is checked conservatively: one "@", a dot in the domain, no spaces.
 function normalizeEmail(value) {
   const email = String(value || '').trim().toLowerCase();
   if (!email || email.length > EMAIL_MAX) return null;
@@ -628,9 +628,9 @@ function getRecovery(uin) {
   return store.prepare('SELECT email, verified FROM recoveryEmail WHERE uin = ?').get(String(uin)) || null;
 }
 
-// Номер, которому адрес уже принадлежит, или null. Адрес лежит в трёх местах —
-// в анкете ICQ, в учётной записи AIM и здесь, — и каждое из них пускает своего
-// владельца в клиент, поэтому смотрим все три: один адрес — одна учётная запись.
+// The number the address already belongs to, or null. The address lives in three
+// places (the ICQ profile, the AIM account and here), and each of them lets its
+// owner into the client, so all three are checked: one address, one account.
 function emailOwner(email, exceptUin) {
   const addr = String(email).trim().toLowerCase();
   const except = String(exceptUin || '');
@@ -652,8 +652,8 @@ function emailOwner(email, exceptUin) {
       .get(except, addr, addr);
     return hit ? hit.uin : null;
   } catch (err) {
-    // Основная база недоступна — надёжнее отказать, чем выдать адрес дважды.
-    console.error(`не удалось проверить адрес по основной базе: ${err.message}`);
+    // The main database is unavailable; refusing is safer than handing out the address twice.
+    console.error(`could not check the address against the main database: ${err.message}`);
     return 'unknown';
   } finally {
     try {
@@ -672,8 +672,8 @@ function saveRecovery(uin, email) {
   syncLoginEmail();
 }
 
-// Возвращает false, если адрес успел занять другой номер: между письмом и
-// переходом по ссылке его могли привязать в другом месте.
+// Returns false if another number has taken the address in the meantime: between
+// the mail and the click on the link it may have been attached elsewhere.
 function markVerified(uin, email) {
   if (emailOwner(email, uin)) return false;
   store
@@ -683,18 +683,18 @@ function markVerified(uin, email) {
   return true;
 }
 
-// Вход по адресу почты делает сервер OSCAR, а адрес для восстановления хранит
-// эта служба в своей базе. Поэтому зеркалим его в основную базу — там его
-// читает вход. Набор крошечный, так что переписываем его целиком: после любой
-// правки расхождений не остаётся.
+// Login by mail address is done by the OSCAR server, while the recovery address is
+// kept by this service in its own database. So it is mirrored into the main database,
+// where login reads it. The set is tiny, so it is rewritten in full: after any edit
+// no discrepancies remain.
 //
-// Подтверждение письмом тут ни при чём: привязать адрес можно, только зная
-// текущий пароль учётной записи, так что непривязанный адрес всё равно никуда
-// не пускает. Подтверждение нужно лишь самому восстановлению пароля — чтобы
-// письмо со ссылкой ушло в ящик, который человек действительно читает.
+// Confirmation by mail plays no part here: an address can only be attached by
+// someone who knows the account's current password, so an unconfirmed address does
+// not let anyone in anyway. Confirmation is needed only for password recovery itself,
+// so that the mail with the link goes to a mailbox the person really reads.
 //
-// Таблицы может ещё не быть, если сервер с нужной миграцией не запускался, —
-// тогда просто пишем в журнал и пробуем в следующий раз.
+// The table may not exist yet if the server with the needed migration has not run;
+// then we just log it and try again next time.
 function syncLoginEmail() {
   const rows = store
     .prepare('SELECT uin, email, updatedAt FROM recoveryEmail')
@@ -721,7 +721,7 @@ function syncLoginEmail() {
       throw err;
     }
   } catch (err) {
-    console.error(`адреса восстановления не перенесены в основную базу: ${err.message}`);
+    console.error(`recovery addresses were not copied to the main database: ${err.message}`);
   } finally {
     try {
       if (db) db.close();
@@ -733,7 +733,7 @@ function tokenHash(raw) {
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 
-// В базе лежит только хеш: утечка файла не даёт готовых ссылок.
+// Only the hash is stored: a leaked file does not yield working links.
 function issueToken(uin, kind, email) {
   store.prepare('DELETE FROM recoveryToken WHERE expiresAt < ?').run(Date.now());
   const raw = crypto.randomBytes(32).toString('base64url');
@@ -743,7 +743,7 @@ function issueToken(uin, kind, email) {
   return raw;
 }
 
-// Возвращает {code} при отказе либо строку токена.
+// Returns {code} on refusal, or the token string.
 function takeToken(raw, kind) {
   if (!raw || !/^[A-Za-z0-9_-]{16,128}$/.test(raw)) return { code: 'token_bad' };
   const row = store.prepare('SELECT * FROM recoveryToken WHERE hash = ?').get(tokenHash(raw));
@@ -753,12 +753,12 @@ function takeToken(raw, kind) {
   return { row };
 }
 
-// Любая смена пароля обесценивает выданные ссылки.
+// Any password change invalidates the links already issued.
 function dropTokens(uin) {
   store.prepare('DELETE FROM recoveryToken WHERE uin = ?').run(String(uin));
 }
 
-// Учётной записи больше нет — стирать её адрес обязательно.
+// The account is gone, so its address must be erased.
 function forgetRecovery(uin) {
   for (const table of ['recoveryEmail', 'recoveryToken', 'mailLog']) {
     store.prepare(`DELETE FROM ${table} WHERE uin = ?`).run(String(uin));
@@ -766,8 +766,8 @@ function forgetRecovery(uin) {
   syncLoginEmail();
 }
 
-// При переезде адрес уходит на новый номер вместе с отметкой о подтверждении:
-// человек уже доказал, что ящик его.
+// On a move the address goes to the new number together with its confirmation mark:
+// the person has already proved the mailbox is theirs.
 function moveRecovery(from, to) {
   const rec = getRecovery(from);
   forgetRecovery(to);
@@ -793,7 +793,7 @@ function noteMail(uin) {
   store.prepare('INSERT INTO mailLog (uin, sent) VALUES (?, ?)').run(String(uin), Date.now());
 }
 
-// Письмо отправляем в том языке, на котором человек смотрел страницу.
+// The mail is sent in the language the person was viewing the page in.
 async function sendRecoveryMail(uin, email, kind, lang) {
   const t = I18N[LANGS.includes(lang) ? lang : FALLBACK_LANG];
   const raw = issueToken(uin, kind, email);
@@ -837,18 +837,18 @@ function json(res, code, payload) {
   res.end(body);
 }
 
-// Функции в словаре нужны браузеру строками — сериализуем как есть.
+// The browser needs the dictionary functions as strings, so they are serialized as is.
 function serializeI18N() {
   return JSON.stringify(I18N, (key, value) =>
     typeof value === 'function' ? { __fn: value.toString() } : value,
   );
 }
 
-// Оформление — общее для всех сервисов проекта, см. ui.js.
+// The styling is shared by all of the project's services, see ui.js.
 const { STYLE, flowerImg, header, footer, langLabel, serveAsset, FAVICON } = require('./ui.js');
 
-// Страница профиля живёт отдельным файлом: разметка большая. Её строки
-// подмешиваем в общий словарь, иначе переключатель языка на ней не сработает.
+// The profile page lives in a separate file: its markup is large. Its strings
+// are merged into the shared dictionary, otherwise the language switch would not work on it.
 const { STRINGS: PROFILE_STRINGS, renderProfilePage } = require('./profile.js');
 for (const code of Object.keys(PROFILE_STRINGS)) {
   Object.assign(I18N[code], PROFILE_STRINGS[code]);
@@ -942,7 +942,7 @@ const OSCAR_PORT = ${JSON.stringify(OSCAR_PORT)};
 const LANGS = ${JSON.stringify(LANGS)};
 const LANG_LABEL = (c) => String(c).toUpperCase();
 
-// Функции словаря приходят строками — возвращаем им исполняемость.
+// Dictionary functions arrive as strings, so they are made callable again.
 const I18N = JSON.parse(${JSON.stringify(serializeI18N())}, (key, value) => {
   if (value && typeof value === 'object' && typeof value.__fn === 'string') {
     return new Function('return (' + value.__fn + ')')();
@@ -988,7 +988,7 @@ function translateError(payload) {
   return typeof entry === 'function' ? entry(payload.uin) : entry;
 }
 
-// Последнее сообщение храним в виде данных, чтобы перерисовать его на другом языке.
+// The last message is kept as data so it can be redrawn in another language.
 let lastMessage = null;
 
 function renderMessage() {
@@ -1345,7 +1345,7 @@ applyLang(lang);
 </html>`;
 }
 
-// Подтверждение адреса — короткая страница с результатом, без форм.
+// Address confirmation: a short page with the result, no forms.
 function renderVerifyPage(lang, uin, failText) {
   const t = I18N[lang];
   const ok = Boolean(uin);
@@ -1386,8 +1386,8 @@ ${FAVICON}
 </html>`;
 }
 
-// Смена номера и удаление — обе операции необратимы и обе доказываются
-// текущим паролем, поэтому живут на одной странице с общими полями входа.
+// Changing the number and deleting the account are both irreversible and both are
+// proved with the current password, so they share one page with common sign-in fields.
 function renderAccountPage(lang) {
   const t = I18N[lang];
   return /* html */ `<!DOCTYPE html>
@@ -1619,7 +1619,7 @@ moveEl.addEventListener('click', () => {
 });
 
 dropEl.addEventListener('click', () => {
-  // Второй ввод номера — это и есть подтверждение, отдельного окна не нужно.
+  // Entering the number a second time is the confirmation; no separate dialog is needed.
   run(
     dropEl,
     'statusDeleting',
@@ -1658,9 +1658,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Смена пароля живёт на странице профиля — там она рядом с адресом и
-    // остальными данными учётной записи. Прежний адрес остался рабочим: на него
-    // ссылаются закладки и сам клиент.
+    // Password change lives on the profile page, next to the address and the rest of
+    // the account data. The old URL still works: bookmarks and the client itself
+    // point to it.
     if (req.method === 'GET' && (url.pathname === '/password' || url.pathname === '/password.html')) {
       res.writeHead(302, { Location: '/profile', 'Cache-Control': 'no-store' });
       res.end();
@@ -1780,7 +1780,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Из-под блокировки нельзя ни сбежать на новый номер, ни удалиться.
+      // A locked-out account can neither escape to a new number nor delete itself.
       const account = await fetch(`${API}/user/${encodeURIComponent(uin)}/account`);
       if (account.ok) {
         const info = await account.json().catch(() => null);
@@ -1815,7 +1815,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Сначала заводим новый номер: если это не получится, старый цел.
+      // Create the new number first: if that fails, the old one is intact.
       const created = await createUser(target, String(payload.current || ''));
       if (!created.ok) {
         console.error('new uin create failed', created.status, created.text);
@@ -1875,7 +1875,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Привязка адреса: доказательством владения служит текущий пароль.
+    // Attaching an address: the current password serves as proof of ownership.
     if (req.method === 'POST' && url.pathname === '/api/recovery-email') {
       let payload;
       try {
@@ -1950,8 +1950,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Запрос ссылки: ответ всегда одинаковый, чтобы страница не подсказывала,
-    // у каких номеров есть почта.
+    // Link request: the reply is always the same so that the page does not reveal
+    // which numbers have mail.
     if (req.method === 'POST' && url.pathname === '/api/recover-request') {
       let payload;
       try {
@@ -2003,8 +2003,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Токен гасим только после проверки формы, иначе опечатка в пароле
-      // сожгла бы ссылку.
+      // The token is spent only after the form is validated, otherwise a typo in the
+      // password would burn the link.
       const taken = takeToken(String(payload.token || ''), 'reset');
       if (!taken.row) {
         json(res, 400, { ok: false, code: taken.code });
@@ -2035,8 +2035,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Отдельного входа с печеньем нет: каждый запрос подписывается номером и
-    // текущим паролем, как и остальные действия этой службы.
+    // There is no separate cookie-based sign-in: every request is signed with the number
+    // and current password, like the rest of this service's actions.
     if (
       req.method === 'POST' &&
       (url.pathname === '/api/profile' || url.pathname === '/api/profile-save')
@@ -2176,8 +2176,8 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (verdict === null) {
-        // Несуществующий номер тоже считаем неудачной попыткой — иначе
-        // страница превращается в удобный перебор существующих UIN.
+        // A nonexistent number also counts as a failed attempt, otherwise
+        // the page turns into a handy way to enumerate existing UINs.
         noteFailure(key);
         json(res, 404, { ok: false, code: 'no_user', arg: uin });
         return;
@@ -2189,7 +2189,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Заблокированным менять пароль не даём.
+      // Locked-out accounts are not allowed to change the password.
       const account = await fetch(`${API}/user/${encodeURIComponent(uin)}/account`);
       if (account.ok) {
         const info = await account.json().catch(() => null);
@@ -2250,8 +2250,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Адрес необязателен, но если он указан — проверяем до создания номера,
-      // чтобы опечатка не приводила к аккаунту без восстановления.
+      // The address is optional, but if given it is checked before the number is created,
+      // so that a typo does not leave an account without recovery.
       const wantedMail = String(payload.mail || '').trim();
       let email = null;
       if (wantedMail) {
@@ -2276,8 +2276,8 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      // Номер уже создан, поэтому сбой почты регистрацию не отменяет —
-      // адрес всегда можно привязать позже на странице смены пароля.
+      // The number is already created, so a mail failure does not undo the registration;
+      // the address can always be attached later on the password change page.
       let mailState = 'none';
       if (email) {
         mailState = 'failed';

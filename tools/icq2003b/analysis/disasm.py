@@ -1,5 +1,5 @@
-# Дизассемблирование функции по имени экспорта.
-#   python disasm.py <модуль> <подстрока имени> [сколько байт]
+# Disassembles a function found by its export name.
+#   python disasm.py <module> <name substring> [byte count]
 
 import os
 import sys
@@ -23,7 +23,7 @@ for exp in pe.DIRECTORY_ENTRY_EXPORT.symbols:
         targets.append((exp.address, exp.name.decode('latin1')))
 
 if not targets:
-    print('ничего не найдено')
+    print('nothing found')
     raise SystemExit
 
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
@@ -32,7 +32,7 @@ for rva, name in targets:
     data = pe.get_data(rva, length)
     offset = pe.get_offset_from_rva(rva)
     print(f'\n=== {name}')
-    print(f'    RVA 0x{rva:x}, файловое смещение 0x{offset:x}')
+    print(f'    RVA 0x{rva:x}, file offset 0x{offset:x}')
     for ins in md.disasm(data, base + rva):
         raw = ' '.join(f'{b:02x}' for b in ins.bytes)
         print(f'  0x{ins.address:08x}  {raw:<22}  {ins.mnemonic} {ins.op_str}')

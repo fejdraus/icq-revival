@@ -1,15 +1,15 @@
-"""Добавляет в Open OSCAR Server регистрацию нового номера из клиента.
+"""Adds registration of a new number from the client to Open OSCAR Server.
 
-ICQ Pro 2003b на кнопку «Get an ICQ Number» открывает отдельное соединение к
-тому же порту 5190 и шлёт SNAC(0x17, 0x04) — BUCPRegisterRequest. Внутри
-TLV(0x0001) лежит блок ICQ-регистрации: всё в обратном порядке байт, по
-смещению 40 — длина пароля и сам пароль, по смещению 16 — случайный cookie,
-который сервер обязан вернуть в ответе.
+On the "Get an ICQ Number" button ICQ Pro 2003b opens a separate connection to
+the same port 5190 and sends SNAC(0x17, 0x04), BUCPRegisterRequest. TLV(0x0001)
+inside it carries the ICQ registration block, all of it little-endian: at
+offset 40 the password length and the password itself, at offset 16 a random
+cookie the server must return in its reply.
 
-Сервер отвечает SNAC(0x17, 0x05) с выданным номером и следом шлёт пустой FLAP
-канала 4 — для клиента это сигнал закрыть соединение.
+The server answers SNAC(0x17, 0x05) with the number it handed out and then
+sends an empty channel 4 FLAP, which tells the client to close the connection.
 
-Скрипт правит три файла в дереве исходников и ничего не собирает.
+The script edits three files in the source tree and builds nothing.
 """
 
 import re
@@ -19,23 +19,23 @@ ROOT = sys.argv[1] if len(sys.argv) > 1 else '.'
 
 
 def patch(path, anchor, addition, marker):
-    """Вставляет addition после anchor, если marker ещё не встречается в файле."""
+    """Inserts addition after anchor unless marker already occurs in the file."""
     full = f'{ROOT}/{path}'
     with open(full, encoding='utf-8') as f:
         text = f.read()
     if marker in text:
-        print(f'  {path}: уже пропатчен')
+        print(f'  {path}: already patched')
         return
     if anchor not in text:
-        print(f'  {path}: ЯКОРЬ НЕ НАЙДЕН — пропускаю')
+        print(f'  {path}: ANCHOR NOT FOUND - skipping')
         return
     text = text.replace(anchor, anchor + addition, 1)
     with open(full, 'w', encoding='utf-8') as f:
         f.write(text)
-    print(f'  {path}: добавлено')
+    print(f'  {path}: added')
 
 
-# --- 1. константа ответа -----------------------------------------------------
+# --- 1. the reply constant ---------------------------------------------------
 
 patch(
     'wire/snacs.go',
@@ -44,40 +44,40 @@ patch(
     'BUCPRegisterResponse',
 )
 
-# --- 2. обработчик в сервисе аутентификации ---------------------------------
+# --- 2. the handler in the auth service ------------------------------------
 
 AUTH_CODE = '''
 
-// Смещения внутри блока ICQ-регистрации (TLV 0x0001 запроса SNAC(0x17,0x04)).
-// Весь блок записан в обратном порядке байт, в отличие от самих SNAC.
+// Offsets inside the ICQ registration block (TLV 0x0001 of SNAC(0x17,0x04)).
+// The whole block is little-endian, unlike the SNACs around it.
 const (
 	icqRegCookieOffset   = 16
 	icqRegPasswordOffset = 40
 	icqRegMinLen         = icqRegPasswordOffset + 2
 )
 
-// Диапазон, из которого выдаются номера. Начинаем со 100000 — так же, как это
-// делали настоящие серверы ICQ, и как подбирает номер наша страница
-// регистрации.
+// The range numbers are handed out from. It starts at 100000, the way the real
+// ICQ servers did and the way our own registration page picks a
+// number.
 const (
 	icqUINFirst = 100000
 	icqUINLast  = 2147483646
 )
 
-// BUCPRegister выдаёт новый номер ICQ и заводит под него учётную запись.
+// BUCPRegister hands out a new ICQ number and creates an account for it.
 //
-// Клиент шлёт SNAC(0x17,0x04) с выбранным паролем и случайным cookie, сервер
-// отвечает SNAC(0x17,0x05) с присвоенным номером. Формат блока — ICQ v8,
-// описание: https://kingant.net/oscar/?family=0x0017&subtype=0x0005
+// The client sends SNAC(0x17,0x04) with the chosen password and a random cookie;
+// the server answers SNAC(0x17,0x05) with the assigned number. The block is ICQ v8,
+// described at https://kingant.net/oscar/?family=0x0017&subtype=0x0005
 func (s AuthService) BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wire.SNACMessage, error) {
 	block := wire.TLVRestBlock{}
 	if err := wire.UnmarshalBE(&block, bytes.NewReader(snacPayloadIn)); err != nil {
-		return wire.SNACMessage{}, fmt.Errorf("разбор запроса регистрации: %w", err)
+		return wire.SNACMessage{}, fmt.Errorf("parsing registration request: %w", err)
 	}
 
 	reg, ok := block.Bytes(wire.ICQTLVTagsRegistration)
 	if !ok || len(reg) < icqRegMinLen {
-		return wire.SNACMessage{}, errors.New("в запросе регистрации нет блока с данными")
+		return wire.SNACMessage{}, errors.New("registration request carries no data block")
 	}
 
 	cookie := binary.LittleEndian.Uint32(reg[icqRegCookieOffset:])
@@ -85,9 +85,9 @@ func (s AuthService) BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wi
 	passLen := int(binary.LittleEndian.Uint16(reg[icqRegPasswordOffset:]))
 	from := icqRegPasswordOffset + 2
 	if passLen == 0 || from+passLen > len(reg) {
-		return wire.SNACMessage{}, errors.New("в запросе регистрации нет пароля")
+		return wire.SNACMessage{}, errors.New("registration request carries no password")
 	}
-	// Клиент передаёт пароль со завершающим нулём, он в длину включён.
+	// The client sends the password with a trailing NUL counted in the length.
 	password := strings.TrimRight(string(reg[from:from+passLen]), "\\x00")
 
 	uin, err := s.nextFreeUIN(ctx)
@@ -99,11 +99,11 @@ func (s AuthService) BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wi
 	if err := s.createAccount(ctx, screenName, password); err != nil {
 		switch {
 		case errors.Is(err, state.ErrPasswordInvalid):
-			// Клиент сам проверяет длину 6–8 символов, но подстрахуемся.
+			// The client checks the 6-8 character length itself; guard anyway.
 			s.logger.InfoContext(ctx, "registration rejected: bad password", "uin", uin)
 			return wire.SNACMessage{}, err
 		default:
-			return wire.SNACMessage{}, fmt.Errorf("создание учётной записи %d: %w", uin, err)
+			return wire.SNACMessage{}, fmt.Errorf("creating account %d: %w", uin, err)
 		}
 	}
 
@@ -122,30 +122,30 @@ func (s AuthService) BUCPRegister(ctx context.Context, snacPayloadIn []byte) (wi
 	}, nil
 }
 
-// nextFreeUIN подбирает первый свободный номер, начиная со 100000.
+// nextFreeUIN picks the first free number starting at 100000.
 func (s AuthService) nextFreeUIN(ctx context.Context) (int, error) {
 	for uin := icqUINFirst; uin <= icqUINLast; uin++ {
 		u, err := s.userManager.User(ctx, state.NewIdentScreenName(strconv.Itoa(uin)))
 		if err != nil {
-			return 0, fmt.Errorf("поиск свободного номера: %w", err)
+			return 0, fmt.Errorf("looking for a free number: %w", err)
 		}
 		if u == nil {
 			return uin, nil
 		}
 	}
-	return 0, errors.New("свободных номеров не осталось")
+	return 0, errors.New("no free numbers left")
 }
 
-// icqRegistrationReply собирает тело ответа о регистрации. Все поля — в
-// обратном порядке байт; постоянные значения взяты из описания протокола.
+// icqRegistrationReply builds the body of the registration reply. Every field
+// is little-endian; the constants come from the protocol description.
 func icqRegistrationReply(uin uint32, cookie uint32) []byte {
 	buf := make([]byte, 0, 52)
 	put16 := func(v uint16) { buf = binary.LittleEndian.AppendUint16(buf, v) }
 	put32 := func(v uint32) { buf = binary.LittleEndian.AppendUint32(buf, v) }
 
-	put16(0x0003) // версия блока
+	put16(0x0003) // block version
 	put32(0)
-	put16(0x002d) // длина остатка, значение из описания протокола
+	put16(0x002d) // length of the rest, a constant from the protocol description
 	put16(0x0003)
 	put16(0x0000)
 	put16(0x58ff)
@@ -153,12 +153,12 @@ func icqRegistrationReply(uin uint32, cookie uint32) []byte {
 	put16(0xbaa7)
 	put16(0x0000)
 	put16(0x0004)
-	put32(cookie) // cookie из запроса, клиент сверяет его с отправленным
+	put32(cookie) // cookie from the request; the client matches it with its own
 	put32(0)
 	put32(0)
 	put32(0)
 	put32(0)
-	put32(uin) // выданный номер
+	put32(uin) // the number handed out
 	put32(cookie)
 	put16(0x0000)
 
@@ -167,7 +167,7 @@ func icqRegistrationReply(uin uint32, cookie uint32) []byte {
 '''
 
 patch('foodgroup/auth.go', '\nfunc (s AuthService) createUser(', AUTH_CODE + '\nfunc (s AuthService) createUser(', 'BUCPRegister')
-# вставка выше дублирует якорь, поэтому убираем исходный
+# the insertion above duplicates the anchor, so remove the original one
 with open(f'{ROOT}/foodgroup/auth.go', encoding='utf-8') as f:
     t = f.read()
 dup = '\nfunc (s AuthService) createUser(' + AUTH_CODE + '\nfunc (s AuthService) createUser('
@@ -175,18 +175,18 @@ if dup in t:
     t = t.replace(dup, AUTH_CODE + '\nfunc (s AuthService) createUser(', 1)
     with open(f'{ROOT}/foodgroup/auth.go', 'w', encoding='utf-8') as f:
         f.write(t)
-    print('  foodgroup/auth.go: якорь восстановлен')
+    print('  foodgroup/auth.go: anchor restored')
 
-# --- 3. тег TLV с блоком регистрации ----------------------------------------
+# --- 3. the TLV tag of the registration block ------------------------------
 
 patch(
     'wire/snacs.go',
     '\tBUCPRegisterResponse         uint16 = 0x0005',
-    '\n\n\t// ICQTLVTagsRegistration — TLV с блоком регистрации нового номера.\n\tICQTLVTagsRegistration uint16 = 0x0001',
+    '\n\n\t// ICQTLVTagsRegistration holds the registration block for a new number.\n\tICQTLVTagsRegistration uint16 = 0x0001',
     'ICQTLVTagsRegistration',
 )
 
-# --- 4. ветка в приёмнике логина --------------------------------------------
+# --- 4. the branch in the login receiver ------------------------------------
 
 SERVER_CASE = '''
 			case fr.FoodGroup == wire.BUCP && fr.SubGroup == wire.BUCPRegisterRequest:
@@ -203,14 +203,14 @@ SERVER_CASE = '''
 				if err := flapc.SendSNAC(outSNAC.Frame, outSNAC.Body); err != nil {
 					return err
 				}
-				// Пустой FLAP канала 4 — сигнал клиенту закрыть соединение.
+				// An empty channel 4 FLAP tells the client to close the connection.
 				return flapc.NewSignoff(wire.TLVRestBlock{})
 '''
 
 patch(
     'server/oscar/server.go',
     '\t\t\tcase fr.FoodGroup == wire.BUCP && fr.SubGroup == wire.BUCPLoginRequest:',
-    '',  # добавим отдельно ниже, чтобы вставить ПЕРЕД веткой логина
+    '',  # added separately below, so it goes BEFORE the login branch
     'BUCPRegisterRequest',
 )
 
@@ -221,11 +221,11 @@ if 'BUCPRegisterRequest' not in t and anchor in t:
     t = t.replace(anchor, SERVER_CASE.rstrip('\n') + '\n' + anchor, 1)
     with open(f'{ROOT}/server/oscar/server.go', 'w', encoding='utf-8') as f:
         f.write(t)
-    print('  server/oscar/server.go: ветка регистрации добавлена')
+    print('  server/oscar/server.go: registration branch added')
 elif 'BUCPRegisterRequest' in t:
-    print('  server/oscar/server.go: уже пропатчен')
+    print('  server/oscar/server.go: already patched')
 
-# --- 5. метод в интерфейсе ---------------------------------------------------
+# --- 5. the interface method -------------------------------------------------
 
 patch(
     'server/oscar/types.go',
@@ -234,4 +234,4 @@ patch(
     'BUCPRegister',
 )
 
-print('готово')
+print('done')

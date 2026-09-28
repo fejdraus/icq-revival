@@ -1,20 +1,21 @@
-# Собирает файл перевода для плагина ICQ.
+# Builds the translation file for the ICQ plugin.
 #
-# Переводы в Miranda привязаны к плагину меткой #muuid: ядро ищет раздел с UUID
-# плагина, а не найдя — откатывается на строки без привязки. Раздела для
-# протокола ICQ в langpack нет, его удалили вместе с самим плагином, поэтому
-# переводится хорошо если половина.
+# Translations in Miranda are tied to a plugin by the #muuid mark: the core looks
+# for the section with the plugin's UUID and, failing that, falls back to the
+# strings that are not tied to any plugin. The langpack has no section for the
+# ICQ protocol, it was removed together with the plugin itself, so at best half
+# of it gets translated.
 #
-# Скрипт вытаскивает переводимые строки из исходников и ресурса плагина и
-# подставляет к ним готовый русский перевод тех же английских строк из любого
-# раздела существующего langpack. Чего не нашлось — выписывается в конец
-# закомментированным, чтобы дописать руками.
+# The script pulls the translatable strings out of the plugin's sources and
+# resource and pairs them with the ready Russian translation of the same English
+# strings from any section of an existing langpack. Whatever is not found is
+# written at the end, commented out, to be filled in by hand.
 #
-# Источников перевода можно указать несколько: они опрашиваются по порядку, так
-# что первым разумно ставить нынешний langpack (современные формулировки), а
-# следом — старый, из времён Miranda IM, где раздел ICQ ещё был.
+# Several translation sources can be given: they are consulted in order, so it
+# makes sense to put the current langpack first (modern wording) and the old
+# one, from the Miranda IM days when the ICQ section still existed, after it.
 #
-#   python make-langpack.py <каталог-плагина> <выходной-файл> <langpack...>
+#   python make-langpack.py <plugin-dir> <output-file> <langpack...>
 import io
 import os
 import re
@@ -22,19 +23,19 @@ import sys
 
 MUUID = '{A5B4A32D-D2A8-4925-AE3E-1480E41A07B3}'
 
-# Translate("x"), TranslateT("x"), LPGEN("x"), LPGENW("x") и прочие обёртки.
+# Translate("x"), TranslateT("x"), LPGEN("x"), LPGENW("x") and the other wrappers.
 RE_CODE = re.compile(r'\b(?:LPGENW?|Translate[TWU]?)\s*\(\s*"((?:[^"\\]|\\.)*)"')
 
-# Подписи элементов в ресурсе: первая строка в кавычках у каждого объявления.
+# Control captions in the resource: the first quoted string of each declaration.
 RE_RC_CTRL = re.compile(
     r'^\s*(?:CAPTION|LTEXT|RTEXT|CTEXT|CONTROL|PUSHBUTTON|DEFPUSHBUTTON|GROUPBOX'
     r'|CHECKBOX|RADIOBUTTON|MENUITEM|POPUP)\s+"((?:[^"]|"")*)"')
-# Строки из STRINGTABLE: идентификатор, за ним текст.
+# Strings from a STRINGTABLE: an identifier followed by the text.
 RE_RC_STR = re.compile(r'^\s*ID[A-Z_0-9]+\s+"((?:[^"]|"")*)"\s*$')
 
 
 def unescape_rc(s):
-    """В ресурсах кавычка удваивается."""
+    """In resources a quote is doubled."""
     return s.replace('""', '"')
 
 
@@ -43,7 +44,7 @@ def collect(plugin_dir):
 
     def add(text, where):
         text = text.strip()
-        # Пустые, разделители и одиночные подчёркивания переводить нечего.
+        # Empty strings, separators and lone underscores have nothing to translate.
         if not text or text in ('&', '-', '...'):
             return
         if not re.search(r'[A-Za-z]', text):
@@ -68,19 +69,20 @@ def collect(plugin_dir):
                         add(unescape_rc(m.group(1)), name)
             else:
                 for m in RE_CODE.finditer(text):
-                    # Загрузчик langpack сам превращает \" в кавычку, поэтому
-                    # ключ пишется с обычными кавычками. Управляющие
-                    # последовательности он тоже разбирает, их оставляем как есть.
+                    # The langpack loader turns \" into a quote itself, so
+                    # the key is written with plain quotes. It parses the other
+                    # escape sequences too, so those are left as they are.
                     add(m.group(1).replace('\\"', '"'), name)
 
     return found
 
 
 def load_langpack(path, table):
-    """Английская строка -> перевод, из всех разделов подряд.
+    """English string -> translation, from all sections in turn.
 
-    Дописывает в общую таблицу, не затирая то, что уже нашлось в источнике
-    поважнее. Метка порядка байтов у старых файлов встречается, снимаем.
+    Adds to the shared table without overwriting what was already found in a
+    more important source. Old files sometimes carry a byte order mark; it is
+    stripped.
     """
     lines = io.open(path, encoding='utf-8-sig', errors='replace').read().splitlines()
     i = 0
@@ -97,8 +99,8 @@ def load_langpack(path, table):
 
 
 def lookup(table, norm, text):
-    """Точное совпадение, затем послабления: без '&', без учёта регистра,
-    с точностью до хвостовых двоеточия и многоточия."""
+    """An exact match first, then looser ones: without '&', ignoring case,
+    and ignoring a trailing colon or ellipsis."""
     if text in table:
         return table[text]
     key = normalize(text)
@@ -113,7 +115,7 @@ def normalize(s):
 
 def main():
     if len(sys.argv) < 4:
-        print('python make-langpack.py <каталог-плагина> <выходной-файл> <langpack...>')
+        print('python make-langpack.py <plugin-dir> <output-file> <langpack...>')
         return 1
 
     plugin_dir, out_path = sys.argv[1], sys.argv[2]
@@ -123,7 +125,7 @@ def main():
     for src in sys.argv[3:]:
         before = len(table)
         load_langpack(src, table)
-        print('%-60s строк: +%d' % (os.path.basename(src), len(table) - before))
+        print('%-60s strings: +%d' % (os.path.basename(src), len(table) - before))
 
     norm = {}
     for eng, rus in table.items():
@@ -159,9 +161,9 @@ def main():
     io.open(out_path, 'w', encoding='utf-8', newline='\r\n').write('\n'.join(out) + '\n')
 
     total = len(strings)
-    print('строк найдено: %d' % total)
-    print('переведено:     %d (%.0f%%)' % (len(done), 100.0 * len(done) / total))
-    print('осталось:       %d' % len(missing))
+    print('strings found: %d' % total)
+    print('translated:    %d (%.0f%%)' % (len(done), 100.0 * len(done) / total))
+    print('remaining:     %d' % len(missing))
     return 0
 
 

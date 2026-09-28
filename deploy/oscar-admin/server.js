@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 
-// Админка Open OSCAR Server: пользователи, пароли, блокировки, сессии.
-// Обёртка над management API, закрытая страницей входа (сеанс в cookie).
-// Язык интерфейса определяется по Accept-Language, переключается вручную.
+// Open OSCAR Server admin panel: users, passwords, blocks, sessions.
+// A wrapper over the management API, guarded by a sign-in page (session in a
+// cookie). The UI language comes from Accept-Language and can be switched.
 
 const http = require('http');
 const crypto = require('crypto');
-// Оформление — общее для всех сервисов проекта, см. ui.js.
+// The look is shared by all the project's services, see ui.js.
 const { STYLE, flowerImg, header, footer, serveAsset, FAVICON } = require('./ui.js');
 
 const API = process.env.API_BASE || 'http://127.0.0.1:8090';
@@ -15,21 +15,22 @@ const PORT = Number(process.env.PORT || 8100);
 const HOST = process.env.HOST || '0.0.0.0';
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_SECRET = process.env.ADMIN_PASSWORD || '';
-// Сеанс после входа: случайный токен в cookie, живёт SESSION_HOURS часов.
-// Хранится в памяти — перезапуск службы просто просит войти заново.
+// The session after sign-in: a random token in a cookie, valid for
+// SESSION_HOURS hours. It is kept in memory - restarting the service just
+// asks you to sign in again.
 const SESSION_COOKIE = 'icq_admin';
 const SESSION_HOURS = 12;
-// Подбор пароля: столько неудачных попыток с одного адреса — и вход
-// закрыт на LOCK_MINUTES минут. nginx вдобавок ограничивает частоту.
+// Password guessing: this many failed attempts from one address and sign-in
+// is closed for LOCK_MINUTES minutes. nginx rate-limits on top of that.
 const MAX_FAILURES = 5;
 const LOCK_MINUTES = 15;
 
 if (!ADMIN_SECRET) {
-  console.error('ADMIN_PASSWORD не задан — отказываюсь запускаться без пароля.');
+  console.error('ADMIN_PASSWORD is not set - refusing to start without a password.');
   process.exit(1);
 }
 
-// Ограничения самого сервера (state/user.go).
+// The server's own limits (state/user.go).
 const PASS_ICQ = [6, 8];
 const PASS_AIM = [4, 16];
 const SUSPEND_STATES = ['suspended', 'expired', 'suspended_age', 'deleted'];
@@ -212,7 +213,7 @@ function safeEqual(a, b) {
   const ba = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
   if (ba.length !== bb.length) {
-    // Сравниваем всё равно, чтобы время ответа не выдавало длину.
+    // Compare anyway so the response time does not give away the length.
     crypto.timingSafeEqual(ba, ba);
     return false;
   }
@@ -266,7 +267,7 @@ function lockedFor(addr) {
 }
 
 function checkCredentials(user, secret) {
-  // Оба сравнения выполняются всегда — без short-circuit.
+  // Both comparisons always run - no short-circuit.
   const okUser = safeEqual(user, ADMIN_USER);
   const okSecret = safeEqual(secret, ADMIN_SECRET);
   return okUser && okSecret;
@@ -397,7 +398,8 @@ function json(res, code, payload) {
   res.end(body);
 }
 
-// Ошибки уезжают кодом с аргументами: текст собирает браузер на текущем языке.
+// Errors go out as a code with arguments: the browser builds the text in the
+// current language.
 function validateSecret(value, isICQ) {
   const [min, max] = isICQ ? PASS_ICQ : PASS_AIM;
   const len = String(value || '').length;
@@ -555,7 +557,7 @@ function setStatus(key, ...args) {
   statusEl.textContent = typeof v === 'function' ? v(...args) : v;
 }
 
-// Ошибка приходит как {code, args} — текст собираем на текущем языке.
+// An error arrives as {code, args} - we build the text in the current language.
 function errText(payload) {
   if (payload && payload.code) {
     const entry = t.err[payload.code];
@@ -848,7 +850,7 @@ setInterval(load, 20000);
 }
 
 const server = http.createServer(async (req, res) => {
-  // Картинка отдаётся без пароля: иначе её не покажет ни один браузер.
+  // The image is served without a password: otherwise no browser would show it.
   if (serveAsset(req, res)) return;
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pageLang = () => {
@@ -938,7 +940,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // Список пользователей + активные сессии одним запросом.
+    // The user list plus active sessions in one request.
     if (req.method === 'GET' && url.pathname === '/api/state') {
       const [users, sess] = await Promise.all([apiCall('/user'), apiCall('/session')]);
       if (!users.ok) {
@@ -1013,8 +1015,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'PATCH' && parts.length === 4 && parts[0] === 'api' && parts[1] === 'users' && parts[3] === 'suspend') {
       const name = decodeURIComponent(parts[2]);
       const payload = JSON.parse(await readBody(req));
-      // Снятие блокировки — это пустая строка: на null сервер отвечает 304,
-      // потому что трактует его как "поле не передано".
+      // Lifting a block is an empty string: the server answers null with 304
+      // because it treats it as "field not sent".
       const status = payload.status == null ? '' : String(payload.status);
       if (status !== '' && !SUSPEND_STATES.includes(status)) {
         json(res, 400, { ok: false, code: 'invalid_status', args: [status] });
@@ -1029,7 +1031,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 502, { ok: false, code: 'upstream', args: [String(r.body || r.status)] });
         return;
       }
-      // Блокировка не выкидывает уже подключённого — делаем это сами.
+      // Blocking does not kick a user who is already connected - we do it ourselves.
       if (status !== '') {
         await apiCall(`/session/${encodeURIComponent(name)}`, { method: 'DELETE' });
       }

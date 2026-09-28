@@ -1,6 +1,6 @@
-# Ищем, откуда в коде ссылаются на строку по известному файловому смещению,
-# и дизассемблируем окрестности каждой ссылки.
-#   python xref.py <модуль> <смещение строки в файле, hex> [байт до] [байт после]
+# Finds where the code refers to a string at a known file offset,
+# and disassembles the code around each reference.
+#   python xref.py <module> <string offset in file, hex> [bytes before] [bytes after]
 
 import os
 import sys
@@ -26,12 +26,12 @@ for s in pe.sections:
         rva = s.VirtualAddress + (str_off - s.PointerToRawData)
         break
 if rva is None:
-    print('смещение вне секций')
+    print('offset is outside the sections')
     raise SystemExit
 
 va = base + rva
 text = data[str_off:str_off + 40].split(b'\0')[0].decode('latin1', 'replace')
-print(f'строка «{text}» — RVA 0x{rva:x}, VA 0x{va:x}')
+print(f'string "{text}" - RVA 0x{rva:x}, VA 0x{va:x}')
 
 needle = va.to_bytes(4, 'little')
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
@@ -44,22 +44,22 @@ while True:
         break
     start = pos
     pos += 1
-    # интересует только push imm32 (68) или mov ..., imm32 (b8..bf, c7)
+    # only push imm32 (68) or mov ..., imm32 (b8..bf, c7) are of interest
     op = data[start - 1]
     if op not in (0x68, 0xb8, 0xb9, 0xba, 0xbb, 0xbe, 0xbf):
         continue
     found += 1
     chunk_start = max(0, start - 1 - before)
     chunk = data[chunk_start:start - 1 + after]
-    # виртуальный адрес начала куска
+    # virtual address of the start of the chunk
     sec = next(s for s in pe.sections
                if s.PointerToRawData <= chunk_start < s.PointerToRawData + s.SizeOfRawData)
     chunk_va = base + sec.VirtualAddress + (chunk_start - sec.PointerToRawData)
-    print(f'\n--- ссылка #{found}: файловое смещение 0x{start - 1:x} ---')
+    print(f'\n--- reference #{found}: file offset 0x{start - 1:x} ---')
     for ins in md.disasm(chunk, chunk_va):
         mark = '  <<<' if ins.address == base + sec.VirtualAddress + (start - 1 - sec.PointerToRawData) else ''
         raw = ' '.join(f'{b:02x}' for b in ins.bytes)
         print(f'  0x{ins.address:08x}  {raw:<20}  {ins.mnemonic} {ins.op_str}{mark}')
 
 if not found:
-    print('прямых ссылок не найдено')
+    print('no direct references found')

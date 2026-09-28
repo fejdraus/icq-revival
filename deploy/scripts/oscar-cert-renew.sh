@@ -1,11 +1,12 @@
 #!/bin/bash
-# Обновление TLS-сертификата Tailscale для OSCAR.
-# tailscale cert сам понимает, нужно ли перевыпускать: если до истечения
-# больше месяца, он просто отдаёт существующий и выходит с кодом 0.
+# Renews the Tailscale TLS certificate for OSCAR.
+# tailscale cert decides by itself whether to reissue: if more than a month
+# is left before expiry, it just hands back the existing one and exits 0.
 #
-# Сертификат отдаёт nginx в контейнере oscar-nginx (порт 5193 — современные
-# клиенты). Копию кладём рядом с его конфигом через cp: файл примонтирован
-# в контейнер по отдельности, и замена его новым inode контейнеру не видна.
+# The certificate is served by nginx in the oscar-nginx container (port 5193,
+# modern clients). The copy goes next to its config via cp: the file is
+# mounted into the container on its own, and replacing it with a new inode
+# would not be visible to the container.
 set -euo pipefail
 
 DOMAIN="${OSCAR_TLS_DOMAIN:?set OSCAR_TLS_DOMAIN to the server's host name}"
@@ -27,11 +28,11 @@ chmod 600 "$KEY"
 after=$(openssl x509 -in "$CERT" -noout -enddate 2>/dev/null || true)
 
 if [ "$before" = "$after" ]; then
-  echo "сертификат не менялся ($after), перезапуск не нужен"
+  echo "certificate unchanged ($after), no reload needed"
   exit 0
 fi
 
-echo "сертификат обновлён: $after"
+echo "certificate renewed: $after"
 
 cp "$CERT" "$NGINX_CERTS/ts-cert.pem"
 cp "$KEY" "$NGINX_CERTS/ts-key.pem"
@@ -40,8 +41,8 @@ chmod 644 "$NGINX_CERTS/ts-cert.pem"
 chmod 600 "$NGINX_CERTS/ts-key.pem"
 
 if docker exec oscar-nginx nginx -s reload; then
-  echo "nginx перечитал сертификат"
+  echo "nginx reloaded the certificate"
 else
-  echo "не удалось перечитать конфиг nginx — проверьте контейнер oscar-nginx" >&2
+  echo "failed to reload the nginx config; check the oscar-nginx container" >&2
   exit 1
 fi
