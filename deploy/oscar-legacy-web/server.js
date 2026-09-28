@@ -46,19 +46,6 @@ const PORT = Number(process.env.PORT || 8101);
 const BIND = process.env.BIND || '127.0.0.1';
 const CONFIG_PATH = process.env.CONFIG || path.join(__dirname, 'services.json');
 
-// The ICQ code books (countries, interests), the same ones the profile page
-// uses. Without the file a card simply shows no decoded names instead of
-// failing.
-// The Xtraz list ICQ 6 fills its own windows from. It is the original list with
-// one entry of ours added: serving a shorter one replaces the client's own
-// categories, and the strip at the top loses everything it had.
-let xtrazList = '<xtrazList majorVer="1" minorVer="0"><groups/><xtraz/></xtrazList>';
-try {
-  xtrazList = fs.readFileSync(path.join(__dirname, 'xtrazlist.xml'), 'utf8');
-} catch {
-  // Without the file the gallery stays as it was: the client reports a problem.
-}
-
 // tZers: the short movies with sound ICQ 6.5 plays over the message window,
 // and their thumbnails (the client has its own copies and asks only for a
 // missing one). The ICQ 6.5 patch points ConfigFiles\tzer.xml at
@@ -381,6 +368,9 @@ function serveRuffle(ctx) {
   ctx.res.end(ctx.req.method === 'HEAD' ? undefined : body);
 }
 
+// The ICQ code books (countries, interests), the same ones the profile page
+// uses. Without the file a card simply shows no decoded names instead of
+// failing.
 let CODES = {};
 try {
   CODES = JSON.parse(fs.readFileSync(path.join(__dirname, 'icq-codes.json'), 'utf8'));
@@ -3416,9 +3406,6 @@ const ACTIONS = {
     // "Welcome to ICQ" item of the main menu opens an entry from it too, and
     // went dead with the rest. That entry is given back, pointed at our own
     // welcome page.
-    //
-    // To offer the old entries again, serve `xtrazList` here: it is the
-    // archived list, kept next to this file.
     const self = selfBase(ctx.req);
     const body = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
 <xtrazList majorVer="1" minorVer="0" date="06-10-09">
