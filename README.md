@@ -1,132 +1,107 @@
-# ICQ Revival
+<p align="center">
+  <img src="docs/img/logo.png" alt="ICQ Revival" width="300">
+</p>
 
-**ICQ Revival** is a private instant messaging server for the ICQ and AIM
-clients people remember - from ICQ 99 to ICQ 6.5, QIP and Miranda - where
-clients of different generations sign in to the same server and talk to each
-other.
+<h3 align="center">Uh-oh! 🌼 Your old ICQ is back online.</h3>
 
-It is built on [Open OSCAR Server](https://github.com/mk6i/open-oscar-server),
-an open-source OSCAR/TOC server written in Go, and adds what it takes for real
-old clients to feel at home: both dialects of the ICQ profile protocol, the web
-services the clients still try to reach on ICQ.com, patches for the clients
-themselves, and a deployment that runs as a set of containers.
+<p align="center">
+  Your favourite messenger from the 2000s - the same client, the same sounds,
+  the same flower - talking again, today.
+</p>
 
-| Disclaimer |
-|---|
-| This project is an independent, non-commercial initiative. It is not affiliated with, endorsed by or associated with AOL, Yahoo!, ICQ, Mail.ru or VK. |
+<p align="center">
+  <b>English</b> · <a href="README.uk.md">Українською</a>
+</p>
 
-## Clients
+<p align="center">
+  <img alt="Free" src="https://img.shields.io/badge/price-free-6cc04a">
+  <img alt="No ads" src="https://img.shields.io/badge/ads-none-6cc04a">
+  <img alt="Clients" src="https://img.shields.io/badge/ICQ%202003b%20·%20ICQ%206.5%20·%20QIP%20·%20Miranda-supported-2f8f46">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-lightgrey">
+</p>
 
-| Client | Status |
-|---|---|
-| ICQ Pro 2003b | Works fully, including getting a new number from the client and search |
-| QIP 2005 (build 8092) | Works fully |
-| QIP 2012 | Profiles, search and saving your own profile |
-| ICQ 6.5 | Profiles, search, messages, setting your picture; the patch below cleans up the interface |
-| Miranda NG | Works, with the ICQ plugin brought back to the current Miranda API (see below) |
-| AIM 7.5 | Signs in over TLS through Kerberos |
-| ICQ 95-99 | Supported by the server over the legacy UDP protocol (v2-v5); not yet tried with real clients here |
-| Everything Open OSCAR Server supports | AIM 1.x-7.x, ICQ 98-5, Pidgin, TOC clients - see [its documentation](https://github.com/mk6i/open-oscar-server#readme) |
+---
 
-ICQ 7 and later do not work: they reached the stage of signing in and stopped
-at a challenge the server does not answer yet. R&Q after 2019 dropped OSCAR
-altogether.
+## Remember this?
 
-## What ICQ Revival adds
+A green flower in the corner of the screen. A number you knew by heart. The
+"uh-oh!" of a new message, a friend's status going from *Away* to *Free for
+Chat*, a file sent at dial-up speed.
 
-**On the server**
+ICQ went quiet in 2024. **ICQ Revival brings it back** - not as a lookalike,
+but for the very programs you used back then. Install your old ICQ, sign in,
+and your contact list comes alive again.
 
-- [x] Both ICQ profile dialects. ICQ 99-2003 ask for a profile one way, ICQ 6
-      and everything modelled on it (QIP 2012, Miranda's MDir) another way; the
-      client chooses, so the server understands both, and a profile saved in one
-      reads correctly in the other.
-- [x] Profile and directory search for ICQ 6.5, QIP 2012 and Miranda NG, in
-      the reply layout each of them expects.
-- [x] Extended profiles: marital status, origin city, verified and login
-      e-mail, and tolerant parsing of what older clients send.
-- [x] Signing in with an e-mail address instead of a number, as the "ICQ#/Email"
-      field of the old login windows promises.
-- [x] A new number from inside the client - "Get an ICQ Number" in ICQ 2003b.
-- [x] Random chat: joining an interest group and being matched with someone.
-- [x] Authorization answers that reach the person who asked, whichever client
-      they use.
+## Start in three steps
 
-**Around the server** (`deploy/`)
+1. **Get a number.** Pick a free ICQ Revival number and a password on the
+   registration page of the ICQ Revival website. It takes a minute.
+2. **Prepare your client.** Download the small patch for your ICQ, or the
+   plugin for Miranda, from the website's *Clients and patches* page - there is
+   a link to it right on the registration page. Enter the server name once -
+   the patch does the rest.
+3. **Sign in** with your number and say hi. 👋
 
-- [x] Registration site: pick a number, set a password, attach an e-mail for
-      recovery, change your number or close the account. English, Ukrainian
-      and Russian, in the look of the Windows 98 era.
-- [x] Admin panel: users, passwords, blocking, sessions.
-- [x] Replacements for the ICQ.com pages the clients still open - the welcome
-      window, "who is online", white pages, the web pager, help - and the page
-      ICQ 6.5 uses to set your picture, with the image scaled to what the
-      client can show.
-- [x] A TLS front that still speaks SSLv3 and TLS 1.0 for the clients of the
-      2000s, next to a modern certificate for everyone else.
-- [x] Daily database backups.
+Your original client is backed up before anything changes, and one click
+puts it back exactly as it was.
 
-**On the client side** (`tools/`)
+## Works with the classics
 
-- [x] `ICQ-2003b-Patch.exe` for ICQ Pro 2003b: removes the banners and the Google bar,
-      points the menu items that opened ICQ.com at your server.
-- [x] `ICQ-6.5-Patch.exe` for ICQ 6.5: removes the Xtraz, advertising, tZers, SMS
-      and phone parts that have nothing behind them any more, and points the
-      pages the client opens at your server.
-- [x] The ICQ protocol plugin for Miranda NG, which Miranda removed, ported to
-      the current API.
+| | Client | What you get |
+|:-:|---|---|
+| 🌼 | **ICQ Pro 2003b** | Everything, including getting a new number right from the client |
+| 🌼 | **ICQ 6.5** | Messages, animated avatars, tZers, voice and video calls |
+| 💬 | **QIP 2005 / QIP 2012** | Chat, profiles and search |
+| 🧩 | **Miranda NG** | The ICQ plugin, brought back and kept up to date automatically |
+| 🏃 | **AIM 5-7, Pidgin** and other OSCAR clients | Chat - just type the server in the settings |
 
-Each patch backs up what it changes and restores it on request.
-[tools/README.md](./tools/README.md) lists them by client.
+The best part: **they all talk to each other.** A friend on ICQ 2003b can chat
+with you on ICQ 6.5 or Miranda, just like in the old days.
 
-## Running it
+## What's back
 
-In containers, on any Linux machine with a public IPv4 address and a DNS name:
+- 💬 **Messages** - online and offline, with the familiar sounds.
+- 👤 **Your profile** - name, city, birthday, "about me", and search to find
+  old friends.
+- 🖼️ **Pictures and animated avatars** - upload a photo, or pick one of the
+  ICQ 6 animated characters that react to your smileys.
+- 😜 **tZers** - the little animated jokes of ICQ 6.5, playing again.
+- 📞 **Voice and video calls** between ICQ 6.5 users.
+- 📁 **File transfer** between friends.
+- 🎲 **Random chat** - meet someone new with the same interests.
+- ✉️ **Sign in with your e-mail**, and get your password back if you forget it.
+- 🧹 **A clean window** - the dead ads, banners and broken buttons are gone.
 
-```
-cd deploy
-cp .env.example .env                              # set PUBLIC_HOST and ACME_EMAIL
-cp secrets/admin.env.example secrets/admin.env    # set the admin password
-docker compose --profile certs run --rm cert-gen
-docker compose --profile certs run --rm certbot
-docker compose up -d --build
-```
+## Questions
 
-[deploy/docker/README.md](./deploy/docker/README.md) explains each step,
-renewal and backups. [deploy/VM-SPEC.md](./deploy/VM-SPEC.md) covers sizing,
-ports and the reasons behind them - it is written so that a person or an AI
-can provision the machine from it. The systemd units in `deploy/systemd/`
-are the alternative to containers.
+**Is this the real ICQ?**
+No. ICQ Revival is an independent, non-commercial project run by fans. It
+brings the old programs back to life on a server of its own.
 
-Then point the clients at the server: the sign-in server is set in each
-client's own connection settings, and the patches above take care of the rest.
+**Do I keep my old ICQ number?**
+The original ICQ numbers could not be carried over. You pick a new one - often
+you can have your old number again if it is free.
 
-## Documentation
+**Does it cost anything?**
+No. There are no ads and nothing to pay.
 
-| Where | What |
-|---|---|
-| [NOTES.md](./NOTES.md) | What each client needs from the server, and how it was found out |
-| [deploy/VM-SPEC.md](./deploy/VM-SPEC.md) | Machine, network, TLS and data requirements |
-| [deploy/docker/README.md](./deploy/docker/README.md) | Running and maintaining the containers |
-| [tools/README.md](./tools/README.md) | Client patches and helpers, by client |
-| [api.yml](./api.yml) | Management API |
-| [docs/](./docs) | Open OSCAR Server's own guides: building, clients, platforms |
+**Is my old client safe to patch?**
+Yes. The patch checks every file before touching it, keeps a backup, and
+"Restore original" returns the client exactly as it was.
 
-## Development
+**Where do I get the old client itself?**
+The patches work with ICQ Pro 2003b (build 3916) and ICQ 6.5 (build 2024).
+The project does not hand out the clients themselves.
 
-Build with `go build -o open_oscar_server ./cmd/server`, test with
-`go test ./...`. [docs/BUILD.md](./docs/BUILD.md) has the details.
+## For the curious and the technical
 
-The Go module path stays `github.com/mk6i/open-oscar-server`, so changes from
-the upstream project merge without touching every import. The upstream
-repository is the `upstream` remote:
+How it works, what each client needs, running your own server and developing
+it: see the **[ICQ Revival wiki](docs/wiki/Home.md)**.
 
-```
-git fetch upstream
-git merge upstream/main
-```
+---
 
-## License
-
-MIT, as Open OSCAR Server - see [LICENSE](./LICENSE). Open OSCAR Server is
-copyright (c) 2024 mk6i; the additions of ICQ Revival are published under the
-same terms.
+<sub>ICQ Revival is an independent, non-commercial project. It is not
+affiliated with, endorsed by or associated with ICQ, AOL, Yahoo!, Mail.ru or
+VK. ICQ and AIM are trademarks of their respective owners. Built on
+[Open OSCAR Server](https://github.com/mk6i/open-oscar-server) by mk6i;
+released under the [MIT License](LICENSE).</sub>
