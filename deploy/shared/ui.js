@@ -158,6 +158,10 @@ body {
 body.compact { padding: 6px; font-size: 13px; line-height: 1.45; }
 body.compact .titlebar td { padding-top: 5px; padding-bottom: 5px; }
 body.compact .label { font-size: 16px; }
+/* The flower in the header: large enough to be remembered, a size smaller in
+   the client's small windows. */
+body.compact .titlebar td.flowercell { width: 44px; }
+body.compact .flowercell img { width: 34px; height: 34px; }
 body.compact .body { padding: 8px 10px; }
 body.compact .statusbar td { padding-top: 4px; padding-bottom: 4px; }
 body.compact p { margin: 0 0 5px; }
@@ -387,7 +391,7 @@ function langLabel(code) {
 function header(title, subtitle, attrs) {
   return `<table class="titlebar" width="100%" cellpadding="0" cellspacing="0" border="0">
   <tr>
-    <td width="34" align="left" valign="middle" class="flowercell">${flowerImg(24)}</td>
+    <td width="56" align="left" valign="middle" class="flowercell">${flowerImg(44)}</td>
     <td valign="middle"><span class="label"${attrs ? ' ' + attrs : ''}>${title}</span></td>
     <td align="right" valign="middle">${subtitle ? `<span class="box">${subtitle}</span>` : ''}</td>
   </tr>
