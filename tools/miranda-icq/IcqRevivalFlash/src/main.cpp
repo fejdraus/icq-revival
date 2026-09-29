@@ -1199,7 +1199,6 @@ int CMPlugin::Load()
 	MarkModuleForUpdater(g_plugin.getInst(), bOurList);
 	MarkForUpdater(L"Libs\\FlashPlayerControl.dll", !bOurList);
 	MarkForUpdater(L"Languages\\langpack_russian_icqrevivalflash.txt", !bOurList);
-	MarkForUpdater(L"Languages\\langpack_ukrainian_icqrevivalflash.txt", !bOurList);
 
 	ClearOldMark(L"Plugins\\FlashAvatars.dll", bOurList);
 	ClearOldMark(L"Languages\\langpack_russian_flashavatars.txt", bOurList);

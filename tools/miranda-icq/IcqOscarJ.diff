@@ -6551,7 +6551,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.
  	return 0;
  }
  
-@@ -73,8 +73,181 @@
+@@ -73,8 +73,178 @@
  	{ LPGEN("Expand string edit"), "ICO_EXPANDSTRINGEDIT", IDI_EXPANDSTRINGEDIT }
  };
  
@@ -6586,9 +6586,7 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.
 +	L"Plugins\\IcqRevivalFlash.dll",
 +	L"Libs\\FlashPlayerControl.dll",
 +	L"Languages\\langpack_russian_icq.txt",
-+	L"Languages\\langpack_russian_icqrevivalflash.txt",
-+	L"Languages\\langpack_ukrainian_icq.txt",
-+	L"Languages\\langpack_ukrainian_icqrevivalflash.txt"
++	L"Languages\\langpack_russian_icqrevivalflash.txt"
 +};
 +
 +// The Flash plugin was FlashAvatars.dll up to 1.0: Miranda NG's list deletes
@@ -6727,13 +6725,12 @@ diff -ruN -x 'Release*' -x obj -x '*.user' -x '*.dll' a/src/init.cpp b/src/init.
 +	bool bOurList = UpdaterUsesOurList();
 +	MarkModuleForUpdater(g_plugin.getInst(), bOurList);
 +	MarkForUpdater(L"Languages\\langpack_russian_icq.txt", !bOurList);
-+	MarkForUpdater(L"Languages\\langpack_ukrainian_icq.txt", !bOurList);
 +	HookEvent(ME_SYSTEM_MODULESLOADED, OnModulesLoaded);
 +
  	srand(time(0));
  	_tzset();
  
-@@ -86,7 +259,7 @@
+@@ -86,7 +256,7 @@
  
  	// Init extra statuses
  	InitXStatusIcons();

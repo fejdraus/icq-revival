@@ -104,9 +104,7 @@ static const wchar_t *g_arOurFiles[] =
 	L"Plugins\\IcqRevivalFlash.dll",
 	L"Libs\\FlashPlayerControl.dll",
 	L"Languages\\langpack_russian_icq.txt",
-	L"Languages\\langpack_russian_icqrevivalflash.txt",
-	L"Languages\\langpack_ukrainian_icq.txt",
-	L"Languages\\langpack_ukrainian_icqrevivalflash.txt"
+	L"Languages\\langpack_russian_icqrevivalflash.txt"
 };
 
 // The Flash plugin was FlashAvatars.dll up to 1.0: Miranda NG's list deletes
@@ -245,7 +243,6 @@ int CMPlugin::Load()
 	bool bOurList = UpdaterUsesOurList();
 	MarkModuleForUpdater(g_plugin.getInst(), bOurList);
 	MarkForUpdater(L"Languages\\langpack_russian_icq.txt", !bOurList);
-	MarkForUpdater(L"Languages\\langpack_ukrainian_icq.txt", !bOurList);
 	HookEvent(ME_SYSTEM_MODULESLOADED, OnModulesLoaded);
 
 	srand(time(0));
