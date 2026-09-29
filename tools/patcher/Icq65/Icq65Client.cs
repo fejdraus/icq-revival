@@ -108,6 +108,29 @@ namespace IcqRevival.Patch
                     new ByteEdit { Offset = 0x2F0190, From = new byte[] { 0x03, 0x00, 0x00, 0x00 }, To = new byte[] { 0x02, 0x00, 0x00, 0x00 } },  // count
                 },
             },
+            // The Xtraz entries lost after the list is read again. The Xtraz
+            // description manager (MISB.dll) keeps the parsed list and, apart
+            // from it, the entries it has loaded - what "Change my picture"
+            // and "Welcome" look up (MNXtrazUtils::IsXtraAvailable). Every
+            // ReloadTimeout its Update (RVA 0x494E0) empties the loaded entries
+            // and then asks the server again. A 304 or an error refills them
+            // from the copy on disk; a new list (200) is found to be parsed
+            // already and returns before anything is loaded, so they stay empty
+            // until the client restarts and those items open the Xtraz error
+            // page. The edit skips the emptying: "mov ecx, edi; jmp" to the
+            // download call that follows it.
+            new CodePatch
+            {
+                File = "MISB.dll",
+                Size = 765952,
+                Sha256From = "994387921C16D553A678AD5DEEE57E5CC53950DA9D16803A32A3A8B1A303815C",
+                Sha256To = "1E67145222BBD50433D83FE7F695E2D3739C67BEBF435432E2C6109276DEA30A",
+                What = "Xtraz items lost when the list is read again",
+                Edits = new[]
+                {
+                    new ByteEdit { Offset = 0x4953E, From = new byte[] { 0x8B, 0x46, 0x34, 0x8B }, To = new byte[] { 0x8B, 0xCF, 0xEB, 0x23 } },
+                },
+            },
         };
 
         // --- interface -----------------------------------------------------------
@@ -560,27 +583,6 @@ namespace IcqRevival.Patch
         {
             return Regex.Matches(text, LinkPattern, RegexOptions.IgnoreCase).Cast<Match>()
                 .Count(m => !Ps.Eq(m.Value, PagesBase(domain, m.Groups["path"].Value)));
-        }
-
-        // How often the client reads the Xtraz list again, in seconds. It keeps
-        // the list in memory, loses it when it signs on again by itself (after
-        // a dropped connection or a server restart), and reads it only when
-        // this timer runs out - six hours out of the box, during which "Change
-        // my picture" and "Welcome" find no entry and open the Xtraz error page.
-        // The list is under a kilobyte, so ten minutes costs nothing.
-        const string XtrazReloadSeconds = "600";
-        const string XtrazReloadPattern = "(Key=\"ReloadTimeout\" Value=\")([^\"]*)(\")";
-
-        static string WithXtrazReload(string name, string text)
-        {
-            if (!Ps.Eq(name, "XtraConfig.xml")) return text;
-            return Regex.Replace(text, XtrazReloadPattern, m => m.Groups[1].Value + XtrazReloadSeconds + m.Groups[3].Value);
-        }
-
-        static bool XtrazReloadSet(string text)
-        {
-            Match m = Regex.Match(text, XtrazReloadPattern);
-            return !m.Success || m.Groups[2].Value == XtrazReloadSeconds;
         }
 
         // The client draws the ad slots and the teaser strip only while these
@@ -1105,9 +1107,7 @@ namespace IcqRevival.Patch
             int other = 0;
             foreach (string f in PatchFiles.FilesWithExtension(dir, ".xml"))
             {
-                string text = PatchFiles.ReadText(f).Text;
-                other += CountStrayLinks(text, domain);
-                if (Ps.Eq(Path.GetFileName(f), "XtraConfig.xml") && !XtrazReloadSet(text)) other++;
+                other += CountStrayLinks(PatchFiles.ReadText(f).Text, domain);
             }
             return other > 0 ? "original" : "patched";
         }
@@ -1146,7 +1146,7 @@ namespace IcqRevival.Patch
             j.Add("sms", "Services that are gone", "SMS and phone: buttons, icons, menus, options, sounds, filter");
             j.Add("zlango", "Services that are gone", "the Zlango add-on and its message window buttons");
             j.Add("ads", "Advertising", "advertising: the ad slots and boxes, the banner and its frame");
-            j.Add("fix", "Fixes", "the cut-off bottom of the \"Advanced\" preferences group");
+            j.Add("fix", "Fixes", "the cut-off \"Advanced\" preferences group; \"Change my picture\" lost after the Xtraz list reloads");
             j.Add("links", "Your server", "the pages the client opens point at your server");
             j.Add("sign-in", "Your server", "automatic connection and voice calls use your server");
             // Off until chosen: it needs our DLL next to the patch, and the
@@ -1186,6 +1186,7 @@ namespace IcqRevival.Patch
             j.Assign("the ad box of the contact list", "ads");
             j.Assign("advertising slots", "ads");
             j.Assign("the cut-off bottom of the \"Advanced\" group", "fix");
+            j.Assign("Xtraz items lost when the list is read again", "fix");
             // The client refuses content from a host not on its whitelists, so
             // the links are no use without them.
             j.Assign("links", "links");
@@ -1383,7 +1384,6 @@ namespace IcqRevival.Patch
                 if (links)
                 {
                     text = Regex.Replace(text, LinkPattern, m => PagesBase(domain, m.Groups["path"].Value), RegexOptions.IgnoreCase);
-                    text = WithXtrazReload(name, text);
                 }
                 if (white) text = AddWhitelisted(name, text, domain);
                 foreach (Strip s in Strips)

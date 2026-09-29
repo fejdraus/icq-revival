@@ -442,10 +442,14 @@ window size.
 the translated names; ours needs none, but the fetch has to succeed - on a 404
 the parse fails and the window only reports "a problem opening Xtra".
 
-**The list is cached for `ReloadTimeout`** (21600 seconds out of the box), so
-a change only takes effect after the client restarts or the timer runs out, not
-after the window is reopened. The patch sets it to 600 seconds (see
-`XtrazReloadSeconds` in `Icq65Client.cs`).
+**The list is read again every `ReloadTimeout`** (21600 seconds). Before each
+read the client empties the Xtraz entries it has loaded; a 304 or an error
+refills them from its copy on disk, but a new list (200) is found to be parsed
+already and they stay empty until the client restarts - "Change my picture" and
+"Welcome" then open the Xtraz error page. The server answers with a 304 while
+the list has not changed (`XTRAZ_LIST_CHANGED` in `deploy/oscar-legacy-web`),
+and the patch's "Fixes" job keeps the entries in `MISB.dll` (RVA `0x4953E`).
+A changed list still reaches a running client only when it restarts.
 
 Backups are kept next to the originals with the `.icq6patch-backup` suffix, and
 "Restore original" puts them back (it also restores the `.icq6-retarget-backup`
