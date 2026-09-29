@@ -354,7 +354,7 @@ way can be returned to the original with it.
 
 The sections below describe the findings it is built on.
 
-## Dead ICQ 6.5 web services - `tools/icq65/retarget/`
+## Dead ICQ 6.5 web services - the ICQ 6.5 patch (`tools/patcher/Icq65`)
 
 Besides signing in, ICQ 6 fetches over HTTP from services that are long gone:
 Xtraz on `xtraz.icq.com` and `df.icq.com`, help and guides on `labs.icq.com`,
@@ -379,7 +379,7 @@ both, which the tool does.
 under `services/icqApp/ver1/` as Boxely files - `.box` markup, `.style.box`
 styles, `.dtd` strings - not compiled into the binaries. A widget is removed by
 marking it `collapsed="true"`, which is how the client hides its own optional
-parts, and `tools/icq65/declutter` does that for the frames left behind by the
+parts, and the ICQ 6.5 patch (`Icq65Client.cs`) does that for the frames left behind by the
 dead services: the Xtraz strip above the contact list (`idXtrazBarArea`), the
 entertainment panel below it with its ad slot (`idMainEntertainmentBox`), the
 banner under the message window (`idBottomBannerContainer`), the SMS and phone
@@ -442,13 +442,17 @@ window size.
 the translated names; ours needs none, but the fetch has to succeed - on a 404
 the parse fails and the window only reports "a problem opening Xtra".
 
-**The list is cached for `ReloadTimeout`** (21600 seconds by default), so a
-change only takes effect after the client restarts, not after the window is
-reopened.
+**The list is cached for `ReloadTimeout`** (21600 seconds out of the box), so
+a change only takes effect after the client restarts or the timer runs out, not
+after the window is reopened. The patch sets it to 600 seconds (see
+`XtrazReloadSeconds` in `Icq65Client.cs`).
 
-Backups are kept next to the originals with the `.icq6-retarget-backup` suffix
-and `--restore` puts them back. Binaries are left alone: the sign-in address
-`login.icq.com` is set by the user under Options → Connection → ICQ server.
+Backups are kept next to the originals with the `.icq6patch-backup` suffix, and
+"Restore original" puts them back (it also restores the `.icq6-retarget-backup`
+and `.icq6-declutter-backup` files the older Python tools left). The sign-in
+server is changed in `MCore.dll` itself, so the default `login.icq.com` points at
+your server; a server typed under Options → Connection → Manual stays the user's
+choice.
 
 `MXtraz.dll` is only a string inside `MISB.dll`, not a missing file - the Xtraz
 engine itself is `MISB.dll`, listed in `ICQ.exe.csassembly` and exporting
@@ -560,7 +564,8 @@ is part of a stretched image and gets visibly squashed below this width.
 
 **Lesson for the future:** in this client visibility is decided by the code and the
 skin, not by the resources. A change has to be checked by running the client and
-querying the live window (`tools/icq2003b/patch/dialog/inspect-window.ps1`), not by
+querying the live window (a script for it, `inspect-window.ps1`, is in the history
+before commit `b654961`), not by
 reading templates - twice in a row reading them gave a confident but wrong answer.
 
 The checksums in the entries for `Icq.exe` refer to the file with the other changes
