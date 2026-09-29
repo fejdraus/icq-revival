@@ -1,0 +1,55 @@
+// The Xtraz list ICQ 6.5 reads every ReloadTimeout: a 304 while it has not
+// changed (the client drops its loaded entries on a 200 of an unchanged list,
+// see the xtrazlist route), and the date of its last change kept in step with
+// its entries.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const { start } = require('./test-server.js');
+
+const LIST = '/xtraz2/global/10/6/30007/xtrazlist.xml';
+
+// The entries as of XTRAZ_LIST_CHANGED in server.js, with the server's own
+// address taken out. When this fails, the entries changed: move
+// XTRAZ_LIST_CHANGED forward, then put the new value here.
+const ENTRIES_SHA1 = '627bbb54dd81d4b6c474bb62924e4611de2a5e1f';
+
+test('Xtraz list: 304 while unchanged, 200 when the copy is older', async (t) => {
+  const srv = await start(false);
+  t.after(() => srv.stop());
+
+  const first = await fetch(srv.base + LIST);
+  const body = await first.text();
+  assert.equal(first.status, 200);
+  const modified = first.headers.get('last-modified');
+  const etag = first.headers.get('etag');
+  assert.ok(modified && etag);
+
+  await t.test('the entries match the date of their last change', () => {
+    const host = new URL(srv.base).host;
+    const neutral = body.split(host).join('HOST');
+    const sha1 = crypto.createHash('sha1').update(neutral).digest('hex');
+    assert.equal(sha1, ENTRIES_SHA1,
+      'the Xtraz list changed: move XTRAZ_LIST_CHANGED forward and update ENTRIES_SHA1');
+  });
+
+  await t.test('a copy saved after the change gets a 304', async () => {
+    const saved = new Date(Date.parse(modified) + 3600e3).toUTCString();
+    const res = await fetch(srv.base + LIST, { headers: { 'if-modified-since': saved } });
+    assert.equal(res.status, 304);
+    assert.equal(await res.text(), '');
+  });
+
+  await t.test('the same ETag gets a 304', async () => {
+    const res = await fetch(srv.base + LIST, { headers: { 'if-none-match': etag } });
+    assert.equal(res.status, 304);
+  });
+
+  await t.test('a copy older than the change gets the list', async () => {
+    const saved = new Date(Date.parse(modified) - 3600e3).toUTCString();
+    const res = await fetch(srv.base + LIST, { headers: { 'if-modified-since': saved } });
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), body);
+  });
+});

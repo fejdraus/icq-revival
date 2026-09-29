@@ -57,6 +57,12 @@ const CONFIG_PATH = process.env.CONFIG || path.join(__dirname, 'services.json');
 // Only the names found in the folder are served, read once at start and again
 // on SIGHUP: a request names a file, never a path, so there is nothing to walk
 // out of the folder with.
+// When the entries of the Xtraz list (the xtrazlist route) last changed, as
+// its Last-Modified. Move it forward whenever they change - clients whose
+// copy is older get the new list, everyone else a 304; xtraz-list.test.js
+// fails until it is moved.
+const XTRAZ_LIST_CHANGED = 'Tue, 29 Sep 2026 00:00:00 GMT';
+
 const TZER_DIR = path.join(__dirname, 'tzers');
 const TZER_TYPES = {
   '.swf': 'application/x-shockwave-flash',
@@ -3430,11 +3436,32 @@ const ACTIONS = {
   </xtraz>
 </xtrazList>
 `, 'utf8');
-    ctx.res.writeHead(200, {
+    // The client asks again every ReloadTimeout whether the list changed
+    // (If-Modified-Since, the time it saved its copy). Saying "changed" when
+    // it has not is not only wasted: ICQ 6.5 drops the entries it has loaded
+    // before it asks, refills them from its copy on a 304, but on a 200 finds
+    // the list already parsed and leaves them empty - "Change my picture" and
+    // "Welcome" then open the Xtraz error page until it restarts (the ICQ 6.5
+    // patch also fixes that in MISB.dll). So the list carries the date of its
+    // last change and an ETag, and a client that has it gets a 304. nginx,
+    // which caches the list, answers most of these itself
+    // (if_modified_since before).
+    const etag = `"${crypto.createHash('sha1').update(body).digest('hex').slice(0, 16)}"`;
+    const headers = {
       'content-type': 'text/xml; charset=utf-8',
-      'content-length': body.length,
-      'cache-control': 'no-store',
-    });
+      'last-modified': XTRAZ_LIST_CHANGED,
+      'etag': etag,
+      'cache-control': 'no-cache',
+    };
+    const since = Date.parse(ctx.req.headers['if-modified-since'] || '');
+    const match = ctx.req.headers['if-none-match'];
+    if (match ? match === etag : since >= Date.parse(XTRAZ_LIST_CHANGED)) {
+      ctx.res.writeHead(304, headers);
+      ctx.res.end();
+      return;
+    }
+    headers['content-length'] = body.length;
+    ctx.res.writeHead(200, headers);
     ctx.res.end(body);
   },
 
