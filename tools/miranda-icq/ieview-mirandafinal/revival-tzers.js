@@ -8,24 +8,24 @@
 // skin folder), so nothing from a message ever becomes part of an address,
 // markup or code. Anything else stays plain text.
 //
-// English names: what ICQ 6.5 sends (en-US TzerLabels.dtd). Russian: its
-// ru-RU TzerLabels.dtd, as our tZer menu shows them. Ukrainian: our tZer menu
-// in a Ukrainian Miranda (langpack_ukrainian_icqrevivalflash.txt); ICQ 6.5
-// has no Ukrainian labels.
+// English names: what ICQ 6.5 sends (en-US TzerLabels.dtd), and what
+// IcqRevivalFlash sends whatever the language of Miranda. Russian: its
+// ru-RU TzerLabels.dtd - the Russian ICQ 6.5 sends those, and IcqRevivalFlash
+// did in a Russian Miranda before it kept to the English names.
 
 var revivalTzerTable = [
 	['gangsta',   "Gangsta'"],
-	['canthearu', "Can't Hear U", "Вас не слышно", "Вас не чути"],
-	['skratch',   'Scratch', "Царапина", "Подряпина"],
+	['canthearu', "Can't Hear U", "Вас не слышно"],
+	['skratch',   'Scratch', "Царапина"],
 	['boo',       'Booooo'],
-	['kisses',    'Kisses', "Поцелуйчики", "Поцілунки"],
-	['chillout',  'Chill Out', "Расслабьтесь", "Розслабтеся"],
+	['kisses',    'Kisses', "Поцелуйчики"],
+	['chillout',  'Chill Out', "Расслабьтесь"],
 	['akitaka',   'Akitaka'],
-	['laugh',     'Hilaaarious', "Умооооора", "Сміхотааа"],
-	['duh',       'Like Duh!', "Вот дурак!", "Ну очевидно ж!"],
+	['laugh',     'Hilaaarious', "Умооооора"],
+	['duh',       'Like Duh!', "Вот дурак!"],
 	['beback',    'L8R'],
-	['likeu',     'Like U!', "Ты мне нравишься", "Ти мені подобаєшся"],
-	['sorry',     "I'm Sorry", "Мне очень жаль", "Мені дуже шкода"]
+	['likeu',     'Like U!', "Ты мне нравишься"],
+	['sorry',     "I'm Sorry", "Мне очень жаль"]
 ];
 
 function revivalTrim(s) {

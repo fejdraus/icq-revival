@@ -526,7 +526,10 @@ static void SendTzer(MCONTACT hContact, int i, const CMStringA &szBase)
 		return;
 
 	CMStringA szUrl(szBase + g_tzers[i].file + ".swf"), szThumb(szBase + g_tzers[i].file + ".png");
-	T2Utf szName(TranslateW_LP(g_tzers[i].name, &g_plugin));
+	// The name goes to the contact and into both histories, so it is the
+	// English one ICQ 6.5 sends, whatever the language of this Miranda: the
+	// menu shows it translated, the message does not depend on who sent it.
+	T2Utf szName(g_tzers[i].name);
 
 	ICQ_TZER tz = { sizeof(tz), g_tzers[i].id, szName, szUrl, szThumb, 1 };
 	if (CallProtoService(szProto, PS_ICQ_SENDTZER, hContact, (LPARAM)&tz))
