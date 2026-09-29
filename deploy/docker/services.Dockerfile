@@ -22,7 +22,7 @@ ENV NODE_NO_WARNINGS=1
 
 FROM base AS register
 COPY --chown=node deploy/oscar-register/ ./
-COPY --chown=node deploy/shared/ui.js deploy/shared/flower.png ./
+COPY --chown=node deploy/shared/ui.js deploy/shared/flower.png deploy/shared/logo-page.png ./
 USER node
 EXPOSE 8099
 CMD ["node", "server.js"]
@@ -30,7 +30,7 @@ CMD ["node", "server.js"]
 
 FROM base AS admin
 COPY --chown=node deploy/oscar-admin/ ./
-COPY --chown=node deploy/shared/ui.js deploy/shared/flower.png ./
+COPY --chown=node deploy/shared/ui.js deploy/shared/flower.png deploy/shared/logo-page.png ./
 USER node
 EXPOSE 8100
 CMD ["node", "server.js"]
@@ -42,7 +42,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-pil \
  && rm -rf /var/lib/apt/lists/*
 COPY --chown=node deploy/oscar-legacy-web/ ./
-COPY --chown=node deploy/shared/ui.js deploy/shared/flower.png ./
+COPY --chown=node deploy/shared/ui.js deploy/shared/flower.png deploy/shared/logo-page.png ./
 # The white pages show countries and interests by name, from the same lists
 # the registration pages use.
 COPY --chown=node deploy/oscar-register/icq-codes.json ./

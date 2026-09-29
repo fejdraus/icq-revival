@@ -82,13 +82,29 @@ function flowerImg(size) {
     + ` style="border:0;vertical-align:middle">`;
 }
 
+// The whole ICQ Revival logo, lettering and all, for the top of the pages
+// people open first (registration, downloads): logo-page.png, made from
+// logo.png at 440 px wide in 256 colours, shown at half that size so that it
+// stays sharp on high-density screens. Served at /ui/logo.png.
+const LOGO_PNG = fs.readFileSync(path.join(__dirname, 'logo-page.png'));
+const LOGO_ASSET = '/ui/logo.png';
+const LOGO_TAG = require('node:crypto')
+  .createHash('sha1').update(LOGO_PNG).digest('hex').slice(0, 8);
+
+function logoBlock() {
+  const w = LOGO_PNG.readUInt32BE(16), h = LOGO_PNG.readUInt32BE(20);
+  return `<div class="logo"><img src="${LOGO_ASSET}?v=${LOGO_TAG}" width="${w / 2}"`
+    + ` height="${h / 2}" alt="ICQ Revival"></div>`;
+}
+
 // Services call this first thing in their request handler: it returns true if
 // the request was for an image and has already been served.
 function serveAsset(req, res) {
   const url = String(req.url).split('?')[0];
   const asset = url === FLOWER_ASSET ? { type: 'image/png', body: FLOWER_PNG }
-    : url === '/favicon.ico' ? { type: 'image/x-icon', body: FAVICON_ICO }
-      : null;
+    : url === LOGO_ASSET ? { type: 'image/png', body: LOGO_PNG }
+      : url === '/favicon.ico' ? { type: 'image/x-icon', body: FAVICON_ICO }
+        : null;
   if (!asset) return false;
   res.writeHead(200, {
     'content-type': asset.type,
@@ -134,6 +150,10 @@ body {
 }
 /* A centred column without flexbox: the client's built-in engine lacks it. */
 .window { margin: 0 auto; }
+/* The logo at the top of the pages people open first; it never grows wider
+   than the sheet on a phone. */
+.logo { text-align: center; margin: 2px 0 14px; }
+.logo img { max-width: 70%; height: auto; border: 0; }
 /* The client's window is small - the same rules, but tighter. */
 body.compact { padding: 6px; font-size: 13px; line-height: 1.45; }
 body.compact .titlebar td { padding-top: 5px; padding-bottom: 5px; }
@@ -420,5 +440,5 @@ function pickLang(header) {
 module.exports = {
   STYLE, TOKENS, FONT_STACK,
   LANGS, FALLBACK_LANG, pickLang, langLabel,
-  header, footer, flowerImg, serveAsset, FAVICON,
+  header, footer, flowerImg, logoBlock, serveAsset, FAVICON,
 };

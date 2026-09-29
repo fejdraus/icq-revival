@@ -845,7 +845,7 @@ function serializeI18N() {
 }
 
 // The styling is shared by all of the project's services, see ui.js.
-const { STYLE, flowerImg, header, footer, langLabel, serveAsset, FAVICON } = require('./ui.js');
+const { STYLE, flowerImg, logoBlock, header, footer, langLabel, serveAsset, FAVICON } = require('./ui.js');
 
 // The profile page lives in a separate file: its markup is large. Its strings
 // are merged into the shared dictionary, otherwise the language switch would not work on it.
@@ -870,6 +870,7 @@ ${FAVICON}
   ${header(t.winTitle, '', 'data-i18n="winTitle"')}
 
   <div class="body">
+    ${logoBlock()}
     <div class="hero">
       <div>
         <h1 data-i18n="heroTitle">${t.heroTitle}</h1>

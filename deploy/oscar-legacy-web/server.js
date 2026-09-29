@@ -30,7 +30,7 @@ const child_process = require('node:child_process');
 const zlib = require('node:zlib');
 // The shared look of the project, the same as registration and the admin page.
 const { STYLE: SHARED_STYLE, LANGS, FALLBACK_LANG, pickLang,
-  langLabel, header, footer, serveAsset, FAVICON } = require('./ui.js');
+  langLabel, header, footer, logoBlock, serveAsset, FAVICON } = require('./ui.js');
 // Miranda NG's PluginUpdater through this server, with our plugins in its list.
 const { createMirror } = require('./miranda-updates.js');
 // Avatars made in the constructor, /icq/avatar/maker: c-<code>.swf and its
@@ -2414,6 +2414,7 @@ function downloadPage(u) {
   const host = config.oscarHost ? escapeHtml(config.oscarHost) : '';
 
   return page(t.dlTitle, `
+    ${logoBlock()}
     <p>${t.dlIntro}</p>
 
     <div class="scroll">
