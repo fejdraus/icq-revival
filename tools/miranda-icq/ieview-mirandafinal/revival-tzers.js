@@ -9,21 +9,23 @@
 // markup or code. Anything else stays plain text.
 //
 // English names: what ICQ 6.5 sends (en-US TzerLabels.dtd). Russian: its
-// ru-RU TzerLabels.dtd, as our tZer menu shows them.
+// ru-RU TzerLabels.dtd, as our tZer menu shows them. Ukrainian: our tZer menu
+// in a Ukrainian Miranda (langpack_ukrainian_icqrevivalflash.txt); ICQ 6.5
+// has no Ukrainian labels.
 
 var revivalTzerTable = [
 	['gangsta',   "Gangsta'"],
-	['canthearu', "Can't Hear U", "Вас не слышно"],
-	['skratch',   'Scratch', "Царапина"],
+	['canthearu', "Can't Hear U", "Вас не слышно", "Вас не чути"],
+	['skratch',   'Scratch', "Царапина", "Подряпина"],
 	['boo',       'Booooo'],
-	['kisses',    'Kisses', "Поцелуйчики"],
-	['chillout',  'Chill Out', "Расслабьтесь"],
+	['kisses',    'Kisses', "Поцелуйчики", "Поцілунки"],
+	['chillout',  'Chill Out', "Расслабьтесь", "Розслабтеся"],
 	['akitaka',   'Akitaka'],
-	['laugh',     'Hilaaarious', "Умооооора"],
-	['duh',       'Like Duh!', "Вот дурак!"],
+	['laugh',     'Hilaaarious', "Умооооора", "Сміхотааа"],
+	['duh',       'Like Duh!', "Вот дурак!", "Ну очевидно ж!"],
 	['beback',    'L8R'],
-	['likeu',     'Like U!', "Ты мне нравишься"],
-	['sorry',     "I'm Sorry", "Мне очень жаль"]
+	['likeu',     'Like U!', "Ты мне нравишься", "Ти мені подобаєшся"],
+	['sorry',     "I'm Sorry", "Мне очень жаль", "Мені дуже шкода"]
 ];
 
 function revivalTrim(s) {
