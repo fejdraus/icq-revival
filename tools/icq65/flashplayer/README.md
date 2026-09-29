@@ -298,6 +298,20 @@ rebuild it with MIDL:
 typelib\build-tlb.cmd
 ```
 
+### License notices
+
+Ruffle and the crates it pulls in are MIT, Apache-2.0, MPL-2.0 and the like;
+their copyright and license notices must travel with the DLL.
+`THIRD-PARTY-NOTICES.txt` holds them: every crate Cargo.lock resolves for the
+two targets through normal dependencies, the Rust standard library, and the
+Noto Sans font Ruffle embeds (`notices/`). `tools/make-downloads.py` puts it
+next to the DLL in the downloads. After a change to `Cargo.lock`, regenerate
+it and commit the result:
+
+```
+python make-notices.py
+```
+
 ## Test without ICQ
 
 Run the unit test first. It checks that every vtable slot takes as many stack

@@ -11,3 +11,7 @@ Dockerfile*   text eol=lf
 # Ruffle's web build is served byte for byte as published (its chunk names
 # are content hashes): no line-ending conversion.
 deploy/oscar-legacy-web/ruffle/** -text
+# The Miranda NG ICQ plugin source as built (upstream + IcqOscarJ.diff) is
+# kept byte for byte: Miranda's sources are CRLF, and the diff applies with
+# patch --binary only to the untouched line endings.
+tools/miranda-icq/IcqOscarJ/** -text

@@ -403,7 +403,8 @@
   "downloads": {
     "icq2003bPatch": "/icq/files/icq-2003b-patch.exe",
     "icq65Patch": "/icq/files/icq-65-patch.zip",
-    "mirandaPlugin": "/icq/files/icq-revival-miranda.zip"
+    "mirandaPlugin": "/icq/files/icq-revival-miranda.zip",
+    "mirandaSource": "/icq/files/icq-revival-miranda-src.zip"
   },
   "_oscarHost": "The server address for clients, shown in the \"how to start\" guide. Leave empty to drop that section.",
   "oscarHost": "icq.example.com"

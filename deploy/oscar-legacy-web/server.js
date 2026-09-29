@@ -862,6 +862,7 @@ const I18N = {
     dlBuild: 'Build',
     dlNeeds: 'What it needs',
     dlGet: 'Download',
+    dlSource: 'Source code (GPLv2)',
     dlSoon: 'not published yet',
     dlAny: 'any',
     dlIcq2003b: 'the ICQ 2003b patch',
@@ -1271,6 +1272,7 @@ const I18N = {
     dlBuild: 'Збірка',
     dlNeeds: 'Що потрібно',
     dlGet: 'Завантажити',
+    dlSource: 'Вихідний код (GPLv2)',
     dlSoon: 'ще не опубліковано',
     dlAny: 'будь-яка',
     dlIcq2003b: 'патч для ICQ 2003b',
@@ -2270,10 +2272,10 @@ function contactHtml() {
 
 // A download from the config. A value that is empty or still says TODO is not
 // a link yet, and the page says so instead of sending the reader nowhere.
-function downloadLink(key, t) {
+function downloadLink(key, t, label = t.dlGet) {
   const url = String((config.downloads || {})[key] || '').trim();
   if (!url || /^todo/i.test(url)) return `<span class="dim">${t.dlSoon}</span>`;
-  return `<a href="${escapeHtml(url)}">${t.dlGet}</a>`;
+  return `<a href="${escapeHtml(url)}">${label}</a>`;
 }
 
 // The links at the foot of every information page, minus the page itself.
@@ -2422,7 +2424,9 @@ function downloadPage(u) {
       <tbody>
         ${row('<b>ICQ Pro 2003b</b>', '3916', t.dlIcq2003b, downloadLink('icq2003bPatch', t))}
         ${row('<b>ICQ 6.5</b>', '2024', t.dlIcq65, downloadLink('icq65Patch', t))}
-        ${row('<b>Miranda NG</b>', '0.96.7', t.dlMiranda, downloadLink('mirandaPlugin', t))}
+        ${row('<b>Miranda NG</b>', '0.96.7', t.dlMiranda, downloadLink('mirandaPlugin', t)
+          // The plugins are GPLv2: their source sits right under the binaries.
+          + `<br><span class="dim">${downloadLink('mirandaSource', t, t.dlSource)}</span>`)}
         ${row(`<b>${t.dlOthers}</b>`, t.dlAny, t.dlByHand,
           `<a href="${ownLink('/help/', u)}">${t.lnkHelp}</a>`)}
       </tbody>

@@ -11,6 +11,7 @@ address substitution.
 | File | What it is |
 |------|---------|
 | `IcqOscarJ.diff` | patch for `NotWorkingStuff/Deprecated/IcqOscarJ`, 41 files |
+| `IcqOscarJ/` | the plugin source as built: `NotWorkingStuff/Deprecated/IcqOscarJ` of [miranda-ng/deprecated](https://github.com/miranda-ng/deprecated) (commit `eba42656`) with `IcqOscarJ.diff` applied, byte for byte (`-text` in `.gitattributes`); the GPLv2 source of `build/*/IcqOscarJ.dll` |
 | `build/x32/IcqOscarJ.dll` | built for core 0.96.7, for `miranda32.exe` |
 | `build/x64/IcqOscarJ.dll` | the same for `miranda64.exe` |
 | `IcqRevivalFlash/` | source of the plugin for ICQ 6 animated avatars and tZers (`FlashAvatars` before 1.1), see below |
@@ -325,10 +326,18 @@ not a suggestion but a hard requirement, see below.
 ```
 git clone --filter=blob:none https://github.com/miranda-ng/miranda-ng
 cd miranda-ng
-cp -r <repository-with-Deprecated>/NotWorkingStuff/Deprecated/IcqOscarJ protocols/
-patch --binary -p1 -d protocols/IcqOscarJ < IcqOscarJ.diff
+git checkout cc32e4168    # tip of 0_96_7: core 0.96.7.28845, see below
+build\make_ver_stable.bat
+cp -r <this-repo>/tools/miranda-icq/IcqOscarJ protocols/    # already patched
 MSBuild.exe protocols/IcqOscarJ/icqoscar8.vcxproj \
   -p:Configuration=Release -p:Platform=Win32 -p:PlatformToolset=v143
+```
+
+`IcqOscarJ/` is the same as the upstream folder with the diff applied:
+```
+git clone --filter=blob:none https://github.com/miranda-ng/deprecated
+cp -r deprecated/NotWorkingStuff/Deprecated/IcqOscarJ protocols/
+patch --binary -p1 -d protocols/IcqOscarJ < IcqOscarJ.diff
 ```
 
 `--binary` is required: the Miranda source is stored with CRLF, and without it
