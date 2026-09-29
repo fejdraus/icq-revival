@@ -562,6 +562,27 @@ namespace IcqRevival.Patch
                 .Count(m => !Ps.Eq(m.Value, PagesBase(domain, m.Groups["path"].Value)));
         }
 
+        // How often the client reads the Xtraz list again, in seconds. It keeps
+        // the list in memory, loses it when it signs on again by itself (after
+        // a dropped connection or a server restart), and reads it only when
+        // this timer runs out - six hours out of the box, during which "Change
+        // my picture" and "Welcome" find no entry and open the Xtraz error page.
+        // The list is under a kilobyte, so ten minutes costs nothing.
+        const string XtrazReloadSeconds = "600";
+        const string XtrazReloadPattern = "(Key=\"ReloadTimeout\" Value=\")([^\"]*)(\")";
+
+        static string WithXtrazReload(string name, string text)
+        {
+            if (!Ps.Eq(name, "XtraConfig.xml")) return text;
+            return Regex.Replace(text, XtrazReloadPattern, m => m.Groups[1].Value + XtrazReloadSeconds + m.Groups[3].Value);
+        }
+
+        static bool XtrazReloadSet(string text)
+        {
+            Match m = Regex.Match(text, XtrazReloadPattern);
+            return !m.Success || m.Groups[2].Value == XtrazReloadSeconds;
+        }
+
         // The client draws the ad slots and the teaser strip only while these
         // list something, and without SMS carriers it has nowhere to send a text.
         sealed class Strip
@@ -1084,7 +1105,9 @@ namespace IcqRevival.Patch
             int other = 0;
             foreach (string f in PatchFiles.FilesWithExtension(dir, ".xml"))
             {
-                other += CountStrayLinks(PatchFiles.ReadText(f).Text, domain);
+                string text = PatchFiles.ReadText(f).Text;
+                other += CountStrayLinks(text, domain);
+                if (Ps.Eq(Path.GetFileName(f), "XtraConfig.xml") && !XtrazReloadSet(text)) other++;
             }
             return other > 0 ? "original" : "patched";
         }
@@ -1360,6 +1383,7 @@ namespace IcqRevival.Patch
                 if (links)
                 {
                     text = Regex.Replace(text, LinkPattern, m => PagesBase(domain, m.Groups["path"].Value), RegexOptions.IgnoreCase);
+                    text = WithXtrazReload(name, text);
                 }
                 if (white) text = AddWhitelisted(name, text, domain);
                 foreach (Strip s in Strips)
