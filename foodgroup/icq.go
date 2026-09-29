@@ -472,7 +472,7 @@ func (s *ICQService) OfflineMsgReq(ctx context.Context, inFrame wire.SNACFrame, 
 			msgOut := wire.ICQMessageReplyEnvelope{
 				Message: reply,
 			}
-			if err := s.replyToSelf(ctx, instance, msgOut, inFrame.RequestID, wire.SNACFlagsMoreToCome); err != nil {
+			if err := s.reply(ctx, instance, msgOut, inFrame.RequestID, wire.SNACFlagsMoreToCome); err != nil {
 				return fmt.Errorf("sending offline message: %w", err)
 			}
 		} else {
@@ -522,7 +522,7 @@ func (s *ICQService) OfflineMsgReq(ctx context.Context, inFrame wire.SNACFrame, 
 		},
 	}
 
-	if err := s.replyToSelf(ctx, instance, eofMsg, inFrame.RequestID, 0); err != nil {
+	if err := s.reply(ctx, instance, eofMsg, inFrame.RequestID, 0); err != nil {
 		return fmt.Errorf("sending end of offline messages: %w", err)
 	}
 
@@ -1276,15 +1276,12 @@ func (s *ICQService) affiliations(ctx context.Context, instance *state.SessionIn
 	return s.reply(ctx, instance, msg, requestID, flags)
 }
 
+// reply answers the instance that made the request, not every instance of the
+// account: the reply carries that instance's request ID, and a client asks the
+// ICQ database for its own details and offline messages while it is still
+// signing on - before the session counts as signed on, a relay by screen name
+// finds nobody and the reply is lost.
 func (s *ICQService) reply(ctx context.Context, instance *state.SessionInstance, message wire.ICQMessageReplyEnvelope, requestID uint32, snacFlags uint16) error {
-	message.Message = s.text.outAll(message.Message)
-	s.messageRelayer.RelayToScreenName(ctx, instance.IdentScreenName(), replySNAC(message, requestID, snacFlags))
-	return nil
-}
-
-// replyToSelf answers the instance that made the request rather than every
-// instance of the account.
-func (s *ICQService) replyToSelf(ctx context.Context, instance *state.SessionInstance, message wire.ICQMessageReplyEnvelope, requestID uint32, snacFlags uint16) error {
 	message.Message = s.text.outAll(message.Message)
 	s.messageRelayer.RelayToSelf(ctx, instance, replySNAC(message, requestID, snacFlags))
 	return nil

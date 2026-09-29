@@ -115,7 +115,7 @@ func TestICQService_ClassicCodePage(t *testing.T) {
 		})).
 		Return(nil)
 	relayer := newMockMessageRelayer(t)
-	relayer.EXPECT().RelayToScreenName(mock.Anything, mock.Anything, mock.Anything).Return()
+	relayer.EXPECT().RelayToSelf(mock.Anything, mock.Anything, mock.Anything).Return()
 
 	s := NewICQService(relayer, nil, updater, slog.Default(), nil, nil)
 	assert.NoError(t, s.SetClassicCodePage("windows-1251"))

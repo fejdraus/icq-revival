@@ -235,7 +235,7 @@ func TestICQService_FindByICQName(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			sessionRetriever := newMockSessionRetriever(t)
@@ -370,7 +370,7 @@ func TestICQService_FindByICQEmail(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			sessionRetriever := newMockSessionRetriever(t)
@@ -511,7 +511,7 @@ func TestICQService_FindByEmail3(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			sessionRetriever := newMockSessionRetriever(t)
@@ -646,7 +646,7 @@ func TestICQService_FindByUIN(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			sessionRetriever := newMockSessionRetriever(t)
@@ -785,7 +785,7 @@ func TestICQService_FindByUIN2(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			sessionRetriever := newMockSessionRetriever(t)
@@ -987,7 +987,7 @@ func TestICQService_FindByWhitePages(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			sessionRetriever := newMockSessionRetriever(t)
@@ -1815,7 +1815,7 @@ func TestICQService_FindByWhitePages2(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			sessionRetriever := newMockSessionRetriever(t)
@@ -2295,7 +2295,7 @@ func TestICQService_FullUserInfo(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -2647,7 +2647,7 @@ func TestICQService_OfflineMsgReq(t *testing.T) {
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
 				messageRelayer.EXPECT().
-					RelayToScreenName(mock.Anything, params.screenName, params.message)
+					RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 			for _, params := range tt.mockParams.relayToSelfParams {
 				messageRelayer.EXPECT().
@@ -2810,7 +2810,7 @@ func TestICQService_SetAffiliations(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -2886,7 +2886,7 @@ func TestICQService_SetEmails(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -3410,7 +3410,7 @@ func TestICQService_SetICQInfo(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -3482,7 +3482,7 @@ func TestICQService_SetICQPhone(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -3593,7 +3593,7 @@ func TestICQService_SetBasicInfo(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -3726,7 +3726,7 @@ func TestICQService_SetInterests(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -3826,7 +3826,7 @@ func TestICQService_SetMoreInfo(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -3966,7 +3966,7 @@ func TestICQService_SetPermissions(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -4051,7 +4051,7 @@ func TestICQService_SetUserNotes(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -4158,7 +4158,7 @@ func TestICQService_SetWorkInfo(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -4275,7 +4275,7 @@ func TestICQService_ShortUserInfo(t *testing.T) {
 
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 
 			s := ICQService{
@@ -4348,7 +4348,7 @@ func TestICQService_XMLReqData(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			messageRelayer := newMockMessageRelayer(t)
 			for _, params := range tt.mockParams.relayToScreenNameParams {
-				messageRelayer.EXPECT().RelayToScreenName(mock.Anything, params.screenName, params.message)
+				messageRelayer.EXPECT().RelayToSelf(mock.Anything, matchSession(params.screenName), params.message)
 			}
 			s := ICQService{
 				messageRelayer: messageRelayer,
