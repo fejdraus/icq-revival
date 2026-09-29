@@ -255,6 +255,8 @@ function group(which) {
   }
 }
 
+{{ICQ_LANG_SCRIPT}}
+
 // The plugin object stays inert until it is handed the instance id that the
 // client puts in the address of the page it opens.
 function connect() {
@@ -269,6 +271,7 @@ function connect() {
     return;
   }
   CONNECTED = true;
+  if (revivalIcqLang(LANG)) { return; }
   hideOutsideLinks();
   refresh();
   if (AVATARS.length) { readAnimated(); }

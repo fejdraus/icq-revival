@@ -238,7 +238,7 @@ test('the picture page', async (t) => {
     const blank = [...text.matchAll(/<a [^>]*target="_blank"[^>]*>/g)].map((m) => m[0]);
     assert.ok(blank.length >= 2);
     for (const a of blank) assert.match(a, /class="outside"/, a);
-    assert.match(text, /CONNECTED = true;\s+hideOutsideLinks\(\);/);
+    assert.match(text, /CONNECTED = true;\s+if \(revivalIcqLang\(LANG\)\) \{ return; \}\s+hideOutsideLinks\(\);/);
     assert.doesNotMatch(text, /OpenUrl|window\.open\(/);
     // The constructor comes in a frame of this page, and the page is never
     // navigated away inside the client.

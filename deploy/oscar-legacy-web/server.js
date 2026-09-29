@@ -2096,7 +2096,7 @@ function pagerLink(uin) {
 
 // The "ICQ Welcome" window opens after sign-in. It used to carry ICQ.com
 // advertising; now it greets the user and reports the state of their server.
-async function welcomePage(uin, selfPath, u) {
+async function welcomePage(uin, selfPath, u, xtraId) {
   const t = u.t;
   let online = null;
   try {
@@ -2143,7 +2143,12 @@ async function welcomePage(uin, selfPath, u) {
         ${item('/password', t.lnkPwd)}
         ${item('/account', t.lnkAccount)}
       </table>
-    </div>`, t.welcomeSub, true, u);
+    </div>${xtraId ? `
+    ${PLUGIN_OBJECT}
+    <script type="text/javascript">
+    ${ICQ_LANG_SCRIPT}
+    try { plugin.Initialize(${JSON.stringify(xtraId)}); revivalIcqLang(${JSON.stringify(u.lang)}); } catch (e) {}
+    </script>` : ''}`, t.welcomeSub, true, u);
 }
 
 // "User's Unified Messaging Center" is a button in the message window. It used
@@ -2617,6 +2622,7 @@ function avatarPage(u, req) {
     .replace('{{FOOTER}}', () => footer({ langs: langSwitch(u.lang, u.selfUrl) }))
     .replace('{{TABS_STYLE}}', () => (hasAnimated ? '' : 'display:none'))
     .replace('{{ANIMATED}}', () => animatedGallery(u))
+    .replace('{{ICQ_LANG_SCRIPT}}', () => ICQ_LANG_SCRIPT)
     .replace('{{STRINGS}}', () => scriptJson(strings))
     .replace('{{AVATARS}}', () => scriptJson(avatars))
     .replace('{{AVATAR_BASE}}', () => scriptJson(`${plainBase(req)}/icq/avatars/`))
@@ -2965,6 +2971,24 @@ const MAKER_FRAME_H = 330;
 const PLUGIN_OBJECT = `<!-- The Xtraz plugin object, the way back into the client (see avatar.html). -->
 <OBJECT CLASSID="clsid:8D18DFF4-0943-4347-8BCA-0C57033F6820" id="plugin" width="0" height="0">
 </OBJECT>`;
+
+// Inside ICQ 6.5 the page opens in the language of ICQ's own interface:
+// the plugin object hands it out (GetIMClientData("LANG_ID"): "ua-ua",
+// "ru-ru", "en-us"... - the Locale ICQ picks its windows and its Xtraz strings
+// by). Ukrainian ICQ gets the Ukrainian page, any other language the English
+// one. A lang= already in the address - the UK/EN switch, or this very
+// reload - wins, so it reloads at most once. Called after plugin.Initialize;
+// true when the page is being replaced. ES3: the client's IE 7 runs it.
+const ICQ_LANG_SCRIPT = `function revivalIcqLang(lang) {
+  var v;
+  try { v = plugin.GetIMClientData('LANG_ID'); } catch (e) { return false; }
+  if (typeof v != 'string' || !v) { return false; }
+  var want = /^(ua|uk)(-|$)/i.test(v) ? 'uk' : 'en';
+  var q = window.location.search;
+  if (want == lang || /[?&]lang=/.test(q)) { return false; }
+  window.location.replace(window.location.pathname + q + (q ? '&' : '?') + 'lang=' + want);
+  return true;
+}`;
 
 function makerPage(u, req, url) {
   const t = u.t;
@@ -3327,7 +3351,8 @@ const ACTIONS = {
 
   welcome: async (ctx) => send(
     ctx.res, 200,
-    await welcomePage((ctx.url.searchParams.get('uin') || '').trim(), ctx.path, ctx.u),
+    await welcomePage((ctx.url.searchParams.get('uin') || '').trim(), ctx.path, ctx.u,
+      XTRA_ID.test(ctx.url.searchParams.get('id') || '') ? ctx.url.searchParams.get('id') : ''),
   ),
 
   map: async (ctx) => redirect(ctx.res, mapUrl(ctx.req.url)),
