@@ -1,8 +1,10 @@
 // The icon every client patch carries, in the window and on its exe.
 //
-// The icon is drawn, not stored: the same picture is drawn into the window's
-// header and into its title bar, and the app.ico each exe is built with was
-// written from it once, by WriteFile below.
+// The picture is the flower of the ICQ Revival logo, drawn from a PNG the
+// patch carries (flower.png, embedded), with the client version on a pill
+// under it from 48 pixels up. It is drawn into the window's header and into
+// its title bar, and the app.ico each exe is built with was written from it
+// once, by WriteFile below.
 
 using System;
 using System.Drawing;
@@ -18,9 +20,32 @@ namespace IcqRevival.Patch
     {
         public static Color ColorOf(string hex) { return ColorTranslator.FromHtml(hex); }
 
-        // A flower of eight petals on a rounded tile in the colour of the client
-        // version. From 48 pixels up the version is written under the flower, so
-        // the exe of each patch can be told apart at a glance in Explorer.
+        // The flower of the ICQ Revival logo, 256 pixels square on a
+        // transparent ground: flower.png next to this file, embedded in each
+        // patch under that name. Loaded once.
+        static Bitmap flower;
+
+        static Bitmap Flower
+        {
+            get
+            {
+                if (flower == null)
+                {
+                    using (Stream s = typeof(PatchIcon).Assembly.GetManifestResourceStream("flower.png"))
+                    using (var png = new Bitmap(s))
+                    {
+                        // A copy, so that the stream may be closed.
+                        flower = new Bitmap(png);
+                    }
+                }
+                return flower;
+            }
+        }
+
+        // The flower of the ICQ Revival logo, filling the icon. From 48 pixels
+        // up the flower moves up and the version is written under it, white on
+        // a pill in the colour of the client version, so the exe of each patch
+        // can be told apart at a glance in Explorer.
         public static Bitmap Draw(int size, string badge, string top, string bottom)
         {
             var bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb);
@@ -28,62 +53,96 @@ namespace IcqRevival.Patch
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.CompositingQuality = CompositingQuality.HighQuality;
                 g.Clear(Color.Transparent);
 
                 double pad = Math.Max(0.5, size / 32.0);
-                double w = size - 2 * pad;
-                double r = w * 0.22;
-                using (var tile = new GraphicsPath())
+                bool withText = size >= 48;
+                double side = withText ? size * 0.80 : size - 2 * pad;
+                double fx = (size - side) / 2;
+                double fy = withText ? pad : (size - side) / 2;
+                Bitmap f = Flower;
+                using (var attrs = new ImageAttributes())
                 {
-                    tile.AddArc((float)pad, (float)pad, (float)(2 * r), (float)(2 * r), 180, 90);
-                    tile.AddArc((float)(pad + w - 2 * r), (float)pad, (float)(2 * r), (float)(2 * r), 270, 90);
-                    tile.AddArc((float)(pad + w - 2 * r), (float)(pad + w - 2 * r), (float)(2 * r), (float)(2 * r), 0, 90);
-                    tile.AddArc((float)pad, (float)(pad + w - 2 * r), (float)(2 * r), (float)(2 * r), 90, 90);
-                    tile.CloseFigure();
-                    using (var fill = new LinearGradientBrush(
-                        new PointF(0, (float)pad), new PointF(0, (float)(size - pad)), ColorOf(top), ColorOf(bottom)))
+                    // No half-transparent seam where the edge pixels are sampled.
+                    attrs.SetWrapMode(WrapMode.TileFlipXY);
+                    var dest = new[]
                     {
-                        g.FillPath(fill, tile);
-                    }
+                        new PointF((float)fx, (float)fy),
+                        new PointF((float)(fx + side), (float)fy),
+                        new PointF((float)fx, (float)(fy + side)),
+                    };
+                    g.DrawImage(f, dest, new RectangleF(0, 0, f.Width, f.Height), GraphicsUnit.Pixel, attrs);
                 }
 
-                bool withText = size >= 48;
-                double cx = size / 2.0;
-                double cy = withText ? size * 0.40 : size / 2.0;
-                double petalLen = withText ? size * 0.19 : size * 0.25;
-                double petalWid = petalLen * 0.72;
-                using (var white = new SolidBrush(Color.FromArgb(250, 255, 255, 255)))
+                if (withText)
                 {
-                    for (int i = 0; i < 8; i++)
+                    // The pill: the dark outline and the white rim of the logo's
+                    // shapes around the colour of the client version.
+                    // Under 64 pixels there is no room for the rim.
+                    double h = size * 0.32;
+                    double y = size - pad - h;
+                    double maxW = size - 2 * pad;
+                    double line = Math.Max(1.0, size / 40.0);
+                    int rings = size >= 64 ? 2 : 1;
+                    double inset = rings * line;
+                    // The digits stand about 0.7 em tall: 0.6 of the inside.
+                    double em = (h - 2 * inset) * 0.85;
+                    using (var fmt = (StringFormat)StringFormat.GenericTypographic.Clone())
                     {
-                        GraphicsState state = g.Save();
-                        g.TranslateTransform((float)cx, (float)cy);
-                        g.RotateTransform(45 * i);
-                        g.FillEllipse(white, (float)(-petalWid / 2), (float)(-petalLen * 1.55), (float)petalWid, (float)(petalLen * 1.1));
-                        g.Restore(state);
-                    }
-                    double heart = petalLen * 0.62;
-                    using (var heartBrush = new SolidBrush(ColorOf(bottom)))
-                    {
-                        g.FillEllipse(heartBrush, (float)(cx - heart / 2), (float)(cy - heart / 2), (float)heart, (float)heart);
-                    }
-
-                    if (withText)
-                    {
-                        double em = size * 0.20;
-                        if (badge.Length > 3) em = size * 0.165;
-                        using (var font = new Font("Segoe UI", (float)em, FontStyle.Bold, GraphicsUnit.Pixel))
-                        using (var fmt = new StringFormat())
+                        fmt.Alignment = StringAlignment.Center;
+                        fmt.LineAlignment = StringAlignment.Near;
+                        fmt.FormatFlags |= StringFormatFlags.NoWrap;
+                        double textW;
+                        using (var probe = new Font("Segoe UI", (float)em, FontStyle.Bold, GraphicsUnit.Pixel))
                         {
-                            fmt.Alignment = StringAlignment.Center;
-                            fmt.LineAlignment = StringAlignment.Center;
-                            var box = new RectangleF(0, (float)(size * 0.70), size, (float)(size * 0.24));
+                            textW = g.MeasureString(badge, probe, PointF.Empty, fmt).Width;
+                        }
+                        double room = maxW - h * 0.7;
+                        if (textW > room)
+                        {
+                            em *= room / textW;
+                            textW = room;
+                        }
+                        double w = Math.Min(maxW, Math.Max(h * 1.8, textW + h * 0.7));
+                        double x = (size - w) / 2;
+                        using (GraphicsPath outer = Pill(x, y, w, h))
+                        using (GraphicsPath rim = Pill(x + line, y + line, w - 2 * line, h - 2 * line))
+                        using (GraphicsPath inner = Pill(x + inset, y + inset, w - 2 * inset, h - 2 * inset))
+                        using (var dark = new SolidBrush(Color.FromArgb(255, 2, 33, 25)))
+                        using (var white = new SolidBrush(Color.White))
+                        using (var fill = new LinearGradientBrush(
+                            new PointF(0, (float)(y + inset - 1)), new PointF(0, (float)(y + h - inset + 1)), ColorOf(top), ColorOf(bottom)))
+                        using (var font = new Font("Segoe UI", (float)em, FontStyle.Bold, GraphicsUnit.Pixel))
+                        {
+                            g.FillPath(dark, outer);
+                            if (rings > 1) g.FillPath(white, rim);
+                            g.FillPath(fill, inner);
+                            // The line is laid out from the top of its ascent;
+                            // the digits are centred by their own height.
+                            FontFamily family = font.FontFamily;
+                            double ascent = em * family.GetCellAscent(FontStyle.Bold) / family.GetEmHeight(FontStyle.Bold);
+                            double baseline = y + h / 2 + em * 0.70 / 2;
+                            var box = new RectangleF((float)x, (float)(baseline - ascent), (float)w, (float)h);
                             g.DrawString(badge, font, white, box, fmt);
                         }
                     }
                 }
             }
             return bmp;
+        }
+
+        // A rectangle with fully rounded ends.
+        static GraphicsPath Pill(double x, double y, double w, double h)
+        {
+            var path = new GraphicsPath();
+            float d = (float)h;
+            path.AddArc((float)x, (float)y, d, d, 90, 180);
+            path.AddArc((float)(x + w - h), (float)y, d, d, 270, 180);
+            path.CloseFigure();
+            return path;
         }
 
         // An .ico with one frame per size: 32-bit bitmaps for the small ones,

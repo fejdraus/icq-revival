@@ -1,11 +1,15 @@
 // The resources of ICQ-2003b-Patch.exe: its icon, its version (Explorer
-// shows the description, hence the client version in it), its manifest and
-// the Ukrainian interface it carries.
+// shows the description, hence the client version in it), its manifest, the
+// flower its icon is drawn with and the Ukrainian interface it carries.
 
 #include <windows.h>
 
 // The icon drawn for the C# patch, shared with it.
 1 ICON "..\\..\\patcher\\Icq2003b\\app.ico"
+
+// The flower of the ICQ Revival logo, which PatchIcon draws into the window's
+// header - the PNG the C# patches carry too.
+FLOWER RCDATA "..\\..\\patcher\\Common\\flower.png"
 
 1 24 "app.manifest"
 

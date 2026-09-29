@@ -38,6 +38,8 @@
   <ItemGroup>
     <!-- Compiled into each patch as source; shared with the other patches. -->
     <Compile Include="..\Common\*.cs" Link="Common\%(Filename)%(Extension)" />
+    <!-- The flower of the ICQ Revival logo, which PatchIcon draws. -->
+    <EmbeddedResource Include="..\Common\flower.png" LogicalName="flower.png" Link="Common\flower.png" />
   </ItemGroup>
 
   <ItemGroup>
