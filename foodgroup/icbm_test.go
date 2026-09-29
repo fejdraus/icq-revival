@@ -3754,9 +3754,13 @@ func TestICBMService_UpdateWarnLevel(t *testing.T) {
 
 		u := &state.User{}
 		userManager := newMockUserManager(t)
+		// UpdateWarnLevel looks the user up at start only when a warning is
+		// already set, and the warning below races the goroutine's start:
+		// the lookup may or may not happen.
 		userManager.EXPECT().
 			User(matchContext(), instance.IdentScreenName()).
-			Return(u, nil)
+			Return(u, nil).
+			Maybe()
 		userManager.EXPECT().
 			SetWarnLevel(matchContext(), instance.IdentScreenName(), now, uint16(100)).
 			Return(nil)
