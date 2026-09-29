@@ -102,9 +102,7 @@ IconItem iconList[] =
 static const wchar_t *g_arOurFiles[] =
 {
 	L"Plugins\\IcqRevivalFlash.dll",
-	L"Libs\\FlashPlayerControl.dll",
-	L"Languages\\langpack_russian_icq.txt",
-	L"Languages\\langpack_russian_icqrevivalflash.txt"
+	L"Libs\\FlashPlayerControl.dll"
 };
 
 // The Flash plugin was FlashAvatars.dll up to 1.0: Miranda NG's list deletes
@@ -114,9 +112,44 @@ static const wchar_t *g_arOurFiles[] =
 // under the Miranda NG list keeps it, or that list would delete the file.
 static const wchar_t *g_arOldFiles[] =
 {
-	L"Plugins\\FlashAvatars.dll",
-	L"Languages\\langpack_russian_flashavatars.txt"
+	L"Plugins\\FlashAvatars.dll"
 };
+
+// The plugins' translations used to be separate files,
+// Languages\langpack_<language>_<plugin>.txt, marked like the rest. Now they
+// are sections of Miranda's main language pack (our update server merges them
+// in), and our list deletes the separate files, which a mark would prevent.
+// So every mark on such a file goes, whatever the language: they are matched
+// by the plugin part of the name (flashavatars: the old name of the Flash
+// plugin's translation). Nothing else needs them, and a list that is not ours
+// does not name those files at all.
+static const char *g_arOldTranslations[] =
+{
+	"languages\\langpack_*_icq.txt",
+	"languages\\langpack_*_icqrevivalflash.txt",
+	"languages\\langpack_*_flashavatars.txt"
+};
+
+static int CollectSetting(const char *szSetting, void *param)
+{
+	((LIST<char> *)param)->insert(mir_strdup(szSetting));
+	return 0;
+}
+
+static void ClearTranslationMarks()
+{
+	LIST<char> arSettings(10);
+	db_enum_settings(0, CollectSetting, "PluginUpdaterFiles", &arSettings);
+	for (auto &it : arSettings) {
+		for (auto &mask : g_arOldTranslations) {
+			if (wildcmpi(it, mask)) {
+				db_unset(0, "PluginUpdaterFiles", it);
+				break;
+			}
+		}
+		mir_free(it);
+	}
+}
 
 static void ClearOldMark(const wchar_t *pwszRelPath, bool bOurList)
 {
@@ -242,7 +275,7 @@ int CMPlugin::Load()
 {
 	bool bOurList = UpdaterUsesOurList();
 	MarkModuleForUpdater(g_plugin.getInst(), bOurList);
-	MarkForUpdater(L"Languages\\langpack_russian_icq.txt", !bOurList);
+	ClearTranslationMarks();
 	HookEvent(ME_SYSTEM_MODULESLOADED, OnModulesLoaded);
 
 	srand(time(0));

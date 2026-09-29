@@ -8,13 +8,14 @@
 #                           next to it as the patch expects, and the player's
 #                           THIRD-PARTY-NOTICES.txt (Ruffle and its crates)
 #   icq-revival-miranda.zip Miranda NG: Miranda32/ and Miranda64/, each laid
-#                           out like a Miranda folder (Plugins, Libs,
-#                           Languages) to be copied over one; Languages holds
-#                           the Russian and Ukrainian translations of our two
-#                           plugins, not Miranda NG's own langpacks; Libs also
-#                           holds the engine's notices. At the top, README.txt
-#                           (the plugins are GPLv2, where their source is) and
-#                           COPYING.txt, the GPLv2 text
+#                           out like a Miranda folder (Plugins, Libs) to be
+#                           copied over one; Libs also holds the engine's
+#                           notices. No translations: those come inside
+#                           Miranda NG's main language pack, which the plugin
+#                           updater fetches from our server (see
+#                           tools/miranda-icq/README.md). At the top,
+#                           README.txt (the plugins are GPLv2, where their
+#                           source is) and COPYING.txt, the GPLv2 text
 #   icq-revival-miranda-src.zip
 #                           the complete source of those two GPLv2 plugins:
 #                           tools/miranda-icq/IcqOscarJ (as built) and
@@ -53,10 +54,6 @@ MIRANDA = {
     'Miranda32': ('x32', 'i686-pc-windows-msvc'),
     'Miranda64': ('x64', 'x86_64-pc-windows-msvc'),
 }
-
-
-# The languages our Miranda plugins are translated into (tools/miranda-icq).
-LANGUAGES = ('russian', 'ukrainian')
 
 
 def add(z, path, name):
@@ -100,8 +97,10 @@ contents of the matching folder over your Miranda NG folder:
                                ported to core 0.96.7 for ICQ Revival)
   Plugins\IcqRevivalFlash.dll  ICQ 6 animated avatars and tZers
   Libs\FlashPlayerControl.dll  the Flash engine they play with (Ruffle)
-  Languages\                   Russian and Ukrainian translations of the two
-                               plugins
+
+The plugins' translations come inside Miranda NG's own language pack
+(Languages\langpack_<language>.txt): once the ICQ account is set up, the
+plugin updater takes that pack from this server with them in it.
 
 License
 -------
@@ -188,11 +187,6 @@ def main():
             # Miranda loads from Libs only the DLLs it is asked for, so a .txt
             # there is left alone (langpacks are Languages/langpack_*.txt).
             add(z, src(*NOTICES), f'{folder}/Libs/FlashPlayerControl-THIRD-PARTY-NOTICES.txt')
-            # Our plugins' translations only; the main langpack_<language>.txt
-            # of Miranda NG itself comes with Miranda or through PluginUpdater.
-            for lang in LANGUAGES:
-                for name in (f'langpack_{lang}_icq.txt', f'langpack_{lang}_icqrevivalflash.txt'):
-                    add(z, src(MI, name), f'{folder}/Languages/{name}')
 
     # The GPLv2 source of the two plugins above, from the repository alone.
     with zipfile.ZipFile(os.path.join(out, 'icq-revival-miranda-src.zip'), 'w') as z:

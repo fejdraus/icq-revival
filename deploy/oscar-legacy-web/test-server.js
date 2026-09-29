@@ -32,7 +32,7 @@ function stage(withRuffle) {
   for (const d of ['pages', 'avatars', 'maker']) {
     fs.cpSync(path.join(HERE, d), path.join(dir, d), { recursive: true });
   }
-  for (const f of ['ui.js', 'flower.png']) fs.copyFileSync(path.join(SHARED, f), path.join(dir, f));
+  for (const f of ['ui.js', 'flower.png', 'logo-page.png']) fs.copyFileSync(path.join(SHARED, f), path.join(dir, f));
   if (withRuffle) {
     // Only the loader: the pages decide by it whether a player is there.
     fs.mkdirSync(path.join(dir, 'ruffle'));

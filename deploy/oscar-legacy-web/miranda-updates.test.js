@@ -10,7 +10,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const zlib = require('node:zlib');
 const {
-  createMirror, readZip, writeZip, parseHashes, filterRules, withIncludes, packagePath, wildMatch,
+  createMirror, readZip, writeZip, parseHashes, filterRules, mergeTranslations, translationName,
+  mainPackLanguage, translationMasks, packagePath, wildMatch, MERGE_BEGIN, MERGE_END,
 } = require('./miranda-updates.js');
 
 const crcHex = (b) => zlib.crc32(b).toString(16).padStart(8, '0');
@@ -52,6 +53,8 @@ const DUMMY = writeZip([['Plugins/Dummy.dll', Buffer.from('dummy v2')]]);
 const LANGPACK_ZIP = writeZip([['Languages/langpack_russian.txt', LANGPACK]]);
 const LANGPACK_UK = Buffer.from('Miranda Language Pack Version 1\r\n[Hello]\r\nПривіт\r\n', 'utf8');
 const LANGPACK_UK_ZIP = writeZip([['Languages/langpack_ukrainian.txt', LANGPACK_UK]]);
+const LANGPACK_DE = Buffer.from('\uFEFFMiranda Language Pack Version 1\r\n[Hello]\r\nHallo\r\n', 'utf8');
+const LANGPACK_DE_ZIP = writeZip([['Languages/langpack_german.txt', LANGPACK_DE]]);
 
 function upstreamFiles() {
   const hashes = [
@@ -60,7 +63,9 @@ function upstreamFiles() {
     `Plugins\\IcqOscarJ.dll 22222222222222222222222222222222 ${crcHex(STOCK_ICQ)}`,
     `Languages\\langpack_russian.txt 33333333333333333333333333333333 ${crcHex(LANGPACK_ZIP)}`,
     `Languages\\langpack_ukrainian.txt 55555555555555555555555555555555 ${crcHex(LANGPACK_UK_ZIP)}`,
-    // a stock line under the name of one of ours never goes out
+    // a pack of a language we have no translation for goes out as it is
+    `Languages\\langpack_german.txt 77777777777777777777777777777777 ${crcHex(LANGPACK_DE_ZIP)}`,
+    // a stock line under the name of a separate translation of ours never goes out
     'Languages\\langpack_ukrainian_icq.txt 66666666666666666666666666666666 00000000',
     'Core\\StdMsg.dll 44444444444444444444444444444444 00000000',
   ].join('\r\n') + '\r\n';
@@ -76,36 +81,44 @@ function upstreamFiles() {
     ['/x32/Plugins/icqoscarj.zip', STOCK_ICQ],
     ['/x32/Languages/langpack_russian.zip', LANGPACK_ZIP],
     ['/x32/Languages/langpack_ukrainian.zip', LANGPACK_UK_ZIP],
+    ['/x32/Languages/langpack_german.zip', LANGPACK_DE_ZIP],
   ]);
 }
 
+// Our translation files, as make-update-packages.py copies them: a header of
+// their own (with a BOM on one of them), then the #muuid section.
+const header = (lang) => `Miranda Language Pack Version 1\r\nLanguage: ${lang}\r\nLocale: 0000\r\n\r\n`;
+const TRANSLATIONS = {
+  'langpack_russian_icq.txt': `${header('ru')};== IcqOscarJ\r\n#muuid {aaaa}\r\n[Status]\r\nСтатус\r\n`,
+  'langpack_russian_icqrevivalflash.txt': `\uFEFF${header('ru')};== IcqRevivalFlash\r\n#muuid {bbbb}\r\n[tZers]\r\nтZers\r\n\r\n`,
+  'langpack_ukrainian_icq.txt': `${header('uk')};== IcqOscarJ\r\n#muuid {aaaa}\r\n[Status]\r\nСтатус\r\n`,
+  'langpack_ukrainian_icqrevivalflash.txt': `${header('uk')};== IcqRevivalFlash\r\n#muuid {bbbb}\r\n[tZers]\r\nтZери\r\n`,
+};
+
 // Our packages as make-update-packages.py lays them out.
-function ourPackages() {
+function ourPackages({ translations = true } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mirpkg-'));
   const files = [];
-  for (const [name, data] of [['Plugins\\IcqOscarJ.dll', 'our icq'], ['Plugins\\IcqRevivalFlash.dll', 'our flash'],
-    ['Languages\\langpack_russian_icqrevivalflash.txt', 'our translation'],
-    ['Languages\\langpack_ukrainian_icqrevivalflash.txt', 'our Ukrainian translation']]) {
+  for (const [name, data] of [['Plugins\\IcqOscarJ.dll', 'our icq'], ['Plugins\\IcqRevivalFlash.dll', 'our flash']]) {
     const rel = `${name.replace(/\.[^.]+$/, '').replace(/\\/g, '/')}.zip`;
     const body = writeZip([[name.replace(/\\/g, '/'), Buffer.from(data)]]);
     fs.mkdirSync(path.join(dir, 'x32', path.dirname(rel)), { recursive: true });
     fs.writeFileSync(path.join(dir, 'x32', rel), body);
     files.push({ name, hash: md5(Buffer.from(data)), crc: crcHex(body), package: rel });
   }
-  fs.writeFileSync(path.join(dir, 'x32', 'manifest.json'), JSON.stringify({
-    files,
-    langpackIncludes: {
-      'Languages\\langpack_russian.txt': {
-        add: ['#include langpack_russian_icq.txt', '#include langpack_russian_icqrevivalflash.txt'],
-        drop: ['#include langpack_russian_flashavatars.txt'],
-      },
-      'Languages\\langpack_ukrainian.txt': {
-        add: ['#include langpack_ukrainian_icq.txt', '#include langpack_ukrainian_icqrevivalflash.txt'],
-      },
-    },
-  }));
+  fs.writeFileSync(path.join(dir, 'x32', 'manifest.json'), JSON.stringify({ files }));
+  if (translations) {
+    fs.mkdirSync(path.join(dir, 'translations'));
+    for (const [name, text] of Object.entries(TRANSLATIONS)) {
+      fs.writeFileSync(path.join(dir, 'translations', name), Buffer.from(text, 'utf8'));
+    }
+  }
   return { dir, files };
 }
+
+// What a merged Russian pack must end with: the sections, headers and BOMs gone.
+const RU_SECTIONS = `${MERGE_BEGIN}\r\n;== IcqOscarJ\r\n#muuid {aaaa}\r\n[Status]\r\nСтатус\r\n\r\n`
+  + `;== IcqRevivalFlash\r\n#muuid {bbbb}\r\n[tZers]\r\nтZers\r\n${MERGE_END}\r\n`;
 
 test('packagePath follows PluginUpdater: no extension, slashes, lower-case file name', () => {
   assert.equal(packagePath('Plugins\\IcqOscarJ.dll'), 'Plugins/icqoscarj.zip');
@@ -143,13 +156,37 @@ test('parseHashes reads upstream\'s own spacing', () => {
   assert.equal(lines[1].name, undefined);
 });
 
-test('withIncludes appends only the missing lines, in the file\'s line endings', () => {
-  assert.equal(withIncludes('a\r\nb', ['#include x.txt']), 'a\r\nb\r\n#include x.txt\r\n');
-  assert.equal(withIncludes('a\n#include X.txt\n', ['#include x.txt']), 'a\n#include X.txt\n');
-  assert.equal(withIncludes('a\r\n#include old.txt\r\nb\r\n', { add: ['#include new.txt'], drop: ['#include OLD.txt'] }),
-    'a\r\nb\r\n#include new.txt\r\n');
-  assert.equal(withIncludes('a\n#include new.txt\n', { add: ['#include new.txt'], drop: ['#include old.txt'] }),
-    'a\n#include new.txt\n');
+test('translationName and mainPackLanguage read the names, not a list of languages', () => {
+  assert.deepEqual(translationName('langpack_russian_icq.txt'), { language: 'russian', plugin: 'icq' });
+  assert.deepEqual(translationName('Langpack_Chinese_Traditional_IcqRevivalFlash.txt'),
+    { language: 'chinese_traditional', plugin: 'icqrevivalflash' });
+  assert.equal(translationName('langpack_russian.txt'), null);
+  assert.equal(translationName('langpack-extra-ru.txt'), null);
+  assert.equal(mainPackLanguage('Languages\\langpack_ukrainian.txt'), 'ukrainian');
+  assert.equal(mainPackLanguage('Languages\\Langpack_Russian.txt'), 'russian');
+  assert.equal(mainPackLanguage('Plugins\\langpack_russian.txt'), null);
+  assert.deepEqual(translationMasks(new Map([['xx', [{ plugin: 'icq' }, { plugin: 'icqrevivalflash' }]]])),
+    ['langpack_*_flashavatars.txt', 'langpack_*_icq.txt', 'langpack_*_icqrevivalflash.txt']);
+});
+
+test('mergeTranslations: sections at the end, old includes out, twice is once', () => {
+  const sections = [{ body: Buffer.from(TRANSLATIONS['langpack_russian_icq.txt']) },
+    { body: Buffer.from(TRANSLATIONS['langpack_russian_icqrevivalflash.txt']) }];
+  const masks = ['langpack_*_icq.txt', 'langpack_*_icqrevivalflash.txt', 'langpack_*_flashavatars.txt'];
+  const pack = Buffer.from('\uFEFFMiranda Language Pack Version 1\r\n[Hello]\r\nПривіт\r\n'
+    + '#include langpack_russian_flashavatars.txt\r\n#include LANGPACK_RUSSIAN_ICQ.txt\r\n#include other.txt\r\n\r\n', 'utf8')
+    .toString('latin1');
+  const once = mergeTranslations(pack, sections, masks);
+  const text = Buffer.from(once, 'latin1').toString('utf8');
+  assert.equal(text, '\uFEFFMiranda Language Pack Version 1\r\n[Hello]\r\nПривіт\r\n#include other.txt\r\n\r\n' + RU_SECTIONS);
+  assert.equal(mergeTranslations(once, sections, masks), once, 'merging again changes nothing');
+  // new sections replace the old ones instead of adding to them
+  const again = Buffer.from(mergeTranslations(once, sections.slice(0, 1), masks), 'latin1').toString('utf8');
+  assert.equal(again.split(MERGE_BEGIN).length, 2);
+  assert.ok(!again.includes('IcqRevivalFlash'));
+  // an LF pack gets LF
+  assert.equal(mergeTranslations('a\n[k]\nv', [{ body: Buffer.from('#muuid {x}\r\n[k]\r\nw\r\n') }]),
+    `a\n[k]\nv\n\n${MERGE_BEGIN}\n#muuid {x}\n[k]\nw\n${MERGE_END}\n`);
 });
 
 test('zip round trip', () => {
@@ -159,7 +196,20 @@ test('zip round trip', () => {
   assert.equal(back.get('c').length, 0);
 });
 
-test('the list: our lines in, stock ones out, rules cleaned, translation patched', async (t) => {
+// A served pack: its list line, its package, and the text inside, checked
+// against the hash and crc the list gives.
+async function servedPack(srvUrl, lines, name) {
+  const line = lines.find((l) => l.startsWith(`Languages\\${name}.txt `));
+  const [, hash, crc] = line.split(' ');
+  const pkg = await get(`${srvUrl}/x32/Languages/${name}.zip`);
+  assert.equal(pkg.status, 200);
+  assert.equal(crcHex(pkg.body), crc, `${name}: crc of what is served`);
+  const text = readZip(pkg.body).get(`Languages/${name}.txt`);
+  assert.equal(md5(text), hash, `${name}: hash of what is served`);
+  return text;
+}
+
+test('the list: our lines in, stock ones out, rules cleaned, translations merged', async (t) => {
   const up = await upstreamServer(upstreamFiles());
   const { dir, files } = ourPackages();
   const mirror = createMirror({ upstream: up.url, dir, log: () => {} });
@@ -175,41 +225,37 @@ test('the list: our lines in, stock ones out, rules cleaned, translation patched
   assert.ok(lines.includes(`Plugins\\IcqRevivalFlash.dll ${files[1].hash} ${files[1].crc}`));
   assert.ok(!lines.some((l) => /flashavatars/i.test(l)), 'nothing under the old name');
   assert.ok(!lines.some((l) => l.includes('22222222')), 'the stock line is gone');
+  assert.ok(!lines.some((l) => /_icq/i.test(l)), 'no line for a separate translation');
   assert.ok(lines.some((l) => l.startsWith('Plugins\\Dummy.dll 1111')));
 
   const rules = JSON.parse(entries.get('rules.txt').toString());
-  // The old name moves to the new one instead of being deleted; ours first,
-  // since PluginUpdater takes the first rule that matches.
+  // The old name moves to the new one instead of being deleted, and the
+  // separate translations go; ours first, since PluginUpdater takes the first
+  // rule that matches.
   assert.deepEqual(rules.rules, {
     'FlashAvatars.dll': 'Plugins\\IcqRevivalFlash.dll',
-    'langpack_russian_flashavatars.txt': 'Languages\\langpack_russian_icqrevivalflash.txt',
+    'langpack_*_flashavatars.txt': null,
+    'langpack_*_icq.txt': null,
+    'langpack_*_icqrevivalflash.txt': null,
     'Obsolete.dll': null,
   });
   assert.deepEqual(Object.keys(rules.rules)[0], 'FlashAvatars.dll');
   assert.deepEqual(rules.packets.map((p) => p.module), ['Plugins\\Dummy.dll']);
 
-  // The translation: upstream's plus our include, hash and crc of what is served.
-  const lp = lines.find((l) => l.startsWith('Languages\\langpack_russian.txt '));
-  const [, hash, crc] = lp.split(' ');
-  const pkg = await get(`${srv.url}/x32/Languages/langpack_russian.zip`);
-  assert.equal(pkg.status, 200);
-  assert.equal(crcHex(pkg.body), crc);
-  const text = readZip(pkg.body).get('Languages/langpack_russian.txt');
-  assert.equal(md5(text), hash);
-  assert.ok(text.toString('utf8').endsWith(
-    'Привіт\r\n#include langpack_russian_icq.txt\r\n#include langpack_russian_icqrevivalflash.txt\r\n'));
+  // Russian: upstream's, its #include of the old name out, our sections in.
+  const ru = (await servedPack(srv.url, lines, 'langpack_russian')).toString('utf8');
+  assert.equal(ru, 'Miranda Language Pack Version 1\r\n[Hello]\r\nПривіт\r\n\r\n' + RU_SECTIONS);
 
-  // The Ukrainian one the same way; our Ukrainian translation is ours.
-  assert.ok(lines.includes(`Languages\\langpack_ukrainian_icqrevivalflash.txt ${files[3].hash} ${files[3].crc}`));
+  // Ukrainian the same way, from its own files.
+  const uk = (await servedPack(srv.url, lines, 'langpack_ukrainian')).toString('utf8');
+  assert.equal(uk.split(MERGE_BEGIN).length, 2, 'our sections once');
+  assert.ok(uk.startsWith(`Miranda Language Pack Version 1\r\n[Hello]\r\nПривіт\r\n\r\n${MERGE_BEGIN}`));
+  assert.ok(uk.includes('тZери') && !uk.includes('тZers') && !uk.includes('Language: uk'));
   assert.ok(!lines.some((l) => l.includes('66666666')), 'no stock line under our name');
-  const lpUk = lines.find((l) => l.startsWith('Languages\\langpack_ukrainian.txt '));
-  const [, hashUk, crcUk] = lpUk.split(' ');
-  const pkgUk = await get(`${srv.url}/x32/Languages/langpack_ukrainian.zip`);
-  assert.equal(crcHex(pkgUk.body), crcUk);
-  const textUk = readZip(pkgUk.body).get('Languages/langpack_ukrainian.txt');
-  assert.equal(md5(textUk), hashUk);
-  assert.equal(textUk.toString('utf8'), 'Miranda Language Pack Version 1\r\n[Hello]\r\nПривіт\r\n'
-    + '#include langpack_ukrainian_icq.txt\r\n#include langpack_ukrainian_icqrevivalflash.txt\r\n');
+
+  // German: no translation of ours, upstream's line and bytes as they are.
+  assert.ok(lines.includes(`Languages\\langpack_german.txt 77777777777777777777777777777777 ${crcHex(LANGPACK_DE_ZIP)}`));
+  assert.deepEqual((await get(`${srv.url}/x32/Languages/langpack_german.zip`)).body, LANGPACK_DE_ZIP);
 
   // Our package, whatever the case of the file name.
   const ours = await get(`${srv.url}/x32/Plugins/icqoscarj.zip`);
@@ -267,23 +313,20 @@ test('a stale list is served while upstream is down; none at all is a 503', asyn
   assert.equal((await get(`${srv2.url}/x32/hashes.zip`)).status, 503);
 });
 
-test('without our packages both main translations still get our include lines', async (t) => {
+test('without translations of ours every pack goes out as it is, and nothing is deleted', async (t) => {
   const up = await upstreamServer(upstreamFiles());
-  const mirror = createMirror({ upstream: up.url, dir: null, log: () => {} });
+  const { dir } = ourPackages({ translations: false });
+  const mirror = createMirror({ upstream: up.url, dir, log: () => {} });
   const srv = await mirrorServer(mirror);
   t.after(() => { up.server.close(); srv.server.close(); });
-  const lines = readZip((await get(`${srv.url}/x32/hashes.zip`)).body).get('hashes.txt').toString('latin1');
-  assert.ok(!lines.includes('langpack_ukrainian_icq.txt'), 'the stock line of ours is left out');
-  const ru = readZip((await get(`${srv.url}/x32/Languages/langpack_russian.zip`)).body)
-    .get('Languages/langpack_russian.txt').toString('utf8');
-  assert.ok(ru.endsWith('Привіт\r\n#include langpack_russian_icq.txt\r\n#include langpack_russian_icqrevivalflash.txt\r\n'));
-  assert.ok(!ru.includes('flashavatars'));
-  const uk = readZip((await get(`${srv.url}/x32/Languages/langpack_ukrainian.zip`)).body)
-    .get('Languages/langpack_ukrainian.txt').toString('utf8');
-  assert.ok(uk.endsWith('Привіт\r\n#include langpack_ukrainian_icq.txt\r\n#include langpack_ukrainian_icqrevivalflash.txt\r\n'));
+  const list = readZip((await get(`${srv.url}/x32/hashes.zip`)).body);
+  const lines = list.get('hashes.txt').toString('latin1');
+  assert.ok(lines.includes(`Languages\\langpack_russian.txt 33333333333333333333333333333333 ${crcHex(LANGPACK_ZIP)}`));
+  assert.deepEqual((await get(`${srv.url}/x32/Languages/langpack_russian.zip`)).body, LANGPACK_ZIP);
+  assert.ok(!Object.keys(JSON.parse(list.get('rules.txt').toString()).rules).some((k) => k.startsWith('langpack')));
 });
 
-test('a translation package that cannot be fetched leaves its line out', async (t) => {
+test('a pack that cannot be fetched leaves its line out, and our separate files in place', async (t) => {
   const files = upstreamFiles();
   files.delete('/x32/Languages/langpack_russian.zip');
   const up = await upstreamServer(files);
@@ -291,8 +334,12 @@ test('a translation package that cannot be fetched leaves its line out', async (
   const mirror = createMirror({ upstream: up.url, dir, log: () => {} });
   const srv = await mirrorServer(mirror);
   t.after(() => { up.server.close(); srv.server.close(); });
-  const lines = readZip((await get(`${srv.url}/x32/hashes.zip`)).body).get('hashes.txt').toString('latin1');
+  const list = readZip((await get(`${srv.url}/x32/hashes.zip`)).body);
+  const lines = list.get('hashes.txt').toString('latin1');
   assert.ok(!lines.includes('langpack_russian.txt'));
+  assert.ok(lines.includes('langpack_ukrainian.txt'));
+  assert.deepEqual(JSON.parse(list.get('rules.txt').toString()).rules,
+    { 'FlashAvatars.dll': 'Plugins\\IcqRevivalFlash.dll', 'Obsolete.dll': null });
 });
 
 test('a relayed file over the cap is refused', async (t) => {

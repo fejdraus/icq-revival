@@ -15,3 +15,6 @@ deploy/oscar-legacy-web/ruffle/** -text
 # kept byte for byte: Miranda's sources are CRLF, and the diff applies with
 # patch --binary only to the untouched line endings.
 tools/miranda-icq/IcqOscarJ/** -text
+# Its diff against upstream likewise: its lines carry the sources' own
+# endings, so it applies with patch --binary only when kept as generated.
+tools/miranda-icq/IcqOscarJ.diff -text

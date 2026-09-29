@@ -11,27 +11,36 @@
 // upstream one (stable channel), cached, with our lines put in:
 //
 //   - our files (Plugins\IcqOscarJ.dll, Plugins\IcqRevivalFlash.dll,
-//     Libs\FlashPlayerControl.dll, their translations) with the hashes of our
-//     builds, so PluginUpdater offers our build and never a stock one;
+//     Libs\FlashPlayerControl.dll) with the hashes of our builds, so
+//     PluginUpdater offers our build and never a stock one;
 //   - the rules that would delete or rename them are dropped, and so are the
 //     ones for the old name of the Flash plugin, FlashAvatars.dll: Miranda NG
 //     deletes "flashavatars.dll", its own plugin of that name removed in 2014.
-//     A rename rule of ours moves the old file and its translation to the new
-//     names instead (RENAMES); PluginUpdater only updates files that are in
-//     place, so a rename is what carries an existing install over;
-//   - the main Russian and Ukrainian translations are served with the
-//     #include lines of our translations appended (and the one for the old name taken out), since
-//     the stock one does not have them and an update would otherwise cut our
-//     plugins' translations off. When its package cannot be fetched, its line
-//     is left out and the installed file is kept as it is.
+//     A rename rule of ours moves the old file to the new name instead
+//     (RENAMES); PluginUpdater only updates files that are in place, so a
+//     rename is what carries an existing install over;
+//   - our plugins' translations go inside Miranda NG's main language packs.
+//     <dir>/translations holds them as langpack_<language>_<plugin>.txt (the
+//     plugin part without "_"), each one #muuid section. Whenever the list
+//     has a Languages\langpack_<language>.txt for which there is such a file,
+//     that pack is served with the sections appended at its end (see
+//     mergeTranslations), and the list line carries the hash and crc of what
+//     is served. Packs of other languages go out as they are. When a pack to
+//     merge cannot be fetched, its line is left out and the installed file is
+//     kept as it is;
+//   - the separate translation files shipped before (Languages\langpack_*_
+//     <plugin>.txt, #include'd by the main pack) are deleted by rules of ours,
+//     put first, once every pack to merge was merged. There is nothing in code
+//     about any language: a new one is a new file in <dir>/translations.
 //
 // Our packages and their hashes come ready-made from
 // tools/miranda-icq/make-update-packages.py (the hash is PluginUpdater's own
 // CalculateModuleHash over the PE sections, not a plain MD5, so it is computed
 // where the builds are): <dir>/x32 and <dir>/x64, each with manifest.json and
-// the zips. Read at start and on SIGHUP. Without the folder there are no
-// packages of ours, but upstream's lines and rules for our files are still
-// left out (OUR_FILES), so PluginUpdater leaves those files as they are.
+// the zips, and <dir>/translations. Read at start and on SIGHUP. Without the
+// folder there are no packages of ours, but upstream's lines and rules for
+// our files are still left out (OUR_FILES), so PluginUpdater leaves those
+// files as they are.
 //
 // Every other package is relayed from upstream byte for byte, streamed, and
 // kept in a small memory cache. Only the names in the current upstream list
@@ -58,13 +67,8 @@ const OUR_FILES = [
   'Plugins\\IcqOscarJ.dll',
   'Plugins\\IcqRevivalFlash.dll',
   'Libs\\FlashPlayerControl.dll',
-  'Languages\\langpack_russian_icq.txt',
-  'Languages\\langpack_russian_icqrevivalflash.txt',
-  'Languages\\langpack_ukrainian_icq.txt',
-  'Languages\\langpack_ukrainian_icqrevivalflash.txt',
-  // the old names, up to 1.0 of the Flash plugin
+  // the old name, up to 1.0 of the Flash plugin
   'Plugins\\FlashAvatars.dll',
-  'Languages\\langpack_russian_flashavatars.txt',
 ];
 
 // Old file name (as rules.txt matches it: the bare name) -> the new path.
@@ -72,28 +76,18 @@ const OUR_FILES = [
 // the new name's line. Put in only when there is a package for the new name.
 const RENAMES = {
   'FlashAvatars.dll': 'Plugins\\IcqRevivalFlash.dll',
-  'langpack_russian_flashavatars.txt': 'Languages\\langpack_russian_icqrevivalflash.txt',
 };
 
-// The lines our translations need in the main one, and the ones of old names
-// to take out of it (see withIncludes).
-const LANGPACK_INCLUDES = {
-  'Languages\\langpack_russian.txt': {
-    add: [
-      '#include langpack_russian_icq.txt',
-      '#include langpack_russian_icqrevivalflash.txt',
-    ],
-    drop: ['#include langpack_russian_flashavatars.txt'],
-  },
-  // Nothing to take out: our Ukrainian translations came after the rename,
-  // and Miranda NG's Ukrainian pack has no #include lines of its own.
-  'Languages\\langpack_ukrainian.txt': {
-    add: [
-      '#include langpack_ukrainian_icq.txt',
-      '#include langpack_ukrainian_icqrevivalflash.txt',
-    ],
-  },
-};
+// The <plugin> part of translation files that were shipped separately under
+// a plugin name no longer in use (FlashAvatars.dll, up to 1.0 of the Flash
+// plugin); they are deleted like the current ones (see translationMasks).
+const OLD_TRANSLATION_PLUGINS = ['flashavatars'];
+
+// The lines around our sections in a main language pack. Comments to
+// Miranda; they let a later merge find and replace what an earlier one put in.
+// tools/miranda-icq/Install-IcqRevival.ps1 writes the same ones.
+const MERGE_BEGIN = ';### ICQ Revival translations: begin';
+const MERGE_END = ';### ICQ Revival translations: end';
 
 // ------------------------------------------------------------------- zip
 
@@ -259,23 +253,96 @@ function filterRules(json, ourNames, renames = {}) {
   return out;
 }
 
-// The main translation with the lines ours need appended, if missing, and the
-// lines of old names taken out. includes is { add: [...], drop: [...] }, or
-// just the array to add.
-function withIncludes(text, includes) {
-  const add = Array.isArray(includes) ? includes : (includes.add || []);
-  const drop = new Set((Array.isArray(includes) ? [] : (includes.drop || [])).map((l) => l.trim().toLowerCase()));
-  const eol = text.includes('\r\n') ? '\r\n' : '\n';
-  if (drop.size) {
-    const lines = text.split(/\r?\n/);
-    const kept = lines.filter((l) => !drop.has(l.trim().toLowerCase()));
-    if (kept.length !== lines.length) text = kept.join(eol);
+// ------------------------------------------------------------- translations
+
+// A translation file of ours, langpack_<language>_<plugin>.txt: the language
+// as in the name of Miranda's main pack, langpack_<language>.txt (it may hold
+// "_" itself), and the plugin, which does not. Null for any other name.
+function translationName(file) {
+  const m = /^langpack_(.+)_([^_.\\/]+)\.txt$/i.exec(file);
+  return m ? { language: m[1].toLowerCase(), plugin: m[2].toLowerCase() } : null;
+}
+
+// The language of a main pack as the list names it,
+// Languages\langpack_<language>.txt, or null.
+function mainPackLanguage(name) {
+  const m = /^languages\\langpack_([^\\]+)\.txt$/i.exec(name);
+  return m ? m[1].toLowerCase() : null;
+}
+
+// Our translation files, read from a folder: Map(language -> [{ name, body }]),
+// by name within a language. A missing folder is an empty map.
+function loadTranslations(folder) {
+  const out = new Map();
+  let names = [];
+  try {
+    names = fs.readdirSync(folder).sort();
+  } catch {
+    return out;
   }
-  const have = new Set(text.split(/\r?\n/).map((l) => l.trim().toLowerCase()));
-  const missing = add.filter((l) => !have.has(l.trim().toLowerCase()));
-  if (!missing.length) return text;
-  const sep = text.endsWith('\n') || text === '' ? '' : eol;
-  return text + sep + missing.join(eol) + eol;
+  for (const name of names) {
+    const t = translationName(name);
+    if (!t) continue;
+    const body = fs.readFileSync(path.join(folder, name));
+    if (!out.has(t.language)) out.set(t.language, []);
+    out.get(t.language).push({ name, plugin: t.plugin, body });
+  }
+  return out;
+}
+
+// The rules.txt masks of our separate translation files, as they were
+// shipped before the merge: one per plugin, for every language.
+function translationMasks(translations) {
+  const plugins = new Set(OLD_TRANSLATION_PLUGINS);
+  for (const files of translations.values()) for (const f of files) plugins.add(f.plugin);
+  return [...plugins].sort().map((p) => `langpack_*_${p}.txt`);
+}
+
+// One file of ours as a section of the main pack: without its BOM and its
+// own header ("Miranda Language Pack Version 1", "Language:", "Locale:": the
+// core reads a header only at the top of the main pack, anywhere else those
+// lines would be taken for a translation), in the pack's line endings.
+function sectionLines(body) {
+  let text = body.toString('latin1');
+  if (text.startsWith('\xEF\xBB\xBF')) text = text.slice(3);
+  const lines = text.split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length && !/^[;#[]/.test(lines[i])) i++;
+  const out = lines.slice(i);
+  while (out.length && out[out.length - 1].trim() === '') out.pop();
+  return out;
+}
+
+// A main language pack (a latin1 string, so the UTF-8 bytes stay as they
+// are) with our sections at its end, between MERGE_BEGIN and MERGE_END: the
+// core reads the pack from top to bottom, and a #muuid holds until the next
+// one, so ours must come after everything of the pack's own. What an earlier
+// merge put in is replaced, and #include lines of our separate files of old
+// (masks, see translationMasks) are taken out, so merging twice gives the
+// same file. sections: [{ body }] in order.
+function mergeTranslations(text, sections, masks = []) {
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const kept = [];
+  let inside = false;
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim();
+    if (inside) {
+      if (t === MERGE_END) inside = false;
+      continue;
+    }
+    if (t === MERGE_BEGIN) { inside = true; continue; }
+    const inc = /^#include\s+(.+)$/i.exec(t);
+    if (inc && masks.some((m) => wildMatch(m, inc[1].trim()))) continue;
+    kept.push(line);
+  }
+  while (kept.length && kept[kept.length - 1].trim() === '') kept.pop();
+  const ours = [MERGE_BEGIN];
+  sections.forEach((s, i) => {
+    if (i) ours.push('');
+    ours.push(...sectionLines(s.body));
+  });
+  ours.push(MERGE_END);
+  return [...kept, '', ...ours].join(eol) + eol;
 }
 
 // ------------------------------------------------------------------- mirror
@@ -292,8 +359,10 @@ function createMirror(options = {}) {
   const log = options.log || ((m) => console.log(`miranda: ${m}`));
   const agent = options.userAgent || 'ICQ-Revival-mirror (PluginUpdater relay)';
 
-  // Our packages per platform: { files: Map(name lower -> entry), includes }.
+  // Our packages per platform: { files: Map(name lower -> entry) }.
   let ours = new Map();
+  // Our translations: Map(language -> [{ name, plugin, body }]).
+  let translations = new Map();
   // Per platform: the list we hand out and what it was built from.
   const lists = new Map();
   // Upstream packages, least recently used first: key -> Buffer.
@@ -320,14 +389,16 @@ function createMirror(options = {}) {
           log(`${platform} ${f.name} left out: ${err.message}`);
         }
       }
-      next.set(platform, { files, includes: manifest.langpackIncludes || LANGPACK_INCLUDES });
+      next.set(platform, { files });
     }
     ours = next;
+    translations = dir ? loadTranslations(path.join(dir, 'translations')) : new Map();
     // A list built from the previous packages is out of date.
     // Rebuild it now rather than on the next request, which would still
     // get the old one while the new one is made.
     for (const [platform, l] of lists) { l.fetchedAt = 0; refresh(platform); }
-    log(`packages: ${PLATFORMS.map((p) => `${p} ${ours.get(p)?.files.size || 0}`).join(', ')}`);
+    log(`packages: ${PLATFORMS.map((p) => `${p} ${ours.get(p)?.files.size || 0}`).join(', ')}; `
+      + `translations: ${[...translations].map(([l, f]) => `${l} ${f.length}`).join(', ') || 'none'}`);
   }
 
   async function fetchUpstream(platform, rel) {
@@ -379,7 +450,8 @@ function createMirror(options = {}) {
     const entries = readZip(upstreamZip);
     const hashesName = [...entries.keys()].find((n) => n.toLowerCase() === 'hashes.txt');
     if (!hashesName) throw new Error('hashes.zip without hashes.txt');
-    const own = ours.get(platform) || { files: new Map(), includes: LANGPACK_INCLUDES };
+    const own = ours.get(platform) || { files: new Map() };
+    const masks = translations.size ? translationMasks(translations) : [];
     const ourNames = new Set([...OUR_FILES, ...[...own.files.values()].map((f) => f.name)]
       .map((n) => n.toLowerCase()));
     const parsed = parseHashes(entries.get(hashesName).toString('latin1'));
@@ -388,6 +460,7 @@ function createMirror(options = {}) {
     const patched = new Map();       // package path lower -> our patched zip
     const out = [];
     const written = new Set();
+    let mergeFailed = false;
     for (const line of parsed.lines) {
       if (!line.name) { out.push(line.raw); continue; }
       const lower = line.name.toLowerCase();
@@ -399,22 +472,25 @@ function createMirror(options = {}) {
       }
       // Ours without a package here: the installed file stays as it is.
       if (ourNames.has(lower)) continue;
-      const includeKey = Object.keys(own.includes).find((k) => k.toLowerCase() === lower);
-      if (includeKey) {
+      // A separate translation of ours, deleted by our rules: no line for it.
+      if (lower.startsWith('languages\\') && masks.some((m) => wildMatch(m, baseName(line.name)))) continue;
+      const sections = translations.get(mainPackLanguage(line.name));
+      if (sections) {
         try {
           const zip = await upstreamPackage(platform, line);
           const inner = readZip(zip);
           const [entryName, data] = [...inner.entries()][0] || [];
           if (!entryName) throw new Error('empty package');
-          const text = withIncludes(data.toString('latin1'), own.includes[includeKey]);
+          const text = mergeTranslations(data.toString('latin1'), sections, masks);
           const body = Buffer.from(text, 'latin1');
           const pkg = writeZip([[entryName, body]]);
           const hash = crypto.createHash('md5').update(body).digest('hex');
           patched.set(packagePath(line.name).toLowerCase(), pkg);
           out.push(`${line.name} ${hash} ${crcHex(pkg)}`);
         } catch (err) {
-          // The installed translation stays as it is: better than one
-          // without our lines.
+          // The installed pack stays as it is, #include lines and all: better
+          // than one without our translations. So do our separate files.
+          mergeFailed = true;
           log(`${platform} ${line.name} left out of the list: ${err.message}`);
         }
         continue;
@@ -428,8 +504,11 @@ function createMirror(options = {}) {
 
     const zipEntries = [[hashesName, Buffer.from(out.join(parsed.eol) + parsed.eol, 'latin1')]];
     const names = [...OUR_FILES, ...[...own.files.values()].map((f) => f.name)];
+    // Ours go first: renames of old names, and the deletes of our separate
+    // translations, now that the main packs carry them.
     const renames = Object.fromEntries(Object.entries(RENAMES)
       .filter(([, to]) => own.files.has(to.toLowerCase())));
+    if (!mergeFailed) for (const m of masks) renames[m] = null;
     const rulesEntry = (name, json) => [name, Buffer.from(JSON.stringify(filterRules(json, names, renames), null, 1), 'utf8')];
     let rulesSeen = false;
     for (const [name, data] of entries) {
@@ -596,5 +675,7 @@ function createMirror(options = {}) {
 }
 
 module.exports = {
-  createMirror, readZip, writeZip, parseHashes, filterRules, withIncludes, packagePath, wildMatch,
+  createMirror, readZip, writeZip, parseHashes, filterRules, mergeTranslations, translationName,
+  mainPackLanguage, translationMasks, loadTranslations, packagePath, wildMatch,
+  MERGE_BEGIN, MERGE_END,
 };

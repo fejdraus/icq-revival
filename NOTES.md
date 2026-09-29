@@ -662,10 +662,11 @@ building, picking the source snapshot and installing are in `tools/miranda-icq/R
 
 **Translation.** Strings in Miranda are tied to a plug-in by a `#muuid` tag, and current
 packs have no section for the ICQ protocol - it was removed together with the plug-in.
-`langpack_russian_icq.txt` brings it back: it goes into `Languages\`, and
-`#include langpack_russian_icq.txt` is appended at the **very end** of the main pack. At
-the end, precisely - our file sets `#muuid`, and everything that comes after this line in
-the pack would otherwise be attributed to our plug-in. It is built by
+`tools/miranda-icq/translations/langpack_<language>_icq.txt` brings it back: its
+section is merged at the **very end** of Miranda's main pack of that language, by our
+update server when it serves the pack and by `Install-IcqRevival.ps1`. At the end,
+precisely - our section sets `#muuid`, and everything that comes after it in the pack
+would otherwise be attributed to our plug-in. The Russian file is built by
 `make-langpack.py`; the current pack covers 59% of the strings, the rest comes from a
 pack from the Miranda IM days, where the `IcqOscarJ` section is still intact.
 

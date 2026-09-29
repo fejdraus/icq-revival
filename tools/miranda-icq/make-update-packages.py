@@ -7,20 +7,28 @@
 # is not the file's MD5 but PluginUpdater's CalculateModuleHash (checksum.cpp):
 # the MD5 of the PE section data after the debug, export and resource
 # timestamps are zeroed and the relocations are rebased to 0; for non-PE files
-# (translations) it is the MD5 of the whole file. That is why this script
-# computes the hashes and the server takes them ready-made from manifest.json.
+# (the language packs the server merges) it is the MD5 of the whole file. That
+# is why this script computes the hashes and the server takes them
+# ready-made from manifest.json.
 #
 #   python make-update-packages.py <output-dir> [--engine32 dll] [--engine64 dll]
 #   python make-update-packages.py --hash <file...>      hashes only, for checking
 #
 # The result is <dir>/x32 and <dir>/x64: Plugins/IcqOscarJ.zip,
-# Plugins/IcqRevivalFlash.zip, Libs/FlashPlayerControl.zip, Languages/*.zip and
-# manifest.json. This directory is what goes onto the server (see README).
+# Plugins/IcqRevivalFlash.zip, Libs/FlashPlayerControl.zip and manifest.json;
+# and <dir>/translations, a copy of translations/langpack_<language>_<plugin>.txt.
+# The server merges those into Miranda NG's main pack of the same language when
+# it serves it (deploy/oscar-legacy-web/miranda-updates.js); they have no
+# packages of their own. Whatever files translations/ holds are taken, so a
+# new language is a new file there and nothing else. This directory is what
+# goes onto the server (see README).
 import argparse
 import hashlib
 import io
 import json
 import os
+import re
+import shutil
 import struct
 import sys
 import zipfile
@@ -29,28 +37,10 @@ import zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
 ENGINE = os.path.join(ROOT, 'tools', 'icq65', 'flashplayer', 'target')
-
-# Lines the server appends to the main langpack_russian.txt and
-# langpack_ukrainian.txt when they are missing: without them the core does not read the plugins' translations, and
-# updating the langpack from the Miranda NG server wipes them out. drop lists
-# lines with old names that the server removes (before 1.1 the Flash plugin was
-# called FlashAvatars.dll).
-LANGPACK_INCLUDES = {
-    'Languages\\langpack_russian.txt': {
-        'add': [
-            '#include langpack_russian_icq.txt',
-            '#include langpack_russian_icqrevivalflash.txt',
-        ],
-        'drop': ['#include langpack_russian_flashavatars.txt'],
-    },
-    # Nothing to drop: our Ukrainian translations came after the rename.
-    'Languages\\langpack_ukrainian.txt': {
-        'add': [
-            '#include langpack_ukrainian_icq.txt',
-            '#include langpack_ukrainian_icqrevivalflash.txt',
-        ],
-    },
-}
+TRANSLATIONS = os.path.join(HERE, 'translations')
+# langpack_<language>_<plugin>.txt; the plugin part has no "_" (the server
+# splits the name the same way).
+TRANSLATION_NAME = re.compile(r'^langpack_.+_[^_.]+\.txt$', re.IGNORECASE)
 
 
 def module_hash(path):
@@ -210,14 +200,12 @@ def sources(platform, engine):
         ('Plugins\\IcqOscarJ.dll', os.path.join(build, 'IcqOscarJ.dll')),
         ('Plugins\\IcqRevivalFlash.dll', os.path.join(build, 'IcqRevivalFlash.dll')),
         ('Libs\\FlashPlayerControl.dll', engine),
-    ] + [
-        (f'Languages\\{name}', os.path.join(HERE, name))
-        for lang in ('russian', 'ukrainian')
-        for name in (f'langpack_{lang}_icq.txt', f'langpack_{lang}_icqrevivalflash.txt')
     ]
 
 
 def build(out, platform, engine):
+    # packages of an earlier run that are no longer made must not linger
+    shutil.rmtree(os.path.join(out, platform), ignore_errors=True)
     files = []
     for rel, src in sources(platform, engine):
         if not os.path.isfile(src):
@@ -238,10 +226,22 @@ def build(out, platform, engine):
             'size': len(body),
         })
         print(f'{platform} {rel}: {files[-1]["hash"]} {files[-1]["crc"]} ({len(body)} bytes)')
-    manifest = {'files': files, 'langpackIncludes': LANGPACK_INCLUDES}
+    manifest = {'files': files}
     with open(os.path.join(out, platform, 'manifest.json'), 'w', encoding='utf-8', newline='\n') as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
         f.write('\n')
+
+
+def copy_translations(out):
+    dest = os.path.join(out, 'translations')
+    shutil.rmtree(dest, ignore_errors=True)
+    os.makedirs(dest)
+    names = sorted(n for n in os.listdir(TRANSLATIONS) if TRANSLATION_NAME.match(n))
+    if not names:
+        raise SystemExit(f'no translations in {TRANSLATIONS}')
+    for name in names:
+        shutil.copyfile(os.path.join(TRANSLATIONS, name), os.path.join(dest, name))
+        print(f'translations/{name}')
 
 
 def main():
@@ -259,6 +259,7 @@ def main():
         ap.error('an output directory is required')
     build(a.out, 'x32', a.engine32)
     build(a.out, 'x64', a.engine64)
+    copy_translations(a.out)
 
 
 if __name__ == '__main__':

@@ -1173,6 +1173,33 @@ static void MoveSetting(const char *szFromModule, const char *szFrom, const char
 	db_unset(0, szFromModule, szFrom);
 }
 
+// Up to now the plugin's translations were separate files,
+// Languages\langpack_<language>_icqrevivalflash.txt (up to 1.0
+// langpack_<language>_flashavatars.txt), marked like the rest. Now they are
+// sections of Miranda's main language pack (our update server merges them
+// in), and our list deletes the separate files, which a mark would prevent.
+// So every such mark goes, whatever the language.
+static const char *g_arOldTranslations[] =
+{
+	"languages\\langpack_*_icqrevivalflash.txt",
+	"languages\\langpack_*_flashavatars.txt"
+};
+
+static void ClearTranslationMarks()
+{
+	LIST<char> arSettings(10);
+	db_enum_settings(0, CollectSetting, "PluginUpdaterFiles", &arSettings);
+	for (auto &it : arSettings) {
+		for (auto &mask : g_arOldTranslations) {
+			if (wildcmpi(it, mask)) {
+				db_unset(0, "PluginUpdaterFiles", it);
+				break;
+			}
+		}
+		mir_free(it);
+	}
+}
+
 static void MigrateOldName()
 {
 	LIST<char> arSettings(10);
@@ -1198,10 +1225,9 @@ int CMPlugin::Load()
 	bool bOurList = UpdaterUsesOurList();
 	MarkModuleForUpdater(g_plugin.getInst(), bOurList);
 	MarkForUpdater(L"Libs\\FlashPlayerControl.dll", !bOurList);
-	MarkForUpdater(L"Languages\\langpack_russian_icqrevivalflash.txt", !bOurList);
 
 	ClearOldMark(L"Plugins\\FlashAvatars.dll", bOurList);
-	ClearOldMark(L"Languages\\langpack_russian_flashavatars.txt", bOurList);
+	ClearTranslationMarks();
 	MigrateOldName();
 	Avatars_Load(); // its service before the accounts build their menus
 	HookEvent(ME_SYSTEM_MODULESLOADED, OnModulesLoaded);
