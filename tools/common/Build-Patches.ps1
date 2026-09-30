@@ -27,6 +27,7 @@ $tools = Split-Path $PSScriptRoot -Parent
 $Projects = @(
     @{ Project = 'patcher\Icq65\Icq65Patch.csproj'; Exe = 'icq65\patch\ICQ-6.5-Patch.exe' }
     @{ Project = 'patcher\Icq2003b\Icq2003bPatch.csproj'; Exe = 'icq2003b\patch\ICQ-2003b-Patch.exe' }
+    @{ Project = 'patcher\Icq72\Icq72Patch.csproj'; Exe = 'icq72\patch\ICQ-7.2-Patch.exe' }
 )
 
 # Copies a built file into place; a scanner holding the file just made - which

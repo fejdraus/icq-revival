@@ -12,7 +12,8 @@ and can put everything back.
 | `icq65/patch/` | ICQ 6.5 (build 2024) | **The patch to hand out.** `ICQ-6.5-Patch.exe` - removes Xtraz, advertising, tZers, SMS and phone from the interface and points the ICQ.com pages at our server. Built from the C# project in `patcher/Icq65`. With `FlashPlayerControl-Ruffle.dll` next to it (built there by `common/Build-Patches.ps1`, not kept in git) it can instead bring tZers back: "tZers without Flash", off until ticked. |
 | `icq65/flashplayer/` | ICQ 6.5 | `FlashPlayerControl.dll` on Ruffle, the tZers player without Adobe Flash (Rust; see its README). |
 | `icq65/tzers/` | ICQ 6.5 | `make_tzers.py` - rebuilds the twelve tZers the server hands out (`deploy/oscar-legacy-web/tzers/`) from the Wayback Machine, and copies their thumbnails from the client. |
-| `patcher/` | every patch | The patches as C# WinForms programs (.NET Framework 4.8, one exe each): `Common/` - the window, the icon, the job list, backups and the command line all patches share, compiled into each exe as source; `Icq65/` and `Icq2003b/` - the patches for ICQ 6.5 and ICQ Pro 2003b. |
+| `icq72/patch/` | ICQ 7.2 (build 3143) | **The patch to hand out.** `ICQ-7.2-Patch.exe` - removes SMS, the games and Zones buttons, Xtraz, the Lifestream and "My box" tabs and advertising from the interface, takes the AOL Diagnostics module that crashes ICQ 7 (`tbdiag.dll`) out of the way, and points the ICQ.com pages and the sign-in at our server. Text files only: markup, configuration and DTDs, each checked by its checksum first. Built from the C# project in `patcher/Icq72`. The SMS entry of the settings list is built in code and stays. |
+| `patcher/` | every patch | The patches as C# WinForms programs (.NET Framework 4.8, one exe each): `Common/` - the window, the icon, the job list, backups and the command line all patches share, compiled into each exe as source; `Icq65/`, `Icq72/` and `Icq2003b/` - the patches for ICQ 6.5, ICQ 7.2 and ICQ Pro 2003b. |
 | `patcher-cpp/` | ICQ Pro 2003b | The same 2003b patch in C++ on the plain Win32 API, for Windows XP SP3 to 11 with nothing to install (`Build.ps1`, toolset v141_xp). It carries the same text recipe of the translation and builds the translated resources from it the same way. |
 | `common/` | every patch | `Build-Patches.ps1` - builds every patch's exe from `patcher/` (the .NET SDK); `Check-VirusTotal.ps1` - checks the built exes on VirusTotal (key in `VT_API_KEY`). |
 | `miranda-icq/` | Miranda NG | The ICQ protocol plugin brought back to the current Miranda NG API: the patch, build output and language pack. |
@@ -33,8 +34,10 @@ These hold for the patches above and for any new one, for whatever client:
   dropped - and a saved value from an older version is read the same way.
 - **The sign-in server is set too**, as the default the client starts from,
   never inside its own database: ICQ 6.5 in `MCore.dll`, where the built-in
-  `login.icq.com` lives, ICQ 2003b in `Default Server Host` in the registry
-  and in the connection settings the client copied it into on its first run.
+  `login.icq.com` lives, ICQ 7.2 in the default connection settings of
+  `packages\ICQ\ConfigFiles\AppConfig.xml`, ICQ 2003b in `Default Server
+  Host` in the registry and in the connection settings the client copied it
+  into on its first run.
   A server the user typed in the client's own settings stays theirs.
 - **Moving to another server is applying again** with the new domain; links
   pointed at the previous server move without a restore first.

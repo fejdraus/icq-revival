@@ -873,6 +873,7 @@ const I18N = {
     dlAny: 'any',
     dlIcq2003b: 'the ICQ 2003b patch',
     dlIcq65: 'the ICQ 6.5 patch',
+    dlIcq72: 'the ICQ 7.2 patch',
     dlMiranda: 'our ICQ plugin (32 and 64 bit)',
     dlByHand: 'nothing: set the server by hand',
     dlOthers: 'AIM 5.x and other OSCAR clients',
@@ -1284,6 +1285,7 @@ const I18N = {
     dlAny: 'будь-яка',
     dlIcq2003b: 'патч для ICQ 2003b',
     dlIcq65: 'патч для ICQ 6.5',
+    dlIcq72: 'патч для ICQ 7.2',
     dlMiranda: 'наш плагін ICQ (32 і 64 біти)',
     dlByHand: 'нічого: сервер вказується вручну',
     dlOthers: 'AIM 5.x та інші клієнти OSCAR',
@@ -2438,6 +2440,7 @@ function downloadPage(u) {
       <tbody>
         ${row('<b>ICQ Pro 2003b</b>', '3916', t.dlIcq2003b, downloadLink('icq2003bPatch', t))}
         ${row('<b>ICQ 6.5</b>', '2024', t.dlIcq65, downloadLink('icq65Patch', t))}
+        ${row('<b>ICQ 7.2</b>', '3143', t.dlIcq72, downloadLink('icq72Patch', t))}
         ${row('<b>Miranda NG</b>', '0.96.7', t.dlMiranda, downloadLink('mirandaPlugin', t)
           // The plugins are GPLv2: their source sits right under the binaries.
           + `<br><span class="dim">${downloadLink('mirandaSource', t, t.dlSource)}</span>`)}
