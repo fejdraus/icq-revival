@@ -69,6 +69,8 @@ struct Fpc {
     FPC_Play: extern "system" fn(HWND) -> HRESULT,
     FPC_Stop: extern "system" fn(HWND) -> HRESULT,
     FPC_StopPlay: extern "system" fn(HWND) -> HRESULT,
+    FPC_Rewind: extern "system" fn(HWND) -> HRESULT,
+    GetInstalledFlashVersion: extern "system" fn() -> u32,
     FPC_IsPlaying: extern "system" fn(HWND, *mut i16) -> HRESULT,
     FPC_UpdateWindow: extern "system" fn(HWND) -> HRESULT,
     FPCSetEventListener: extern "system" fn(
@@ -100,6 +102,8 @@ fn load_dll(path: &str) -> Fpc {
         FPC_Play: get!(FPC_Play),
         FPC_Stop: get!(FPC_Stop),
         FPC_StopPlay: get!(FPC_StopPlay),
+        FPC_Rewind: get!(FPC_Rewind),
+        GetInstalledFlashVersion: get!(GetInstalledFlashVersion),
         FPC_IsPlaying: get!(FPC_IsPlaying),
         FPC_UpdateWindow: get!(FPC_UpdateWindow),
         FPCSetEventListener: get!(FPCSetEventListener),
@@ -650,6 +654,10 @@ fn play(fpc: &Fpc, movie: &str, out: &str) {
     let null_hr = (fpc.FPC_IsPlaying)(hwnd, null_mut());
     say!("FPC_IsPlaying(NULL) -> {null_hr:#x} (E_POINTER = 0x80004003)");
     say!("FPC_Stop before load -> {:#x}", (fpc.FPC_Stop)(hwnd));
+    say!(
+        "GetInstalledFlashVersion -> {:#010x}",
+        (fpc.GetInstalledFlashVersion)()
+    );
     let w = wide(movie);
     let start = Instant::now();
     say!(
@@ -797,6 +805,20 @@ fn play(fpc: &Fpc, movie: &str, out: &str) {
         vcall!(flash, 35, fn(*mut i32) -> HRESULT, &mut cur);
         say!("CurrentFrame after Stop -> {cur}");
     }
+
+    // ICQ 7.2 replays a tZer with FPC_Rewind, then FPC_Play.
+    say!("FPC_Play -> {:#x}", (fpc.FPC_Play)(hwnd));
+    pump_for(Duration::from_millis(300));
+    say!("FPC_Rewind -> {:#x}", (fpc.FPC_Rewind)(hwnd));
+    unsafe {
+        let mut cur = -1i32;
+        vcall!(flash, 35, fn(*mut i32) -> HRESULT, &mut cur);
+        say!("CurrentFrame after Rewind -> {cur}");
+    }
+    say!("FPC_Play after Rewind -> {:#x}", (fpc.FPC_Play)(hwnd));
+    pump_for(Duration::from_millis(300));
+    say!("IsPlaying after Rewind + Play -> {}", is_playing(fpc, hwnd));
+    say!("FPC_Stop -> {:#x}", (fpc.FPC_Stop)(hwnd));
 
     // Messages the client relies on reaching the (subclassed) window.
     unsafe {

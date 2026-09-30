@@ -33,6 +33,8 @@ tools/patcher-cpp/out/
 
 # Build output of the ICQ 6.5 FlashPlayerControl.dll replacement (Rust)
 tools/icq65/flashplayer/target/
-# ...and its copy next to ICQ-6.5-Patch.exe (tools\common\Build-Patches.ps1):
-# 15 MB, published with the release rather than kept in git.
+# ...and its copies next to ICQ-6.5-Patch.exe and ICQ-7.2-Patch.exe
+# (tools\common\Build-Patches.ps1): 15 MB, published with the release rather
+# than kept in git.
 tools/icq65/patch/FlashPlayerControl-Ruffle.dll
+tools/icq72/patch/FlashPlayerControl-Ruffle.dll

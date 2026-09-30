@@ -21,7 +21,15 @@ These facts come from a static analysis of `MCore.dll`, `MUIMessage.dll` and
   import exactly these ten: `FPCIsFlashInstalled`, `RegisterFlashWindowClass`,
   `UnregisterFlashWindowClass`, `FPC_LoadMovieW`, `FPC_Play`, `FPC_Stop`
   (stop and rewind), `FPC_StopPlay` (pause), `FPC_IsPlaying`,
-  `FPC_UpdateWindow` and `FPCSetEventListener`. The DLL also exports
+  `FPC_UpdateWindow` and `FPCSetEventListener`. ICQ 7.2 (build 3143), whose
+  `MUIMessage.dll` alone delay-loads the DLL, imports all ten plus two more:
+  `FPC_Rewind(HWND) -> HRESULT` (back to the first frame and stopped; it
+  calls it just before `FPC_Play` to replay a tZer from the start) and
+  `GetInstalledFlashVersion() -> DWORD`, no arguments, the version one byte
+  per part (`0xMMmmBBRR`, the original reads it from the registered
+  ShockwaveFlash control and returns 0 without one). The DLL answers 32.0.0.0;
+  ICQ 7.2 asks for it only before its Media Sharing viewer and wants a
+  non-zero major. The DLL also exports
   `DllRegisterServer`, `DllUnregisterServer`, `DllGetClassObject` and
   `DllCanUnloadNow`.
 - **Window class** `FlashPlayerControl` (`CS_GLOBALCLASS | CS_DBLCLKS`). The
@@ -534,7 +542,7 @@ to that file. It always writes the same lines to the debugger
 - **Slow first load.** The first movie per process waits 0.2 to 1.6 s while the
   GPU device starts. The wait happens on the load thread, not the UI thread.
   Later movies reuse the device.
-- **Only the ten exports.** `FPC_SetVariable*`, `FPC_GetVariable*`,
+- **Only the twelve exports.** `FPC_SetVariable*`, `FPC_GetVariable*`,
   `FPCLoadMovieFromMemory` and the other exports of the original are missing.
   The client imports none of them. `FPCSetFaceReturn` is ours, not the
   original's.

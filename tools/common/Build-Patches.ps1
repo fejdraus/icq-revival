@@ -10,13 +10,14 @@
 # the same picture the window shows. Explorer shows the title as the file
 # description, hence the client version in it.
 #
-# The ICQ 6.5 patch also has a file next to it: FlashPlayerControl-Ruffle.dll,
-# the tZers player it puts into the client, as FlashPlayerControl.dll, when
-# "tZers without Flash" is ticked. It has a name of its own so that a patch
-# dropped into the ICQ folder never takes it for the client's original.
-# It is built from tools\icq65\flashplayer with Rust (cargo, see its
-# README.md) and copied to tools\icq65\patch, so that folder is the release:
-# the exe and the DLL side by side. -NoPlayer leaves it out; without cargo it
+# The ICQ 6.5 and 7.2 patches also have a file next to them:
+# FlashPlayerControl-Ruffle.dll, the tZers player they put into the client,
+# as FlashPlayerControl.dll, when "tZers without Flash" is ticked. It has a
+# name of its own so that a patch dropped into the ICQ folder never takes it
+# for the client's original. It is built from tools\icq65\flashplayer with
+# Rust (cargo, see its README.md) and copied to tools\icq65\patch and
+# tools\icq72\patch, so each folder is a release: the exe and the DLL side by
+# side. -NoPlayer leaves it out; without cargo it
 # is left out with a warning, and the patch shows that row as not available.
 
 param([switch]$NoPlayer)
@@ -59,9 +60,9 @@ foreach ($p in $Projects) {
 
 if (-not $NoPlayer) {
     $crate = Join-Path $tools 'icq65\flashplayer'
-    $dll = Join-Path $tools 'icq65\patch\FlashPlayerControl-Ruffle.dll'
+    $dlls = @('icq65\patch\FlashPlayerControl-Ruffle.dll', 'icq72\patch\FlashPlayerControl-Ruffle.dll') | ForEach-Object { Join-Path $tools $_ }
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-        Write-Warning "cargo not found - $dll not built (tools\icq65\flashplayer\README.md)"
+        Write-Warning "cargo not found - $($dlls -join ', ') not built (tools\icq65\flashplayer\README.md)"
     } else {
         # cargo takes the 32-bit target from the crate's .cargo\config.toml,
         # which it reads from the working folder.
@@ -76,6 +77,8 @@ if (-not $NoPlayer) {
             $ErrorActionPreference = 'Stop'
             Pop-Location
         }
-        Copy-Built (Join-Path $crate 'target\i686-pc-windows-msvc\release\FlashPlayerControl.dll') $dll
+        foreach ($dll in $dlls) {
+            Copy-Built (Join-Path $crate 'target\i686-pc-windows-msvc\release\FlashPlayerControl.dll') $dll
+        }
     }
 }

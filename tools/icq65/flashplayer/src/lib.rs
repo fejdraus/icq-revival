@@ -205,6 +205,32 @@ pub extern "system" fn FPC_Stop(hwnd: HWND) -> HRESULT {
     })
 }
 
+/// Goes back to the first frame and stops there, like the control's `Rewind`.
+/// ICQ 7.2 calls it right before `FPC_Play` to replay a tZer from the start.
+#[unsafe(no_mangle)]
+pub extern "system" fn FPC_Rewind(hwnd: HWND) -> HRESULT {
+    crate::ffi_guard("FPC_Rewind", windows_sys::Win32::Foundation::E_FAIL, || {
+        with_instance(hwnd, |i| i.goto_frame(0))
+    })
+}
+
+/// The Flash version this DLL reports: 32.0.0.0, the last Flash Player major.
+const FLASH_VERSION: [u8; 4] = [32, 0, 0, 0];
+
+/// Packs a version as the original does: one byte per part, major on top.
+fn pack_version(v: [u8; 4]) -> u32 {
+    u32::from_be_bytes(v)
+}
+
+/// The installed Flash version as `0xMMmmBBRR`. The original reads the
+/// version resource of the registered ShockwaveFlash control and returns 0
+/// without one. ICQ 7.2 asks before it opens its Media Sharing viewer (a
+/// movie in a ShockwaveFlash control) and wants a major part that is not 0.
+#[unsafe(no_mangle)]
+pub extern "system" fn GetInstalledFlashVersion() -> u32 {
+    pack_version(FLASH_VERSION)
+}
+
 /// Pauses.
 #[unsafe(no_mangle)]
 pub extern "system" fn FPC_StopPlay(hwnd: HWND) -> HRESULT {
@@ -336,4 +362,16 @@ pub unsafe extern "system" fn DllGetClassObject(
 #[unsafe(no_mangle)]
 pub extern "system" fn DllCanUnloadNow() -> HRESULT {
     windows_sys::Win32::Foundation::S_FALSE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_packs_one_byte_per_part() {
+        assert_eq!(pack_version([10, 3, 183, 90]), 0x0A03_B75A);
+        // ICQ 7.2's MUIMessage.dll: `and eax, 0xff000000; cmp eax, 0xa; jb`.
+        assert!(GetInstalledFlashVersion() & 0xFF00_0000 >= 0xA);
+    }
 }

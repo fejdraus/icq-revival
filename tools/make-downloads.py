@@ -7,7 +7,8 @@
 #                           player it installs, FlashPlayerControl-Ruffle.dll,
 #                           next to it as the patch expects, and the player's
 #                           THIRD-PARTY-NOTICES.txt (Ruffle and its crates)
-#   icq-72-patch.exe        the ICQ 7.2 patch (tools/icq72/patch), one exe
+#   icq-72-patch.zip        the ICQ 7.2 patch with the same player and
+#                           notices next to it as the ICQ 6.5 one
 #   icq-revival-miranda.zip Miranda NG: Miranda32/ and Miranda64/, each laid
 #                           out like a Miranda folder (Plugins, Libs) to be
 #                           copied over one; Libs also holds the engine's
@@ -178,8 +179,10 @@ def main():
         add(z, src('tools', 'icq65', 'patch', 'FlashPlayerControl-Ruffle.dll'), 'FlashPlayerControl-Ruffle.dll')
         add(z, src(*NOTICES), 'THIRD-PARTY-NOTICES.txt')
 
-    shutil.copyfile(src('tools', 'icq72', 'patch', 'ICQ-7.2-Patch.exe'),
-                    os.path.join(out, 'icq-72-patch.exe'))
+    with zipfile.ZipFile(os.path.join(out, 'icq-72-patch.zip'), 'w') as z:
+        add(z, src('tools', 'icq72', 'patch', 'ICQ-7.2-Patch.exe'), 'ICQ-7.2-Patch.exe')
+        add(z, src('tools', 'icq72', 'patch', 'FlashPlayerControl-Ruffle.dll'), 'FlashPlayerControl-Ruffle.dll')
+        add(z, src(*NOTICES), 'THIRD-PARTY-NOTICES.txt')
 
     with zipfile.ZipFile(os.path.join(out, 'icq-revival-miranda.zip'), 'w') as z:
         add_text(z, MIRANDA_README, 'README.txt')
