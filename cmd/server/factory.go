@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -74,7 +75,8 @@ func MakeCommonDeps() (Container, error) {
 		return c, fmt.Errorf("unable to create feedbag store: %s", err.Error())
 	}
 
-	c.hmacCookieBaker, err = state.NewHMACCookieBaker()
+	// The key lives next to the database, so the tokens outlive a restart.
+	c.hmacCookieBaker, err = state.NewPersistentHMACCookieBaker(filepath.Join(filepath.Dir(c.cfg.DBPath), "cookie.key"))
 	if err != nil {
 		return c, fmt.Errorf("unable to create HMAC cookie baker: %s", err.Error())
 	}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/mk6i/open-oscar-server/wire"
@@ -39,9 +40,57 @@ type ServerCookie struct {
 
 func NewHMACCookieBaker() (HMACCookieBaker, error) {
 	cb := HMACCookieBaker{}
-	cb.key = make([]byte, 32)
+	cb.key = make([]byte, cookieKeyLen)
 	if _, err := io.ReadFull(rand.Reader, cb.key); err != nil {
 		return cb, fmt.Errorf("cannot generate random HMAC key: %w", err)
+	}
+	return cb, nil
+}
+
+// cookieKeyLen is the length of the key HMACCookieBaker signs tokens with.
+const cookieKeyLen = 32
+
+// NewPersistentHMACCookieBaker returns a baker whose key is kept in the file
+// at path, so the tokens it issues outlive a restart of the server - ICQ 7
+// keeps one for a year and signs in with it. The file is made, readable by
+// its owner only, the first time; one of the wrong length is replaced.
+func NewPersistentHMACCookieBaker(path string) (HMACCookieBaker, error) {
+	key, err := os.ReadFile(path)
+	if err == nil && len(key) == cookieKeyLen {
+		return HMACCookieBaker{key: key}, nil
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return HMACCookieBaker{}, fmt.Errorf("cannot read HMAC key: %w", err)
+	}
+	cb, err := NewHMACCookieBaker()
+	if err != nil {
+		return cb, err
+	}
+	if len(key) > 0 {
+		// the wrong length: replaced
+		if err := os.WriteFile(path, cb.key, 0o600); err != nil {
+			return cb, fmt.Errorf("cannot save HMAC key: %w", err)
+		}
+		return cb, nil
+	}
+	// Made only if still missing: another server process sharing the
+	// database may have made it meanwhile, and then its key is the one.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		if key, err = os.ReadFile(path); err == nil && len(key) == cookieKeyLen {
+			return HMACCookieBaker{key: key}, nil
+		}
+		return cb, fmt.Errorf("cannot read HMAC key made by another process: %v", err)
+	}
+	if err != nil {
+		return cb, fmt.Errorf("cannot save HMAC key: %w", err)
+	}
+	_, werr := f.Write(cb.key)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return cb, fmt.Errorf("cannot save HMAC key: %w", werr)
 	}
 	return cb, nil
 }
