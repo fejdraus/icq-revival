@@ -50,7 +50,8 @@ func TestHasFlashAvatarCaps(t *testing.T) {
 		want bool
 	}{
 		{name: "ICQ 6", caps: [][16]byte{CapUTF8Messages, CapICQTZers, CapICQ6HTML}, want: true},
-		{name: "tZers alone, as ICQ 5.1 sends", caps: [][16]byte{CapICQTZers}, want: false},
+		{name: "tZers with server relay, as ICQ 5.1 sends", caps: [][16]byte{CapICQCh2Extended, CapICQTZers}, want: false},
+		{name: "ICQ 7: tZers without server relay", caps: [][16]byte{CapSmartCaps, CapICQTZers, CapHostStatusTextAware}, want: true},
 		{name: "ICQ 6 HTML alone", caps: [][16]byte{CapICQ6HTML}, want: false},
 		{name: "devils, as Miranda sends", caps: [][16]byte{devils, CapUTF8Messages, CapXHTMLIM}, want: false},
 		{name: "Miranda with the IcqRevivalFlash plugin", caps: [][16]byte{devils, CapUTF8Messages, CapXHTMLIM, CapFlashAvatarPlayer}, want: true},
