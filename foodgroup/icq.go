@@ -435,6 +435,10 @@ func (s *ICQService) OfflineMsgReq(ctx context.Context, inFrame wire.SNACFrame, 
 					if err != nil {
 						return fmt.Errorf("unmarshalling offline message: %w", err)
 					}
+					if form, doc := parseTzer(msgIn.Message); form == tzerIM {
+						// an ICQ offline message carries text only
+						msgText = tzerText(doc)
+					}
 					reply.MsgType = wire.ICBMExtendedMsgTypePlain
 					reply.Message = msgText
 				}

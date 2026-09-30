@@ -178,14 +178,13 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 	}
 
 	relayTLVs := inBody.TLVList
-	if text, isTzer := tzerText(inBody, recipSess); isTzer {
-		// a tZer the recipient can't play arrives as a message saying so
-		frags, err := textFragments(text)
-		if err != nil {
-			return nil, fmt.Errorf("textFragments: %w", err)
-		}
-		clientIM.ChannelID = wire.ICBMChannelIM
-		clientIM.Append(wire.NewTLVBE(wire.ICBMTLVAOLIMData, frags))
+	if channel, tlv, rebuilt, err := tzerForRecipient(inBody, recipSess); err != nil {
+		return nil, fmt.Errorf("tzerForRecipient: %w", err)
+	} else if rebuilt {
+		// a tZer goes in the form the recipient plays, or as a message saying
+		// what it was
+		clientIM.ChannelID = channel
+		clientIM.Append(tlv)
 		relayTLVs = nil
 	}
 
@@ -224,7 +223,8 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 		clientIM.Append(tlv)
 	}
 
-	if instance.TypingEventsEnabled() && (inBody.ChannelID == wire.ICBMChannelIM || inBody.ChannelID == wire.ICBMChannelMIME) {
+	if instance.TypingEventsEnabled() && clientIM.ChannelID == inBody.ChannelID &&
+		(inBody.ChannelID == wire.ICBMChannelIM || inBody.ChannelID == wire.ICBMChannelMIME) {
 		// tell the receiver that we want to receive their typing events
 		clientIM.Append(wire.NewTLVBE(wire.ICBMTLVWantEvents, []byte{}))
 	}
@@ -630,7 +630,16 @@ func (s *ICBMService) OfflineRetrieve(ctx context.Context, instance *state.Sessi
 			TLVRestBlock: wire.TLVRestBlock{},
 		}
 
-		for _, tlv := range event.Message.TLVList {
+		storedTLVs := event.Message.TLVList
+		// a stored tZer goes in the form the recipient plays, as a live one does
+		if channel, tlv, rebuilt, err := tzerForRecipient(event.Message, instance.Session()); err != nil {
+			return wire.SNACMessage{}, fmt.Errorf("tzerForRecipient: %w", err)
+		} else if rebuilt {
+			clientIM.ChannelID = channel
+			storedTLVs = wire.TLVList{tlv}
+		}
+
+		for _, tlv := range storedTLVs {
 			// The stored SNAC is whatever the sender sent. A send time it carries
 			// is not ours, and TLVList lookups return the first match, so it would
 			// shadow the stamp appended below.

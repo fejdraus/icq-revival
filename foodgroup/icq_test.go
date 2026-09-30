@@ -2635,6 +2635,91 @@ func TestICQService_OfflineMsgReq(t *testing.T) {
 			},
 			wantICBMSenderCalls: 0,
 		},
+		{
+			name:     "send an offline tZer from ICQ 7.2 as text",
+			seq:      1,
+			instance: newTestInstance("11111111", sessOptUIN(11111111)),
+			mockParams: mockParams{
+				offlineMessageManagerParams: offlineMessageManagerParams{
+					retrieveMessagesParams: retrieveMessagesParams{
+						{
+							recipIn: state.NewIdentScreenName("11111111"),
+							messagesOut: []state.OfflineMessage{
+								{
+									Sender:    state.NewIdentScreenName("22222222"),
+									Recipient: state.NewIdentScreenName("11111111"),
+									Message:   tzerIMMessage(t, tzerDoc),
+									Sent:      time.Date(2024, time.August, 2, 12, 5, 0, 0, time.UTC),
+								},
+							},
+						},
+					},
+				},
+				messageRelayerParams: messageRelayerParams{
+					relayToSelfParams: relayToSelfParams{
+						{
+							screenName: state.NewIdentScreenName("11111111"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.ICQ,
+									SubGroup:  wire.ICQDBReply,
+									Flags:     wire.SNACFlagsMoreToCome,
+									RequestID: 1234,
+								},
+								Body: wire.SNAC_0x15_0x02_DBReply{
+									TLVRestBlock: wire.TLVRestBlock{
+										TLVList: wire.TLVList{
+											wire.NewTLVBE(wire.ICQTLVTagsMetadata, wire.ICQMessageReplyEnvelope{
+												Message: wire.ICQ_0x0041_DBQueryOfflineMsgReply{
+													ICQMetadata: wire.ICQMetadata{
+														UIN:     11111111,
+														ReqType: wire.ICQDBQueryOfflineMsgReply,
+														Seq:     1,
+													},
+													SenderUIN: 22222222,
+													Year:      uint16(2024),
+													Month:     uint8(8),
+													Day:       uint8(2),
+													Hour:      uint8(12),
+													Minute:    uint8(5),
+													MsgType:   wire.ICBMExtendedMsgTypePlain,
+													Message:   "tZer: Вас не чути",
+												},
+											}),
+										},
+									},
+								},
+							},
+						},
+						{
+							screenName: state.NewIdentScreenName("11111111"),
+							message: wire.SNACMessage{
+								Frame: wire.SNACFrame{
+									FoodGroup: wire.ICQ,
+									SubGroup:  wire.ICQDBReply,
+									RequestID: 1234,
+								},
+								Body: wire.SNAC_0x15_0x02_DBReply{
+									TLVRestBlock: wire.TLVRestBlock{
+										TLVList: wire.TLVList{
+											wire.NewTLVBE(wire.ICQTLVTagsMetadata, wire.ICQMessageReplyEnvelope{
+												Message: wire.ICQ_0x0042_DBQueryOfflineMsgReplyLast{
+													ICQMetadata: wire.ICQMetadata{
+														UIN:     11111111,
+														ReqType: wire.ICQDBQueryOfflineMsgReplyLast,
+														Seq:     1,
+													},
+												},
+											}),
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

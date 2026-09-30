@@ -1015,9 +1015,28 @@ func sessOptAvatarItem(item wire.BARTID) func(instance *state.SessionInstance) {
 }
 
 // sessOptICQ6 makes the instance an ICQ 6 client, one that may be sent Flash
-// avatar and big icon items: it announces wire.FlashAvatarCaps.
+// avatar and big icon items: it announces wire.FlashAvatarCaps. Like ICQ 6.5,
+// it takes ICQ server relay (channel 2) messages.
 func sessOptICQ6(instance *state.SessionInstance) {
-	instance.SetCaps([][16]byte{wire.CapICQTZers, wire.CapICQ6HTML, wire.CapUTF8Messages})
+	instance.SetCaps([][16]byte{wire.CapICQTZers, wire.CapICQ6HTML, wire.CapUTF8Messages, wire.CapICQCh2Extended})
+}
+
+// sessOptICQ7 makes the instance an ICQ 7.2 client, with the capabilities it
+// announces: wire.CapICQTZers and wire.CapSmartCaps, but neither
+// wire.CapICQ6HTML nor wire.CapICQCh2Extended.
+func sessOptICQ7(instance *state.SessionInstance) {
+	instance.SetCaps([][16]byte{
+		wire.CapHostStatusTextAware,
+		wire.CapSmartCaps,
+		wire.CapFileTransfer,
+		wire.CapRTCAudio,
+		wire.CapICQTZers,
+		wire.CapUTF8Messages,
+		wire.CapShortCaps,
+		wire.CapSupportICQ,
+		wire.CapBuddyListTransfer,
+		wire.CapAvatarService,
+	})
 }
 
 // sessOptMirandaFlashAvatars makes the instance Miranda's ICQ plugin with
