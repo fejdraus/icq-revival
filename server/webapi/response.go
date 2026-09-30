@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -174,7 +175,7 @@ func SendResponse(w http.ResponseWriter, r *http.Request, data any, logger *slog
 
 	// Check for XML format
 	if format == "xml" {
-		sendXML(w, data, logger)
+		sendXML(w, r, data, logger)
 		return
 	}
 
@@ -249,7 +250,7 @@ func sendErrorEnvelope(w http.ResponseWriter, r *http.Request, httpStatus int, r
 
 	switch {
 	case format == "xml" || strings.Contains(contentType, "xml"):
-		sendXMLError(w, httpStatus, resp)
+		sendXMLError(w, r, httpStatus, resp)
 	case format == "amf" || format == "amf3" || strings.Contains(contentType, "amf"):
 		sendAMFError(w, httpStatus, resp)
 	default:
@@ -303,8 +304,40 @@ func sendJSONError(w http.ResponseWriter, httpStatus int, resp ErrorResponse) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// The XML namespaces of the Web API envelopes: the authentication methods
+// answer in one, everything else in the other.
+const (
+	xmlnsLogin = "https://api.login.aol.com"
+	xmlnsAIM   = "http://developer.aim.com/xsd/aim.xsd"
+)
+
+// xmlNamespace returns the namespace the <response> root carries for r. The AIM
+// client core (ICQ 7) matches each element by namespace as well as by name, and
+// looks for statusCode and data in the namespace the root is meant to declare.
+// Without it the reply reads as having no status at all.
+func xmlNamespace(r *http.Request) string {
+	if r != nil && strings.HasPrefix(r.URL.Path, "/auth/") {
+		return xmlnsLogin
+	}
+	return xmlnsAIM
+}
+
+// withXMLNamespace declares ns as the default namespace on the <response> root
+// that the envelopes' MarshalXML renders, which the elements inside inherit.
+func withXMLNamespace(xmlData []byte, ns string) []byte {
+	const root = "<response>"
+	if !bytes.HasPrefix(xmlData, []byte(root)) {
+		return xmlData
+	}
+	out := make([]byte, 0, len(xmlData)+len(ns)+10)
+	out = append(out, `<response xmlns="`...)
+	out = append(out, ns...)
+	out = append(out, `">`...)
+	return append(out, xmlData[len(root):]...)
+}
+
 // sendXMLError sends an XML error response.
-func sendXMLError(w http.ResponseWriter, httpStatus int, resp ErrorResponse) {
+func sendXMLError(w http.ResponseWriter, r *http.Request, httpStatus int, resp ErrorResponse) {
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 	w.WriteHeader(httpStatus)
 
@@ -315,6 +348,7 @@ func sendXMLError(w http.ResponseWriter, httpStatus int, resp ErrorResponse) {
 		http.Error(w, resp.Response.StatusText, httpStatus)
 		return
 	}
+	xmlData = withXMLNamespace(xmlData, xmlNamespace(r))
 
 	xmlOutput := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>%s`, xmlData)
 	_, _ = w.Write([]byte(xmlOutput))
@@ -339,7 +373,7 @@ func sendJSON(w http.ResponseWriter, data any, logger *slog.Logger) {
 }
 
 // sendXML sends an XML response.
-func sendXML(w http.ResponseWriter, data any, logger *slog.Logger) {
+func sendXML(w http.ResponseWriter, r *http.Request, data any, logger *slog.Logger) {
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 
 	// Every payload is a struct whose xml tags name its elements, and the
@@ -349,9 +383,10 @@ func sendXML(w http.ResponseWriter, data any, logger *slog.Logger) {
 		if logger != nil {
 			logger.Error("failed to marshal XML response", "err", err.Error())
 		}
-		sendXMLError(w, http.StatusInternalServerError, newErrorResponse(http.StatusInternalServerError, "internal server error"))
+		sendXMLError(w, r, http.StatusInternalServerError, newErrorResponse(http.StatusInternalServerError, "internal server error"))
 		return
 	}
+	xmlData = withXMLNamespace(xmlData, xmlNamespace(r))
 
 	// Write XML declaration and data
 	xmlOutput := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>%s`, xmlData)

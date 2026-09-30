@@ -117,6 +117,7 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, session
 		mux.HandleFunc("GET /{$}", handler.GetHelloWorldHandler)
 		mux.Handle("GET /crossdomain.xml", crossDomainHandler)
 
+		mux.HandleFunc("POST /auth/getChallenge", authHandler.GetChallenge)
 		mux.HandleFunc("POST /auth/clientLogin", authHandler.ClientLogin)
 		mux.HandleFunc("GET /auth/getToken", authHandler.GetToken)
 		mux.HandleFunc("GET /auth/getInfo", authHandler.GetInfo)

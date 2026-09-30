@@ -24,11 +24,15 @@ import (
 // testAuthService implements AuthService for the auth-handler tests (only
 // FLAPLogin and CrackCookie are exercised).
 type testAuthService struct {
-	flapLogin   func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
-	crackCookie func(authCookie []byte) (state.ServerCookie, time.Time, error)
+	flapLogin     func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error)
+	crackCookie   func(authCookie []byte) (state.ServerCookie, time.Time, error)
+	bucpChallenge func(ctx context.Context, bodyIn wire.SNAC_0x17_0x06_BUCPChallengeRequest) (wire.SNACMessage, error)
 }
 
 func (t *testAuthService) BUCPChallenge(ctx context.Context, bodyIn wire.SNAC_0x17_0x06_BUCPChallengeRequest, newUUID func() uuid.UUID) (wire.SNACMessage, error) {
+	if t.bucpChallenge != nil {
+		return t.bucpChallenge(ctx, bodyIn)
+	}
 	return wire.SNACMessage{}, nil
 }
 
@@ -372,17 +376,6 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			},
 		},
 		{
-			name:               "Error_TokenTypeBeyondMax",
-			method:             "POST",
-			contentType:        "application/x-www-form-urlencoded",
-			body:               "s=testuser&pwd=testpass&tokenType=31536001",
-			auth:               &testAuthService{},
-			expectedStatusCode: http.StatusBadRequest,
-			checkResponse: func(t *testing.T, body string) {
-				assert.Contains(t, body, `"statusCode":462`)
-			},
-		},
-		{
 			// The spec puts these in the body, and a password in a URL is one
 			// that has already been logged. Credentials in the query string are
 			// not credentials at all.
@@ -547,6 +540,12 @@ func TestAuthHandler_ClientLogin_SendsClientIdentity(t *testing.T) {
 			expectedClientID: "dev123",
 		},
 		{
+			// The AIM client core (ICQ 7) sends its key as "k".
+			name:             "KNamesTheClient",
+			body:             "s=testuser&pwd=testpass&k=gu19PNBblQjCdbMU",
+			expectedClientID: "gu19PNBblQjCdbMU",
+		},
+		{
 			name:             "MissingDevIDFallsBack",
 			body:             "s=testuser&pwd=testpass",
 			expectedClientID: "WebAIM",
@@ -646,9 +645,11 @@ func TestTokenTypeTTL(t *testing.T) {
 		{name: "one second", tokenType: "1", want: time.Second},
 		{name: "exactly the max", tokenType: "31536000", want: longTermTTL},
 		{name: "zero seconds", tokenType: "0", wantErr: true},
-		{name: "one past the max", tokenType: "31536001", wantErr: true},
+		{name: "one past the max", tokenType: "31536001", want: longTermTTL},
+		{name: "ICQ 7 longtermtoken", tokenType: "315569260", want: longTermTTL},
 		// large enough that scaling to a Duration would overflow int64
-		{name: "overflowing seconds", tokenType: "99999999999999999", wantErr: true},
+		{name: "overflowing seconds", tokenType: "99999999999999999", want: longTermTTL},
+		{name: "beyond uint64", tokenType: "99999999999999999999", wantErr: true},
 		{name: "negative", tokenType: "-1", wantErr: true},
 		{name: "unrecognized word", tokenType: "forever", wantErr: true},
 		{name: "float", tokenType: "60.5", wantErr: true},

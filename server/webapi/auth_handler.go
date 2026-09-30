@@ -66,6 +66,8 @@ type ClientLoginData struct {
 	SessionSecret  string    `json:"sessionSecret" xml:"sessionSecret"`
 	HostTime       int64     `json:"hostTime" xml:"hostTime"`
 	TokenExpiresIn int       `json:"tokenExpiresIn" xml:"tokenExpiresIn"`
+	// DHServerPublic answers a client's dh_consumer_public; see dhServerPublic.
+	DHServerPublic string `json:"dhServerPublic,omitempty" xml:"dhServerPublic,omitempty"`
 }
 
 // RedirectData sends an unauthenticated client to the login page.
@@ -158,11 +160,15 @@ func tokenTypeTTL(tokenType string) (time.Duration, error) {
 	if err != nil {
 		return 0, fmt.Errorf("tokenType %q is not shortterm, longterm, or a count of seconds", tokenType)
 	}
-	// bound the count before scaling it, so an absurd value is an error rather
-	// than an overflowed duration
-	maxSecs := uint64(longTermTTL / time.Second)
-	if secs == 0 || secs > maxSecs {
-		return 0, fmt.Errorf("tokenType %q is outside the range 1-%d seconds", tokenType, maxSecs)
+	if secs == 0 {
+		return 0, fmt.Errorf("tokenType %q is not a positive count of seconds", tokenType)
+	}
+	// A longer lifetime is granted as longTermTTL rather than refused: the AIM
+	// client core (ICQ 7) asks for its aimcc.connect.longtermtoken, ten years,
+	// when the password is saved. The count is bounded before scaling it, so an
+	// absurd value cannot overflow the duration.
+	if secs > uint64(longTermTTL/time.Second) {
+		return longTermTTL, nil
 	}
 	return time.Duration(secs) * time.Second, nil
 }
@@ -175,9 +181,22 @@ var errInvalidCredentials = errors.New("invalid screen name or password")
 // by the OSCAR auth service. It returns errInvalidCredentials when the credentials are
 // rejected.
 func (h *AuthHandler) authenticateCredentials(ctx context.Context, username, password, clientID string, ttl time.Duration) ([]byte, error) {
+	return h.authenticate(ctx, username, wire.NewTLVBE(wire.LoginTLVTagsPlaintextPassword, password), clientID, ttl)
+}
+
+// authenticateDigest is authenticateCredentials for a client that sends the MD5
+// digest getChallenge asked for instead of the password: that digest is the
+// BUCP password hash, and is checked as one.
+func (h *AuthHandler) authenticateDigest(ctx context.Context, username string, digest []byte, clientID string, ttl time.Duration) ([]byte, error) {
+	return h.authenticate(ctx, username, wire.NewTLVBE(wire.LoginTLVTagsPasswordHash, digest), clientID, ttl)
+}
+
+// authenticate signs the account on with the given password TLV and returns the
+// auth cookie minted by the OSCAR auth service.
+func (h *AuthHandler) authenticate(ctx context.Context, username string, passwordTLV wire.TLV, clientID string, ttl time.Duration) ([]byte, error) {
 	signonFrame := wire.FLAPSignonFrame{}
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsScreenName, username))
-	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsPlaintextPassword, password))
+	signonFrame.Append(passwordTLV)
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsClientIdentity, clientID))
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsMultiConnFlags, wire.MultiConnFlagsRecentClient))
 	signonFrame.Append(wire.NewTLVBE(wire.LoginTLVTagsTokenTTL, uint32(ttl.Seconds())))
@@ -252,13 +271,25 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		password = r.PostFormValue("password")
 	}
 	devID := r.PostFormValue("devId")
+	if devID == "" {
+		// The AIM client core (ICQ 7) names its key "k", as on every other call.
+		devID = r.PostFormValue("k")
+	}
 	tokenType := r.PostFormValue("tokenType")
 
+	// The form without the password: clients that sign in over TLS send it
+	// in the clear, the others a hash of it, and neither belongs in a log.
+	logged := url.Values{}
+	for k, v := range r.Form {
+		if k != "pwd" {
+			logged[k] = v
+		}
+	}
 	h.Logger.Debug("clientLogin attempt",
 		"username", username,
 		"has_password", password != "",
 		"devId", devID,
-		"form", r.Form)
+		"form", logged)
 
 	// Validate required fields
 	if username == "" || password == "" {
@@ -273,7 +304,19 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authCookie, err := h.authenticateCredentials(r.Context(), username, password, clientIDForDevID(devID), ttl)
+	var authCookie []byte
+	if parseBoolParam(r.PostFormValue("digest")) {
+		// pwd is the digest of a getChallenge reply, not the password.
+		digest, derr := passwordDigest(password)
+		if derr != nil {
+			h.Logger.DebugContext(r.Context(), "clientLogin rejected digest", "username", username, "error", derr)
+			SendErrorDetail(w, r, http.StatusBadRequest, statusParameterError, 0, derr.Error())
+			return
+		}
+		authCookie, err = h.authenticateDigest(r.Context(), username, digest, clientIDForDevID(devID), ttl)
+	} else {
+		authCookie, err = h.authenticateCredentials(r.Context(), username, password, clientIDForDevID(devID), ttl)
+	}
 	if err != nil {
 		h.Logger.DebugContext(r.Context(), "clientLogin failed", "username", username, "error", err)
 		if errors.Is(err, errInvalidCredentials) {
@@ -296,7 +339,17 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build response
+	// A client without TLS keys its session with Diffie-Hellman instead of the
+	// password. Should the exchange fail, dhServerPublic is left out and the
+	// client carries on without a session key, which nothing here checks.
+	var serverPublic string
+	if consumer := r.PostFormValue("dh_consumer_public"); consumer != "" {
+		serverPublic, err = dhServerPublic(r.PostFormValue("dh_modulus"), r.PostFormValue("dh_base"), consumer)
+		if err != nil {
+			h.Logger.DebugContext(r.Context(), "clientLogin Diffie-Hellman failed", "username", username, "error", err)
+			serverPublic = ""
+		}
+	}
 
 	// Send response in requested format (JSON, JSONP, XML, or AMF)
 	SendOK(w, r, &ClientLoginData{
@@ -310,6 +363,7 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		HostTime:      time.Now().Unix(),
 		// A number here where token.expiresIn is a string, as the client expects.
 		TokenExpiresIn: int(ttl.Seconds()),
+		DHServerPublic: serverPublic,
 	}, h.Logger)
 
 	h.Logger.Info("user authenticated successfully",

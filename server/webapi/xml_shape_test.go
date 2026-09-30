@@ -34,13 +34,15 @@ func renderXML(t *testing.T, data any) string {
 
 // The spec renders the envelope as a flat <response> root carrying statusCode,
 // statusText, requestId and data — not the "response"-keyed nesting JSON uses.
+// The root declares the AIM namespace, which a namespace-aware client matches
+// every element against.
 func TestXMLEnvelopeMatchesSpec(t *testing.T) {
 	body := renderXML(t, struct {
 		AimSID string `xml:"aimsid"`
 	}{AimSID: "opaquedata"})
 
 	assert.Contains(t, body, `<?xml version="1.0" encoding="UTF-8"?>`)
-	assert.Contains(t, body, "<response><statusCode>200</statusCode><statusText>Ok</statusText>"+
+	assert.Contains(t, body, `<response xmlns="http://developer.aim.com/xsd/aim.xsd"><statusCode>200</statusCode><statusText>Ok</statusText>`+
 		"<requestId>123</requestId><data><aimsid>opaquedata</aimsid></data></response>")
 }
 
