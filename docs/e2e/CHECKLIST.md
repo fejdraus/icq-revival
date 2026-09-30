@@ -118,7 +118,24 @@ client-side layer can.
 | 8.5 | 0392 Consistent Color Generation | Colouring fingerprints so people compare them more reliably. | Management page. | stage 5 |
 | 8.6 | 0045 MUC, 0313 MAM | Group chats; server archive and history sync. | Only if groups or history sync are ever in scope. | open |
 
-## 9. Not covered (same as OMEMO)
+## 9. Towards Signal level - after the planned stages
+
+What the design takes: Signal's trust model (one account key signs every device;
+one safety number per pair of accounts; a last-resort key so a drained pool cannot
+block a conversation), OMEMO's rules of behaviour and SCE's envelope, and Matrix's
+vodozemac for the ratchet. What Signal has and the planned stages (1-5) do not:
+
+| # | Gap | What it takes | Status |
+|---|---|---|---|
+| 9.1 | Post-quantum key agreement (PQXDH: X25519 + ML-KEM). | vodozemac does not do it: our own key agreement from audited primitives (e.g. RustCrypto `ml-kem`) in front of the Double Ratchet, as container scheme 2 next to scheme 1; post-quantum one-time keys in the key directory (API extension). | open - after stage 5 |
+| 9.2 | Post-quantum ratchet (Signal's newer triple ratchet). | Follows 9.1; a separate step. | open - after 9.1 |
+| 9.3 | Metadata hiding (Signal's sealed sender). | The server sees who writes to whom and when. Hiding the sender from the server needs its own delivery scheme; OSCAR routes by screen name. | open - research |
+| 9.4 | Transport security for the old clients (7.2 above). | TLS 1.3 in a client-side layer; until then an active attacker on the path remains. | open |
+| 9.5 | Group chats. | Membership and per-member device keys (8.6). | open - if ever |
+| 9.6 | Device linking convenience (Signal: scan a QR code). | **Owner's decision: for the first versions the management page in an ICQ Xtra window plus entering a short code is good enough.** A QR flow can come later. | decided for v1 |
+| 9.7 | Independent review. | Each part is proven, the combination is ours: have the scheme and the code reviewed independently before calling it Signal-grade to users. | open - before release |
+
+## 10. Not covered (same as OMEMO)
 
 - Metadata and traffic analysis: the server still sees who talks to whom and when.
 - A device an attacker controls permanently.
