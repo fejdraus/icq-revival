@@ -144,9 +144,20 @@ namespace IcqRevival.Patch
         // Some things may not be removed although they look removable: the ad
         // element of the message window is looked up by the code, and without it
         // the emoticon and formatting panels stop opening, so it is given no size
-        // instead; the empty band at the foot of that window holds the same
-        // panels, and the buttons above it sit on a spacer that keeps them out of
-        // its way.
+        // instead.
+        //
+        // The band at the foot of that window is the banner's slot, and the
+        // same panels open in it: idBottomBox shows either idFeaturesArea or
+        // the banner, never both (the code swaps them, MUIMessage.dll
+        // 0x33D65A50). Its container floats over the foot of the window
+        // (position="fixed", 68 high), and a nameless 68-high spacer under
+        // the buttons keeps them out of its way, so the band stays when no
+        // panel is open. Taken off the ads, the spacer is collapsed and the
+        // container is put back in line with no size of its own: it is as
+        // high as what it shows - nothing, or the panel's area (minHeight 72,
+        // held to the old 68) - and the history above gives way to it. The
+        // banner container, left in view by the code whenever no panel is
+        // open, and the separator beside it lose their height as well.
 
         enum EditKind { Collapse, DropLine, Replace }
 
@@ -206,6 +217,22 @@ namespace IcqRevival.Patch
                 "<part name=\"idBottomBannerContainer\" flex=\"1\" hAlign=\"center\" fill=\"url(#image.MessageDlgXtra.window.background)\"",
                 "<part name=\"idBottomBannerContainer\" flex=\"1\" hAlign=\"center\"",
                 "the white frame at the foot of the message window"),
+            Replace(Content + @"\MUIMessage\MsgSessionPanel.box",
+                "<box:vbox s:height=\"68\" s:minHeight=\"68\" s:paddingTop=\"4\" />",
+                "<box:vbox s:height=\"68\" s:minHeight=\"68\" s:paddingTop=\"4\" collapsed=\"true\"/>",
+                "the empty band at the foot of the message window"),
+            Replace(Theme + @"\MUIMessage\MsgSessionDlg.style.box",
+                "<part name=\"idBottomBoxContainer\" flex=\"1\" height=\"68\" minHeight=\"68\" maxHeight=\"68\" position=\"fixed\" bottom=\"0\" right=\"0\" left=\"0\" />",
+                "<part name=\"idBottomBoxContainer\" maxHeight=\"68\" />",
+                "the empty band at the foot of the message window"),
+            Replace(Theme + @"\MUIMessage\MsgSessionDlg.style.box",
+                "<part name=\"idAdAvSeparator\" height=\"30\" width=\"76\" />",
+                "<part name=\"idAdAvSeparator\" height=\"0\" width=\"76\" />",
+                "the empty band at the foot of the message window"),
+            Replace(Theme + @"\MUIMessage\MsgSessionDlg.style.box",
+                " height=\"72\" padding=\"3 0 0 0\" margin=\"0 7\"/>",
+                " height=\"0\" padding=\"0\" margin=\"0 7\"/>",
+                "the empty band at the foot of the message window"),
             Replace(Theme + @"\MUICore\MainDlgPanelOwner.style.box",
                 "<style id=\"adBoxStyle\" width=\"120\" height=\"90\" />",
                 "<style id=\"adBoxStyle\" width=\"0\" height=\"0\" />",
@@ -1145,7 +1172,7 @@ namespace IcqRevival.Patch
             j.Add("tzers", "Services that are gone", "tZers: the button, the teasers, the option and the sound");
             j.Add("sms", "Services that are gone", "SMS and phone: buttons, icons, menus, options, sounds, filter");
             j.Add("zlango", "Services that are gone", "the Zlango add-on and its message window buttons");
-            j.Add("ads", "Advertising", "advertising: the ad slots and boxes, the banner and its frame");
+            j.Add("ads", "Advertising", "advertising: the ad slots and boxes, the banner, its frame and the empty band it leaves");
             j.Add("fix", "Fixes", "the cut-off \"Advanced\" preferences group; \"Change my picture\" lost after the Xtraz list reloads");
             j.Add("links", "Your server", "the pages the client opens point at your server");
             j.Add("sign-in", "Your server", "automatic connection and voice calls use your server");
@@ -1183,6 +1210,7 @@ namespace IcqRevival.Patch
             j.Assign("the banner under the message window", "ads");
             j.Assign("the ad box of the message window", "ads");
             j.Assign("the white frame at the foot of the message window", "ads");
+            j.Assign("the empty band at the foot of the message window", "ads");
             j.Assign("the ad box of the contact list", "ads");
             j.Assign("advertising slots", "ads");
             j.Assign("the cut-off bottom of the \"Advanced\" group", "fix");
