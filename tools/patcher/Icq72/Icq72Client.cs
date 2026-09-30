@@ -96,6 +96,7 @@ namespace IcqRevival.Patch
                 "A4BDD3630F4DA954B2E5E0765C9042B68498D3150CCE800EF6BF0CAF88F00285",
                 "0F8A8710088F173924381C385A76D8980EE1C772DCF48CF92610A7449FCA7E84" } },
             { @"imApp\content\MUICore\ContactList\MiniUserProfileDlg.gadgets.box", new[] { "BFF7BD00E07F0CD6C3842EAC048F430C3C4C67D7AAC7F4C5AE12A1C971A8A04A" } },
+            { @"imApp\content\MUICore\Preferences\OPrefsPanelAdvanced.box", new[] { "54F27DB04DD0FE24D08C775B7A0ADBD1791424F1B98D9CA579809DAF57475C95" } },
             { @"imApp\content\MUICore\Preferences\OPrefsPanelNotifications.box", new[] { "F9C3BA5A0C8B51F020057E6BFB8CC0D6C2DFA0C2E41BB0E409F4ED2A0D70FB08" } },
             { @"imApp\content\MUICore\Preferences\OPrefsPanelHistory.box", new[] { "D01350E6CE40DDCD6DFEA9E0EFD1DF3146379D5595C4C015F4DDBA5042FC818F" } },
             { @"imApp\content\MUICore\Preferences\OPrefsPanelSkin.box", new[] { "5E968717120B8FFBD1F0779CC64481F3D3D48A0221FA5F36CC7D27FCF227DD8F" } },
@@ -276,6 +277,12 @@ namespace IcqRevival.Patch
             On(Content + @"\MUICore\Preferences\OPrefsPanelNotifications.box", "the \"Xtraz invitation\" option", Collapse("idXtrazInvitation")),
             On(Content + @"\MUICore\Preferences\OPrefsPanelHistory.box", "the \"save Xtraz invitations\" option", Collapse("idSaveXtrazInvitations")),
             On(Content + @"\MUICore\HistorySearchDlg.box", "the Xtraz filter of the history search", Collapse("idMsgTypeXtrazInvitation")),
+
+            // Zlango, writing with its picture words. The message window's box
+            // for it is filled with its buttons by the code, so it stays -
+            // collapsed.
+            On(MsgPanel, "the Zlango buttons of the message window", Collapse("idZlangoBox")),
+            On(Content + @"\MUICore\Preferences\OPrefsPanelAdvanced.box", "the \"Always convert text to Zlango\" option", Collapse("idAutoConvertTextToZlango")),
 
             // The tab strip of the main window: the Lifestream and "My box"
             // (mail) tabs are not made, and the strip - with the contacts tab
@@ -788,6 +795,7 @@ namespace IcqRevival.Patch
             j.Add("sms", "Services that are gone", "SMS: the tab, the buttons, the menu item, the sounds and the filter");
             j.Add("games", "Services that are gone", "the games button of the main window");
             j.Add("xtraz", "Services that are gone", "Xtraz: the Zones (\"Z\") button, menus, options and filter");
+            j.Add("zlango", "Services that are gone", "Zlango: writing with its picture words - the message window buttons and the option");
             j.Add("tabs", "Services that are gone", "the tab strip of the main window, with the Lifestream and \"My box\" mail tabs: only the contact list stays");
             j.Add("ads", "Advertising", "advertising: the ad slots, boxes and the empty bands they leave");
             j.Add("fix", "Fixes", "the AOL Diagnostics module that crashes ICQ 7 (tbdiag.dll)");
@@ -798,6 +806,8 @@ namespace IcqRevival.Patch
             j.Add("tzers-player", "Your server", "tZers and Flash avatars without Flash: our player (" + PlayerShipped + " next to this patch)", off: true);
 
             j.Assign("the SMS tab of the main window", "sms");
+            j.Assign("the Zlango buttons of the message window", "zlango");
+            j.Assign("the \"Always convert text to Zlango\" option", "zlango");
             j.Assign("the SMS tab of the message window", "sms");
             j.Assign("the \"SMS\" item of the contact menu", "sms");
             j.Assign("the SMS button of the contact card", "sms");

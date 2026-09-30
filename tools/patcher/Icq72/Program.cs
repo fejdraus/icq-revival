@@ -8,7 +8,7 @@
 // Without arguments the window opens. For a scripted run:
 //   ICQ-7.2-Patch.exe -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>] [-Include tzers-player] [-Player <dll>]
 //   ICQ-7.2-Patch.exe -Restore [-Root <folder>]
-// -Skip takes job keys (sms, games, xtraz, tabs, ads, fix,
+// -Skip takes job keys (sms, games, xtraz, zlango, tabs, ads, fix,
 // links, sign-in, tzers-player), separated by commas; they are left out, or
 // taken out if in place. -Include takes the jobs that are off unless asked
 // for: tzers-player. -Player is our FlashPlayerControl-Ruffle.dll for it,
