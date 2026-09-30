@@ -2355,7 +2355,8 @@ func TestHandler_ICBMAddParameters(t *testing.T) {
 		{
 			name: "success",
 			inputBody: wire.SNAC_0x04_0x02_ICBMAddParameters{
-				Channel: 1,
+				Channel:            1,
+				MaxIncomingICBMLen: 512,
 			},
 		},
 	}
@@ -2371,6 +2372,8 @@ func TestHandler_ICBMAddParameters(t *testing.T) {
 			}
 
 			svc := newMockICBMService(t)
+			svc.EXPECT().
+				AddParameters(mock.Anything, mock.Anything, tt.inputBody)
 			h := Handler{
 				ICBMService: svc,
 				RouteLogger: middleware.RouteLogger{

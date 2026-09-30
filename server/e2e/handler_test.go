@@ -216,9 +216,10 @@ func TestHandler_RateLimit(t *testing.T) {
 
 func TestHandler_Account(t *testing.T) {
 	d := newTestDirectory(t)
-	token, _ := d.signOn("100001")
+	token, instance := d.signOn("100001")
 	sn := state.NewIdentScreenName("100001")
 	pub, priv := newKey(t)
+	otherPub, _ := newKey(t)
 
 	res := d.do(http.MethodGet, "/e2e/v1/users/100001/account", "", nil)
 	assert.Equal(t, http.StatusNotFound, res.status)
@@ -226,9 +227,12 @@ func TestHandler_Account(t *testing.T) {
 
 	cases := []struct {
 		name string
-		body any
-		want int
-		code string
+		// announce, when set, is the account key the BOS connection announces
+		// before the request.
+		announce []byte
+		body     any
+		want     int
+		code     string
 	}{
 		{name: "unknown field", body: `{"account_key":"","self_signature":"","extra":1}`, want: http.StatusBadRequest, code: "bad_request"},
 		{name: "trailing data", body: `{"account_key":"","self_signature":""} {}`, want: http.StatusBadRequest, code: "bad_request"},
@@ -243,11 +247,17 @@ func TestHandler_Account(t *testing.T) {
 			"account_key":    enc(pub),
 			"self_signature": enc(ed25519.Sign(priv, AccountMessage(state.NewIdentScreenName("100002"), pub))),
 		}, want: http.StatusBadRequest, code: "invalid_signature"},
-		{name: "first publish", body: accountBody(sn, pub, priv), want: http.StatusCreated},
+		{name: "first publish, nothing announced", body: accountBody(sn, pub, priv), want: http.StatusForbidden, code: "not_announced"},
+		{name: "first publish, another key announced", announce: otherPub, body: accountBody(sn, pub, priv), want: http.StatusForbidden, code: "not_announced"},
+		{name: "first publish", announce: pub, body: accountBody(sn, pub, priv), want: http.StatusCreated},
+		{name: "same key again, whatever is announced", announce: otherPub, body: accountBody(sn, pub, priv), want: http.StatusOK},
 		{name: "same key again", body: accountBody(sn, pub, priv), want: http.StatusOK},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.announce != nil {
+				instance.SetE2EAccountKey(tc.announce)
+			}
 			res := d.do(http.MethodPut, "/e2e/v1/account", token, tc.body)
 			assert.Equal(t, tc.want, res.status, res.body)
 			if tc.code != "" {
@@ -263,15 +273,17 @@ func TestHandler_Account(t *testing.T) {
 
 func TestHandler_AccountReplace(t *testing.T) {
 	d := newTestDirectory(t)
-	token, _ := d.signOn("100001")
+	token, instance := d.signOn("100001")
 	sn := state.NewIdentScreenName("100001")
 	oldPub, oldPriv := newKey(t)
+	instance.SetE2EAccountKey(oldPub)
 	require.Equal(t, http.StatusCreated, d.do(http.MethodPut, "/e2e/v1/account", token, accountBody(sn, oldPub, oldPriv)).status)
 	keep, drop := newTestDevice(t, 1), newTestDevice(t, 2)
 	for _, dev := range []testDevice{keep, drop} {
 		require.Equal(t, http.StatusCreated, d.do(http.MethodPut, fmt.Sprintf("/e2e/v1/devices/%d", dev.id), token, deviceBody(sn, dev, oldPriv)).status)
 	}
 	newPub, newPriv := newKey(t)
+	instance.SetE2EAccountKey(newPub)
 
 	res := d.do(http.MethodPut, "/e2e/v1/account", token, accountBody(sn, newPub, newPriv))
 	assert.Equal(t, http.StatusConflict, res.status, "no proof while devices are active")
@@ -303,6 +315,10 @@ func TestHandler_AccountReplace(t *testing.T) {
 	// Every device gone: a reset needs no proof.
 	require.Equal(t, http.StatusNoContent, d.do(http.MethodDelete, "/e2e/v1/devices/1", token, nil).status)
 	resetPub, resetPriv := newKey(t)
+	res = d.do(http.MethodPut, "/e2e/v1/account", token, accountBody(sn, resetPub, resetPriv))
+	assert.Equal(t, http.StatusForbidden, res.status, "the new key was not announced")
+	assert.Equal(t, "not_announced", res.body["error"])
+	instance.SetE2EAccountKey(resetPub)
 	require.Equal(t, http.StatusOK, d.do(http.MethodPut, "/e2e/v1/account", token, accountBody(sn, resetPub, resetPriv)).status)
 
 	res = d.do(http.MethodGet, "/e2e/v1/users/100001/account-history", "", nil)
@@ -319,9 +335,10 @@ func TestHandler_AccountReplace(t *testing.T) {
 
 func TestHandler_Devices(t *testing.T) {
 	d := newTestDirectory(t)
-	token, _ := d.signOn("100001")
+	token, instance := d.signOn("100001")
 	sn := state.NewIdentScreenName("100001")
 	pub, priv := newKey(t)
+	instance.SetE2EAccountKey(pub)
 	dev := newTestDevice(t, 7)
 
 	res := d.do(http.MethodPut, "/e2e/v1/devices/7", token, deviceBody(sn, dev, priv))
@@ -374,6 +391,12 @@ func TestHandler_Devices(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, res.status)
 	assert.Equal(t, "too_many_devices", res.body["error"])
 
+	instance.SetE2EAccountKey(nil)
+	res = d.do(http.MethodDelete, "/e2e/v1/devices/7", token, nil)
+	assert.Equal(t, http.StatusForbidden, res.status, "a token alone does not revoke")
+	assert.Equal(t, "not_announced", res.body["error"])
+	instance.SetE2EAccountKey(pub)
+
 	assert.Equal(t, http.StatusNoContent, d.do(http.MethodDelete, "/e2e/v1/devices/7", token, nil).status)
 	assert.Equal(t, http.StatusNotFound, d.do(http.MethodDelete, "/e2e/v1/devices/77", token, nil).status)
 	res = d.do(http.MethodPut, "/e2e/v1/devices/7", token, deviceBody(sn, dev, priv))
@@ -382,10 +405,11 @@ func TestHandler_Devices(t *testing.T) {
 
 func TestHandler_KeysAndClaim(t *testing.T) {
 	d := newTestDirectory(t)
-	aliceToken, _ := d.signOn("100001")
+	aliceToken, alice := d.signOn("100001")
 	bobToken, _ := d.signOn("100002")
 	sn := state.NewIdentScreenName("100001")
 	pub, priv := newKey(t)
+	alice.SetE2EAccountKey(pub)
 	dev := newTestDevice(t, 1)
 	require.Equal(t, http.StatusCreated, d.do(http.MethodPut, "/e2e/v1/account", aliceToken, accountBody(sn, pub, priv)).status)
 	require.Equal(t, http.StatusCreated, d.do(http.MethodPut, "/e2e/v1/devices/1", aliceToken, deviceBody(sn, dev, priv)).status)

@@ -1141,6 +1141,12 @@ type SessionInstance struct {
 	toc2              bool
 	toc2MsgEnc        bool
 	icqDCInfo         wire.ICQDCInfo
+	// maxIncomingICBMLen is the largest ICBM the client takes, per channel,
+	// as it set with ICBMAddParameters; channel 0 holds its default.
+	maxIncomingICBMLen map[uint16]uint16
+	// e2eAccountKey is the account key the end-to-end encryption add-on
+	// announced on this connection (LocateSetInfo TLV 0x0E2E).
+	e2eAccountKey []byte
 
 	// Per-session state
 	idle              bool
@@ -1575,6 +1581,49 @@ func (s *SessionInstance) RemoteAddr() (remoteAddr *netip.AddrPort) {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 	return s.remoteAddr
+}
+
+// SetMaxIncomingICBMLen records the largest ICBM the client takes on
+// channel, or on every channel it sets nothing else for if channel is 0.
+func (s *SessionInstance) SetMaxIncomingICBMLen(channel uint16, maxLen uint16) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.maxIncomingICBMLen == nil {
+		s.maxIncomingICBMLen = make(map[uint16]uint16)
+	}
+	s.maxIncomingICBMLen[channel] = maxLen
+}
+
+// MaxIncomingICBMLen returns the largest ICBM the client takes on channel:
+// what it set for that channel, else its default (channel 0), else
+// serverMax. The result never exceeds serverMax.
+func (s *SessionInstance) MaxIncomingICBMLen(channel uint16, serverMax uint16) uint16 {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	maxLen, ok := s.maxIncomingICBMLen[channel]
+	if !ok {
+		maxLen, ok = s.maxIncomingICBMLen[0]
+	}
+	if !ok || maxLen > serverMax {
+		return serverMax
+	}
+	return maxLen
+}
+
+// SetE2EAccountKey records the account key the end-to-end encryption add-on
+// announced on this connection.
+func (s *SessionInstance) SetE2EAccountKey(key []byte) {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.e2eAccountKey = slices.Clone(key)
+}
+
+// E2EAccountKey returns the account key the end-to-end encryption add-on
+// announced on this connection, or nil if it announced none.
+func (s *SessionInstance) E2EAccountKey() []byte {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	return slices.Clone(s.e2eAccountKey)
 }
 
 // SetAwayMessage sets the instance's away message.

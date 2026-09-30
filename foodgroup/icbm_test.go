@@ -1,6 +1,7 @@
 package foodgroup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestICBMService_ChannelMsgToHost(t *testing.T) {
@@ -4146,6 +4148,132 @@ func TestReadsHTML(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, readsHTML(newTestInstance("100001", tt.options...).Session()))
+		})
+	}
+}
+
+// The server relays no ICBM longer than it announces as MaxIncomingICBMLen,
+// nor one longer than a recipient's client set for itself with
+// ICBMAddParameters.
+func TestICBMService_ChannelMsgToHost_MaxIncomingICBMLen(t *testing.T) {
+	message := func(channel uint16, tag uint16, n int) wire.SNAC_0x04_0x06_ICBMChannelMsgToHost {
+		return wire.SNAC_0x04_0x06_ICBMChannelMsgToHost{
+			ChannelID:  channel,
+			ScreenName: "recipient",
+			TLVRestBlock: wire.TLVRestBlock{
+				TLVList: wire.TLVList{wire.NewTLVBE(tag, bytes.Repeat([]byte{'a'}, n))},
+			},
+		}
+	}
+
+	cases := []struct {
+		name string
+		// params are the ICBMAddParameters each of the recipient's clients
+		// sent, one per instance; nil sends none.
+		params []*wire.SNAC_0x04_0x02_ICBMAddParameters
+		inBody wire.SNAC_0x04_0x06_ICBMChannelMsgToHost
+		// wantErr is the ICBM error code, 0 if the message is relayed.
+		wantErr uint16
+	}{
+		{
+			name:   "up to the server's limit, no parameters set",
+			params: []*wire.SNAC_0x04_0x02_ICBMAddParameters{nil},
+			inBody: message(wire.ICBMChannelIM, wire.ICBMTLVAOLIMData, 8000),
+		},
+		{
+			name:    "over the server's limit",
+			params:  []*wire.SNAC_0x04_0x02_ICBMAddParameters{nil},
+			inBody:  message(wire.ICBMChannelIM, wire.ICBMTLVAOLIMData, 8001),
+			wantErr: wire.ErrorCodeRequestDenied,
+		},
+		{
+			name:    "over the server's limit on channel 2",
+			params:  []*wire.SNAC_0x04_0x02_ICBMAddParameters{nil},
+			inBody:  message(wire.ICBMChannelRendezvous, wire.ICBMTLVData, 8001),
+			wantErr: wire.ErrorCodeRequestDenied,
+		},
+		{
+			name:    "over the default the recipient set",
+			params:  []*wire.SNAC_0x04_0x02_ICBMAddParameters{{Channel: 0, MaxIncomingICBMLen: 512}},
+			inBody:  message(wire.ICBMChannelIM, wire.ICBMTLVAOLIMData, 513),
+			wantErr: wire.ErrorCodeRefusedByClient,
+		},
+		{
+			name:   "within what the recipient set",
+			params: []*wire.SNAC_0x04_0x02_ICBMAddParameters{{Channel: 0, MaxIncomingICBMLen: 512}, nil},
+			inBody: message(wire.ICBMChannelIM, wire.ICBMTLVAOLIMData, 512),
+		},
+		{
+			name:   "the default for another channel does not apply",
+			params: []*wire.SNAC_0x04_0x02_ICBMAddParameters{{Channel: 2, MaxIncomingICBMLen: 512}},
+			inBody: message(wire.ICBMChannelIM, wire.ICBMTLVAOLIMData, 4000),
+		},
+		{
+			name:    "one of the recipient's clients takes less",
+			params:  []*wire.SNAC_0x04_0x02_ICBMAddParameters{nil, {Channel: 1, MaxIncomingICBMLen: 2000}},
+			inBody:  message(wire.ICBMChannelIM, wire.ICBMTLVAOLIMData, 2001),
+			wantErr: wire.ErrorCodeRefusedByClient,
+		},
+		{
+			name:   "a limit above the server's is the server's",
+			params: []*wire.SNAC_0x04_0x02_ICBMAddParameters{{Channel: 0, MaxIncomingICBMLen: 0xFFFF}},
+			inBody: message(wire.ICBMChannelIM, wire.ICBMTLVAOLIMData, 8000),
+		},
+		{
+			name:    "a limit below 80 is 80",
+			params:  []*wire.SNAC_0x04_0x02_ICBMAddParameters{{Channel: 0, MaxIncomingICBMLen: 10}},
+			inBody:  message(wire.ICBMChannelIM, wire.ICBMTLVAOLIMData, 81),
+			wantErr: wire.ErrorCodeRefusedByClient,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sender := newTestInstance("sender")
+			recipient := newTestInstance("recipient")
+			for i := 1; i < len(tc.params); i++ {
+				recipient.Session().AddInstance()
+			}
+
+			relationshipFetcher := newMockRelationshipFetcher(t)
+			relationshipFetcher.EXPECT().
+				Relationship(matchContext(), sender.IdentScreenName(), recipient.IdentScreenName()).
+				Return(state.Relationship{}, nil).
+				Maybe()
+			sessionRetriever := newMockSessionRetriever(t)
+			sessionRetriever.EXPECT().
+				RetrieveSession(recipient.IdentScreenName()).
+				Return(recipient.Session()).
+				Maybe()
+			messageRelayer := newMockMessageRelayer(t)
+			if tc.wantErr == 0 {
+				messageRelayer.EXPECT().RelayToScreenName(matchContext(), recipient.IdentScreenName(), mock.Anything).Maybe()
+				messageRelayer.EXPECT().RelayToScreenNameActiveOnly(matchContext(), recipient.IdentScreenName(), mock.Anything).Maybe()
+			}
+
+			svc := ICBMService{
+				relationshipFetcher: relationshipFetcher,
+				messageRelayer:      messageRelayer,
+				sessionRetriever:    sessionRetriever,
+				convoTracker:        newConvoTracker(),
+				logger:              slog.Default(),
+			}
+			for i, params := range tc.params {
+				if params != nil {
+					svc.AddParameters(context.Background(), recipient.Session().Instances()[i], *params)
+				}
+			}
+
+			got, err := svc.ChannelMsgToHost(context.Background(), sender, wire.SNACFrame{RequestID: 7}, tc.inBody)
+			require.NoError(t, err)
+			if tc.wantErr == 0 {
+				assert.Nil(t, got)
+				return
+			}
+			require.NotNil(t, got)
+			assert.Equal(t, wire.ICBMErr, got.Frame.SubGroup)
+			assert.Equal(t, uint32(7), got.Frame.RequestID)
+			assert.Equal(t, tc.wantErr, got.Body.(wire.SNACError).Code)
 		})
 	}
 }

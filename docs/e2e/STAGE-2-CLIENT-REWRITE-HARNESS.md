@@ -219,9 +219,11 @@ touches:
 - **2.5, 2.6 (no garbage, no automatic re-key)** - groundwork: unmarked or
   unparsable text passes untouched, and nothing the add-on does starts a new
   exchange.
-- **7.1 (blocking)** - not this stage's, but it gates any deployment the owner
-  test might lead to: the key-directory token still travels in clear on the BOS
-  connection this add-on sits on.
+- **7.1** - closed on the server: the token still travels in clear on the BOS
+  connection this add-on sits on, but setting an account key now also needs the
+  key announced on that connection (TLV `0x0E2E` in `LocateSetInfo`,
+  KEY-DIRECTORY-API.md 3.3). The add-on appends it in stage 3, next to its
+  capability.
 
 ## Found on the way
 
@@ -230,5 +232,6 @@ touches:
   a test built on the server's own layout (`foodgroup/icq.go` `OfflineMsgReq`).
 - Phase 0 read channel-2 text only in the tZer plugin layout; plain type-2
   messages are now read by their real layout, the plugin form stays as a fallback.
-- The server announces `MaxIncomingICBMLen` 8000 but does not enforce it; the
-  7 000-byte guard keeps a rewritten message below what a receiving client takes.
+- The server announced `MaxIncomingICBMLen` 8000 but did not enforce it; it
+  does now (CHECKLIST.md 3.9). The 7 000-byte guard keeps a rewritten message
+  below that.

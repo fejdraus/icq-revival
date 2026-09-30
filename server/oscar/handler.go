@@ -431,10 +431,14 @@ func (rt Handler) FeedbagRespondAuthorizeToHost(ctx context.Context, instance *s
 	return nil
 }
 
-func (rt Handler) ICBMAddParameters(ctx context.Context, _ *state.SessionInstance, inFrame wire.SNACFrame, r io.Reader, _ ResponseWriter) error {
+func (rt Handler) ICBMAddParameters(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, r io.Reader, _ ResponseWriter) error {
 	inBody := wire.SNAC_0x04_0x02_ICBMAddParameters{}
+	if err := wire.UnmarshalBE(&inBody, r); err != nil {
+		return err
+	}
 	rt.LogRequest(ctx, inFrame, inBody)
-	return wire.UnmarshalBE(&inBody, r)
+	rt.ICBMService.AddParameters(ctx, instance, inBody)
+	return nil
 }
 
 func (rt Handler) ICBMParameterQuery(ctx context.Context, _ *state.SessionInstance, inFrame wire.SNACFrame, _ io.Reader, rw ResponseWriter) error {

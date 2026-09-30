@@ -106,6 +106,7 @@ type FeedbagService interface {
 }
 
 type ICBMService interface {
+	AddParameters(ctx context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x04_0x02_ICBMAddParameters)
 	ChannelMsgToHost(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x04_0x06_ICBMChannelMsgToHost) (*wire.SNACMessage, error)
 	ClientErr(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x04_0x0B_ICBMClientErr) error
 	ClientEvent(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x04_0x14_ICBMClientEvent) error

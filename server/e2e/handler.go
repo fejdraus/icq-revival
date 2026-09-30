@@ -201,6 +201,9 @@ func (h *Handler) putAccount(w http.ResponseWriter, r *http.Request, c caller) {
 			writeError(w, http.StatusBadRequest, "bad_request", "proof and devices are for replacing the account key")
 			return
 		}
+		if cur == nil && !announced(w, c, req.AccountKey) {
+			return
+		}
 		err = h.store.E2EPublishAccountKey(ctx, c.screenName, req.AccountKey, now)
 	case req.Proof != nil:
 		if !verify(cur.Key, RotateMessage(c.screenName, cur.Key, req.AccountKey), req.Proof) {
@@ -215,6 +218,9 @@ func (h *Handler) putAccount(w http.ResponseWriter, r *http.Request, c caller) {
 	default:
 		if req.Devices != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "devices need a proof")
+			return
+		}
+		if !announced(w, c, req.AccountKey) {
 			return
 		}
 		err = h.store.E2EResetAccountKey(ctx, c.screenName, cur.Key, req.AccountKey, now)
@@ -234,6 +240,24 @@ func (h *Handler) putAccount(w http.ResponseWriter, r *http.Request, c caller) {
 		status = http.StatusCreated
 	}
 	writeJSON(w, status, newAccountJSON(c.screenName, *acc))
+}
+
+// announced reports whether the caller's BOS connection announced key
+// (LocateSetInfo TLV 0x0E2E), and answers 403 not_announced if it did not.
+//
+// The token travels in clear on the BOS connection, so whoever reads that
+// traffic holds it too. What such a reader cannot do is put anything into
+// the connection, so the account key it would like to plant never shows up
+// there. A first publish and a reset - the two ways to set an account key
+// that no current account key vouches for - therefore need the key to have
+// come in on the token's own connection as well.
+func announced(w http.ResponseWriter, c caller, key []byte) bool {
+	if got := c.instance.E2EAccountKey(); got != nil && string(got) == string(key) {
+		return true
+	}
+	writeError(w, http.StatusForbidden, "not_announced",
+		"this account key was not announced on the BOS connection of this token (LocateSetInfo TLV 0x0E2E)")
+	return false
 }
 
 // checkResigned checks the new account signatures a rotation carries: each
@@ -356,10 +380,18 @@ func (h *Handler) writeOwnDevice(w http.ResponseWriter, r *http.Request, sn stat
 	writeJSON(w, status, ownDeviceJSON{Device: newDeviceJSON(*dev), OneTimeKeyCount: count, HasFallbackKey: hasFallback})
 }
 
-// revokeDevice revokes one of the caller's devices.
+// revokeDevice revokes one of the caller's devices. Revoking needs an
+// account key announced on the token's BOS connection, any one: the add-on
+// announces its key at every sign-in, while someone holding only a sniffed
+// token cannot, so they cannot strip an account of its devices.
 func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request, c caller) {
 	deviceID, ok := deviceIDParam(w, r)
 	if !ok {
+		return
+	}
+	if c.instance.E2EAccountKey() == nil {
+		writeError(w, http.StatusForbidden, "not_announced",
+			"revoking needs an account key announced on the BOS connection of this token (LocateSetInfo TLV 0x0E2E)")
 		return
 	}
 	if err := h.store.E2ERevokeDevice(r.Context(), c.screenName, deviceID, h.now()); err != nil {

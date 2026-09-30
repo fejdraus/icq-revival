@@ -5,7 +5,8 @@ directory of **public** keys and a relay for device linking. The server stores
 what clients publish and hands it out again; it never holds a private key or a
 plaintext message. Background: `DESIGN.md`, sections 7-9. Code: `server/e2e`
 (HTTP, signatures), `state/e2e_keys.go` (storage), `state/e2e_token.go`
-(token), `foodgroup/oservice.go` (`motdTLVs`, where the token is handed out).
+(token), `foodgroup/oservice.go` (`motdTLVs`, where the token is handed out),
+`foodgroup/locate.go` (`SetInfo`, where the add-on announces its account key).
 
 ## 1. Model
 
@@ -48,7 +49,8 @@ listener would be a few lines in `cmd/server` if that ever matters.
 The API is plain JSON over HTTP. It is not AMF and not the Web AIM envelope,
 and it is independent of the WebAPI's `aimsid` sessions. Clients should use the
 HTTPS address. The token is a bearer credential, so sending it over plain HTTP
-exposes it to anyone on the path.
+exposes it to anyone on the path. It is exposed anyway, though: the BOS
+connection that hands it out is not encrypted (section 3.3).
 
 ## 3. Authentication: the token
 
@@ -114,7 +116,65 @@ So **a token dies with its session instance or at expiry**, whichever comes
 first. Nothing is stored server-side. A client that stays signed on longer
 than the TTL calls `POST /e2e/v1/token` before expiry to get a fresh token.
 
-### 3.3 Rate and size limits
+### 3.3 The token is not a secret: announcing the account key
+
+The MOTD that carries the token travels in clear, like everything else on the
+BOS connection of ICQ 6.5 and 7.2 (CHECKLIST.md 7.1, 7.2). Whoever reads that
+traffic has the token and can call every `T` endpoint as the account until the
+session ends. The dangerous call is the one that sets an account key no key
+vouches for yet: the first publish, and a reset. With the token alone, a
+reader could publish **their** key for a UIN that has not enrolled, and every
+peer's trust-on-first-use would pin the reader's key.
+
+A password does not help here. ICQ 2003b sends a reversibly roasted password.
+ICQ 6.5 and 7.2 send `StrongMD5Pass`, and since the salt (`AuthKey`) of an
+account never changes, that digest is the same at every sign-in: a
+password-equivalent that a reader of the traffic has already seen.
+
+What a reader of the traffic cannot do is **write** into the connection. So
+the add-on announces its account key on the BOS connection itself, and the
+directory takes a key that no current key vouches for only when it came in
+on the connection the token belongs to:
+
+- The add-on appends TLV `0x0E2E` (value: the 32-byte account key, raw) to the
+  TLV block of an outbound `Locate SetInfo` (`0x02/0x04`). It already rewrites
+  that SNAC in place to add its capability, so no frame is added. The client
+  sends `SetInfo` while signing on, so an add-on that has an account key
+  announces it at every sign-on. It generates the key before sign-on, when it
+  has none yet. `0x0E2E` is not an AOL tag; the server ignores a value that
+  is not 32 bytes.
+- The server remembers the last key announced on each session instance.
+- `PUT /e2e/v1/account` as a **first publish** or a **reset** needs
+  `account_key` to be the key announced on the token's session instance.
+  Otherwise the answer is `403 not_announced`. Republishing the stored key and
+  rotating (which the current key signs) need no announcement.
+- `DELETE /e2e/v1/devices/{device_id}` needs **some** key announced on that
+  instance, any one. A reader of the traffic therefore cannot strip an
+  account of its devices either. A user who lost every device announces the
+  new key they are about to reset to, and may then revoke the old devices and
+  reset.
+
+The add-on publishes after its `SetInfo` has gone out. If the directory
+answers `403 not_announced` because the HTTPS request overtook the `SetInfo`,
+it retries a little later.
+
+What is left to a reader of the traffic while the session lasts:
+
+- the `T` calls that change nothing for good or that need a signature they
+  cannot make: a fresh token, reading the own device's state, claims (any
+  signed-on account can make those), uploads that must be signed by a device;
+- device linking: the reader can open a link request or answer one. The
+  clients must guard it themselves: the user compares the short authentication
+  string, and a new device accepts a reply only if it holds the private half
+  of the published account key. At worst the reader answers first and the
+  user has to start the linking again.
+
+A reader who **changes** traffic (an active attacker on the path) can
+announce a key too; that needs the connection itself to be encrypted
+(CHECKLIST.md 7.2). So does anyone who learns the password: they sign on as
+the user and hold a genuine session.
+
+### 3.4 Rate and size limits
 
 - Every request that needs a token counts against a per-account token bucket:
   5 requests a second, bursts of 30. When the bucket is empty the answer is
@@ -290,7 +350,8 @@ The token is base64url without padding, ready for the header.
 required. Depending on what is stored:
 
 - **No key yet** - the key is published: `201`, and a history entry
-  `publish`. `proof` and `devices` must be absent.
+  `publish`. `proof` and `devices` must be absent. The key must have been
+  announced on the token's BOS connection (section 3.3).
 - **The same key** - no-op, `200`.
 - **Another key, with `proof`** - a **rotation**. `proof` is the `rotate`
   message signed by the current key. `devices` lists the active devices to
@@ -314,7 +375,8 @@ required. Depending on what is stored:
 - **Another key, without `proof`** - a **reset**, e.g. after every device was
   lost. It is allowed only when the account has no active device (revoke them
   first, from a device or from the management API). Otherwise the answer is
-  `409 active_devices`. History entry `reset`. `200`. Peers learn about it
+  `409 active_devices`. The new key must have been announced on the token's
+  BOS connection (section 3.3). History entry `reset`. `200`. Peers learn about it
   from the history, as a changed safety number.
 
 Response (`200`/`201`):
@@ -324,7 +386,9 @@ Response (`200`/`201`):
 ```
 
 Errors: `400 invalid_key`, `400 invalid_signature` (self_signature, proof or
-a device signature), `404 no_device` / `410 device_revoked` (a listed device),
+a device signature), `403 not_announced` (first publish or reset of a key not
+announced on the BOS connection), `404 no_device` / `410 device_revoked` (a
+listed device),
 `409 active_devices`, `409 account_key_changed` (it changed during the
 request; retry).
 
@@ -373,7 +437,9 @@ client when to upload more one-time keys. `404 no_device`.
 
 Revokes one of the caller's devices: its one-time and fallback keys are
 deleted, and it stays in the device list with `revoked_at`. `204`. Revoking a
-revoked device is also `204`. `404 no_device`.
+revoked device is also `204`. The token's BOS connection must have announced
+an account key, any one (section 3.3); otherwise `403 not_announced`.
+`404 no_device`.
 
 ### 6.6 `POST /e2e/v1/devices/{device_id}/one-time-keys`
 
@@ -525,6 +591,7 @@ requests.
 | 400  | `invalid_key`         | a key is not 32 bytes                                   |
 | 400  | `invalid_signature`   | a signature does not verify                             |
 | 401  | `unauthorized`        | no, bad or expired token, or its session has ended      |
+| 403  | `not_announced`       | the key was not announced on the token's BOS connection |
 | 404  | `no_account`          | the account has no account key                          |
 | 404  | `no_device`           | no such device                                          |
 | 404  | `no_link`             | no such unexpired link request for this account         |

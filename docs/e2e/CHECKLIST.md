@@ -56,6 +56,7 @@ stage owns it yet - decide before the stage that needs it).
 | 3.6 | The recipient inside the ciphertext (`<to/>`) where the server could redirect (group vs private). | Include the recipient UIN too - cheap, and it stops the server from re-addressing a message. | stage 3 |
 | 3.7 | Each message is marked with the scheme it uses, so a client that cannot read it says so instead of showing noise (XEP-0380). | Capability GUID + a readable one-line hint before the container for clients without the add-on. | stage 2-3 |
 | 3.8 | Key material ride in empty messages; these are exempt from the trust rule (4.1). | Control messages carry no content. | stage 3 |
+| 3.9 | An encrypted message, longer than the plain one, still fits what the recipient's client takes. | The server announces `MaxIncomingICBMLen` 8000 and enforces it: it refuses a longer ICBM (`REQUEST_DENIED`), and one longer than any of the recipient's clients set with `ICBMAddParameters` (`REFUSED_BY_CLIENT`). Measured on the message TLV (`0x0002`, channels 1 and 3) or the data TLV (`0x0005`, others). The add-on keeps a container within the limit or splits it. | server done; client stage 3 |
 
 ## 4. Trust (XEP-0384 §8)
 
@@ -87,7 +88,8 @@ stage owns it yet - decide before the stage that needs it).
 ## 7. Transport security and sign-in
 
 Today nothing between the clients and the server is encrypted: messages, contact
-lists, addresses and the key directory token travel in clear. Sign-in is weak too:
+lists, addresses and the key directory token travel in clear (the token no longer
+suffices to set an account key, see 7.1). Sign-in is weak too:
 ICQ 2003b sends a XOR-"roasted" password (reversible at once); ICQ 6.5 and 7.2 send
 an MD5 challenge digest (no clear password, but a captured digest can be
 brute-forced offline, and the server must store MD5 of the password, which is
@@ -98,7 +100,7 @@ client-side layer can.
 
 | # | Requirement | Ours | Status |
 |---|---|---|---|
-| 7.1 | **Must be fixed before the key directory is deployed:** the key directory token must not be exposed in clear. Anyone who sniffs it can publish the first account key for a UIN that has not enrolled yet and so hijack trust-on-first-use. | Either deliver/use the token only over TLS, or make the first account-key publish need more than the token (e.g. proof of the password, or confirmation through an already trusted channel). | open - blocking |
+| 7.1 | **Must be fixed before the key directory is deployed:** the key directory token must not be exposed in clear. Anyone who sniffs it can publish the first account key for a UIN that has not enrolled yet and so hijack trust-on-first-use. | The token still travels in clear, but it no longer suffices to set a key: a first publish or a reset needs the key announced on the token's own BOS connection (TLV `0x0E2E` in `LocateSetInfo`, added in place by the add-on), and revoking a device needs some key announced there. A sniffer can read the connection but not write into it. A password proof was rejected: 2003b sends the password reversibly roasted, and 6.5/7.2 send `StrongMD5Pass`, which is the same at every sign-in (fixed salt), so a sniffer already holds a password-equivalent. Left to an active attacker on the path: 7.2. `KEY-DIRECTORY-API.md` 3.3. | server done; client stage 3 (announce the key) |
 | 7.2 | The connection to the server is encrypted with modern TLS (1.3). | The server already has TLS ports; the old clients' own TLS is missing or outdated (off for ICQ 7.2). A client-side layer that wraps the client's connection in TLS 1.3 - naturally the same component as the message encryption. | open |
 | 7.3 | Sign-in does not expose a password-equivalent secret. | Inside TLS the old sign-in is protected in transit. With a client-side layer, the layer can sign in with SCRAM-SHA-256 and channel binding instead of MD5. | open |
 | 7.4 | The server does not store password-equivalent values where avoidable. | Old sign-in methods force MD5 storage; keep them, but add SCRAM verifiers for clients that can use them, and allow turning off the weakest method (2003b's XOR) per server. | open |

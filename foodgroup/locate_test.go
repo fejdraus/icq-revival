@@ -1,6 +1,7 @@
 package foodgroup
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -944,6 +945,38 @@ func TestLocateService_SetInfo_SetCaps(t *testing.T) {
 		{9, 70, 19, 70, 76, 127, 17, 209, 130, 34, 68, 69, 83, 84, 0, 0},
 	}
 	assert.ElementsMatch(t, expect, instance.Session().Caps())
+}
+
+// The end-to-end encryption add-on announces the account key it is about to
+// publish in a TLV of LocateSetInfo; the key directory checks a first publish
+// against it.
+func TestLocateService_SetInfo_E2EAccountKey(t *testing.T) {
+	key := bytes.Repeat([]byte{0x01}, 32)
+	setInfo := func(b []byte) wire.SNAC_0x02_0x04_LocateSetInfo {
+		return wire.SNAC_0x02_0x04_LocateSetInfo{
+			TLVRestBlock: wire.TLVRestBlock{
+				TLVList: wire.TLVList{wire.NewTLVBE(wire.LocateTLVTagsInfoE2EAccountKey, b)},
+			},
+		}
+	}
+
+	tests := []struct {
+		name   string
+		inBody wire.SNAC_0x02_0x04_LocateSetInfo
+		want   []byte
+	}{
+		{name: "a key is recorded", inBody: setInfo(key), want: key},
+		{name: "a key of the wrong size is ignored", inBody: setInfo(key[:31]), want: nil},
+		{name: "no TLV, no key", inBody: wire.SNAC_0x02_0x04_LocateSetInfo{}, want: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := NewLocateService(nil, nil, nil, nil, nil, nil)
+			instance := newTestInstance("100001")
+			assert.NoError(t, svc.SetInfo(context.Background(), instance, tt.inBody))
+			assert.Equal(t, tt.want, instance.E2EAccountKey())
+		})
+	}
 }
 
 // A mood is one of the capabilities, and the client re-renders its own status from

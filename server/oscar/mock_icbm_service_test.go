@@ -48,6 +48,58 @@ func (_m *mockICBMService) EXPECT() *mockICBMService_Expecter {
 	return &mockICBMService_Expecter{mock: &_m.Mock}
 }
 
+// AddParameters provides a mock function for the type mockICBMService
+func (_mock *mockICBMService) AddParameters(ctx context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x04_0x02_ICBMAddParameters) {
+	_mock.Called(ctx, instance, inBody)
+	return
+}
+
+// mockICBMService_AddParameters_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'AddParameters'
+type mockICBMService_AddParameters_Call struct {
+	*mock.Call
+}
+
+// AddParameters is a helper method to define mock.On call
+//   - ctx context.Context
+//   - instance *state.SessionInstance
+//   - inBody wire.SNAC_0x04_0x02_ICBMAddParameters
+func (_e *mockICBMService_Expecter) AddParameters(ctx any, instance any, inBody any) *mockICBMService_AddParameters_Call {
+	return &mockICBMService_AddParameters_Call{Call: _e.mock.On("AddParameters", ctx, instance, inBody)}
+}
+
+func (_c *mockICBMService_AddParameters_Call) Run(run func(ctx context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x04_0x02_ICBMAddParameters)) *mockICBMService_AddParameters_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 *state.SessionInstance
+		if args[1] != nil {
+			arg1 = args[1].(*state.SessionInstance)
+		}
+		var arg2 wire.SNAC_0x04_0x02_ICBMAddParameters
+		if args[2] != nil {
+			arg2 = args[2].(wire.SNAC_0x04_0x02_ICBMAddParameters)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *mockICBMService_AddParameters_Call) Return() *mockICBMService_AddParameters_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *mockICBMService_AddParameters_Call) RunAndReturn(run func(ctx context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x04_0x02_ICBMAddParameters)) *mockICBMService_AddParameters_Call {
+	_c.Run(run)
+	return _c
+}
+
 // ChannelMsgToHost provides a mock function for the type mockICBMService
 func (_mock *mockICBMService) ChannelMsgToHost(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x04_0x06_ICBMChannelMsgToHost) (*wire.SNACMessage, error) {
 	ret := _mock.Called(ctx, instance, inFrame, inBody)

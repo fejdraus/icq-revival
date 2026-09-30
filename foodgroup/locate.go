@@ -110,6 +110,13 @@ func (s LocateService) SetInfo(ctx context.Context, instance *state.SessionInsta
 		}
 	}
 
+	// the account key the end-to-end encryption add-on is about to publish;
+	// the key directory takes a first publish or a reset only for a key
+	// announced this way (see server/e2e)
+	if key, ok := inBody.Bytes(wire.LocateTLVTagsInfoE2EAccountKey); ok && len(key) == 32 {
+		instance.SetE2EAccountKey(key)
+	}
+
 	// broadcast away message change to buddies
 	if awayMsg, hasAwayMsg := inBody.String(wire.LocateTLVTagsInfoUnavailableData); hasAwayMsg {
 		if awayMsg != "" {

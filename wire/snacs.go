@@ -564,6 +564,12 @@ const (
 	LocateTLVTagsInfoSupportHostSig  uint16 = 0x0C
 	LocateTLVTagsInfoHtmlInfoData    uint16 = 0x0E
 	LocateTLVTagsInfoHtmlInfoType    uint16 = 0x0D
+	// LocateTLVTagsInfoE2EAccountKey carries the account key (32 bytes) the
+	// end-to-end encryption add-on is about to publish in the key directory.
+	// The add-on appends it in place to an outbound LocateSetInfo, so it
+	// arrives on the BOS connection, where someone who only reads the traffic
+	// cannot put it. Not an AOL tag.
+	LocateTLVTagsInfoE2EAccountKey uint16 = 0x0E2E
 
 	// LocateTLVTagsRightsMaxSigLen is the max signature length
 	LocateTLVTagsRightsMaxSigLen uint16 = 0x01

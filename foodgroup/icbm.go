@@ -76,6 +76,27 @@ func (s *ICBMService) BridgeFeedbagService(service *FeedbagService) {
 	s.forwardICQAuthEvents = service.ForwardICQAuthEvents
 }
 
+// maxICBMLen is the largest ICBM the server relays, and what it announces as
+// MaxIncomingICBMLen. What AOL's servers gave, and the top of the range the
+// OSCAR specification allows (80 to 8000). A SIP message of an ICQ 6 call is
+// several kilobytes and goes over ICBM too.
+const maxICBMLen uint16 = 8000
+
+// minICBMLen is the bottom of the range the OSCAR specification allows for
+// MaxIncomingICBMLen.
+const minICBMLen uint16 = 80
+
+// AddParameters records the ICBM parameters a client sets for itself. Of
+// them the server honours MaxIncomingICBMLen: it relays no ICBM longer than
+// that to the client. A value of 0 leaves the previous one; the rest is
+// brought into the range 80 to 8000.
+func (s *ICBMService) AddParameters(_ context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x04_0x02_ICBMAddParameters) {
+	if inBody.MaxIncomingICBMLen == 0 {
+		return
+	}
+	instance.SetMaxIncomingICBMLen(inBody.Channel, max(inBody.MaxIncomingICBMLen, minICBMLen))
+}
+
 // ParameterQuery returns ICBM service parameters.
 func (s *ICBMService) ParameterQuery(_ context.Context, inFrame wire.SNACFrame) wire.SNACMessage {
 	return wire.SNACMessage{
@@ -85,11 +106,9 @@ func (s *ICBMService) ParameterQuery(_ context.Context, inFrame wire.SNACFrame) 
 			RequestID: inFrame.RequestID,
 		},
 		Body: wire.SNAC_0x04_0x05_ICBMParameterReply{
-			MaxSlots:  100,
-			ICBMFlags: 3,
-			// What AOL's servers gave. A SIP message of an ICQ 6 call is
-			// several kilobytes and goes over ICBM too.
-			MaxIncomingICBMLen:   8000,
+			MaxSlots:             100,
+			ICBMFlags:            3,
+			MaxIncomingICBMLen:   maxICBMLen,
 			MaxSourceEvil:        999,
 			MaxDestinationEvil:   999,
 			MinInterICBMInterval: 0,
@@ -103,6 +122,11 @@ func (s *ICBMService) ParameterQuery(_ context.Context, inFrame wire.SNACFrame) 
 // flag.
 func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x04_0x06_ICBMChannelMsgToHost) (*wire.SNACMessage, error) {
 	recip := state.NewIdentScreenName(inBody.ScreenName)
+
+	msgLen := icbmMessageLen(inBody)
+	if msgLen > int(maxICBMLen) {
+		return newICBMErr(inFrame.RequestID, wire.ErrorCodeRequestDenied), nil
+	}
 
 	rel, err := s.relationshipFetcher.Relationship(ctx, instance.IdentScreenName(), recip)
 	if err != nil {
@@ -136,6 +160,13 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 			return newICBMErr(inFrame.RequestID, wire.ErrorCodeNotLoggedOn), nil
 		}
 		return msg, err
+	}
+
+	for _, recipInstance := range recipSess.Instances() {
+		if msgLen > int(recipInstance.MaxIncomingICBMLen(inBody.ChannelID, maxICBMLen)) {
+			// longer than one of the recipient's clients said it takes
+			return newICBMErr(inFrame.RequestID, wire.ErrorCodeRefusedByClient), nil
+		}
 	}
 
 	if inBody.ChannelID == wire.ICBMChannelSIP {
@@ -269,6 +300,18 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 			ScreenName: inBody.ScreenName,
 		},
 	}, nil
+}
+
+// icbmMessageLen returns the length of what an ICBM carries, the part
+// MaxIncomingICBMLen limits: the message TLV of channels 1 and 3 (fragments,
+// text and all), the data TLV of the others.
+func icbmMessageLen(inBody wire.SNAC_0x04_0x06_ICBMChannelMsgToHost) int {
+	tag := wire.ICBMTLVData
+	if inBody.ChannelID == wire.ICBMChannelIM || inBody.ChannelID == wire.ICBMChannelMIME {
+		tag = wire.ICBMTLVAOLIMData
+	}
+	b, _ := inBody.Bytes(tag)
+	return len(b)
 }
 
 // canSendOfflineMessage returns true if the user can send an offline message.
