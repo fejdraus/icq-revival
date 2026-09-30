@@ -217,6 +217,51 @@ var CONNECTED = false;
 var BART_PICTURE = 1;
 var BART_ANIMATED = 8;
 var transaction = 0;
+
+// ICQ 7.2 keeps SetBartItem and GetBartItem in the plugin's type library, but
+// both only return E_NOTIMPL there ("Object doesn't support this action"). Its
+// avatars go through SetAvatar(transaction, kind, address, picture address)
+// and GetAvatar(transaction, kind, screen name), and the answer comes in
+// OnAvatarResult. ICQ 6 has no SetAvatar, and a name the object does not have
+// throws error 438 before anything reaches the client, so trying SetAvatar
+// first tells the two apart without asking which client this is.
+var NO_SUCH_METHOD = 438;
+
+function noSuchMethod(e) {
+  return !!e && typeof e.number === 'number' && (e.number & 0xFFFF) === NO_SUCH_METHOD;
+}
+
+// ICQ 7.2 takes the animated face only together with a picture, which it
+// downloads and sets as the buddy icon too (it refuses the face without one).
+// The still the IM server shows in the face's place is that picture.
+function stillOf(address) {
+  return String(address).replace(/\.swf$/i, '-still.jpg');
+}
+
+function setBart(kind, address) {
+  try {
+    if (kind === BART_ANIMATED) {
+      plugin.SetAvatar(transaction, kind, address, stillOf(address));
+    } else {
+      plugin.SetAvatar(transaction, kind, address);
+    }
+    return;
+  } catch (e) {
+    if (!noSuchMethod(e)) { throw e; }
+  }
+  plugin.SetBartItem(transaction, kind, address);
+}
+
+function getBart(kind) {
+  var name = plugin.OwnerInfo.ScreenName;
+  try {
+    plugin.GetAvatar(transaction, kind, name);
+    return;
+  } catch (e) {
+    if (!noSuchMethod(e)) { throw e; }
+  }
+  plugin.GetBartItem(transaction, kind, name);
+}
 var pending = '';
 var waiting = false;
 // The transactions of the animated tab, so their answers are not taken for
@@ -343,7 +388,7 @@ function apply() {
   // left the page stuck on it.
   say(T.picUploading);
   try {
-    plugin.SetBartItem(transaction, BART_PICTURE, sent);
+    setBart(BART_PICTURE, sent);
   } catch (e) {
     say(T.picRefused + e.message);
     return;
@@ -541,7 +586,7 @@ function applyEdit() {
     transaction = transaction + 1;
     say(T.picUploading);
     try {
-      plugin.SetBartItem(transaction, BART_PICTURE, sent);
+      setBart(BART_PICTURE, sent);
     } catch (e) {
       say(T.picRefused + e.message);
       return;
@@ -562,7 +607,7 @@ function refresh() {
   transaction = transaction + 1;
   picRead = transaction;
   try {
-    plugin.GetBartItem(transaction, BART_PICTURE, plugin.OwnerInfo.ScreenName);
+    getBart(BART_PICTURE);
   } catch (e) {
     say(T.picReadFailed + e.message);
   }
@@ -677,6 +722,8 @@ function cancelAnimated() {
 // Nothing else is set: ICQ 6 keeps one avatar, and setting a picture (BART
 // type 1) after the movie would take the movie away again. The contacts whose
 // clients cannot play it are shown a still of the same face by the server.
+// ICQ 7.2 is the exception: it sets the face's still as the picture along with
+// the movie (see setBart).
 function applyAnimated() {
   if (!animChosen) { return; }
   setAnimatedUrl(AVATAR_BASE + animChosen, null);
@@ -695,7 +742,7 @@ function setAnimatedUrl(sent, callback) {
   // Said before the call: the events may fire from inside it (see apply()).
   say(T.picAnimSetting);
   try {
-    plugin.SetBartItem(transaction, BART_ANIMATED, sent);
+    setBart(BART_ANIMATED, sent);
   } catch (e) {
     animPending = '';
     say(T.picAnimRefused + e.message);
@@ -735,7 +782,7 @@ function readAnimated() {
   transaction = transaction + 1;
   animRead = transaction;
   try {
-    plugin.GetBartItem(transaction, BART_ANIMATED, plugin.OwnerInfo.ScreenName);
+    getBart(BART_ANIMATED);
   } catch (e) {
     // Only the "now set" line depends on it.
   }
@@ -772,23 +819,39 @@ function showAnimated(data) {
   else if (a && a.thumb) { shot.src = '/icq/avatars/' + a.thumb; }
   else { shot.removeAttribute('src'); }
 }
-</script>
 
-<script for="plugin" event="OnBartOpSucceeded(transID, bcstrData)" language="JavaScript">
-  if (transID == animRead) { showAnimated(bcstrData); }
-  else if (transID == animSet) { animDone(bcstrData); }
+// The client's answer to one of the page's transactions, from ICQ 6's
+// OnBartOp events and ICQ 7.2's OnAvatarResult alike.
+function bartSucceeded(transID, data) {
+  if (transID == animRead) { showAnimated(data); }
+  else if (transID == animSet) { animDone(data); }
   else {
-    show(bcstrData);
+    show(data);
     done();
   }
-</script>
+}
 
-<script for="plugin" event="OnBartOpFailed(transID)" language="JavaScript">
+function bartFailed(transID) {
   if (transID == animRead) { showAnimated(''); }
   else if (transID == animSet) { animFailed(); }
   // Reading fails when there is simply no picture, which is not worth a fuss;
   // only an upload that was asked for is reported as refused.
   else if (transID != picRead && pending) { say(T.picServerRefused); }
+}
+</script>
+
+<script for="plugin" event="OnBartOpSucceeded(transID, bcstrData)" language="JavaScript">
+  bartSucceeded(transID, bcstrData);
+</script>
+
+<script for="plugin" event="OnBartOpFailed(transID)" language="JavaScript">
+  bartFailed(transID);
+</script>
+
+<script for="plugin" event="OnAvatarResult(transeID, result, bcsData)" language="JavaScript">
+  // ICQ 7.2: result is the HRESULT of the operation.
+  if (result < 0) { bartFailed(transeID); }
+  else { bartSucceeded(transeID, bcsData); }
 </script>
 
 <script for="plugin" event="OnOwnerBartItemChange(eType, bcstrData)" language="JavaScript">

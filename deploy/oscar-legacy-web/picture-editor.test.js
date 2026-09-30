@@ -278,4 +278,65 @@ test('the picture page', async (t) => {
     const { text } = await get(srv.base, '/icq/avatar?lang=en');
     assert.match(text, /<button type="button" id="animMake" class="primary" onclick="makeOwn\(\)">Make your own<\/button>/);
   });
+
+  // The page's plugin calls, run against stand-ins for both clients. ICQ 7.2's
+  // SetBartItem and GetBartItem are E_NOTIMPL stubs (JScript error 445); ICQ 6
+  // has no SetAvatar or GetAvatar at all (JScript error 438).
+  await t.test('ICQ 7.2 gets SetAvatar and GetAvatar, ICQ 6 SetBartItem and GetBartItem', async () => {
+    const { text } = await get(srv.base, '/icq/avatar?lang=en');
+    const code = /var NO_SUCH_METHOD = 438;[\s\S]*?\nfunction getBart\(kind\) \{[\s\S]*?\n\}\n/.exec(text)[0];
+    const jscriptError = (n) => Object.assign(new Error(`JScript ${n}`), { number: (0x800A0000 | n) | 0 });
+    const run = (plugin, calls) => new Function('plugin', `
+      var BART_PICTURE = 1, BART_ANIMATED = 8, transaction = 5;
+      ${code}
+      ${calls}`)(plugin);
+    const log = [];
+    const icq72 = {
+      OwnerInfo: { ScreenName: '100001' },
+      SetAvatar: (...a) => log.push(['SetAvatar', ...a]),
+      GetAvatar: (...a) => log.push(['GetAvatar', ...a]),
+      SetBartItem: () => { throw jscriptError(445); },
+      GetBartItem: () => { throw jscriptError(445); },
+    };
+    const icq6 = {
+      OwnerInfo: { ScreenName: '100002' },
+      SetAvatar: () => { throw jscriptError(438); },
+      GetAvatar: () => { throw jscriptError(438); },
+      SetBartItem: (...a) => log.push(['SetBartItem', ...a]),
+      GetBartItem: (...a) => log.push(['GetBartItem', ...a]),
+    };
+    const movie = 'http://icq.example/icq/avatars/2308koshak.swf';
+    const picture = 'http://icq.example/icq/avatar/file/0123456789abcdef';
+    const calls = `setBart(BART_ANIMATED, ${JSON.stringify(movie)});
+      setBart(BART_PICTURE, ${JSON.stringify(picture)});
+      getBart(BART_ANIMATED);`;
+
+    run(icq72, calls);
+    assert.deepEqual(log.splice(0), [
+      // The movie goes with its still, which ICQ 7.2 insists on.
+      ['SetAvatar', 5, 8, movie, 'http://icq.example/icq/avatars/2308koshak-still.jpg'],
+      ['SetAvatar', 5, 1, picture],
+      ['GetAvatar', 5, 8, '100001'],
+    ]);
+    run(icq6, calls);
+    assert.deepEqual(log.splice(0), [
+      ['SetBartItem', 5, 8, movie],
+      ['SetBartItem', 5, 1, picture],
+      ['GetBartItem', 5, 8, '100002'],
+    ]);
+
+    // Any other refusal of SetAvatar is the client's answer, not a sign of
+    // ICQ 6: it reaches the page as it is.
+    const refusing = { ...icq72, SetAvatar: () => { throw jscriptError(5); } };
+    assert.throws(() => run(refusing, `setBart(BART_ANIMATED, ${JSON.stringify(movie)});`), /JScript 5/);
+    assert.deepEqual(log, []);
+
+    // ICQ 7.2 answers in OnAvatarResult, with an HRESULT, through the same
+    // handling as ICQ 6's OnBartOp events.
+    assert.match(text, /<script for="plugin" event="OnAvatarResult\(transeID, result, bcsData\)" language="JavaScript">\s*\/\/[^\n]*\n\s*if \(result < 0\) \{ bartFailed\(transeID\); \}\s*else \{ bartSucceeded\(transeID, bcsData\); \}/);
+    assert.match(text, /event="OnBartOpSucceeded\(transID, bcstrData\)" language="JavaScript">\s*bartSucceeded\(transID, bcstrData\);/);
+    assert.match(text, /event="OnBartOpFailed\(transID\)" language="JavaScript">\s*bartFailed\(transID\);/);
+    // Nothing calls the old methods directly any more.
+    assert.equal(text.match(/plugin\.(SetBartItem|GetBartItem)\(/g).length, 2);
+  });
 });
