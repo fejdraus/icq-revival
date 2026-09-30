@@ -93,6 +93,9 @@ pub struct Instance {
     pub frame_serial: Cell<u64>,
     /// The faces a Flash avatar was told to show (face.rs).
     faces: crate::face::Faces,
+    /// SetVariable calls made while the movie was still loading, applied
+    /// once its first frame has run (the last value per variable).
+    pending_vars: RefCell<Vec<(String, String)>>,
 }
 
 /// The windows of one thread. Each window lives on the thread that created
@@ -119,7 +122,9 @@ thread_local! {
 static OWNERS: Mutex<Vec<(usize, u32)>> = Mutex::new(Vec::new());
 
 /// Finished background loads, keyed by (window, generation).
-static LOADS: Mutex<Vec<(usize, u32, Result<Vec<u8>, String>)>> = Mutex::new(Vec::new());
+/// The result is the movie and the URL it came from (see `fetch::fetch_movie`).
+#[allow(clippy::type_complexity)]
+static LOADS: Mutex<Vec<(usize, u32, Result<(Vec<u8>, String), String>)>> = Mutex::new(Vec::new());
 
 pub fn get(hwnd: HWND) -> Option<Rc<Instance>> {
     if hwnd.is_null() {
@@ -262,6 +267,7 @@ impl Instance {
             on_control_timer: RefCell::new(None),
             frame_serial: Cell::new(0),
             faces: crate::face::Faces::default(),
+            pending_vars: RefCell::new(Vec::new()),
         }
     }
 
@@ -313,6 +319,7 @@ impl Instance {
         }
         self.fs.borrow_mut().clear();
         self.faces.reset();
+        self.pending_vars.borrow_mut().clear();
         unsafe { KillTimer(self.hwnd, FACE_TIMER) };
         *self.url.borrow_mut() = url.to_owned();
         self.ready_state.set(1);
@@ -329,7 +336,7 @@ impl Instance {
             .spawn(move || {
                 crate::install_panic_hook();
                 let result = std::panic::catch_unwind(|| {
-                    let mut result = crate::fetch::fetch(&url);
+                    let mut result = crate::fetch::fetch_movie(&url);
                     if result.is_ok() {
                         if let Err(e) = crate::gpu::wait(Duration::from_secs(60)) {
                             result = Err(e);
@@ -370,14 +377,14 @@ impl Instance {
         }
         // Loaded or failed: a movie that cannot be had has ended.
         self.loading.set(false);
-        let data = match result {
+        let (data, from) = match result {
             Ok(d) => d,
             Err(_) => {
                 self.ended.set(true);
                 return;
             }
         };
-        let url = crate::fetch::movie_url(&self.url.borrow());
+        let url = crate::fetch::movie_url(&from);
         let (w, h) = self.size();
         let movie = match Movie::new(
             &data,
@@ -561,11 +568,30 @@ impl Instance {
     }
 
     pub fn set_variable(&self, path: &str, value: &str) -> HRESULT {
-        let hr = match self.with_movie("SetVariable", |m| m.set_variable(path, value)) {
-            Some(true) => S_OK,
-            _ => E_FAIL,
+        // ICQ 7.2 sets the face right after the Movie, while the movie still
+        // loads: keep it for the movie (Flash queues such calls as well).
+        let waiting = self.loading.get()
+            || self
+                .movie
+                .borrow()
+                .as_ref()
+                .is_some_and(|m| m.root_state().0 < 1);
+        let hr = if waiting {
+            let mut q = self.pending_vars.borrow_mut();
+            q.retain(|(p, _)| p != path);
+            q.push((path.to_owned(), value.to_owned()));
+            log(&format!(
+                "SetVariable({path:?}, {value:?}) -> 0x0 (kept until the movie has loaded)"
+            ));
+            S_OK
+        } else {
+            let hr = match self.with_movie("SetVariable", |m| m.set_variable(path, value)) {
+                Some(true) => S_OK,
+                _ => E_FAIL,
+            };
+            log(&format!("SetVariable({path:?}, {value:?}) -> {hr:#x}"));
+            hr
         };
-        log(&format!("SetVariable({path:?}, {value:?}) -> {hr:#x}"));
         let delay = crate::face::delay_ms();
         match self.faces.on_set(path, value, Instant::now(), delay) {
             crate::face::Action::Arm(ms) => {
@@ -721,7 +747,31 @@ impl Instance {
         if changed {
             self.present();
         }
+        self.apply_pending_vars();
         self.deliver_fscommands();
+    }
+
+    /// SetVariable calls kept while loading, once the first frame has run.
+    fn apply_pending_vars(&self) {
+        if self.pending_vars.borrow().is_empty() {
+            return;
+        }
+        let started = self
+            .movie
+            .borrow()
+            .as_ref()
+            .is_some_and(|m| m.root_state().0 >= 1);
+        if !started {
+            return;
+        }
+        let vars = std::mem::take(&mut *self.pending_vars.borrow_mut());
+        for (path, value) in vars {
+            let ok = self.with_movie("SetVariable", |m| m.set_variable(&path, &value));
+            log(&format!(
+                "SetVariable({path:?}, {value:?}) applied after load -> {}",
+                if ok == Some(true) { "0x0" } else { "failed" }
+            ));
+        }
     }
 
     fn deliver_fscommands(&self) {

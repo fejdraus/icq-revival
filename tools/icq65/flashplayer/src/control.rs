@@ -12,15 +12,22 @@
 //! - IViewObjectEx / IViewObject2 / IViewObject (Draw: the last frame,
 //!   premultiplied, AlphaBlend'ed into the host's DC)
 //! - IOleInPlaceObjectWindowless / IOleInPlaceObject / IOleWindow
-//!   (windowless in-place activation, SetObjectRects)
+//!   (in-place activation, windowless or windowed, SetObjectRects)
 //! - IObjectWithSite, IOleControl
 //! - IShockwaveFlash / IDispatch / IConnectionPointContainer from the
 //!   window's FlashObject, which delegates its IUnknown to this control.
 //!
 //! When the movie shows a new frame, the host is told through
 //! IOleInPlaceSiteWindowless::InvalidateRect (or IAdviseSink::OnViewChange)
-//! and paints it with Draw. Everything runs on the thread that created the
-//! control (apartment threaded).
+//! and paints it with Draw.
+//!
+//! A site that cannot host it windowless (ICQ 7.2's devil box answers
+//! CanWindowlessActivate with S_FALSE and never calls Draw) gets a windowed
+//! control instead: a child window of the site's window that paints the
+//! frames itself, opaque like Flash's WMode window.
+//!
+//! Everything runs on the thread that created the control (apartment
+//! threaded).
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -38,7 +45,7 @@ use windows_sys::Win32::Graphics::Gdi::{
     DeleteObject, HBITMAP, HDC, SelectObject,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, HWND_MESSAGE, KillTimer, SetTimer,
+    CreateWindowExW, DestroyWindow, HWND_MESSAGE, KillTimer, SW_SHOWNA, SetTimer, ShowWindow,
 };
 use windows_sys::core::{GUID, HRESULT};
 
@@ -349,6 +356,14 @@ pub struct Control {
     qi_seen: RefCell<Vec<(GUID, bool)>>,
     /// The site's window (IOleWindow::GetWindow): where its InvalidateRect goes.
     site_hwnd: Cell<HWND>,
+    /// Windowed activation (the site cannot host windowless controls, like
+    /// ICQ 7.2's devil box): our own child window of the site's window,
+    /// which paints the frames itself. NULL when windowless or inactive.
+    child: Cell<HWND>,
+    /// The child window has been shown (it stays hidden until a frame exists).
+    child_shown: Cell<bool>,
+    /// WM_PAINTs of the child window.
+    child_paints: Cell<u32>,
 }
 
 unsafe fn ctl<'a>(this: Unk, index: usize) -> &'a Control {
@@ -419,6 +434,9 @@ impl Control {
             last_draw_size: Cell::new((0, 0)),
             qi_seen: RefCell::new(Vec::new()),
             site_hwnd: Cell::new(null_mut()),
+            child: Cell::new(null_mut()),
+            child_shown: Cell::new(false),
+            child_paints: Cell::new(0),
         }));
         let control = unsafe { &*c };
         let class: Vec<u16> = "FlashPlayerControl".encode_utf16().chain(Some(0)).collect();
@@ -540,8 +558,9 @@ impl Control {
 
     fn teardown(&self) {
         self.clog(&format!(
-            "released: {} Draw calls, {} repaint notifications",
+            "released: {} Draw calls ({} of them painting its own window), {} repaint notifications",
             self.draws.get(),
+            self.child_paints.get(),
             self.notifies.get()
         ));
         self.deactivate();
@@ -658,6 +677,26 @@ impl Control {
         };
         let n = self.notifies.get() + 1;
         self.notifies.set(n);
+        let child = self.child.get();
+        if !child.is_null() {
+            // Windowed: our own window paints the frame.
+            self.keep_opaque();
+            let shown = !self.child_shown.replace(true);
+            unsafe {
+                if shown {
+                    ShowWindow(child, SW_SHOWNA);
+                }
+                windows_sys::Win32::Graphics::Gdi::InvalidateRect(child, null(), 0);
+            }
+            if log_every(n) || shown {
+                self.clog(&format!(
+                    "repaint request #{n} ({reason}, frame {serial}, window drew {}): own window {child:?}{}",
+                    self.drawn_serial.get(),
+                    if shown { " shown" } else { "" }
+                ));
+            }
+            return;
+        }
         let rect = self.obj_rect.get();
         let inv = self.invalidate(rect);
         let vc = self.view_change();
@@ -740,7 +779,9 @@ impl Control {
         }
     }
 
-    fn activate(&self, rect: *const RECT) -> HRESULT {
+    /// In-place activation. `parent` is DoVerb's hwndParent, used for the
+    /// windowed case when the site has no window of its own.
+    fn activate(&self, rect: *const RECT, parent: HWND) -> HRESULT {
         let client = self.client_site.get();
         if client.is_null() {
             self.clog("activate: no client site -> E_UNEXPECTED");
@@ -853,14 +894,23 @@ impl Control {
             ));
             self.clog(&format!(
                 "in-place active: {} site (CanWindowlessActivate {}), OnInPlaceActivate{} -> {hr:#x}, \
-                 GetWindowContext -> {ctx_hr:#x} pos {} clip {}, DoVerb rect {}",
+                 GetWindowContext -> {ctx_hr:#x} pos {} clip {}, DoVerb rect {}, {}",
                 ["plain", "Ex", "windowless"][kind as usize],
                 can_windowless.map_or("n/a".into(), |h| format!("{h:#x}")),
                 if kind == 0 { "" } else { "Ex" },
                 rect_str(&pos),
                 rect_str(&clip),
-                opt_rect_str(rect)
+                opt_rect_str(rect),
+                if kind == 2 {
+                    "windowless"
+                } else {
+                    "windowed (own child window)"
+                }
             ));
+            if kind != 2 {
+                let parent = if sh.is_null() { parent } else { sh };
+                self.create_child(parent);
+            }
             // IOleClientSite::ShowObject
             vcall!(client, 6, fn() -> HRESULT);
         }
@@ -869,8 +919,168 @@ impl Control {
         S_OK
     }
 
+    /// Windowed activation: Flash without WMode transparent/opaque is a
+    /// window of its own, painted opaque with the stage colour (a child
+    /// window cannot be see-through). ICQ 7.2's devil box hosts Flash so.
+    fn create_child(&self, parent: HWND) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS,
+        };
+        if parent.is_null() {
+            self.clog(
+                "windowed activation: no parent window (site and DoVerb gave none), nothing shown",
+            );
+            return;
+        }
+        register_child_class();
+        let r = self.obj_rect.get().unwrap_or(self.pos.get());
+        let class = wide(CHILD_CLASS);
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                class.as_ptr(),
+                null(),
+                WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
+                r.left,
+                r.top,
+                (r.right - r.left).max(0),
+                (r.bottom - r.top).max(0),
+                parent,
+                null_mut(),
+                crate::module(),
+                self as *const Control as *const c_void,
+            )
+        };
+        if hwnd.is_null() {
+            self.clog(&format!(
+                "windowed activation: CreateWindowEx failed ({})",
+                std::io::Error::last_os_error()
+            ));
+            return;
+        }
+        self.child.set(hwnd);
+        self.child_shown.set(false);
+        self.keep_opaque();
+        self.clog(&format!(
+            "windowed activation: own window {hwnd:?} at {} in {}",
+            rect_str(&r),
+            describe_window(parent)
+        ));
+    }
+
+    /// A windowed control shows the stage colour (Flash's WMode window):
+    /// switches a transparent display to opaque.
+    fn keep_opaque(&self) {
+        if let Some(inst) = self.inst() {
+            let mut d = inst.display.get();
+            if d.transparent {
+                d.transparent = false;
+                self.in_draw.set(true);
+                inst.set_display(d);
+                self.in_draw.set(false);
+                self.clog("windowed: WMode window (opaque, stage colour drawn)");
+            }
+        }
+    }
+
+    fn destroy_child(&self) {
+        let hwnd = self.child.replace(null_mut());
+        if !hwnd.is_null() {
+            unsafe {
+                set_child_owner(hwnd, null());
+                DestroyWindow(hwnd);
+            }
+            self.clog(&format!("own window {hwnd:?} destroyed"));
+        }
+        self.child_shown.set(false);
+    }
+
+    /// Moves the own window to `pos`, clipped to `clip` (SetObjectRects).
+    fn place_child(&self, pos: &RECT, clip: *const RECT) {
+        use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, SetWindowRgn};
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos,
+        };
+        let hwnd = self.child.get();
+        if hwnd.is_null() {
+            return;
+        }
+        let (w, h) = (pos.right - pos.left, pos.bottom - pos.top);
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                null_mut(),
+                pos.left,
+                pos.top,
+                w.max(0),
+                h.max(0),
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            let mut rgn = null_mut();
+            if !clip.is_null() {
+                let c = *clip;
+                let i = RECT {
+                    left: c.left.max(pos.left),
+                    top: c.top.max(pos.top),
+                    right: c.right.min(pos.right),
+                    bottom: c.bottom.min(pos.bottom),
+                };
+                if i.left != pos.left
+                    || i.top != pos.top
+                    || i.right != pos.right
+                    || i.bottom != pos.bottom
+                {
+                    rgn = CreateRectRgn(
+                        i.left - pos.left,
+                        i.top - pos.top,
+                        (i.right - pos.left).max(i.left - pos.left),
+                        (i.bottom - pos.top).max(i.top - pos.top),
+                    );
+                }
+            }
+            // The window owns the region from here on.
+            SetWindowRgn(hwnd, rgn, 1);
+        }
+    }
+
+    /// WM_PAINT of the own window: the frame at the window's size, over the
+    /// window colour where the movie leaves pixels uncovered.
+    fn paint_child(&self, hwnd: HWND) {
+        use windows_sys::Win32::Graphics::Gdi::{
+            BeginPaint, BitBlt, COLOR_WINDOW, CreateCompatibleBitmap, EndPaint, FillRect,
+            GetSysColorBrush, PAINTSTRUCT, SRCCOPY,
+        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+        let n = self.child_paints.get() + 1;
+        self.child_paints.set(n);
+        unsafe {
+            let mut ps: PAINTSTRUCT = std::mem::zeroed();
+            let dc = BeginPaint(hwnd, &mut ps);
+            if dc.is_null() {
+                return;
+            }
+            let mut r: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut r);
+            let (w, h) = (r.right - r.left, r.bottom - r.top);
+            if w > 0 && h > 0 {
+                // Composed off screen: no flicker between fill and frame.
+                let mem = CreateCompatibleDC(dc);
+                let bmp = CreateCompatibleBitmap(dc, w, h);
+                let old = SelectObject(mem, bmp);
+                FillRect(mem, &r, GetSysColorBrush(COLOR_WINDOW));
+                self.draw(mem, &r, Some("own window"));
+                BitBlt(dc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+                SelectObject(mem, old);
+                DeleteObject(bmp);
+                DeleteDC(mem);
+            }
+            EndPaint(hwnd, &ps);
+        }
+    }
+
     fn deactivate(&self) {
         self.disarm_retry();
+        self.destroy_child();
         if !self.active.replace(false) {
             return;
         }
@@ -1009,7 +1219,9 @@ impl Control {
         Some((dc, frame, serial, rendered))
     }
 
-    fn draw(&self, hdc: HDC, bounds: *const RECT) -> HRESULT {
+    /// Draws the current frame into `hdc`. `label` names a caller other than
+    /// the host's IViewObject::Draw (the own window's WM_PAINT), for the log.
+    fn draw(&self, hdc: HDC, bounds: *const RECT, label: Option<&str>) -> HRESULT {
         let n = self.draws.get() + 1;
         self.draws.set(n);
         if hdc.is_null() {
@@ -1017,7 +1229,7 @@ impl Control {
             return E_POINTER;
         }
         let (r, from) = if !bounds.is_null() {
-            (unsafe { *bounds }, "lprcBounds")
+            (unsafe { *bounds }, label.unwrap_or("lprcBounds"))
         } else if let Some(r) = self.obj_rect.get() {
             (r, "SetObjectRects")
         } else {
@@ -1132,6 +1344,115 @@ impl Control {
 }
 
 // ---------------------------------------------------------------------------
+// The own window of a control activated windowed.
+
+const CHILD_CLASS: &str = "FlashPlayerControlAxWindow";
+
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(Some(0)).collect()
+}
+
+fn register_child_class() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClassInfoExW, IDC_ARROW, LoadCursorW, RegisterClassExW, WNDCLASSEXW,
+    };
+    let name = wide(CHILD_CLASS);
+    let hinst = crate::module();
+    unsafe {
+        let mut existing: WNDCLASSEXW = std::mem::zeroed();
+        existing.cbSize = size_of::<WNDCLASSEXW>() as u32;
+        if GetClassInfoExW(hinst, name.as_ptr(), &mut existing) != 0 {
+            return;
+        }
+        let class = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            style: 0,
+            lpfnWndProc: Some(child_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: hinst,
+            hIcon: null_mut(),
+            hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            hbrBackground: null_mut(),
+            lpszMenuName: null(),
+            lpszClassName: name.as_ptr(),
+            hIconSm: null_mut(),
+        };
+        RegisterClassExW(&class);
+    }
+}
+
+#[cfg(target_pointer_width = "64")]
+unsafe fn set_child_owner(hwnd: HWND, c: *const Control) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GWLP_USERDATA, SetWindowLongPtrW};
+    unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, c as isize) };
+}
+#[cfg(target_pointer_width = "32")]
+unsafe fn set_child_owner(hwnd: HWND, c: *const Control) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GWLP_USERDATA, SetWindowLongW};
+    unsafe { SetWindowLongW(hwnd, GWLP_USERDATA, c as i32) };
+}
+#[cfg(target_pointer_width = "64")]
+unsafe fn child_owner(hwnd: HWND) -> *const Control {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GWLP_USERDATA, GetWindowLongPtrW};
+    unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Control }
+}
+#[cfg(target_pointer_width = "32")]
+unsafe fn child_owner(hwnd: HWND) -> *const Control {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GWLP_USERDATA, GetWindowLongW};
+    unsafe { GetWindowLongW(hwnd, GWLP_USERDATA) as usize as *const Control }
+}
+
+unsafe extern "system" fn child_proc(
+    hwnd: HWND,
+    msg: u32,
+    wp: windows_sys::Win32::Foundation::WPARAM,
+    lp: windows_sys::Win32::Foundation::LPARAM,
+) -> windows_sys::Win32::Foundation::LRESULT {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CREATESTRUCTW, DefWindowProcW, HTTRANSPARENT, WM_ERASEBKGND, WM_NCCREATE, WM_NCDESTROY,
+        WM_NCHITTEST, WM_PAINT,
+    };
+    let handled = crate::ffi_guard("control window", None, || unsafe {
+        match msg {
+            WM_NCCREATE => {
+                let cs = lp as *const CREATESTRUCTW;
+                set_child_owner(hwnd, (*cs).lpCreateParams as *const Control);
+                None
+            }
+            WM_PAINT => {
+                let c = child_owner(hwnd);
+                if c.is_null() {
+                    return None;
+                }
+                (*c).paint_child(hwnd);
+                Some(0)
+            }
+            WM_ERASEBKGND => Some(1),
+            // The mouse goes to the host's window underneath (the avatar's
+            // menu and hover buttons), as if the movie were windowless.
+            WM_NCHITTEST => Some(HTTRANSPARENT as isize),
+            WM_NCDESTROY => {
+                // Destroyed with its parent while the control lives on.
+                let c = child_owner(hwnd);
+                set_child_owner(hwnd, null());
+                if !c.is_null() && (*c).child.get() == hwnd {
+                    (*c).child.set(null_mut());
+                    (*c).child_shown.set(false);
+                    (*c).clog(&format!("own window {hwnd:?} destroyed with its parent"));
+                }
+                None
+            }
+            _ => None,
+        }
+    });
+    match handled {
+        Some(r) => r,
+        None => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Vtables. `this` points at one of the control's vtable pointers; the
 // const parameter says which one.
 
@@ -1169,6 +1490,44 @@ fn unk<const I: usize>() -> Vec<usize> {
         release::<I> as *const () as usize,
     ]
 }
+
+/// A method the control does not implement: logs the call (so a live log
+/// shows what a host misses) and returns `$hr`, clearing an out pointer.
+macro_rules! stub {
+    ($name:ident, $iface:expr, $what:literal, $hr:expr, ($($a:ident: $t:ty),*) $(, out $o:ident)?) => {
+        unsafe extern "system" fn $name(this: Unk, $($a: $t),*) -> HRESULT {
+            $(
+                if !$o.is_null() {
+                    unsafe { *$o = null_mut() };
+                }
+            )?
+            $( let _ = $a; )*
+            unsafe { ctl(this, $iface) }.call_log(concat!($what, " (not implemented)"));
+            $hr
+        }
+    };
+}
+
+stub!(ole_set_moniker, I_OLEOBJECT, "IOleObject::SetMoniker", E_NOTIMPL, (a: usize, b: usize));
+stub!(ole_get_moniker, I_OLEOBJECT, "IOleObject::GetMoniker", E_NOTIMPL, (a: usize, b: usize, out: *mut Unk), out out);
+stub!(ole_init_from_data, I_OLEOBJECT, "IOleObject::InitFromData", E_NOTIMPL, (a: usize, b: usize, c: usize));
+stub!(ole_get_clipboard_data, I_OLEOBJECT, "IOleObject::GetClipboardData", E_NOTIMPL, (a: usize, out: *mut Unk), out out);
+stub!(ole_enum_verbs, I_OLEOBJECT, "IOleObject::EnumVerbs -> OLE_S_USEREG", OLE_S_USEREG, (out: *mut Unk), out out);
+stub!(ole_set_color_scheme, I_OLEOBJECT, "IOleObject::SetColorScheme", E_NOTIMPL, (a: usize));
+stub!(pb_save, I_PROPBAG, "IPersistPropertyBag::Save", E_NOTIMPL, (a: usize, b: usize, c: usize));
+stub!(psi_load, I_STREAMINIT, "IPersistStreamInit::Load", E_NOTIMPL, (a: usize));
+stub!(psi_save, I_STREAMINIT, "IPersistStreamInit::Save", E_NOTIMPL, (a: usize, b: usize));
+stub!(ipo_context_help, I_INPLACE, "IOleInPlaceObject::ContextSensitiveHelp", E_NOTIMPL, (a: usize));
+stub!(
+    ipo_reactivate_and_undo,
+    I_INPLACE,
+    "IOleInPlaceObject::ReactivateAndUndo",
+    E_NOTIMPL,
+    ()
+);
+stub!(ipo_get_drop_target, I_INPLACE, "IOleInPlaceObjectWindowless::GetDropTarget", E_NOTIMPL, (out: *mut Unk), out out);
+stub!(octl_get_control_info, I_CONTROL, "IOleControl::GetControlInfo", E_NOTIMPL, (a: usize));
+stub!(octl_on_mnemonic, I_CONTROL, "IOleControl::OnMnemonic", E_NOTIMPL, (a: usize));
 
 // --- IOleObject -------------------------------------------------------------
 
@@ -1234,18 +1593,6 @@ unsafe extern "system" fn ole_close(this: Unk, save: u32) -> HRESULT {
         S_OK
     })
 }
-extern "system" fn notimpl2(_: Unk, _: usize, _: usize) -> HRESULT {
-    E_NOTIMPL
-}
-unsafe extern "system" fn notimpl_out3(_: Unk, _: usize, _: usize, out: *mut Unk) -> HRESULT {
-    if !out.is_null() {
-        unsafe { *out = null_mut() };
-    }
-    E_NOTIMPL
-}
-extern "system" fn notimpl3(_: Unk, _: usize, _: usize, _: usize) -> HRESULT {
-    E_NOTIMPL
-}
 unsafe extern "system" fn ole_do_verb(
     this: Unk,
     verb: i32,
@@ -1259,7 +1606,7 @@ unsafe extern "system" fn ole_do_verb(
         let c = unsafe { ctl(this, I_OLEOBJECT) };
         let hr = match verb {
             OLEIVERB_PRIMARY | OLEIVERB_SHOW | OLEIVERB_INPLACEACTIVATE | OLEIVERB_UIACTIVATE => {
-                c.activate(rect)
+                c.activate(rect, parent)
             }
             OLEIVERB_HIDE => {
                 c.deactivate();
@@ -1273,12 +1620,6 @@ unsafe extern "system" fn ole_do_verb(
         ));
         hr
     })
-}
-unsafe extern "system" fn ole_use_reg1(_: Unk, out: *mut Unk) -> HRESULT {
-    if !out.is_null() {
-        unsafe { *out = null_mut() };
-    }
-    OLE_S_USEREG
 }
 extern "system" fn ok0(_: Unk) -> HRESULT {
     S_OK
@@ -1389,9 +1730,6 @@ unsafe extern "system" fn ole_get_misc_status(this: Unk, aspect: u32, out: *mut 
     ));
     S_OK
 }
-extern "system" fn notimpl1(_: Unk, _: usize) -> HRESULT {
-    E_NOTIMPL
-}
 
 fn oleobject_vtbl() -> Vec<usize> {
     let mut v = unk::<I_OLEOBJECT>();
@@ -1400,12 +1738,12 @@ fn oleobject_vtbl() -> Vec<usize> {
         ole_get_client_site as *const () as usize, // GetClientSite
         ole_set_host_names as *const () as usize,  // SetHostNames(app, obj)
         ole_close as *const () as usize,           // Close
-        notimpl2 as *const () as usize,            // SetMoniker(which, pmk)
-        notimpl_out3 as *const () as usize,        // GetMoniker(assign, which, ppmk)
-        notimpl3 as *const () as usize,            // InitFromData(obj, creation, reserved)
-        notimpl_out_2 as *const () as usize,       // GetClipboardData(reserved, ppobj)
+        ole_set_moniker as *const () as usize,     // SetMoniker(which, pmk)
+        ole_get_moniker as *const () as usize,     // GetMoniker(assign, which, ppmk)
+        ole_init_from_data as *const () as usize,  // InitFromData(obj, creation, reserved)
+        ole_get_clipboard_data as *const () as usize, // GetClipboardData(reserved, ppobj)
         ole_do_verb as *const () as usize,         // DoVerb
-        ole_use_reg1 as *const () as usize,        // EnumVerbs
+        ole_enum_verbs as *const () as usize,      // EnumVerbs
         ok0 as *const () as usize,                 // Update
         ok0 as *const () as usize,                 // IsUpToDate
         get_class_id as *const () as usize,        // GetUserClassID
@@ -1416,15 +1754,9 @@ fn oleobject_vtbl() -> Vec<usize> {
         ole_unadvise as *const () as usize,        // Unadvise
         ole_enum_advise as *const () as usize,     // EnumAdvise
         ole_get_misc_status as *const () as usize, // GetMiscStatus
-        notimpl1 as *const () as usize,            // SetColorScheme
+        ole_set_color_scheme as *const () as usize, // SetColorScheme
     ]);
     v
-}
-unsafe extern "system" fn notimpl_out_2(_: Unk, _: usize, out: *mut Unk) -> HRESULT {
-    if !out.is_null() {
-        unsafe { *out = null_mut() };
-    }
-    E_NOTIMPL
 }
 
 // --- IPersistPropertyBag / IPersistStreamInit --------------------------------
@@ -1452,7 +1784,7 @@ fn propbag_vtbl() -> Vec<usize> {
         get_class_id as *const () as usize, // GetClassID
         pb_init_new as *const () as usize,  // InitNew
         pb_load as *const () as usize,      // Load(bag, errorlog)
-        notimpl3 as *const () as usize,     // Save(bag, clearDirty, saveAll)
+        pb_save as *const () as usize,      // Save(bag, clearDirty, saveAll)
     ]);
     v
 }
@@ -1470,8 +1802,8 @@ fn streaminit_vtbl() -> Vec<usize> {
     v.extend([
         get_class_id as *const () as usize,     // GetClassID
         s_false0 as *const () as usize,         // IsDirty
-        notimpl1 as *const () as usize,         // Load(stream)
-        notimpl2 as *const () as usize,         // Save(stream, clearDirty)
+        psi_load as *const () as usize,         // Load(stream)
+        psi_save as *const () as usize,         // Save(stream, clearDirty)
         psi_get_size_max as *const () as usize, // GetSizeMax
         psi_init_new as *const () as usize,     // InitNew
     ]);
@@ -1497,7 +1829,7 @@ unsafe extern "system" fn view_draw(
     g!(
         "IViewObject::Draw",
         E_FAIL,
-        unsafe { ctl(this, I_VIEW) }.draw(hdc, bounds)
+        unsafe { ctl(this, I_VIEW) }.draw(hdc, bounds, None)
     )
 }
 unsafe extern "system" fn view_get_color_set(
@@ -1701,11 +2033,14 @@ fn view_vtbl() -> Vec<usize> {
 
 // --- IOleInPlaceObjectWindowless ------------------------------------------------
 
-unsafe extern "system" fn ipo_get_window(_: Unk, out: *mut HWND) -> HRESULT {
-    if !out.is_null() {
-        unsafe { *out = null_mut() };
+unsafe extern "system" fn ipo_get_window(this: Unk, out: *mut HWND) -> HRESULT {
+    if out.is_null() {
+        return E_POINTER;
     }
-    E_FAIL // windowless
+    // The own window when activated windowed; none when windowless.
+    let child = unsafe { ctl(this, I_INPLACE) }.child.get();
+    unsafe { *out = child };
+    if child.is_null() { E_FAIL } else { S_OK }
 }
 unsafe extern "system" fn ipo_deactivate(this: Unk) -> HRESULT {
     g!("InPlaceDeactivate", E_FAIL, {
@@ -1735,6 +2070,7 @@ unsafe extern "system" fn ipo_set_object_rects(
         ));
         let size = |r: &RECT| (r.right - r.left, r.bottom - r.top);
         let resized = old.as_ref().map(size) != Some(size(&r));
+        c.place_child(&r, clip);
         c.resize();
         if resized {
             c.notify("new size");
@@ -1760,25 +2096,16 @@ unsafe extern "system" fn ipo_on_window_message(
 fn inplace_vtbl() -> Vec<usize> {
     let mut v = unk::<I_INPLACE>();
     v.extend([
-        ipo_get_window as *const () as usize,        // GetWindow
-        notimpl1 as *const () as usize,              // ContextSensitiveHelp
-        ipo_deactivate as *const () as usize,        // InPlaceDeactivate
-        ok0 as *const () as usize,                   // UIDeactivate
-        ipo_set_object_rects as *const () as usize,  // SetObjectRects
-        notimpl_0 as *const () as usize,             // ReactivateAndUndo
-        ipo_on_window_message as *const () as usize, // OnWindowMessage
-        ole_use_reg_notimpl1 as *const () as usize,  // GetDropTarget
+        ipo_get_window as *const () as usize,          // GetWindow
+        ipo_context_help as *const () as usize,        // ContextSensitiveHelp
+        ipo_deactivate as *const () as usize,          // InPlaceDeactivate
+        ok0 as *const () as usize,                     // UIDeactivate
+        ipo_set_object_rects as *const () as usize,    // SetObjectRects
+        ipo_reactivate_and_undo as *const () as usize, // ReactivateAndUndo
+        ipo_on_window_message as *const () as usize,   // OnWindowMessage
+        ipo_get_drop_target as *const () as usize,     // GetDropTarget
     ]);
     v
-}
-extern "system" fn notimpl_0(_: Unk) -> HRESULT {
-    E_NOTIMPL
-}
-unsafe extern "system" fn ole_use_reg_notimpl1(_: Unk, out: *mut Unk) -> HRESULT {
-    if !out.is_null() {
-        unsafe { *out = null_mut() };
-    }
-    E_NOTIMPL
 }
 
 // --- IObjectWithSite / IOleControl ------------------------------------------------
@@ -1821,10 +2148,10 @@ fn withsite_vtbl() -> Vec<usize> {
 fn control_vtbl() -> Vec<usize> {
     let mut v = unk::<I_CONTROL>();
     v.extend([
-        notimpl1 as *const () as usize, // GetControlInfo
-        notimpl1 as *const () as usize, // OnMnemonic
-        ok1 as *const () as usize,      // OnAmbientPropertyChange
-        ok1 as *const () as usize,      // FreezeEvents
+        octl_get_control_info as *const () as usize, // GetControlInfo
+        octl_on_mnemonic as *const () as usize,      // OnMnemonic
+        ok1 as *const () as usize,                   // OnAmbientPropertyChange
+        ok1 as *const () as usize,                   // FreezeEvents
     ]);
     v
 }

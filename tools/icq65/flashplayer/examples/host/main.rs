@@ -54,6 +54,7 @@ macro_rules! say {
 }
 
 mod avatar;
+mod ax72;
 mod axfirst;
 mod axhost;
 mod stacks;
@@ -1047,6 +1048,14 @@ fn main() {
             let atl = axhost::atl_host(&args[3], &args[4], &names[..names.len().min(3)]);
             say!("result: container ok {}, ATL host ok {atl}", r.ok);
             std::process::exit(if r.ok && atl { 0 } else { 1 });
+        }
+        // ax72 <base dir|url> <out> <names...>: ICQ 7.2's devil host
+        // (windowed activation in a frame window per avatar).
+        "ax72" => {
+            axhost::register_class(&args[1]);
+            let ok = ax72::run(&args[3], &args[4], &args[5..]);
+            say!("result: ICQ 7.2 host ok {ok}");
+            std::process::exit(if ok { 0 } else { 1 });
         }
         m => panic!("unknown mode {m}"),
     }

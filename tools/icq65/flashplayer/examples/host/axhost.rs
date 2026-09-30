@@ -25,26 +25,37 @@ use windows_sys::core::{GUID, HRESULT};
 
 use crate::{Unk, bstr_str, guid_eq, pump_for, wide};
 
-const CLSID_FLASH: GUID = GUID::from_u128(0xD27CDB6E_AE6D_11cf_96B8_444553540000);
-const IID_IUNKNOWN: GUID = GUID::from_u128(0x00000000_0000_0000_C000_000000000046);
-const IID_ICLASSFACTORY: GUID = GUID::from_u128(0x00000001_0000_0000_C000_000000000046);
-const IID_IOLEOBJECT: GUID = GUID::from_u128(0x00000112_0000_0000_C000_000000000046);
-const IID_IPERSISTPROPERTYBAG: GUID = GUID::from_u128(0x37D84F60_42CB_11CE_8135_00AA004BB851);
-const IID_IPERSISTSTREAMINIT: GUID = GUID::from_u128(0x7FD52380_4E07_101B_AE2D_08002B2EC713);
-const IID_IVIEWOBJECTEX: GUID = GUID::from_u128(0x3AF24292_0C96_11CE_A0CF_00AA00600AB8);
-const IID_IVIEWOBJECT2: GUID = GUID::from_u128(0x00000127_0000_0000_C000_000000000046);
-const IID_IVIEWOBJECT: GUID = GUID::from_u128(0x0000010D_0000_0000_C000_000000000046);
-const IID_IOBJECTWITHSITE: GUID = GUID::from_u128(0xFC4801A3_2BA9_11CF_A229_00AA003D7352);
-const IID_IOLEINPLACEOBJECTWINDOWLESS: GUID =
+pub(crate) const CLSID_FLASH: GUID = GUID::from_u128(0xD27CDB6E_AE6D_11cf_96B8_444553540000);
+pub(crate) const IID_IUNKNOWN: GUID = GUID::from_u128(0x00000000_0000_0000_C000_000000000046);
+pub(crate) const IID_ICLASSFACTORY: GUID = GUID::from_u128(0x00000001_0000_0000_C000_000000000046);
+pub(crate) const IID_IOLEOBJECT: GUID = GUID::from_u128(0x00000112_0000_0000_C000_000000000046);
+pub(crate) const IID_IPERSISTPROPERTYBAG: GUID =
+    GUID::from_u128(0x37D84F60_42CB_11CE_8135_00AA004BB851);
+pub(crate) const IID_IPERSISTSTREAMINIT: GUID =
+    GUID::from_u128(0x7FD52380_4E07_101B_AE2D_08002B2EC713);
+pub(crate) const IID_IVIEWOBJECTEX: GUID = GUID::from_u128(0x3AF24292_0C96_11CE_A0CF_00AA00600AB8);
+pub(crate) const IID_IVIEWOBJECT2: GUID = GUID::from_u128(0x00000127_0000_0000_C000_000000000046);
+pub(crate) const IID_IVIEWOBJECT: GUID = GUID::from_u128(0x0000010D_0000_0000_C000_000000000046);
+pub(crate) const IID_IOBJECTWITHSITE: GUID =
+    GUID::from_u128(0xFC4801A3_2BA9_11CF_A229_00AA003D7352);
+pub(crate) const IID_IOLEINPLACEOBJECTWINDOWLESS: GUID =
     GUID::from_u128(0x1C2056CC_5EF4_101B_8BC8_00AA003E3B29);
-const IID_IOLECLIENTSITE: GUID = GUID::from_u128(0x00000118_0000_0000_C000_000000000046);
-const IID_IOLEWINDOW: GUID = GUID::from_u128(0x00000114_0000_0000_C000_000000000046);
-const IID_IOLEINPLACESITE: GUID = GUID::from_u128(0x00000119_0000_0000_C000_000000000046);
-const IID_IOLEINPLACESITEEX: GUID = GUID::from_u128(0x9C2CAD80_3424_11CF_B670_00AA004CD6D8);
-const IID_IOLEINPLACESITEWINDOWLESS: GUID = GUID::from_u128(0x922EADA0_3424_11CF_B670_00AA004CD6D8);
-const IID_IADVISESINK: GUID = GUID::from_u128(0x0000010F_0000_0000_C000_000000000046);
-const IID_IPROPERTYBAG: GUID = GUID::from_u128(0x55272A00_42CB_11CE_8135_00AA004BB851);
-const IID_IDISPATCH: GUID = GUID::from_u128(0x00020400_0000_0000_C000_000000000046);
+pub(crate) const IID_IOLECLIENTSITE: GUID = GUID::from_u128(0x00000118_0000_0000_C000_000000000046);
+pub(crate) const IID_IOLEINPLACEOBJECT: GUID =
+    GUID::from_u128(0x00000113_0000_0000_C000_000000000046);
+pub(crate) const IID_IDISPATCHEX: GUID = GUID::from_u128(0xA6EF9860_C720_11D0_9337_00A0C90DCAA9);
+pub(crate) const IID_IRUNNABLEOBJECT: GUID =
+    GUID::from_u128(0x00000126_0000_0000_C000_000000000046);
+pub(crate) const IID_IOLEWINDOW: GUID = GUID::from_u128(0x00000114_0000_0000_C000_000000000046);
+pub(crate) const IID_IOLEINPLACESITE: GUID =
+    GUID::from_u128(0x00000119_0000_0000_C000_000000000046);
+pub(crate) const IID_IOLEINPLACESITEEX: GUID =
+    GUID::from_u128(0x9C2CAD80_3424_11CF_B670_00AA004CD6D8);
+pub(crate) const IID_IOLEINPLACESITEWINDOWLESS: GUID =
+    GUID::from_u128(0x922EADA0_3424_11CF_B670_00AA004CD6D8);
+pub(crate) const IID_IADVISESINK: GUID = GUID::from_u128(0x0000010F_0000_0000_C000_000000000046);
+pub(crate) const IID_IPROPERTYBAG: GUID = GUID::from_u128(0x55272A00_42CB_11CE_8135_00AA004BB851);
+pub(crate) const IID_IDISPATCH: GUID = GUID::from_u128(0x00020400_0000_0000_C000_000000000046);
 
 pub const EMOTIONS: [&str; 9] = [
     "stam", "smile", "sad", "laugh", "mad", "cry", "love", "offline", "busy",
@@ -54,13 +65,21 @@ pub const EMOTIONS: [&str; 9] = [
 // Site: IOleClientSite + IOleInPlaceSiteWindowless + IAdviseSink
 
 #[repr(C)]
-struct Site {
-    vtbls: [*const usize; 3],
-    hwnd: HWND,
-    pos: Cell<RECT>,
-    invalidations: Cell<u32>,
-    view_changes: Cell<u32>,
-    activate_flags: Cell<i64>,
+pub(crate) struct Site {
+    pub(crate) vtbls: [*const usize; 3],
+    pub(crate) hwnd: HWND,
+    pub(crate) pos: Cell<RECT>,
+    pub(crate) invalidations: Cell<u32>,
+    pub(crate) view_changes: Cell<u32>,
+    pub(crate) activate_flags: Cell<i64>,
+    /// CanWindowlessActivate answers S_OK (boxelyRenderer, ICQ 6.5) or
+    /// S_FALSE (ICQ 7.2's devil box: `windowless="false"`).
+    pub(crate) windowless: bool,
+    /// The IUnknown of the control, for what the ICQ 7.2 site does in
+    /// OnInPlaceActivateEx of a windowed control.
+    pub(crate) control: Cell<Unk>,
+    /// SetObjectRects the site made from OnInPlaceActivateEx.
+    pub(crate) rects_from_activate: Cell<Option<HRESULT>>,
 }
 
 unsafe fn site<'a>(this: Unk, i: usize) -> &'a Site {
@@ -150,7 +169,25 @@ unsafe extern "system" fn ip_on_activate_ex(this: Unk, no_redraw: *mut i32, flag
     if !no_redraw.is_null() {
         unsafe { *no_redraw = 0 };
     }
+    // ICQ 7.2 (MUIUtils 0x32edeea0): a windowed control gets
+    // IOleInPlaceObject::SetObjectRects(pos, pos) from here.
+    if flags & 1 == 0 && !s.control.get().is_null() {
+        let ipo = qi(s.control.get(), &IID_IOLEINPLACEOBJECT);
+        if !ipo.is_null() {
+            let r = s.pos.get();
+            let hr = unsafe { vcall!(ipo, 7, fn(*const RECT, *const RECT) -> HRESULT, &r, &r) };
+            unsafe { vcall!(ipo, 2, fn() -> u32) };
+            s.rects_from_activate.set(Some(hr));
+        }
+    }
     S_OK
+}
+unsafe extern "system" fn ip_can_windowless(this: Unk) -> HRESULT {
+    if unsafe { site(this, 1) }.windowless {
+        S_OK
+    } else {
+        S_FALSE
+    }
 }
 unsafe extern "system" fn ip_invalidate_rect(this: Unk, rect: *const RECT, erase: i32) -> HRESULT {
     let s = unsafe { site(this, 1) };
@@ -186,7 +223,7 @@ extern "system" fn av0(_: Unk) {}
 extern "system" fn av1(_: Unk, _: usize) {}
 extern "system" fn av2(_: Unk, _: usize, _: usize) {}
 
-fn site_vtbls() -> [*const usize; 3] {
+pub(crate) fn site_vtbls() -> [*const usize; 3] {
     static V: OnceLock<[Vec<usize>; 3]> = OnceLock::new();
     let v = V.get_or_init(|| {
         let u = |i: usize| -> Vec<usize> {
@@ -227,7 +264,7 @@ fn site_vtbls() -> [*const usize; 3] {
             f(ip_on_activate_ex as *const ()),     // OnInPlaceActivateEx
             f(r1 as *const ()),                    // OnInPlaceDeactivateEx
             f(r0 as *const ()),                    // RequestUIActivate
-            f(r0 as *const ()),                    // CanWindowlessActivate
+            f(ip_can_windowless as *const ()),     // CanWindowlessActivate
             f(sfalse0 as *const ()),               // GetCapture
             f(r1 as *const ()),                    // SetCapture
             f(sfalse0 as *const ()),               // GetFocus
@@ -257,10 +294,10 @@ fn site_vtbls() -> [*const usize; 3] {
 // IPropertyBag with the <param>s
 
 #[repr(C)]
-struct Bag {
-    vtbl: *const usize,
-    params: Vec<(String, String)>,
-    reads: std::cell::RefCell<Vec<String>>,
+pub(crate) struct Bag {
+    pub(crate) vtbl: *const usize,
+    pub(crate) params: Vec<(String, String)>,
+    pub(crate) reads: std::cell::RefCell<Vec<String>>,
 }
 
 unsafe extern "system" fn bag_qi(this: Unk, iid: *const GUID, out: *mut Unk) -> HRESULT {
@@ -305,7 +342,7 @@ unsafe extern "system" fn bag_read(
         None => E_INVALIDARG,
     }
 }
-fn bag_vtbl() -> *const usize {
+pub(crate) fn bag_vtbl() -> *const usize {
     static V: OnceLock<Vec<usize>> = OnceLock::new();
     V.get_or_init(|| {
         vec![
@@ -364,6 +401,9 @@ pub fn host_control(
             invalidations: Cell::new(0),
             view_changes: Cell::new(0),
             activate_flags: Cell::new(-1),
+            windowless: true,
+            control: Cell::new(null_mut()),
+            rects_from_activate: Cell::new(None),
         });
         let site_unk = &*site as *const Site as Unk;
         let sink = (site_unk as *mut u8).add(2 * size_of::<usize>()) as Unk;

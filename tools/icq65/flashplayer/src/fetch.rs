@@ -66,6 +66,63 @@ pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
     }
 }
 
+/// Reads a movie. An ICQ extras document instead of a SWF
+/// (`<DOCUMENT><RESSET TYPE="ICQ_EXTRAS"><URL>...</URL></RESSET></DOCUMENT>`,
+/// what a Flash avatar's BART item holds) is followed once to the movie it
+/// names. Returns the movie and the URL it came from.
+pub fn fetch_movie(url: &str) -> Result<(Vec<u8>, String), String> {
+    let data = fetch(url)?;
+    if is_swf(&data) {
+        return Ok((data, url.to_owned()));
+    }
+    match extras_url(&data) {
+        Some(inner) => {
+            crate::log(&format!("{url} is an ICQ extras document for {inner}"));
+            let data = fetch(&inner)?;
+            Ok((data, inner))
+        }
+        None => Ok((data, url.to_owned())),
+    }
+}
+
+fn is_swf(data: &[u8]) -> bool {
+    data.len() >= 3 && matches!(&data[1..3], b"WS") && matches!(data[0], b'F' | b'C' | b'Z')
+}
+
+/// The `<URL>` of an ICQ extras document (UTF-8 or UTF-16), if `data` is one.
+pub(crate) fn extras_url(data: &[u8]) -> Option<String> {
+    let text = if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xFE {
+        let units: Vec<u16> = data[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        String::from_utf16_lossy(&units)
+    } else {
+        String::from_utf8_lossy(data).into_owned()
+    };
+    let text = text.trim_start_matches('\u{feff}').trim_start();
+    if !text.starts_with('<') {
+        return None;
+    }
+    let lower = text.to_ascii_lowercase();
+    if !lower.contains("<document") {
+        return None;
+    }
+    let start = lower.find("<url>")? + "<url>".len();
+    let end = start + lower[start..].find("</url>")?;
+    let mut inner = text[start..end].trim();
+    if let Some(s) = inner.strip_prefix("<![CDATA[") {
+        inner = s.strip_suffix("]]>").unwrap_or(s).trim();
+    }
+    let url = inner
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&");
+    (!url.is_empty()).then_some(url)
+}
+
 fn http(url: &str) -> Result<Vec<u8>, String> {
     struct Handle(*mut c_void);
     impl Drop for Handle {
@@ -138,4 +195,30 @@ fn http(url: &str) -> Result<Vec<u8>, String> {
         }
     }
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extras_document_names_its_movie() {
+        let doc = br#"<?xml version="1.0" encoding="UTF-8"?><DOCUMENT><RESSET TYPE="ICQ_EXTRAS"><URL>http://h:8101/icq/avatars/smile.swf?a=1&amp;b=2</URL></RESSET></DOCUMENT>"#;
+        assert_eq!(
+            extras_url(doc).as_deref(),
+            Some("http://h:8101/icq/avatars/smile.swf?a=1&b=2")
+        );
+        let wide: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain(
+                "<DOCUMENT><RESSET><URL> <![CDATA[x.swf]]> </URL></RESSET></DOCUMENT>"
+                    .encode_utf16()
+                    .flat_map(|u| u.to_le_bytes()),
+            )
+            .collect();
+        assert_eq!(extras_url(&wide).as_deref(), Some("x.swf"));
+        assert_eq!(extras_url(b"FWS\x06rest"), None);
+        assert_eq!(extras_url(b"<html><URL>x</URL></html>"), None);
+        assert!(is_swf(b"CWS\x08") && is_swf(b"FWS\x06") && !is_swf(b"<DOC"));
+    }
 }

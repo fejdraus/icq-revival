@@ -114,6 +114,37 @@ directly:
     something else repainted. That is why the DLL keeps asking. When the
     site's window (`IOleWindow::GetWindow`) is hidden, it also invalidates
     the nearest visible ancestor over its rectangle.
+- **ICQ 7.2: windowed activation.** ICQ 7.2 (build 3525) hosts the avatar
+  with the `icqFlashPlayer` gadget of `imApp\content\MUIUtils\ToolkitEx.box`
+  (`windowless="false"`; params Quality High, Scale ShowAll, Menu False, no
+  WMode), created by `MCDevilImpl::CreateFlashDevil` (MUICoreLib) and hosted
+  by the Boxely object box in `MUIUtils.dll`:
+  - Each control gets a child window of class `__oxFrame.class__` (style
+    `0x46000000`), hidden and 0x0 at first, moved and shown later.
+  - `ActivateAx` (MUIUtils `0x32edfbd0`) calls, in order: `GetMiscStatus`,
+    `SetClientSite`, `IPersistPropertyBag::Load`, `IViewObjectEx`, `Advise`,
+    `SetAdvise`, `SetHostNames("AXWIN")`, `SetExtent`, `GetExtent`,
+    `DoVerb(OLEIVERB_INPLACEACTIVATE)` with that frame window as parent, then
+    `IObjectWithSite::SetSite`.
+  - The site's `CanWindowlessActivate` (`0x32edea40`) answers `S_FALSE`, so
+    the activation is windowed; its `OnInPlaceActivateEx` (`0x32edeea0`)
+    calls `IOleInPlaceObject::SetObjectRects` itself. It never calls
+    `IViewObject::Draw`, and its `InvalidateRect` does nothing for a
+    windowed control.
+  - `MCFlashPlayerImpl` then puts `Movie` through `IDispatch` (a plain URL of
+    the SWF), calls `Play`, and `MCDevilImpl` sends `face.emotion` at once,
+    while the movie still loads. Later come `SetExtent` and `SetObjectRects`
+    with the real size (62x62 in the message window).
+
+  So when the site cannot host it windowless, the control creates its own
+  child window (class `FlashPlayerControlAxWindow`) in the site's window
+  (`IOleWindow::GetWindow`, else DoVerb's parent), returns it from
+  `IOleInPlaceObject::GetWindow`, moves and clips it on `SetObjectRects`,
+  and paints each frame into it itself. Like Flash with WMode window, it is
+  opaque and shows the stage colour; a child window cannot be see-through.
+  It stays hidden until the first frame, lets the mouse through to the host
+  (`HTTRANSPARENT`), and is destroyed on deactivation or with its parent.
+  Windowless hosts (ICQ 6.5's boxelyRenderer, IE, ATL) are unchanged.
 - **Driving it** (through `IShockwaveFlash` or `IDispatch`):
   - `Movie` (put through `Invoke`), `Play` (+0x70), `Stop` (+0x74), `put_Movie`
     (+0x58), `TGotoLabel` (+0xF0), `SetVariable` (+0x104).
@@ -137,9 +168,20 @@ directly:
     `FLASHPLAYERCONTROL_FACE_RETURN` sets the wait; a host that times the faces
     itself turns it off with the export `FPCSetFaceReturn(0)` (milliseconds,
     for the whole process), as the Miranda plugin does.
+  - `SetVariable` while the movie still loads (ICQ 7.2 sends the face right
+    after `Movie`) returns `S_OK` and is kept: the last value per variable
+    is set once the movie's first frame has run.
   - Also implemented: `GetVariable`, `TGotoFrame`, `TPlay`, `TStopPlay`, and
     `WMode`/`Scale` get/put. The other property setters are accepted and
     ignored.
+  - Methods the control does not implement log their calls (with
+    `FLASHPLAYERCONTROL_LOG`), and so does every interface a host asks for,
+    once per control, with the result.
+- **An ICQ extras document as the movie.** When the movie turns out to be
+  `<DOCUMENT><RESSET TYPE="ICQ_EXTRAS"><URL>...</URL></RESSET></DOCUMENT>`
+  instead of a SWF (what a Flash avatar's BART item holds), the DLL loads the
+  SWF it names. ICQ 7.2's MCore normally unwraps it itself (MCore
+  `0x31fa6fcf`, `//DOCUMENT/RESSET/URL`).
 
 The control is the same engine as a tZer window. Each control creates a
 hidden message-only window of class `FlashPlayerControl` on its thread, with
@@ -414,6 +456,21 @@ repaints only when the control asks.
 
 The host is DPI aware, so its screenshots line up with window coordinates on
 a scaled display.
+
+`ax72` hosts avatars the way ICQ 7.2 does (see "ICQ 7.2: windowed
+activation" above): a hidden 0x0 frame window per control, a site that
+refuses windowless activation and calls `SetObjectRects` from
+`OnInPlaceActivateEx`, `Movie` through `IDispatch`, `Play` and
+`face.emotion` while loading, then the real size and the frame shown. It
+adds one avatar through an ICQ extras XML file. It checks that every frame
+window is painted by the control's own window at the right size, that faces
+change the picture on screen, that the own window follows a resize, and
+that it is gone after `Close`. It saves `icq72-devils.png` and
+`icq72-devils-faces.png`:
+
+```
+%H%\examples\host.exe %H%\FlashPlayerControl.dll ax72 W:\...\deploy\oscar-legacy-web\avatars C:\out pirate.swf smile.swf ...
+```
 
 `face` hosts one avatar, sends the faces as ICQ 6.5 does ("stam", then the
 face) and checks with `GetVariable` that a smiley's face goes back to the
