@@ -47,7 +47,13 @@ use crate::{IID_ISHOCKWAVEFLASH, Unk, pump_for, wide};
 
 /// Green: a frame window pixel the control did not paint over.
 const FRAME_BG: u32 = 0x0000FF00;
-const SIZE: i32 = 62;
+/// The frame size: 62 (main window) or 100 (message window); `AX72_PX`.
+fn frame_px() -> i32 {
+    std::env::var("AX72_PX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(62)
+}
 
 struct Devil {
     name: String,
@@ -154,6 +160,31 @@ fn set_variable(flash: Unk, name: &str, value: &str) -> HRESULT {
         SysFreeString(bn);
         SysFreeString(bv);
         hr
+    }
+}
+
+fn get_variable(flash: Unk, name: &str) -> String {
+    unsafe {
+        let n = wide(name);
+        let bn = SysAllocString(n.as_ptr());
+        let mut out: *const u16 = null();
+        let hr = vcall!(
+            flash,
+            66,
+            fn(*const u16, *mut *const u16) -> HRESULT,
+            bn,
+            &mut out
+        );
+        SysFreeString(bn);
+        let s = if out.is_null() {
+            format!("<{hr:#x}>")
+        } else {
+            crate::bstr_str(out)
+        };
+        if !out.is_null() {
+            SysFreeString(out);
+        }
+        s
     }
 }
 
@@ -316,7 +347,11 @@ fn host(
             return Err("no IShockwaveFlash".into());
         }
         let play_hr = vcall!(flash, 28, fn() -> HRESULT);
-        let faces: Vec<HRESULT> = (0..2)
+        let faces: Vec<HRESULT> = (0..if std::env::var("AX72_NOFACE").is_ok() {
+            0
+        } else {
+            2
+        })
             .map(|_| set_variable(flash, "face.emotion", "stam"))
             .collect();
         let (win_hr, win) = control_window(unk);
@@ -376,6 +411,7 @@ fn region(px: &[u8], w: i32, at: (i32, i32), size: i32) -> Vec<u8> {
 /// through an ICQ extras document (XML naming the SWF).
 pub fn run(base: &str, out: &str, names: &[String]) -> bool {
     let _ = std::fs::create_dir_all(out);
+    let sz = frame_px();
     let sep = if base.starts_with("http") { "/" } else { "\\" };
     let mut movies: Vec<(String, String)> = names
         .iter()
@@ -393,7 +429,7 @@ pub fn run(base: &str, out: &str, names: &[String]) -> bool {
     }
     let cols = 6;
     let rows = movies.len().div_ceil(cols) as i32;
-    let step = SIZE + 10;
+    let step = sz + 10;
     let win = container_window(
         cols as i32 * step + 10,
         rows * step + 10,
@@ -414,9 +450,9 @@ pub fn run(base: &str, out: &str, names: &[String]) -> bool {
     // Later: the real size, then the frame window is placed and shown.
     pump_for(Duration::from_millis(100));
     for d in &devils {
-        let r = rect(0, 0, SIZE, SIZE);
+        let r = rect(0, 0, sz, sz);
         d.site.pos.set(r);
-        let e = set_extent(d.ole, SIZE, SIZE);
+        let e = set_extent(d.ole, sz, sz);
         let s = set_object_rects(d.unk, r);
         unsafe {
             SetWindowPos(
@@ -424,8 +460,8 @@ pub fn run(base: &str, out: &str, names: &[String]) -> bool {
                 null_mut(),
                 d.at.0,
                 d.at.1,
-                SIZE,
-                SIZE,
+                sz,
+                sz,
                 SWP_NOZORDER | SWP_NOACTIVATE,
             );
             ShowWindow(d.frame, SW_SHOWNA);
@@ -448,14 +484,59 @@ pub fn run(base: &str, out: &str, names: &[String]) -> bool {
     pump_for(Duration::from_millis(1500));
     let (w, h, px) = grab(win);
     save_png(&format!("{out}\\icq72-devils.png"), w as u32, h as u32, &px);
+    if std::env::var("AX72_PROBE").is_ok() {
+        for d in &devils {
+            for v in [
+                "face.MyEmotion",
+                "face.emotion",
+                "face._currentframe",
+                "_global.devilRoot.initEmo",
+                "emotion",
+            ] {
+                say!(
+                    "[{}] GetVariable({v}) = {:?}",
+                    d.name,
+                    get_variable(d.flash, v)
+                );
+            }
+        }
+    }
+    // The idle face over time: one row per avatar, a column per second.
+    let secs = std::env::var("AX72_WATCH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0usize);
+    if secs > 0 {
+        let (sw, sh) = (secs * sz as usize, devils.len() * sz as usize);
+        let mut sheet = vec![0u8; sw * sh * 4];
+        for c in 0..secs {
+            pump_for(Duration::from_millis(1000));
+            let (_, _, now) = grab(win);
+            for (r, d) in devils.iter().enumerate() {
+                let reg = region(&now, w, d.at, sz);
+                for y in 0..sz as usize {
+                    let dst = ((r * sz as usize + y) * sw + c * sz as usize) * 4;
+                    sheet[dst..dst + sz as usize * 4]
+                        .copy_from_slice(&reg[y * sz as usize * 4..(y + 1) * sz as usize * 4]);
+                }
+            }
+        }
+        save_png(
+            &format!("{out}\\icq72-idle-{sz}px.png"),
+            sw as u32,
+            sh as u32,
+            &sheet,
+        );
+        say!("idle sheet -> {out}\\icq72-idle-{sz}px.png ({secs} s)");
+    }
     let mut ok = true;
     for d in &devils {
-        let share = painted(&px, w, d.at, SIZE);
+        let share = painted(&px, w, d.at, sz);
         let (hr, cw) = control_window(d.unk);
         let mut cr: RECT = unsafe { std::mem::zeroed() };
         unsafe { GetClientRect(cw, &mut cr) };
         let visible = unsafe { IsWindowVisible(cw) } != 0;
-        let good = share > 0.9 && hr >= 0 && visible && cr.right == SIZE && cr.bottom == SIZE;
+        let good = share > 0.9 && hr >= 0 && visible && cr.right == sz && cr.bottom == sz;
         say!(
             "[{}] frame painted {:.0}%, own window {hr:#x} {cw:?} {}x{} {}, site InvalidateRect {}, OnViewChange {} -> {}",
             d.name,
@@ -481,7 +562,7 @@ pub fn run(base: &str, out: &str, names: &[String]) -> bool {
         let (_, _, now) = grab(win);
         let n = devils
             .iter()
-            .filter(|d| region(&now, w, d.at, SIZE) != region(&prev, w, d.at, SIZE))
+            .filter(|d| region(&now, w, d.at, sz) != region(&prev, w, d.at, sz))
             .count();
         say!("face {e}: {n}/{} frames changed on screen", devils.len());
         changed += n;

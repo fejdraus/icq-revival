@@ -142,6 +142,11 @@ directly:
   `IOleInPlaceObject::GetWindow`, moves and clips it on `SetObjectRects`,
   and paints each frame into it itself. Like Flash with WMode window, it is
   opaque and shows the stage colour; a child window cannot be see-through.
+  The box asks for Scale ShowAll; with an opaque window that leaves bars of
+  stage colour beside the devils, whose stage is 53x65. So a windowed
+  control shows ShowAll as NoBorder, which fills the frame the way ICQ 6.5's
+  devil box (NoBorder) did. `FLASHPLAYERCONTROL_WINDOWED_SCALE=host` keeps
+  the host's Scale.
   It stays hidden until the first frame, lets the mouse through to the host
   (`HTTRANSPARENT`), and is destroyed on deactivation or with its parent.
   Windowless hosts (ICQ 6.5's boxelyRenderer, IE, ATL) are unchanged.
@@ -168,6 +173,15 @@ directly:
     `FLASHPLAYERCONTROL_FACE_RETURN` sets the wait; a host that times the faces
     itself turns it off with the export `FPCSetFaceReturn(0)` (milliseconds,
     for the whole process), as the Miranda plugin does.
+  - **A devil's face starts as "stam", as in Flash.** Every devil registers
+    the kit's `avatar` class for `face` in an #initclip; its constructor sets
+    `MyEmotion` from `devilRoot.initEmo` ("stam"). Ruffle registers the class
+    after the face is on stage and never runs the constructor. The host's
+    first `face.emotion = "stam"` then did `gotoAndPlay("stam")` on the
+    frame the face already stood on, played on into "smile", and stayed there
+    (in ICQ 7.2 the pirate kept drinking). Once the first frame has run, a
+    control whose `face` stands on frame 1 with `MyEmotion` undefined gets
+    what the constructor sets (`src/instance.rs`, `init_devil_face`).
   - `SetVariable` while the movie still loads (ICQ 7.2 sends the face right
     after `Movie`) returns `S_OK` and is kept: the last value per variable
     is set once the movie's first frame has run.

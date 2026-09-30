@@ -96,6 +96,8 @@ pub struct Instance {
     /// SetVariable calls made while the movie was still loading, applied
     /// once its first frame has run (the last value per variable).
     pending_vars: RefCell<Vec<(String, String)>>,
+    /// The devil face's start state has been checked (see `init_devil_face`).
+    face_checked: Cell<bool>,
 }
 
 /// The windows of one thread. Each window lives on the thread that created
@@ -268,6 +270,7 @@ impl Instance {
             frame_serial: Cell::new(0),
             faces: crate::face::Faces::default(),
             pending_vars: RefCell::new(Vec::new()),
+            face_checked: Cell::new(false),
         }
     }
 
@@ -320,6 +323,7 @@ impl Instance {
         self.fs.borrow_mut().clear();
         self.faces.reset();
         self.pending_vars.borrow_mut().clear();
+        self.face_checked.set(false);
         unsafe { KillTimer(self.hwnd, FACE_TIMER) };
         *self.url.borrow_mut() = url.to_owned();
         self.ready_state.set(1);
@@ -747,8 +751,62 @@ impl Instance {
         if changed {
             self.present();
         }
+        self.init_devil_face();
         self.apply_pending_vars();
         self.deliver_fscommands();
+    }
+
+    /// The start state of an ICQ devil's face, as Flash Player has it.
+    ///
+    /// Every devil (the ICQ devil kit's `avatar` class, registered for the
+    /// `face` clip with `Object.registerClass` in an #initclip) starts in its
+    /// constructor: `__set__emotion(devilRoot.initEmo)`, "stam", which sets
+    /// `MyEmotion`. Flash runs #initclip code before it builds the frame, so
+    /// the constructor runs. Ruffle registers the class after the face is on
+    /// stage and never runs the constructor: `MyEmotion` stays undefined.
+    /// Then the host's first `face.emotion = "stam"` is not a no-op as in
+    /// Flash: the setter does `gotoAndPlay("stam")` on the frame it stands on,
+    /// which plays on into the next label ("smile"), and the face stays there
+    /// (ICQ 7.2 sends "stam" at load: the pirate kept drinking its beer).
+    /// So once the first frame has run, a face that stands on its first frame
+    /// ("stam") with `MyEmotion` undefined gets what the constructor sets.
+    fn init_devil_face(&self) {
+        if self.face_checked.get() || !self.control.get() {
+            return;
+        }
+        let started = self
+            .movie
+            .borrow()
+            .as_ref()
+            .is_some_and(|m| m.root_state().0 >= 1);
+        if !started {
+            return;
+        }
+        self.face_checked.set(true);
+        // GetVariable gives "" or "undefined" for an undefined variable.
+        let get = |p: &str| {
+            self.get_variable(p)
+                .filter(|v| v != "undefined")
+                .unwrap_or_default()
+        };
+        if get("_global.avatar").is_empty() || get("face._currentframe") != "1" {
+            return;
+        }
+        if !get("face.MyEmotion").is_empty() {
+            return; // the constructor ran
+        }
+        let init = match get("_global.devilRoot.initEmo") {
+            v if v.is_empty() => "stam".to_owned(),
+            v => v,
+        };
+        let ok = self.with_movie("devil face", |m| {
+            m.set_variable("_global.devilRoot.initEmo", &init)
+                && m.set_variable("face.MyEmotion", &init)
+        });
+        log(&format!(
+            "devil face: constructor did not run, face starts as {init:?} -> {}",
+            if ok == Some(true) { "set" } else { "failed" }
+        ));
     }
 
     /// SetVariable calls kept while loading, once the first frame has run.

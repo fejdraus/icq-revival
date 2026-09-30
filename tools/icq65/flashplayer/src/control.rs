@@ -968,18 +968,33 @@ impl Control {
         ));
     }
 
-    /// A windowed control shows the stage colour (Flash's WMode window):
-    /// switches a transparent display to opaque.
+    /// How a windowed control shows the movie. Opaque, with the stage colour
+    /// (Flash's WMode window). And NoBorder instead of ShowAll: ICQ 7.2's box
+    /// asks for ShowAll, which with an opaque window leaves bars of stage
+    /// colour beside a devil whose stage (53x65) is not square, while ICQ
+    /// 6.5's devil box asked for NoBorder and filled its frame. The avatars
+    /// look as in ICQ 6.5 so. `FLASHPLAYERCONTROL_WINDOWED_SCALE=host`
+    /// keeps the host's Scale.
     fn keep_opaque(&self) {
-        if let Some(inst) = self.inst() {
-            let mut d = inst.display.get();
-            if d.transparent {
-                d.transparent = false;
-                self.in_draw.set(true);
-                inst.set_display(d);
-                self.in_draw.set(false);
-                self.clog("windowed: WMode window (opaque, stage colour drawn)");
-            }
+        use ruffle_core::StageScaleMode as S;
+        let Some(inst) = self.inst() else { return };
+        let mut d = inst.display.get();
+        let mut what = Vec::new();
+        if d.transparent {
+            d.transparent = false;
+            what.push("WMode window (opaque, stage colour drawn)");
+        }
+        let keep_host = std::env::var("FLASHPLAYERCONTROL_WINDOWED_SCALE")
+            .is_ok_and(|v| v.trim().eq_ignore_ascii_case("host"));
+        if d.scale == S::ShowAll && !keep_host {
+            d.scale = S::NoBorder;
+            what.push("Scale ShowAll shown as NoBorder (fills the frame, as ICQ 6.5's devil box)");
+        }
+        if !what.is_empty() {
+            self.in_draw.set(true);
+            inst.set_display(d);
+            self.in_draw.set(false);
+            self.clog(&format!("windowed: {}", what.join("; ")));
         }
     }
 
