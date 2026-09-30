@@ -57,6 +57,7 @@ stage owns it yet - decide before the stage that needs it).
 | 3.7 | Each message is marked with the scheme it uses, so a client that cannot read it says so instead of showing noise (XEP-0380). | Capability GUID + a readable one-line hint before the container for clients without the add-on. | stage 2-3 |
 | 3.8 | Key material ride in empty messages; these are exempt from the trust rule (4.1). | Control messages carry no content. | stage 3 |
 | 3.9 | An encrypted message, longer than the plain one, still fits what the recipient's client takes. | The server announces `MaxIncomingICBMLen` 8000 and enforces it: it refuses a longer ICBM (`REQUEST_DENIED`), and one longer than any of the recipient's clients set with `ICBMAddParameters` (`REFUSED_BY_CLIENT`). Measured on the message TLV (`0x0002`, channels 1 and 3) or the data TLV (`0x0005`, others). The add-on keeps a container within the limit or splits it. | server done; client stage 3 |
+| 3.10 | Messages the server translates between client generations are left alone: tZers (channel 1 with the 0x10 fragment carrying the tZer capability, from ICQ 7.2; the "Send Tzer" plugin message on channel 2, from ICQ 6.5) are neither rewritten nor encrypted. | Known break since stage 2: the add-on rewrites 7.2's channel 1 tZer, so the server (`foodgroup/icbm_tzer.go`) no longer recognises it and 7.2 -> 6.5 tZers fail; 6.5 -> 7.2 works. Owner's decision: fix once, after the encryption stages. Workaround: `ICQE2E_MODE=observe`. | open - after stage 5 |
 
 ## 4. Trust (XEP-0384 §8)
 
