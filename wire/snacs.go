@@ -1616,18 +1616,9 @@ var FlashAvatarCaps = [][16]byte{CapICQTZers, CapICQ6HTML}
 
 // HasFlashAvatarCaps reports whether a client with caps may be sent the
 // RelayedAvatarBARTTypes items: it announces every one of FlashAvatarCaps (ICQ
-// 6), is ICQ 7 (see HasICQ7Caps), or announces CapFlashAvatarPlayer (another
-// client that plays Flash avatars).
+// 6), or CapFlashAvatarPlayer (another client that plays Flash avatars).
 func HasFlashAvatarCaps(caps [][16]byte) bool {
-	return HasICQ6Caps(caps) || HasICQ7Caps(caps) || slices.Contains(caps, [16]byte(CapFlashAvatarPlayer))
-}
-
-// HasICQ7Caps reports whether a client with caps is ICQ 7: it plays tZers but
-// announces no ICQ server relay (CapICQCh2Extended), which every earlier ICQ
-// that plays them does. ICQ 7 plays the Flash avatar in the message window
-// and shows the buddy icon everywhere else, so, unlike ICQ 6, it needs both.
-func HasICQ7Caps(caps [][16]byte) bool {
-	return slices.Contains(caps, [16]byte(CapICQTZers)) && !slices.Contains(caps, [16]byte(CapICQCh2Extended))
+	return HasICQ6Caps(caps) || slices.Contains(caps, [16]byte(CapFlashAvatarPlayer))
 }
 
 // HasICQ6Caps reports whether a client with caps announces every one of
