@@ -152,11 +152,18 @@ namespace IcqRevival.Patch
         // 0x33D65A50). Its container floats over the foot of the window
         // (position="fixed", 68 high), and a nameless 68-high spacer under
         // the buttons keeps them out of its way, so the band stays when no
-        // panel is open. Taken off the ads, the spacer and the container follow
-        // idFeaturesArea: a binding collapses both while it is collapsed. With
-        // a panel open both are there as the client made them, so it lays out
-        // as before; with none, nothing is left over the buttons. Put in line
-        // instead, the container cut the panels off (tried on a real client).
+        // panel is open. Taken off the ads, the spacer follows idFeaturesArea
+        // (a binding collapses it while that is collapsed), so the history
+        // gives the panel its room. The container stays where it floats but
+        // loses its fixed height: it is as high as what idBottomBox shows -
+        // the banner, left with no height (the code shows it whenever no
+        // panel is open), or the panels' area (minHeight 72, held to the old
+        // 68). It must not be collapsed itself: the code slides idBottomBox
+        // over from a picture it takes before the swap, and a collapsed box
+        // gives it a stale one. idBottomBox gets the window's own background,
+        // so what it covers is painted afresh. Tried on a real client: put in
+        // line the container cut the panels off, and collapsed with the
+        // spacer it showed old pixels as the panel opened.
 
         enum EditKind { Collapse, DropLine, Replace }
 
@@ -184,8 +191,8 @@ namespace IcqRevival.Patch
             return new MarkupEdit { File = file, Kind = EditKind.Replace, Key = from, New = to, What = what };
         }
 
-        // Collapsed while the panels' area of the message window is: the form
-        // the window's own markup uses to follow an element (gadget:<id>).
+        // Collapsed while the panels' area of the message window is, in the
+        // form the window's own markup follows an element with (gadget:<id>).
         const string FollowFeatures = "<box:binding elementSource=\"gadget:idFeaturesArea\" targetProperty=\"collapsed\" path=\"collapsed\" method=\"oneWay\"/>";
 
         static readonly MarkupEdit[] MarkupEdits =
@@ -224,9 +231,17 @@ namespace IcqRevival.Patch
                 "<box:vbox s:height=\"68\" s:minHeight=\"68\" s:paddingTop=\"4\" />",
                 "<box:vbox s:height=\"68\" s:minHeight=\"68\" s:paddingTop=\"4\">" + FollowFeatures + "</box:vbox>",
                 "the empty band at the foot of the message window"),
-            Replace(Content + @"\MUIMessage\MsgSessionPanel.box",
-                "<box:hbox id=\"idBottomBoxContainer\">\r\n\t\t\t\t\t\t\t\t<box:vbox id=\"idBottomBox\"",
-                "<box:hbox id=\"idBottomBoxContainer\">\r\n\t\t\t\t\t\t\t\t" + FollowFeatures + "\r\n\t\t\t\t\t\t\t\t<box:vbox id=\"idBottomBox\"",
+            Replace(Theme + @"\MUIMessage\MsgSessionDlg.style.box",
+                "<part name=\"idBottomBoxContainer\" flex=\"1\" height=\"68\" minHeight=\"68\" maxHeight=\"68\" position=\"fixed\" bottom=\"0\" right=\"0\" left=\"0\" />",
+                "<part name=\"idBottomBoxContainer\" flex=\"1\" maxHeight=\"68\" position=\"fixed\" bottom=\"0\" right=\"0\" left=\"0\" /><part name=\"idBottomBox\" inherits=\"#sGlbWindowBgColor\"/>",
+                "the empty band at the foot of the message window"),
+            Replace(Theme + @"\MUIMessage\MsgSessionDlg.style.box",
+                "<part name=\"idAdAvSeparator\" height=\"30\" width=\"76\" />",
+                "<part name=\"idAdAvSeparator\" height=\"0\" width=\"76\" />",
+                "the empty band at the foot of the message window"),
+            Replace(Theme + @"\MUIMessage\MsgSessionDlg.style.box",
+                " height=\"72\" padding=\"3 0 0 0\" margin=\"0 7\"/>",
+                " height=\"0\" padding=\"0\" margin=\"0 7\"/>",
                 "the empty band at the foot of the message window"),
             Replace(Theme + @"\MUICore\MainDlgPanelOwner.style.box",
                 "<style id=\"adBoxStyle\" width=\"120\" height=\"90\" />",
