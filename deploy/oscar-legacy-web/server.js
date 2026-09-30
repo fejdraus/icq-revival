@@ -61,7 +61,7 @@ const CONFIG_PATH = process.env.CONFIG || path.join(__dirname, 'services.json');
 // its Last-Modified. Move it forward whenever they change - clients whose
 // copy is older get the new list, everyone else a 304; xtraz-list.test.js
 // fails until it is moved.
-const XTRAZ_LIST_CHANGED = 'Tue, 29 Sep 2026 00:00:00 GMT';
+const XTRAZ_LIST_CHANGED = 'Wed, 30 Sep 2026 00:00:00 GMT';
 
 const TZER_DIR = path.join(__dirname, 'tzers');
 const TZER_TYPES = {
@@ -658,6 +658,20 @@ const I18N = {
     cSignedInFor: 'Signed in for',
     cAbout: 'About',
     cAnimatedAvatar: (title) => `animated avatar: ${title}`,
+
+    // The details window of ICQ 7.2 (the icq_profile Xtra), /icq/details.
+    dtOwnTitle: 'My details',
+    dtUserTitle: (who) => `Details of ${who}`,
+    dtSub: 'as this server keeps them',
+    dtLoading: 'Loading the details...',
+    dtNoTarget: 'ICQ did not say whose details to show.',
+    dtOwnLink: 'Show my details',
+    dtOnlyInIcq: 'ICQ 7.2 opens this page for your own details and for a contact\'s. '
+      + 'To look a user up by number, use the search:',
+    dtTabDetails: 'My details',
+    dtEditHow: 'Your name, city and the rest are changed on your account page. '
+      + 'It needs a current browser: copy this address into one.',
+    dtEditLink: 'Change my details on the account page',
     cAccount: 'Account',
     cSuspended: 'suspended',
     cNick: 'Nickname',
@@ -1068,6 +1082,19 @@ const I18N = {
     cSignedInFor: 'У мережі вже',
     cAbout: 'Про себе',
     cAnimatedAvatar: (title) => `анімований аватар: ${title}`,
+
+    dtOwnTitle: 'Моя анкета',
+    dtUserTitle: (who) => `Анкета ${who}`,
+    dtSub: 'як її зберігає цей сервер',
+    dtLoading: 'Завантаження анкети...',
+    dtNoTarget: 'ICQ не повідомив, чию анкету показати.',
+    dtOwnLink: 'Показати мою анкету',
+    dtOnlyInIcq: 'ICQ 7.2 відкриває цю сторінку для вашої анкети та для анкети контакту. '
+      + 'Щоб знайти користувача за номером, скористайтеся пошуком:',
+    dtTabDetails: 'Моя анкета',
+    dtEditHow: 'Ім\'я, місто та інше змінюються на сторінці облікового запису. '
+      + 'Їй потрібен сучасний браузер: скопіюйте цю адресу в нього.',
+    dtEditLink: 'Змінити анкету на сторінці облікового запису',
     cAccount: 'Обліковий запис',
     cSuspended: 'заблоковано',
     cNick: 'Нік',
@@ -2088,6 +2115,168 @@ async function whitepagesPage(uin, selfPath, u) {
        style="${FONT}">${t.sendViaPager}</a></p>`, '', false, u);
 }
 
+// ---------------------------------------------------------- ICQ 7.2 details
+//
+// ICQ 7.2 has no details window of its own: "My details", a click on one's
+// own picture and a contact's "Details" all open the Xtra icq_profile
+// (DetailsDlg.XtraId) from the Xtraz list. MUICore's ShowOwnerDetails and
+// ShowUserDetails open it the same way (MNXtrazUtils::OpenXtraDialog), the
+// only difference is the Xtra's initial data:
+//   var owner="<own number>",target="0";          - one's own details
+//   var owner="<own number>",target="<contact>";  - a contact's (ICQ or AIM)
+// The page gets it through the plugin object's OnInitData(owner, launchMode,
+// buddies, initialData) once plugin.Initialize(<id from the address>) binds
+// it; the address itself carries only bld, dst, id and mode.
+//
+// So /icq/details without icq= is the connector: it binds the plugin, reads
+// whose details were asked for and moves on to /icq/details?icq=<number>
+// (&own=1 for one's own) with the language ICQ runs in. That page is the user
+// card of the white pages; one's own adds a Picture tab leading to the
+// picture page in the same window, which has a tab back. Editing the details
+// needs the account page on the registration service, whose script the
+// client's IE 7 cannot run, and inside ICQ nothing opens an outside browser
+// (see avatar.html), so the page gives its address to copy.
+const DETAILS_WHO = /^[A-Za-z0-9@._ -]{1,64}$/;
+
+function detailsParams(url) {
+  const id = url.searchParams.get('id') || '';
+  const who = (url.searchParams.get('icq') || '').trim();
+  return {
+    id: XTRA_ID.test(id) ? id : '',
+    who: DETAILS_WHO.test(who) ? who : '',
+    own: url.searchParams.get('own') === '1',
+  };
+}
+
+// The address of the details page for one number, keeping the Xtra id.
+function detailsUrl(p, who, own, lang) {
+  return `/icq/details?${p.id ? `id=${encodeURIComponent(p.id)}&` : ''}`
+    + `icq=${encodeURIComponent(who)}${own ? '&own=1' : ''}&lang=${lang}`;
+}
+
+async function detailsPage(url, u) {
+  const t = u.t;
+  const p = detailsParams(url);
+  if (!p.who) return detailsConnector(p, u);
+
+  const card = await userCard(p.who, t, u.lang);
+  let body;
+  if (card.error) body = `<p>${t.serverSilent(escapeHtml(card.error))}</p>`;
+  else if (!card.exists) body = `<p>${t.notRegistered(escapeHtml(p.who))}</p>`;
+  else body = card.html;
+
+  let tabs = '';
+  let edit = '';
+  if (p.own) {
+    const picture = `/icq/avatar?${p.id ? `id=${encodeURIComponent(p.id)}&` : ''}lang=${u.lang}`
+      + `&from=details&icq=${encodeURIComponent(p.who)}`;
+    // The same pills as the picture page's tabs (avatar.html), which the
+    // Picture tab leads to.
+    tabs = `<style>
+.tabs { margin: 0 0 8px; }
+.tabs a { display: inline-block; padding: 2px 11px; margin-right: 5px; font-size: 13px;
+  text-decoration: none; color: #1a1a1a; border: 1px solid #9a9a9a; border-radius: 9px; background: #f2f0ea; }
+.tabs a.on { color: #fff; background: #3c6e1f; border-color: #35601a; }
+</style>
+    <div class="tabs"><a href="#" class="on" onclick="return false;">${t.dtTabDetails}</a>`
+      + `<a href="${escapeHtml(picture)}">${t.picTabPicture}</a></div>`;
+    if (config.registerBase) {
+      const address = `${config.registerBase}/profile?lang=${u.lang}`;
+      // Inside ICQ the address to copy; in a browser simply a link.
+      edit = p.id
+        ? `<p class="dim" style="margin:10px 0 3px 0">${t.dtEditHow}</p>
+    <input type="text" id="editAddress" readonly size="46" value="${escapeHtml(address)}"
+           onfocus="this.select()" onclick="this.select()" style="${FONT}">`
+        : `<p style="margin:10px 0 0 0"><a href="${escapeHtml(address)}">${t.dtEditLink}</a></p>`;
+    }
+  }
+
+  // Bound here too, for the language when the page is reloaded by hand.
+  const connect = p.id ? `
+    ${PLUGIN_OBJECT}
+    <script type="text/javascript">
+    ${ICQ_LANG_SCRIPT}
+    try { plugin.Initialize(${scriptJson(p.id)}); revivalIcqLang(${scriptJson(u.lang)}); } catch (e) {}
+    </script>` : '';
+
+  const title = p.own ? t.dtOwnTitle : t.dtUserTitle(p.who);
+  return page(title, `
+    ${tabs}
+    ${body}
+    ${edit}${connect}`, t.dtSub, true, u);
+}
+
+// The page ICQ 7.2 opens first: it learns from the client whose details to
+// show and hands over to the card. OnInitData's handler is in place before
+// Initialize is called, whether the client answers during the call or after.
+function detailsConnector(p, u) {
+  const t = u.t;
+  const search = `<form method="get" action="/icq/whitepages">
+        <p>${t.icqNumber}
+        <input type="text" name="icq" size="14" style="${FONT}">
+        <input type="hidden" name="lang" value="${u.lang}">
+        <input type="submit" value="${t.searchBtn}" style="${FONT}"></p>
+      </form>`;
+  if (!p.id) {
+    return page(t.dtOwnTitle, `<p>${t.dtOnlyInIcq}</p>${search}`, t.dtSub, false, u);
+  }
+  return page(t.dtOwnTitle, `
+    <p id="dtState">${t.dtLoading}</p>
+    <div id="dtLost" style="display:none">
+      <p>${t.dtNoTarget}</p>
+      <p id="dtOwnRow" style="display:none"><a id="dtOwn" href="#">${t.dtOwnLink}</a></p>
+      ${search}
+    </div>
+    ${PLUGIN_OBJECT}
+    <script type="text/javascript">
+    ${ICQ_LANG_SCRIPT}
+    var DT_ID = ${scriptJson(p.id)};
+    var DT_LANG = ${scriptJson(u.lang)};
+    var dtDone = false;
+    function dtField(data, name) {
+      var m = new RegExp(name + '="([^"]*)"').exec(String(data));
+      return m ? m[1] : '';
+    }
+    function dtOwner() {
+      try { return String(plugin.OwnerInfo.ScreenName || ''); } catch (e) { return ''; }
+    }
+    function dtUrl(who, own) {
+      return '/icq/details?id=' + encodeURIComponent(DT_ID) + '&icq=' + encodeURIComponent(who)
+        + (own ? '&own=1' : '') + '&lang=' + revivalIcqWant(DT_LANG);
+    }
+    function dtShow(initialData) {
+      if (dtDone) { return; }
+      var owner = dtField(initialData, 'owner') || dtOwner();
+      var target = dtField(initialData, 'target');
+      var own = !target || target == '0'
+        || target.replace(/ /g, '').toLowerCase() == owner.replace(/ /g, '').toLowerCase();
+      var who = own ? owner : target;
+      if (!who) { return; }
+      dtDone = true;
+      window.location.replace(dtUrl(who, own));
+    }
+    function dtLost() {
+      if (dtDone) { return; }
+      var owner = dtOwner();
+      document.getElementById('dtState').style.display = 'none';
+      document.getElementById('dtLost').style.display = '';
+      if (owner) {
+        document.getElementById('dtOwn').href = dtUrl(owner, true);
+        document.getElementById('dtOwnRow').style.display = '';
+      }
+    }
+    function dtConnect() {
+      try { plugin.Initialize(DT_ID); } catch (e) { dtLost(); return; }
+      setTimeout(dtLost, 5000);
+    }
+    </script>
+    <script for="plugin" event="OnInitData(owner, launchMode, buddies, initialData)" language="JavaScript">
+    var dtData = initialData;
+    setTimeout(function () { dtShow(dtData); }, 0);
+    </script>
+    <script type="text/javascript">setTimeout(dtConnect, 0);</script>`, t.dtSub, true, u);
+}
+
 // The link from a user card to the web pager. The address comes from the config:
 // http://wwp.icq.com/wwp/ when the ICQ.com names are intercepted, a plain path
 // when the server has an address of its own.
@@ -2618,12 +2807,19 @@ function avatarPage(u, req) {
     large: a.large || '',
   }));
   const hasAnimated = avatars.length > 0;
+  // Opened from ICQ 7.2's details window (/icq/details): a tab back to it.
+  const url = new URL(req.url, 'http://x');
+  const from = url.searchParams.get('from') === 'details' ? detailsParams(url) : null;
+  const back = from && from.who
+    ? `<a href="${escapeHtml(detailsUrl(from, from.who, true, u.lang))}">${t.dtTabDetails}</a>`
+    : '';
   return avatarTemplate
     .replace('{{STYLE}}', () => SHARED_STYLE)
     .replace('{{FAVICON}}', () => FAVICON)
     .replace('{{HEADER}}', () => header(escapeHtml(t.picTitle), escapeHtml(t.picSub)))
     .replace('{{FOOTER}}', () => footer({ langs: langSwitch(u.lang, u.selfUrl) }))
-    .replace('{{TABS_STYLE}}', () => (hasAnimated ? '' : 'display:none'))
+    .replace('{{TABS_STYLE}}', () => (hasAnimated || back ? '' : 'display:none'))
+    .replace('{{BACK_TAB}}', () => back)
     .replace('{{ANIMATED}}', () => animatedGallery(u))
     .replace('{{ICQ_LANG_SCRIPT}}', () => ICQ_LANG_SCRIPT)
     .replace('{{STRINGS}}', () => scriptJson(strings))
@@ -2981,14 +3177,20 @@ const PLUGIN_OBJECT = `<!-- The Xtraz plugin object, the way back into the clien
 // by). Ukrainian ICQ gets the Ukrainian page, any other language the English
 // one. A lang= already in the address - the UK/EN switch, or this very
 // reload - wins, so it reloads at most once. Called after plugin.Initialize;
-// true when the page is being replaced. ES3: the client's IE 7 runs it.
-const ICQ_LANG_SCRIPT = `function revivalIcqLang(lang) {
+// true when the page is being replaced. revivalIcqWant only answers which
+// language that would be, for a page that moves on by itself (the details
+// window). ES3: the client's IE 7 runs it.
+const ICQ_LANG_SCRIPT = `function revivalIcqWant(lang) {
   var v;
-  try { v = plugin.GetIMClientData('LANG_ID'); } catch (e) { return false; }
-  if (typeof v != 'string' || !v) { return false; }
-  var want = /^(ua|uk)(-|$)/i.test(v) ? 'uk' : 'en';
+  if (/[?&]lang=/.test(window.location.search)) { return lang; }
+  try { v = plugin.GetIMClientData('LANG_ID'); } catch (e) { return lang; }
+  if (typeof v != 'string' || !v) { return lang; }
+  return /^(ua|uk)(-|$)/i.test(v) ? 'uk' : 'en';
+}
+function revivalIcqLang(lang) {
+  var want = revivalIcqWant(lang);
   var q = window.location.search;
-  if (want == lang || /[?&]lang=/.test(q)) { return false; }
+  if (want == lang) { return false; }
   window.location.replace(window.location.pathname + q + (q ? '&' : '?') + 'lang=' + want);
   return true;
 }`;
@@ -3368,6 +3570,9 @@ const ACTIONS = {
     await whitepagesPage((ctx.url.searchParams.get('icq') || '').trim(), ctx.path, ctx.u),
   ),
 
+  // ICQ 7.2's details window (the icq_profile Xtra): one's own or a contact's.
+  details: async (ctx) => send(ctx.res, 200, await detailsPage(ctx.url, ctx.u)),
+
   pager: async (ctx) => {
     if (ctx.req.method === 'POST') {
       send(ctx.res, 200, await pagerSend(await readBody(ctx.req), ctx.ip, ctx.path, ctx.u));
@@ -3437,6 +3642,8 @@ const ACTIONS = {
   },
 
   xtrazlist: (ctx) => {
+    // ICQ 7.2 also opens its details window from here (icq_profile, see
+    // detailsPage), at the picture page's size: its Picture tab leads there.
     // A short list: the welcome window, and the two picture entries. The client
     // draws its Xtraz buttons from this list, so an empty one is what removes
     // them - but some of the interface opens entries from it by id and breaks
@@ -3461,6 +3668,9 @@ const ACTIONS = {
     <xtra id="photo_cropper" version="1" type="dhtml" resizable="true"
           width="420" height="300" name="Xtraz" desc="Xtraz"
           url="${self}/icq/stub/xtraz.html?compact=1"/>
+    <xtra id="icq_profile" version="1" type="dhtml" resizable="true"
+          width="540" minWidth="420" height="480" minHeight="360"
+          name="Details" desc="Details" url="${self}/icq/details"/>
   </xtraz>
 </xtrazList>
 `, 'utf8');

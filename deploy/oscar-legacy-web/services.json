@@ -17,6 +17,7 @@
     "  today       the \"who is online\" panel",
     "  whitepages  look a user up by number",
     "  whitepagesicon a user's static picture for the user card, relayed from the management API",
+    "  details     ICQ 7.2's details window (the icq_profile Xtra): one's own details or a contact's",
     "  map         Google Maps at the address the \"Map\" button sends",
     "  pager       web pager: the form and sending a message",
     "  hostsfile   serve a ready-made hosts block for the client",
@@ -252,6 +253,11 @@
     {
       "path": "^/icq/whitepages",
       "action": "whitepages"
+    },
+    {
+      "path": "^/icq/details",
+      "action": "details",
+      "note": "ICQ 7.2's details window, the icq_profile entry of the Xtraz list"
     },
     {
       "path": "^/icq/center",

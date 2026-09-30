@@ -13,7 +13,7 @@ const LIST = '/xtraz2/global/10/6/30007/xtrazlist.xml';
 // The entries as of XTRAZ_LIST_CHANGED in server.js, with the server's own
 // address taken out. When this fails, the entries changed: move
 // XTRAZ_LIST_CHANGED forward, then put the new value here.
-const ENTRIES_SHA1 = '627bbb54dd81d4b6c474bb62924e4611de2a5e1f';
+const ENTRIES_SHA1 = 'd0575d754153392a8d3f4f6c31e8401fff4e65f8';
 
 test('Xtraz list: 304 while unchanged, 200 when the copy is older', async (t) => {
   const srv = await start(false);
