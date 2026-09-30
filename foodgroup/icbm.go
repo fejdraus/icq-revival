@@ -209,12 +209,12 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 				return nil, fmt.Errorf("addExternalIP: %w", err)
 			}
 		}
-		// Strip HTML from ICQ messages if recipient doesn't support XHTML.
+		// Strip HTML from ICQ messages if recipient doesn't read it.
 		// AIM clients send HTML formatted messages that should be preserved.
 		if instance.UIN() > 0 &&
 			(clientIM.ChannelID == wire.ICBMChannelIM || clientIM.ChannelID == wire.ICBMChannelMIME) &&
 			tlv.Tag == wire.ICBMTLVAOLIMData {
-			if !recipSess.HasCap(wire.CapXHTMLIM) {
+			if !readsHTML(recipSess) {
 				if transformedTLV, err := stripHTMLFromICBMTLV(tlv); err == nil {
 					tlv = transformedTLV
 				}
@@ -393,6 +393,14 @@ func (s *ICBMService) addExternalIP(ctx context.Context, instance *state.Session
 	// compare it with the proposed one.
 	frag.Append(wire.NewTLVBE(wire.ICBMRdvTLVTagsVerifiedIP, ip.AsSlice()))
 	return wire.NewTLVBE(tlv.Tag, frag), nil
+}
+
+// readsHTML reports whether recip reads HTML in ICQ messages: it announces
+// XHTML, or it is ICQ 6 or 7, which send and read HTML without announcing it.
+// Their smileys ride in the HTML (<FONT sml="...">, naming the set that draws
+// them), and ICQ 7 draws none from plain text.
+func readsHTML(recip *state.Session) bool {
+	return recip.HasCap(wire.CapXHTMLIM) || recip.HasCap(wire.CapICQ6HTML) || wire.HasICQ7Caps(recip.Caps())
 }
 
 // stripHTML extracts plaintext from HTML content.

@@ -4130,3 +4130,22 @@ func TestStripHTML(t *testing.T) {
 		})
 	}
 }
+
+func TestReadsHTML(t *testing.T) {
+	tests := []struct {
+		name    string
+		options []func(instance *state.SessionInstance)
+		want    bool
+	}{
+		{name: "ICQ 6", options: []func(instance *state.SessionInstance){sessOptICQ6}, want: true},
+		{name: "ICQ 7", options: []func(instance *state.SessionInstance){sessOptICQ7}, want: true},
+		{name: "XHTML", options: []func(instance *state.SessionInstance){func(i *state.SessionInstance) { i.SetCaps([][16]byte{wire.CapXHTMLIM}) }}, want: true},
+		{name: "ICQ 5, tZers with server relay", options: []func(instance *state.SessionInstance){func(i *state.SessionInstance) { i.SetCaps([][16]byte{wire.CapICQTZers, wire.CapICQCh2Extended}) }}, want: false},
+		{name: "no caps", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, readsHTML(newTestInstance("100001", tt.options...).Session()))
+		})
+	}
+}
