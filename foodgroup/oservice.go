@@ -520,6 +520,22 @@ func (s OServiceService) HostOnline(service uint16) wire.SNACMessage {
 				},
 			},
 		}
+	case wire.MDir:
+		// ICQ 7 asks for the profile directory on a connection of its own
+		// (ICQ 6.5, QIP and Miranda send its requests on BOS).
+		return wire.SNACMessage{
+			Frame: wire.SNACFrame{
+				FoodGroup: wire.OService,
+				SubGroup:  wire.OServiceHostOnline,
+				RequestID: wire.ReqIDFromServer,
+			},
+			Body: wire.SNAC_0x01_0x03_OServiceHostOnline{
+				FoodGroups: []uint16{
+					wire.MDir,
+					wire.OService,
+				},
+			},
+		}
 	}
 
 	return wire.SNACMessage{
@@ -665,7 +681,7 @@ func (s OServiceService) ServiceRequest(ctx context.Context, service uint16, ins
 
 	cookie, err := func() ([]byte, error) {
 		switch inBody.FoodGroup {
-		case wire.Admin, wire.Alert, wire.BART, wire.ChatNav, wire.ODir:
+		case wire.Admin, wire.Alert, wire.BART, wire.ChatNav, wire.ODir, wire.MDir:
 			return fnIssueCookie(state.ServerCookie{
 				Service:    inBody.FoodGroup,
 				ScreenName: instance.DisplayScreenName(),

@@ -363,6 +363,225 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
+			name:          "request info for connecting to the MDir service, return MDir connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x01_0x04_OServiceServiceRequest{
+					FoodGroup: wire.BART,
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.OService,
+					SubGroup:  wire.OServiceServiceResponse,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x01_0x05_OServiceServiceResponse{
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.OServiceTLVTagsGroupID, wire.BART),
+							wire.NewTLVBE(wire.OServiceTLVTagsReconnectHere, "127.0.0.1:1234"),
+							wire.NewTLVBE(wire.OServiceTLVTagsLoginCookie, []byte("the-cookie")),
+							wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
+						},
+					},
+				},
+			},
+			mockParams: mockParams{
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							dataIn: []byte{
+								0x00, 0x10, // bart service
+								0x02, 'm', 'e',
+								0x0,                // no client ID
+								0x0,                // no chat cookie
+								0x0,                // multi conn flag
+								0x0,                // kerberos flag
+								0x01,               // session num
+								0x0, 0x0, 0x0, 0x0, // no token ttl
+							},
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
+		},
+		{
+			name:          "request info for connecting to chat nav, return chat nav connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x01_0x04_OServiceServiceRequest{
+					FoodGroup: wire.ChatNav,
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.OService,
+					SubGroup:  wire.OServiceServiceResponse,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x01_0x05_OServiceServiceResponse{
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.OServiceTLVTagsGroupID, wire.ChatNav),
+							wire.NewTLVBE(wire.OServiceTLVTagsReconnectHere, "127.0.0.1:1234"),
+							wire.NewTLVBE(wire.OServiceTLVTagsLoginCookie, []byte("the-cookie")),
+							wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
+						},
+					},
+				},
+			},
+			mockParams: mockParams{
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							dataIn: []byte{
+								0x00, 0x0d, // chatnav service
+								0x02, 'm', 'e',
+								0x0,                // no client ID
+								0x0,                // no chat cookie
+								0x0,                // multi conn flag
+								0x0,                // kerberos flag
+								0x01,               // session num
+								0x0, 0x0, 0x0, 0x0, // no token ttl
+							},
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
+		},
+		{
+			name:          "request info for connecting to chat room, return chat service and chat room metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x01_0x04_OServiceServiceRequest{
+					FoodGroup: wire.Chat,
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(0x01, wire.SNAC_0x01_0x04_TLVRoomInfo{
+								Exchange:       chatRoom.Exchange(),
+								Cookie:         chatRoom.Cookie(),
+								InstanceNumber: chatRoom.InstanceNumber(),
+							}),
+						},
+					},
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.OService,
+					SubGroup:  wire.OServiceServiceResponse,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x01_0x05_OServiceServiceResponse{
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.OServiceTLVTagsGroupID, wire.Chat),
+							wire.NewTLVBE(wire.OServiceTLVTagsReconnectHere, "127.0.0.1:1234"),
+							wire.NewTLVBE(wire.OServiceTLVTagsLoginCookie, []byte("the-auth-cookie")),
+							wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
+						},
+					},
+				},
+			},
+			mockParams: func() mockParams {
+				return mockParams{
+					chatRoomRegistryParams: chatRoomRegistryParams{
+						chatRoomByCookieParams: chatRoomByCookieParams{
+							{
+								cookie: chatRoom.Cookie(),
+								room:   chatRoom,
+							},
+						},
+					},
+					cookieBakerParams: cookieBakerParams{
+						cookieIssueParams: cookieIssueParams{
+							{
+								dataIn: []byte{
+									0x00, 0x0e, // chat service,
+									0x02, 'm', 'e', // screen name
+									0x00, // no client ID
+									0x11, '4', '-', '0', '-', 't', 'h', 'e', '-', 'c', 'h', 'a', 't', '-', 'r', 'o', 'o', 'm',
+									0x0,                // multi conn flag
+									0x0,                // kerberos flag
+									0x01,               // session num
+									0x0, 0x0, 0x0, 0x0, // no token ttl
+								},
+								cookieOut: []byte("the-auth-cookie"),
+							},
+						},
+					},
+				}
+			}(),
+		},
+		{
+			name:          "request info for connecting to the MDir service, return MDir connection metadata",
+			service:       wire.BOS,
+			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
+			instance:      newTestInstance("me"),
+			inputSNAC: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x01_0x04_OServiceServiceRequest{
+					FoodGroup: wire.MDir,
+				},
+			},
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.OService,
+					SubGroup:  wire.OServiceServiceResponse,
+					RequestID: 1234,
+				},
+				Body: wire.SNAC_0x01_0x05_OServiceServiceResponse{
+					TLVRestBlock: wire.TLVRestBlock{
+						TLVList: wire.TLVList{
+							wire.NewTLVBE(wire.OServiceTLVTagsGroupID, wire.MDir),
+							wire.NewTLVBE(wire.OServiceTLVTagsReconnectHere, "127.0.0.1:1234"),
+							wire.NewTLVBE(wire.OServiceTLVTagsLoginCookie, []byte("the-cookie")),
+							wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
+						},
+					},
+				},
+			},
+			mockParams: mockParams{
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							dataIn: []byte{
+								0x00, 0x25, // mdir service
+								0x02, 'm', 'e',
+								0x0,                // no client ID
+								0x0,                // no chat cookie
+								0x0,                // multi conn flag
+								0x0,                // kerberos flag
+								0x01,               // session num
+								0x0, 0x0, 0x0, 0x0, // no token ttl
+							},
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
+		},
+		{
 			name:          "request info for connecting to non-existent chat room, return ErrChatRoomNotFound",
 			service:       wire.BOS,
 			listenerGroup: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"},
@@ -2926,6 +3145,23 @@ func TestOServiceService_HostOnline(t *testing.T) {
 				Body: wire.SNAC_0x01_0x03_OServiceHostOnline{
 					FoodGroups: []uint16{
 						wire.ODir,
+						wire.OService,
+					},
+				},
+			},
+		},
+		{
+			name:    "MDir service",
+			service: wire.MDir,
+			expectOutput: wire.SNACMessage{
+				Frame: wire.SNACFrame{
+					FoodGroup: wire.OService,
+					SubGroup:  wire.OServiceHostOnline,
+					RequestID: wire.ReqIDFromServer,
+				},
+				Body: wire.SNAC_0x01_0x03_OServiceHostOnline{
+					FoodGroups: []uint16{
+						wire.MDir,
 						wire.OService,
 					},
 				},
