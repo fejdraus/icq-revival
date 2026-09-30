@@ -120,6 +120,71 @@ func TestClientDigestIsTheStrongBUCPHash(t *testing.T) {
 	assert.Equal(t, wire.StrongMD5PasswordHash(password, authKey), digest)
 }
 
+// icq72SavedHash is the passwordHash ICQ 7.2 keeps when "Remember my password"
+// is ticked (coolcore59.dll, the login object's GetPasswordHash): base64 of
+// MD5(first 32 UTF-8 bytes of the password) followed by MD5(the password
+// normalized: letters and digits only, lowercased, first 8).
+func icq72SavedHash(plain string) string {
+	full := []byte(plain)
+	if len(full) > 32 {
+		full = full[:32]
+	}
+	var norm []byte
+	for _, c := range []byte(plain) {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			norm = append(norm, c+'a'-'A')
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+			norm = append(norm, c)
+		}
+	}
+	if len(norm) > 8 {
+		norm = norm[:8]
+	}
+	a, b := md5.Sum(full), md5.Sum(norm)
+	return base64.StdEncoding.EncodeToString(append(a[:], b[:]...))
+}
+
+// icq72DigestFromSavedHash computes pwd the way ICQ 7.2 does when it signs in
+// with a saved password: it decodes the stored hash and digests its first
+// half, MD5(challengeWord + hash[:16] + realm).
+func icq72DigestFromSavedHash(t *testing.T, challengeWord, savedHash, realm string) string {
+	raw, err := base64.StdEncoding.DecodeString(savedHash)
+	require.NoError(t, err)
+	require.Len(t, raw, 32)
+	h := md5.New()
+	h.Write([]byte(challengeWord))
+	h.Write(raw[:16])
+	h.Write([]byte(realm))
+	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
+
+// ICQ 7.2 signs in from a saved password with the same digest as from a typed
+// one, so the strong BUCP hash checks both.
+func TestICQ72SavedPasswordDigestIsTheStrongBUCPHash(t *testing.T) {
+	const authKey = "0d6f1a52-3c1e-4d1b-9a55-6f3b7c2e9d10"
+	tests := []struct {
+		name  string
+		plain string
+	}{
+		{name: "lowercase", plain: "qwerty1"},
+		{name: "mixed case and symbols", plain: "Qw$e-R7"},
+		{name: "eight characters, the ICQ maximum", plain: "QwErTy12"},
+		{name: "non-ASCII", plain: "Grüße1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			typed := clientDigest(authKey, tt.plain, challengeRealm)
+			saved := icq72DigestFromSavedHash(t, authKey, icq72SavedHash(tt.plain), challengeRealm)
+			assert.Equal(t, typed, saved)
+
+			digest, err := passwordDigest(saved)
+			require.NoError(t, err)
+			assert.Equal(t, wire.StrongMD5PasswordHash(tt.plain, authKey), digest)
+		})
+	}
+}
+
 func TestAuthHandler_ClientLogin_Digest(t *testing.T) {
 	const authKey, password = "1234567", "test-password"
 
