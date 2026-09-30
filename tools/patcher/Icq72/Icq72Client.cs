@@ -291,6 +291,10 @@ namespace IcqRevival.Patch
             On(MainDlgPanel, "the tab strip of the main window", Collapse("idMainTabs")),
             Follows(MainDlgPanel, w => w("tabs"), t => Collapse("idBigGamesZonesBtn")(
                 Collapse("idGamesSmallButton")(Collapse("idZonesSmallButton")(Collapse("idGamesZonesSmallSeparator")(t))))),
+            // The panels' background is drawn 4px up, under the tabs; with no
+            // tabs it would go over the owner's picture and status message.
+            Follows(MainDlgPanelStyle, w => w("tabs"), t => t.Replace(
+                "<style id=\"imgTabBackground\" marginTop=\"-4\"", "<style id=\"imgTabBackground\" marginTop=\"0\"")),
 
             // Advertising. The ad element of the message window and its
             // container are looked up by the code, so they stay - collapsed and
