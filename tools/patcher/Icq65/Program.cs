@@ -220,7 +220,7 @@ namespace IcqRevival.Patch
             // elevated with another account's password, that is not the one
             // who starts ICQ.
             if (ui.IsSelected("tzers-player")) msg += "\n\ntZers play for the Windows user " + Environment.UserName + ", who has to be the one starting ICQ.";
-            if (ui.IsSelected("e2e-probe")) msg += "\n\nThe E2E observer (Phase 0) is in place. Set the ICQE2E_LOG environment variable to a file path before starting ICQ to log decoded message text; it changes nothing on the wire.";
+            if (ui.IsSelected("e2e-probe")) msg += "\n\nThe E2E test harness (Phase 1) is in place: the text of every message goes out rewritten (an [e2e-harness] marker and ROT13) and is restored on arrival, so a contact without it sees the scrambled form. Set ICQE2E_LOG to a file path before starting ICQ to log each message; ICQE2E_PEERS=uin1,uin2 limits rewriting to those contacts, ICQE2E_MODE=observe turns rewriting off.";
             msg += "\n\nYou can start ICQ now.";
             MessageBox.Show(msg, "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }

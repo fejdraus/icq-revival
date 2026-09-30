@@ -1,8 +1,8 @@
 [package]
 name = "icqe2e_core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Shared engine for the ICQ E2E add-on: FLAP/SNAC/ICBM parsing and Winsock hooking (observation only)"
+description = "Shared engine for the ICQ E2E add-on: FLAP/SNAC/ICBM parsing, the Phase 1 rewrite harness and Winsock hooking"
 license = "MIT"
 publish = false
 
@@ -22,4 +22,6 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_SystemInformation",
     "Win32_System_ProcessStatus",
     "Win32_Security",
+    "Win32_Networking_WinSock",
+    "Win32_UI_WindowsAndMessaging",
 ] }

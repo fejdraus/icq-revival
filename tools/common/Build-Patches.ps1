@@ -83,13 +83,13 @@ if (-not $NoPlayer) {
     }
 }
 
-# The E2E encryption observer (Phase 0, log-only), an owner-only test build:
+# The E2E encryption add-on (Phase 1, rewrite harness), an owner-only test build:
 # tbdiag.dll for ICQ 7.2 and msimg32.dll for ICQ 6.5 (tools\icq-e2e). They are
 # copied next to the patches under their own names, Icqe2eProbe.dll and
 # Icqe2eProbe-msimg32.dll, gitignored like the player and deliberately NOT put
 # into the public download zips (make-downloads.py lists its files by hand).
 # -NoPlayer skips these too; without cargo they are left out with a warning and
-# the "E2E observer" row shows as not available.
+# the "E2E" row shows as not available.
 if (-not $NoPlayer) {
     $e2e = Join-Path $tools 'icq-e2e'
     $e2eOut = Join-Path $e2e 'target\i686-pc-windows-msvc\release'
@@ -98,13 +98,13 @@ if (-not $NoPlayer) {
         @{ Built = 'msimg32.dll'; To = 'icq65\patch\Icqe2eProbe-msimg32.dll' }
     )
     if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
-        Write-Warning "cargo not found - the E2E observer DLLs were not built (tools\icq-e2e\README.md)"
+        Write-Warning "cargo not found - the E2E add-on DLLs were not built (tools\icq-e2e\README.md)"
     } else {
         Push-Location $e2e
         $ErrorActionPreference = 'Continue'
         try {
             $said = & cargo build --release 2>&1
-            if ($LASTEXITCODE -ne 0) { throw ("not built: E2E observer DLLs`n" + ($said | Out-String)) }
+            if ($LASTEXITCODE -ne 0) { throw ("not built: E2E add-on DLLs`n" + ($said | Out-String)) }
         } finally {
             $ErrorActionPreference = 'Stop'
             Pop-Location

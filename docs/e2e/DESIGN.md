@@ -529,7 +529,8 @@ both clients. This is the first thing the owner runs.
 **Phase 1 — pass-through rewrite harness.**
 Same, but actually rewrite the ICBM text in place (e.g. a trivial reversible
 transform) to prove N-in/N-out framing and length fix-up don't disturb the client
-(typing, acks, HTML, smileys all still work).
+(typing, acks, HTML, smileys all still work). Plan and decisions:
+`docs/e2e/STAGE-2-CLIENT-REWRITE-HARNESS.md`.
 
 **Phase 2 — crypto core, single device per UIN.**
 X3DH + Double Ratchet (vodozemac or RustCrypto), `IQE1` container, `CapE2EEncrypt`

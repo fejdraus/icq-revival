@@ -4,7 +4,7 @@
 //! `ICQ.exe`) statically imports it, so a copy in the ICQ folder is loaded
 //! before any BOS connection. This proxy forwards the five real msimg32 exports
 //! to the genuine `system32\msimg32.dll` and, in `DllMain(DLL_PROCESS_ATTACH)`,
-//! starts the E2E observer. GDI calls pass straight through.
+//! starts the E2E add-on. GDI calls pass straight through.
 //!
 //! Forwarding is done with naked thunks that `jmp` to the real function pointers
 //! resolved at attach time, rather than PE export forwarders, because a

@@ -7,12 +7,18 @@
 
 /// OSCAR food groups and subgroups we care about (see wire/snacs.go).
 pub const FOOD_ICBM: u16 = 0x0004;
+pub const FOOD_LOCATE: u16 = 0x0002;
+pub const FOOD_BUDDY: u16 = 0x0003;
 pub const FOOD_ICQ: u16 = 0x0015;
+
+pub const LOCATE_SET_INFO: u16 = 0x0004; // outbound: profile, away message, capabilities
+pub const BUDDY_ARRIVED: u16 = 0x000B; // inbound: a contact's user info
 
 pub const ICBM_MSG_TO_HOST: u16 = 0x0006; // outbound (client -> server)
 pub const ICBM_MSG_TO_CLIENT: u16 = 0x0007; // inbound (server -> client)
 
-pub const ICQ_DB_QUERY: u16 = 0x0002; // ICQ meta request/reply envelope
+pub const ICQ_DB_QUERY: u16 = 0x0002; // ICQ meta request (client -> server)
+pub const ICQ_DB_REPLY: u16 = 0x0003; // ICQ meta reply (server -> client), offline messages ride here
 
 /// A parsed SNAC header plus the body that follows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +147,21 @@ pub fn read_tlvs(data: &[u8]) -> Vec<Tlv<'_>> {
         }
     }
     out
+}
+
+/// Splits a TLV block into its entries and whatever trailing bytes do not form a
+/// whole TLV, so a block can be rebuilt byte for byte around a changed entry.
+pub fn split_tlvs(data: &[u8]) -> (Vec<Tlv<'_>>, &[u8]) {
+    let tlvs = read_tlvs(data);
+    let used: usize = tlvs.iter().map(|t| 4 + t.value.len()).sum();
+    (tlvs, &data[used..])
+}
+
+/// Appends one TLV. The caller makes sure the value fits a u16 length.
+pub fn put_tlv(out: &mut Vec<u8>, tag: u16, value: &[u8]) {
+    out.extend_from_slice(&tag.to_be_bytes());
+    out.extend_from_slice(&(value.len() as u16).to_be_bytes());
+    out.extend_from_slice(value);
 }
 
 /// Finds the first TLV with the given tag.

@@ -1,8 +1,8 @@
 [package]
 name = "icqe2e_testhost"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "In-process harness that drives the E2E observer engine with synthetic frames"
+description = "In-process harness that drives the E2E engine (Phase 1 rewrite) with synthetic frames"
 license = "MIT"
 publish = false
 

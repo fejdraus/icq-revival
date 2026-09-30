@@ -10,7 +10,7 @@
 //! We do two things in `DllMain(DLL_PROCESS_ATTACH)`:
 //!   1. pin our own module so the client's later `FreeLibrary` cannot unload the
 //!      code the installed hooks and the worker thread live in;
-//!   2. start the E2E observer (icqe2e_core::install).
+//!   2. start the E2E add-on (icqe2e_core::install).
 //!
 //! We also export the `FC*` names as harmless cdecl stubs so the client's probe
 //! succeeds (FCLibraryVersion reports a recent version, init returns success)

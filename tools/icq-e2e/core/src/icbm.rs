@@ -11,11 +11,11 @@ pub const CHANNEL_IM: u16 = 0x0001;
 pub const CHANNEL_RENDEZVOUS: u16 = 0x0002;
 
 /// TLVs inside an ICBM body (see wire/snacs.go).
-const TLV_AOL_IM_DATA: u16 = 0x0002; // channel-1 fragment list
-const TLV_RENDEZVOUS_DATA: u16 = 0x0005; // channel-2 fragment
+pub const TLV_AOL_IM_DATA: u16 = 0x0002; // channel-1 fragment list
+pub const TLV_RENDEZVOUS_DATA: u16 = 0x0005; // channel-2 fragment
 
 /// The rendezvous service-data TLV, big-endian inside the ch2 fragment.
-const RDV_TLV_SVC_DATA: u16 = 0x2711;
+pub const RDV_TLV_SVC_DATA: u16 = 0x2711;
 
 /// Which way the message was travelling on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,10 +181,127 @@ fn decode_ch2_text(data: &[u8]) -> Option<String> {
     let rest = r.bytes(r.remaining())?;
     let tlvs = snac::read_tlvs(rest);
     let svc = snac::find_tlv(&tlvs, RDV_TLV_SVC_DATA)?;
+    if let Some(at) = type2_plain_text(svc) {
+        let raw = &svc[at.start..at.start + at.len];
+        let raw = raw.strip_suffix(&[0]).unwrap_or(raw);
+        return Some(bytes_to_display(raw));
+    }
     if let Some(doc) = plugin_document(svc) {
         return Some(String::from_utf8_lossy(doc).into_owned());
     }
     longest_printable(svc)
+}
+
+/// The ICQ server-relay capability a channel-2 type-2 message is sent under.
+pub const CAP_ICQ_SERVER_RELAY: [u8; 16] = [
+    0x09, 0x46, 0x13, 0x49, 0x4C, 0x7F, 0x11, 0xD1, 0x82, 0x22, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00,
+];
+
+/// ICQ message type of a plain text message.
+pub const MSG_TYPE_PLAIN: u8 = 0x01;
+
+/// Where the text of a message sits in a larger little-endian structure: the
+/// offset of its u16 length, and the text itself (trailing NUL included).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextAt {
+    pub len_at: usize,
+    pub start: usize,
+    pub len: usize,
+}
+
+impl TextAt {
+    /// Rebuilds `data` with `text` in place of the old text and its length
+    /// fixed. `None` if the new text does not fit a u16 length.
+    pub fn replace(&self, data: &[u8], text: &[u8]) -> Option<Vec<u8>> {
+        let len = u16::try_from(text.len()).ok()?;
+        let mut out = Vec::with_capacity(data.len() + text.len());
+        out.extend_from_slice(&data[..self.len_at]);
+        out.extend_from_slice(&len.to_le_bytes());
+        out.extend_from_slice(text);
+        out.extend_from_slice(&data[self.start + self.len..]);
+        Some(out)
+    }
+}
+
+/// Finds the text of a plain type-2 message (`msgType 0x01`) in the service
+/// data (TLV 0x2711) of a channel-2 ICQ server-relay message. All little-endian:
+/// a header of u16 length, a second header of u16 length, then msgType:u8,
+/// flags:u8, status:u16, priority:u16, textLen:u16, text (NUL-terminated), and
+/// colours and a capability string after it. Other message types (plugins,
+/// away-message requests, ...) give `None`.
+pub fn type2_plain_text(svc: &[u8]) -> Option<TextAt> {
+    let le16 = |at: usize| -> Option<usize> {
+        Some(u16::from_le_bytes([*svc.get(at)?, *svc.get(at + 1)?]) as usize)
+    };
+    let mut at = 2 + le16(0)?;
+    at += 2 + le16(at)?;
+    let msg_type = *svc.get(at)?;
+    if msg_type != MSG_TYPE_PLAIN {
+        return None;
+    }
+    let len_at = at + 6;
+    let len = le16(len_at)?;
+    let start = len_at + 2;
+    if start + len > svc.len() {
+        return None;
+    }
+    Some(TextAt { len_at, start, len })
+}
+
+/// Finds the message text in the 0x0001 TLV of an ICQ DB reply carrying an
+/// offline message (0x0041). Positions are relative to the TLV value, which
+/// starts with the u16 little-endian length of the ICQ block. Also returns the
+/// sender's UIN. `None` for any other reply or message type.
+pub fn offline_text(env: &[u8]) -> Option<(TextAt, u32)> {
+    if env.len() < 2 {
+        return None;
+    }
+    let block_len = u16::from_le_bytes([env[0], env[1]]) as usize;
+    let block = env.get(2..2 + block_len)?;
+    let mut r = LeReader::new(block);
+    let _uin = r.u32()?;
+    let req_type = r.u16()?;
+    let _seq = r.u16()?;
+    if req_type != ICQ_REQ_OFFLINE_REPLY {
+        return None;
+    }
+    let sender = r.u32()?;
+    r.skip(2 + 1 + 1 + 1 + 1)?; // year(u16), month, day, hour, minute
+    let msg_type = r.u8()?;
+    let _flags = r.u8()?;
+    if msg_type != MSG_TYPE_PLAIN {
+        return None;
+    }
+    let len_at = 2 + r.pos;
+    let len = r.u16()? as usize;
+    r.bytes(len)?;
+    Some((
+        TextAt {
+            len_at,
+            start: len_at + 2,
+            len,
+        },
+        sender,
+    ))
+}
+
+/// Rebuilds an offline-message TLV value with new text: the text, its length
+/// and the ICQ block length are all fixed.
+pub fn replace_offline_text(env: &[u8], at: &TextAt, text: &[u8]) -> Option<Vec<u8>> {
+    let mut out = at.replace(env, text)?;
+    let block_len = u16::from_le_bytes([env[0], env[1]]) as usize;
+    // The old text lies inside the block, so block_len >= at.len.
+    let new_len = u16::try_from(block_len - at.len + text.len()).ok()?;
+    out[..2].copy_from_slice(&new_len.to_le_bytes());
+    Some(out)
+}
+
+/// Text in an 8-bit form for the log: UTF-8 when it is, Latin-1 otherwise.
+fn bytes_to_display(raw: &[u8]) -> String {
+    match std::str::from_utf8(raw) {
+        Ok(s) => s.to_string(),
+        Err(_) => raw.iter().map(|&b| b as char).collect(),
+    }
 }
 
 /// Extracts the document from a plugin service-data blob, mirroring the layout
@@ -236,39 +353,22 @@ fn longest_printable(bytes: &[u8]) -> Option<String> {
 
 // --- ICQ offline messages (food group 0x0015) -------------------------------
 
-const ICQ_TLV_DATA: u16 = 0x0001;
 const ICQ_REQ_OFFLINE_REPLY: u16 = 0x0041;
 
-/// Parses an ICQ meta body (subgroup 0x0002) and, when it carries an offline
-/// message reply (0x0041), returns the decoded message. Everything is
-/// little-endian inside the 0x0001 TLV.
+/// The TLV of an ICQ DB reply that carries the little-endian ICQ block.
+pub const ICQ_TLV_DATA: u16 = 0x0001;
+
+/// Parses an ICQ DB reply body (subgroup 0x0003) and, when it carries an
+/// offline message (0x0041) of plain text, returns the decoded message.
+/// Everything is little-endian inside the 0x0001 TLV.
 pub fn parse_icq_offline(body: &[u8]) -> Option<Message> {
     let tlvs = snac::read_tlvs(body);
     let env = snac::find_tlv(&tlvs, ICQ_TLV_DATA)?;
-    // The value starts with a u16 length prefix of the message block.
-    if env.len() < 2 {
-        return None;
-    }
-    let inner = &env[2..];
-    let mut r = LeReader::new(inner);
-    let _uin = r.u32()?;
-    let req_type = r.u16()?;
-    let _seq = r.u16()?;
-    if req_type != ICQ_REQ_OFFLINE_REPLY {
-        return None;
-    }
-    let sender = r.u32()?;
-    r.skip(2 + 1 + 1 + 1 + 1)?; // year(u16), month, day, hour, minute
-    let _msg_type = r.u8()?;
-    let _flags = r.u8()?;
-    let mlen = r.u16()? as usize;
-    let raw = r.bytes(mlen)?;
+    let (at, sender) = offline_text(env)?;
     // Trim a trailing NUL and decode as UTF-8, falling back to Latin-1.
+    let raw = &env[at.start..at.start + at.len];
     let raw = raw.strip_suffix(&[0]).unwrap_or(raw);
-    let text = match std::str::from_utf8(raw) {
-        Ok(s) => s.to_string(),
-        Err(_) => raw.iter().map(|&b| b as char).collect(),
-    };
+    let text = bytes_to_display(raw);
     Some(Message {
         direction: Direction::Inbound,
         peer: sender.to_string(),
