@@ -169,6 +169,18 @@ type UserManager interface {
 	User(ctx context.Context, screenName state.IdentScreenName) (*state.User, error)
 }
 
+// E2EDeviceManager reads an account's entry in the key directory of the
+// end-to-end encryption add-on and revokes its devices.
+type E2EDeviceManager interface {
+	// E2EAccount returns the account key, or nil if none is published.
+	E2EAccount(ctx context.Context, screenName state.IdentScreenName) (*state.E2EAccount, error)
+	// E2EDevices returns the account's devices, revoked ones included.
+	E2EDevices(ctx context.Context, screenName state.IdentScreenName) ([]state.E2EDevice, error)
+	// E2ERevokeDevice revokes a device and deletes its fallback and one-time
+	// keys.
+	E2ERevokeDevice(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, now time.Time) error
+}
+
 // ICQProfileManager defines methods for getting and setting ICQ user profile data.
 type ICQProfileManager interface {
 	// User returns all attributes for a user.

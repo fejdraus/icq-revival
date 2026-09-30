@@ -23,7 +23,7 @@ import (
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
-func NewManagementAPI(bld config.Build, listener string, userManager UserManager, sessionRetriever SessionRetriever, buddyBroadcaster BuddyBroadcaster, chatRoomRetriever ChatRoomRetriever, chatRoomCreator ChatRoomCreator, chatRoomDeleter ChatRoomDeleter, chatSessionRetriever ChatSessionRetriever, directoryManager DirectoryManager, messageRelayer MessageRelayer, bartAssetManager BARTAssetManager, feedbagRetriever FeedBagRetriever, feedbagManager FeedbagManager, accountManager AccountManager, profileRetriever ProfileRetriever, icqProfileManager ICQProfileManager, createAccount state.CreateAccountFunc, logger *slog.Logger) *Server {
+func NewManagementAPI(bld config.Build, listener string, userManager UserManager, sessionRetriever SessionRetriever, buddyBroadcaster BuddyBroadcaster, chatRoomRetriever ChatRoomRetriever, chatRoomCreator ChatRoomCreator, chatRoomDeleter ChatRoomDeleter, chatSessionRetriever ChatSessionRetriever, directoryManager DirectoryManager, messageRelayer MessageRelayer, bartAssetManager BARTAssetManager, feedbagRetriever FeedBagRetriever, feedbagManager FeedbagManager, accountManager AccountManager, profileRetriever ProfileRetriever, icqProfileManager ICQProfileManager, e2eDeviceManager E2EDeviceManager, createAccount state.CreateAccountFunc, logger *slog.Logger) *Server {
 	mux := http.NewServeMux()
 
 	// Handlers for '/user' route
@@ -66,6 +66,14 @@ func NewManagementAPI(bld config.Build, listener string, userManager UserManager
 	})
 	mux.HandleFunc("PUT /user/{screenname}/icq", func(w http.ResponseWriter, r *http.Request) {
 		putICQProfileHandler(w, r, icqProfileManager, logger)
+	})
+
+	// Handlers for '/user/{screenname}/e2e/devices' route
+	mux.HandleFunc("GET /user/{screenname}/e2e/devices", func(w http.ResponseWriter, r *http.Request) {
+		getE2EDevicesHandler(w, r, userManager, e2eDeviceManager, logger)
+	})
+	mux.HandleFunc("DELETE /user/{screenname}/e2e/devices/{device_id}", func(w http.ResponseWriter, r *http.Request) {
+		deleteE2EDeviceHandler(w, r, userManager, e2eDeviceManager, logger)
 	})
 
 	// Handlers for '/session' route
@@ -1590,6 +1598,113 @@ func deleteLinkedAccountHandler(w http.ResponseWriter, r *http.Request, userMana
 }
 
 // errorMsg sends an error response message and code.
+// e2eDevicesHandle is an account's entry in the end-to-end encryption key
+// directory. Keys are standard base64 without padding, as the key directory
+// API writes them.
+type e2eDevicesHandle struct {
+	ScreenName       string            `json:"screen_name"`
+	AccountKey       *string           `json:"account_key"`
+	AccountUpdatedAt *time.Time        `json:"account_updated_at"`
+	Devices          []e2eDeviceHandle `json:"devices"`
+}
+
+type e2eDeviceHandle struct {
+	DeviceID      uint32     `json:"device_id"`
+	Curve25519Key string     `json:"curve25519_key"`
+	Ed25519Key    string     `json:"ed25519_key"`
+	CreatedAt     time.Time  `json:"created_at"`
+	LastSeenAt    time.Time  `json:"last_seen_at"`
+	RevokedAt     *time.Time `json:"revoked_at"`
+}
+
+// getE2EDevicesHandler handles GET /user/{screenname}/e2e/devices: the
+// account key and every device of the account, revoked ones included.
+func getE2EDevicesHandler(w http.ResponseWriter, r *http.Request, userManager UserManager, mgr E2EDeviceManager, logger *slog.Logger) {
+	w.Header().Set("Content-Type", "application/json")
+	user, err := userManager.User(r.Context(), state.NewIdentScreenName(r.PathValue("screenname")))
+	if err != nil {
+		logger.Error("error in GET /user/{screenname}/e2e/devices", "err", err.Error())
+		errorMsg(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if user == nil {
+		errorMsg(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	acc, err := mgr.E2EAccount(r.Context(), user.IdentScreenName)
+	if err != nil {
+		logger.Error("error in GET /user/{screenname}/e2e/devices", "err", err.Error())
+		errorMsg(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	devices, err := mgr.E2EDevices(r.Context(), user.IdentScreenName)
+	if err != nil {
+		logger.Error("error in GET /user/{screenname}/e2e/devices", "err", err.Error())
+		errorMsg(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	out := e2eDevicesHandle{
+		ScreenName: user.IdentScreenName.String(),
+		Devices:    make([]e2eDeviceHandle, 0, len(devices)),
+	}
+	if acc != nil {
+		key := base64.RawStdEncoding.EncodeToString(acc.Key)
+		out.AccountKey = &key
+		out.AccountUpdatedAt = &acc.UpdatedAt
+	}
+	for _, d := range devices {
+		h := e2eDeviceHandle{
+			DeviceID:      d.DeviceID,
+			Curve25519Key: base64.RawStdEncoding.EncodeToString(d.Curve25519Key),
+			Ed25519Key:    base64.RawStdEncoding.EncodeToString(d.Ed25519Key),
+			CreatedAt:     d.CreatedAt,
+			LastSeenAt:    d.LastSeenAt,
+		}
+		if d.Revoked() {
+			revokedAt := d.RevokedAt
+			h.RevokedAt = &revokedAt
+		}
+		out.Devices = append(out.Devices, h)
+	}
+	if err := json.NewEncoder(w).Encode(out); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// deleteE2EDeviceHandler handles DELETE /user/{screenname}/e2e/devices/{device_id}:
+// revokes the device, e.g. one that was lost.
+func deleteE2EDeviceHandler(w http.ResponseWriter, r *http.Request, userManager UserManager, mgr E2EDeviceManager, logger *slog.Logger) {
+	w.Header().Set("Content-Type", "application/json")
+	deviceID, err := strconv.ParseUint(r.PathValue("device_id"), 10, 32)
+	if err != nil || deviceID == 0 {
+		errorMsg(w, "invalid device id", http.StatusBadRequest)
+		return
+	}
+	user, err := userManager.User(r.Context(), state.NewIdentScreenName(r.PathValue("screenname")))
+	if err != nil {
+		logger.Error("error in DELETE /user/{screenname}/e2e/devices/{device_id}", "err", err.Error())
+		errorMsg(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if user == nil {
+		errorMsg(w, "user not found", http.StatusNotFound)
+		return
+	}
+
+	err = mgr.E2ERevokeDevice(r.Context(), user.IdentScreenName, uint32(deviceID), time.Now())
+	switch {
+	case errors.Is(err, state.ErrE2EDeviceNotFound):
+		errorMsg(w, "device not found", http.StatusNotFound)
+	case err != nil:
+		logger.Error("error in DELETE /user/{screenname}/e2e/devices/{device_id}", "err", err.Error())
+		errorMsg(w, "internal server error", http.StatusInternalServerError)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 func errorMsg(w http.ResponseWriter, error string, code int) {
 	msg := messageBody{Message: error}
 	w.WriteHeader(code)

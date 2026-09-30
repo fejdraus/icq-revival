@@ -2,6 +2,7 @@ package webapi
 
 import (
 	"log/slog"
+	"net/http"
 	"testing"
 	"time"
 
@@ -102,3 +103,8 @@ func rateLimitEventStatuses(t *testing.T, session *Session) []string {
 	}
 	return statuses
 }
+
+// noKeyDirectory is an E2EKeyDirectory that adds no routes.
+type noKeyDirectory struct{}
+
+func (noKeyDirectory) Register(*http.ServeMux) {}

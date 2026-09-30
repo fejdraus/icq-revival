@@ -295,6 +295,85 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageResponse'
 
+  /user/{screenname}/e2e/devices:
+    get:
+      summary: List a user's end-to-end encryption devices.
+      description: |
+        The user's entry in the key directory of the end-to-end encryption
+        add-on for ICQ 6.5 and 7.2 (docs/e2e/KEY-DIRECTORY-API.md): the account
+        key and every device, revoked ones included. Public keys only - the
+        server holds no private key. Keys are standard base64 without padding.
+      parameters:
+        - in: path
+          name: screenname
+          schema:
+            type: string
+          description: User's ICQ UIN or AIM screen name.
+          required: true
+      responses:
+        '200':
+          description: The account key (null if none is published) and the devices.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/E2EDevices'
+        '404':
+          description: User not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+
+  /user/{screenname}/e2e/devices/{device_id}:
+    delete:
+      summary: Revoke an end-to-end encryption device.
+      description: |
+        Revoke a device of the user, e.g. one that was lost: its fallback and
+        one-time keys are deleted, peers see it as revoked, and its id is never
+        reused. Revoking a revoked device succeeds.
+      parameters:
+        - in: path
+          name: screenname
+          schema:
+            type: string
+          description: User's ICQ UIN or AIM screen name.
+          required: true
+        - in: path
+          name: device_id
+          schema:
+            type: integer
+            format: uint32
+            minimum: 1
+          description: Device id.
+          required: true
+      responses:
+        '204':
+          description: Device revoked.
+        '400':
+          description: Invalid device id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '404':
+          description: User or device not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+        '500':
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+
   /session:
     get:
       summary: Get active sessions
@@ -1454,6 +1533,51 @@ paths:
 
 components:
   schemas:
+    E2EDevices:
+      type: object
+      properties:
+        screen_name:
+          type: string
+          example: "100001"
+        account_key:
+          type: string
+          nullable: true
+          description: Account Ed25519 public key, base64; null if none is published.
+        account_updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the current account key was set.
+        devices:
+          type: array
+          items:
+            $ref: '#/components/schemas/E2EDevice'
+
+    E2EDevice:
+      type: object
+      properties:
+        device_id:
+          type: integer
+          format: uint32
+        curve25519_key:
+          type: string
+          description: Device Curve25519 identity key, base64.
+        ed25519_key:
+          type: string
+          description: Device Ed25519 signing key, base64.
+        created_at:
+          type: string
+          format: date-time
+        last_seen_at:
+          type: string
+          format: date-time
+          description: Last time the device published or refreshed its keys.
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the device was revoked; null for an active device.
+
     MessageResponse:
       type: object
       properties:

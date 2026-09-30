@@ -19,6 +19,7 @@ import (
 
 	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/foodgroup"
+	"github.com/mk6i/open-oscar-server/server/e2e"
 	"github.com/mk6i/open-oscar-server/server/http"
 	"github.com/mk6i/open-oscar-server/server/icq_legacy"
 	"github.com/mk6i/open-oscar-server/server/kerberos"
@@ -445,6 +446,7 @@ func MgmtAPI(deps Container) *http.Server {
 		deps.sqLiteUserStore,        // accountManager
 		deps.sqLiteUserStore,        // profileRetriever
 		deps.sqLiteUserStore,        // icqProfileManager
+		deps.sqLiteUserStore,        // e2eDeviceManager
 		state.NewAccountCreator(deps.sqLiteUserStore.InsertUser),
 		logger,
 	)
@@ -629,6 +631,13 @@ func WebAPI(deps Container) *webapi.Server {
 		BARTService:        bartService,
 		SNACRateLimits:     deps.snacRateLimits,
 		AllowedOrigins:     deps.cfg.WebAPIAllowedOrigins,
+		E2EKeyDirectory: e2e.NewHandler(
+			deps.cfg.E2E,
+			deps.sqLiteUserStore,
+			deps.hmacCookieBaker, // the key the BOS server signs the tokens with
+			deps.inMemorySessionManager,
+			logger.With("svc", "e2e"),
+		),
 	}
 
 	return webapi.NewServer(deps.cfg.WebAPIListeners, logger, handler, deps.webAPISessionManager)

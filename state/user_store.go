@@ -56,6 +56,11 @@ type SQLiteUserStore struct {
 	db *sql.DB
 }
 
+// Close closes the database.
+func (f SQLiteUserStore) Close() error {
+	return f.db.Close()
+}
+
 // NewSQLiteUserStore creates a new instance of SQLiteUserStore. If the
 // database does not already exist, a new one is created with the required
 // schema.

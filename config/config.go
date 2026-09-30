@@ -164,6 +164,9 @@ type Config struct {
 	// TURN relay of the STUN server
 	TURN TURNConfig
 
+	// Key directory of the end-to-end encryption add-on
+	E2E E2EConfig
+
 	// ICQ Legacy Protocol Configuration
 	ICQLegacy ICQLegacyConfig
 }
@@ -177,6 +180,17 @@ type TURNConfig struct {
 	MaxPerIP    int           `envconfig:"TURN_MAX_ALLOCATIONS_PER_IP" required:"false" default:"8" basic:"8" ssl:"8" description:"Most allocations the clients behind one IP address may hold at once. A client in a video call holds four."`
 	Kbps        int           `envconfig:"TURN_RELAY_KBPS" required:"false" default:"2000" basic:"2000" ssl:"2000" description:"Most kilobits a second one allocation relays, both ways together; what is over it is dropped. An ICQ 6.5 audio stream needs under 100, a video stream a few hundred."`
 	IdleTimeout time.Duration `envconfig:"TURN_IDLE_TIMEOUT" required:"false" default:"5m" basic:"5m" ssl:"5m" description:"Close an allocation that has relayed nothing for this long, even if the client keeps refreshing it."`
+}
+
+// E2EConfig holds the settings of the key directory that the end-to-end
+// encryption add-on for ICQ 6.5 and 7.2 publishes its public keys to. The
+// directory is served by the WebAPI under /e2e/v1/; see
+// docs/e2e/KEY-DIRECTORY-API.md.
+type E2EConfig struct {
+	TokenTTL       time.Duration `envconfig:"E2E_TOKEN_TTL" required:"false" default:"12h" basic:"12h" ssl:"12h" description:"Lifetime of the key directory token handed to a client when it signs in over BOS. A token also dies with the session it was issued to; a client refreshes it before it expires."`
+	MaxDevices     int           `envconfig:"E2E_MAX_DEVICES" required:"false" default:"10" basic:"10" ssl:"10" description:"Most devices that are not revoked an account may have in the key directory."`
+	MaxOneTimeKeys int           `envconfig:"E2E_MAX_ONE_TIME_KEYS" required:"false" default:"100" basic:"100" ssl:"100" description:"Most one-time keys the key directory holds for one device."`
+	LinkTTL        time.Duration `envconfig:"E2E_LINK_TTL" required:"false" default:"10m" basic:"10m" ssl:"10m" description:"How long a device-link request waits for one of the account's devices to answer before it is dropped."`
 }
 
 // PortRange returns the first and last relay port of TURN_RELAY_PORTS.

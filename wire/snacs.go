@@ -362,6 +362,10 @@ const (
 	OServiceTLVTagsSSLState       uint16 = 0x8E
 	OserviceTLVTagsSSLUseSSL      uint16 = 0x8C
 	OServiceTLVTagsMOTDMessage    uint16 = 0x0B
+	// OServiceTLVTagsMOTDE2EToken carries the key directory token of the
+	// end-to-end encryption add-on in the MOTD of the BOS connection. Not an
+	// AOL tag.
+	OServiceTLVTagsMOTDE2EToken uint16 = 0x0E2E
 
 	OServiceDiscErrNewLogin   uint8 = 0x01
 	OServiceDiscErrAccDeleted uint8 = 0x02

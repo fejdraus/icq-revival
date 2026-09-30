@@ -76,8 +76,10 @@ func NewOServiceService(
 // food group versions followed by SNAC wire.OServiceMotd containing Message of
 // the Day. MOTD is sent here because some clients such as Jimm wait for it
 // before sending RateParamsQuery, causing the login flow to stall if omitted.
-// todo this documentation
-func (s OServiceService) ClientVersions(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x17_OServiceClientVersions) []wire.SNACMessage {
+//
+// On the BOS connection the MOTD also carries the key directory token of the
+// end-to-end encryption add-on (see motdTLVs).
+func (s OServiceService) ClientVersions(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x17_OServiceClientVersions) []wire.SNACMessage {
 	var versions [wire.MDir + 1]uint16
 
 	if len(inBody.Versions)%2 != 0 {
@@ -119,13 +121,34 @@ func (s OServiceService) ClientVersions(ctx context.Context, instance *state.Ses
 			Body: wire.SNAC_0x01_0x13_OServiceMOTD{
 				MessageType: 0x0004,
 				TLVRestBlock: wire.TLVRestBlock{
-					TLVList: wire.TLVList{
-						wire.NewTLVBE(wire.OServiceTLVTagsMOTDMessage, "Welcome to Open OSCAR Server"),
-					},
+					TLVList: s.motdTLVs(ctx, service, instance),
 				},
 			},
 		},
 	}
+}
+
+// motdTLVs returns the TLVs of the MOTD sent on a connection for service. On
+// the BOS connection they include the key directory token of the end-to-end
+// encryption add-on (docs/e2e/KEY-DIRECTORY-API.md): the add-on reads it from
+// the client's inbound stream without changing a byte of it, and the client
+// itself looks up the TLVs of this SNAC by tag, so it passes over one it does
+// not know. It goes on the BOS connection only, where the MOTD comes once per
+// sign-in, right after the client's ClientVersions.
+func (s OServiceService) motdTLVs(ctx context.Context, service uint16, instance *state.SessionInstance) wire.TLVList {
+	tlvs := wire.TLVList{
+		wire.NewTLVBE(wire.OServiceTLVTagsMOTDMessage, "Welcome to Open OSCAR Server"),
+	}
+	if service != wire.BOS {
+		return tlvs
+	}
+	token, err := state.IssueE2EToken(s.cookieIssuer, instance, s.cfg.E2E.TokenTTL)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "unable to issue e2e token", "err", err.Error())
+		return tlvs
+	}
+	tlvs.Append(wire.NewTLVBE(wire.OServiceTLVTagsMOTDE2EToken, token))
+	return tlvs
 }
 
 // RateParamsQuery returns SNAC rate limits. It returns SNAC

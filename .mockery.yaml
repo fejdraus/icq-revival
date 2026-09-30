@@ -92,6 +92,9 @@ packages:
       DirectoryManager:
         config:
           filename: "mock_directory_manager_test.go"
+      E2EDeviceManager:
+        config:
+          filename: "mock_e2e_device_manager_test.go"
       FeedBagRetriever:
         config:
           filename: "mock_feedbag_retriever_test.go"

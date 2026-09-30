@@ -182,6 +182,12 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, session
 		mux.HandleFunc("GET /lifestream/", lifestreamStub.EmptyOK)
 		mux.HandleFunc("GET /service/getAttributes", serviceStub.GetAttributes)
 
+		// Key directory of the end-to-end encryption add-on for ICQ 6.5 and
+		// 7.2 (docs/e2e/KEY-DIRECTORY-API.md). It lives here because this
+		// server is already published over HTTPS, and ICQ 7.2 already reaches
+		// it through its patch.
+		handler.E2EKeyDirectory.Register(mux)
+
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			logger.Debug("webapi 404", "method", r.Method, "path", r.URL.Path)
 			SendError(w, r, http.StatusNotFound, "not found")
@@ -351,6 +357,15 @@ type Handler struct {
 	IconSource         BuddyIconSource
 	BARTService        BARTService
 	SNACRateLimits     wire.SNACRateLimits
+	// E2EKeyDirectory serves the key directory of the end-to-end encryption
+	// add-on under /e2e/v1/.
+	E2EKeyDirectory E2EKeyDirectory
+}
+
+// E2EKeyDirectory adds the routes of the end-to-end encryption key directory
+// (e2e.Handler) to the server's mux.
+type E2EKeyDirectory interface {
+	Register(mux *http.ServeMux)
 }
 
 func (h Handler) GetHelloWorldHandler(w http.ResponseWriter, r *http.Request) {

@@ -3189,23 +3189,18 @@ func TestOServiceService_HostOnline(t *testing.T) {
 }
 
 func TestOServiceService_ClientVersions(t *testing.T) {
-	svc := OServiceService{
-		cfg:    config.Config{},
-		logger: slog.Default(),
-	}
-
-	want := []wire.SNACMessage{
-		{
-			Frame: wire.SNACFrame{
-				FoodGroup: wire.OService,
-				SubGroup:  wire.OServiceHostVersions,
-				RequestID: 1234,
-			},
-			Body: wire.SNAC_0x01_0x18_OServiceHostVersions{
-				Versions: []uint16{5, 6, 7, 8},
-			},
+	hostVersions := wire.SNACMessage{
+		Frame: wire.SNACFrame{
+			FoodGroup: wire.OService,
+			SubGroup:  wire.OServiceHostVersions,
+			RequestID: 1234,
 		},
-		{
+		Body: wire.SNAC_0x01_0x18_OServiceHostVersions{
+			Versions: []uint16{5, 6, 7, 8},
+		},
+	}
+	motd := func(tlvs ...wire.TLV) wire.SNACMessage {
+		return wire.SNACMessage{
 			Frame: wire.SNACFrame{
 				FoodGroup: wire.OService,
 				SubGroup:  wire.OServiceMotd,
@@ -3214,22 +3209,64 @@ func TestOServiceService_ClientVersions(t *testing.T) {
 			Body: wire.SNAC_0x01_0x13_OServiceMOTD{
 				MessageType: 0x0004,
 				TLVRestBlock: wire.TLVRestBlock{
-					TLVList: wire.TLVList{
+					TLVList: append(wire.TLVList{
 						wire.NewTLVBE(wire.OServiceTLVTagsMOTDMessage, "Welcome to Open OSCAR Server"),
-					},
+					}, tlvs...),
 				},
 			},
-		},
+		}
 	}
 
-	instance := newTestInstance("me")
-	have := svc.ClientVersions(context.Background(), instance, wire.SNACFrame{
-		RequestID: 1234,
-	}, wire.SNAC_0x01_0x17_OServiceClientVersions{
-		Versions: []uint16{5, 6, 7, 8},
-	})
+	cases := []struct {
+		name     string
+		service  uint16
+		issue    bool
+		issueErr error
+		want     []wire.SNACMessage
+	}{
+		{
+			name:    "BOS connection gets the e2e token",
+			service: wire.BOS,
+			issue:   true,
+			want:    []wire.SNACMessage{hostVersions, motd(wire.NewTLVBE(wire.OServiceTLVTagsMOTDE2EToken, []byte("token")))},
+		},
+		{
+			name:     "token that cannot be issued is left out",
+			service:  wire.BOS,
+			issue:    true,
+			issueErr: assert.AnError,
+			want:     []wire.SNACMessage{hostVersions, motd()},
+		},
+		{
+			name:    "other connections get no token",
+			service: wire.BART,
+			want:    []wire.SNACMessage{hostVersions, motd()},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cookieBaker := newMockCookieBaker(t)
+			if tc.issue {
+				cookieBaker.EXPECT().
+					Issue(mock.Anything, 12*time.Hour).
+					Return([]byte("token"), tc.issueErr)
+			}
+			svc := OServiceService{
+				cfg:          config.Config{E2E: config.E2EConfig{TokenTTL: 12 * time.Hour}},
+				logger:       slog.Default(),
+				cookieIssuer: cookieBaker,
+			}
 
-	assert.Equal(t, want, have)
+			instance := newTestInstance("me")
+			have := svc.ClientVersions(context.Background(), tc.service, instance, wire.SNACFrame{
+				RequestID: 1234,
+			}, wire.SNAC_0x01_0x17_OServiceClientVersions{
+				Versions: []uint16{5, 6, 7, 8},
+			})
+
+			assert.Equal(t, tc.want, have)
+		})
+	}
 }
 
 // userInfoBlocks returns the user info blocks UserInfoQuery reports for instance.

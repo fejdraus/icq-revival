@@ -232,8 +232,9 @@ func TestServer_CORS(t *testing.T) {
 func testServerHandler(t *testing.T, allowedOrigins []string) http.Handler {
 	t.Helper()
 	handler := Handler{
-		Logger:         slog.Default(),
-		AllowedOrigins: allowedOrigins,
+		Logger:          slog.Default(),
+		AllowedOrigins:  allowedOrigins,
+		E2EKeyDirectory: noKeyDirectory{},
 	}
 	srv := NewServer([]string{"127.0.0.1:0"}, slog.Default(), handler, NewSessionManager())
 	require.NotEmpty(t, srv.servers)

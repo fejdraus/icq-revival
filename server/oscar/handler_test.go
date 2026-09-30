@@ -4410,7 +4410,7 @@ func TestHandler_OServiceServiceClientVersions(t *testing.T) {
 			instance := state.NewSession().AddInstance()
 			svc := newMockOServiceService(t)
 			svc.EXPECT().
-				ClientVersions(mock.Anything, instance, input.Frame, input.Body).
+				ClientVersions(mock.Anything, wire.BOS, instance, input.Frame, input.Body).
 				Return(output)
 
 			h := Handler{

@@ -877,12 +877,12 @@ func (rt Handler) OServiceIdleNotification(ctx context.Context, instance *state.
 	return rt.IdleNotification(ctx, instance, inBody)
 }
 
-func (rt Handler) OServiceClientVersions(ctx context.Context, instance *state.SessionInstance, inFrame wire.SNACFrame, r io.Reader, rw ResponseWriter) error {
+func (rt Handler) OServiceClientVersions(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, r io.Reader, rw ResponseWriter) error {
 	inBody := wire.SNAC_0x01_0x17_OServiceClientVersions{}
 	if err := wire.UnmarshalBE(&inBody, r); err != nil {
 		return err
 	}
-	outSNACs := rt.ClientVersions(ctx, instance, inFrame, inBody)
+	outSNACs := rt.ClientVersions(ctx, service, instance, inFrame, inBody)
 	for _, snac := range outSNACs {
 		rt.LogRequestAndResponse(ctx, inFrame, inBody, snac.Frame, snac.Body)
 		if err := rw.SendSNAC(snac.Frame, snac.Body); err != nil {
@@ -1217,7 +1217,7 @@ func (rt Handler) Handle(ctx context.Context, server uint16, instance *state.Ses
 		case wire.OServiceClientOnline:
 			return rt.OServiceClientOnline(ctx, server, instance, inFrame, r, rw)
 		case wire.OServiceClientVersions:
-			return rt.OServiceClientVersions(ctx, instance, inFrame, r, rw)
+			return rt.OServiceClientVersions(ctx, server, instance, inFrame, r, rw)
 		case wire.OServiceIdleNotification:
 			return rt.OServiceIdleNotification(ctx, instance, inFrame, r, rw)
 		case wire.OServiceNoop:
