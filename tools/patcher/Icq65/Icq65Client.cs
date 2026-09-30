@@ -1296,7 +1296,7 @@ namespace IcqRevival.Patch
             // Group-Object File: the edits of one file together, in the order
             // the files first come up.
             var groups = MarkupEdits.GroupBy(e => e.File, Ps.Keys).ToList();
-            PatchSteps.Start(5 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + CodeLinks.Length);
+            PatchSteps.Start(6 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + CodeLinks.Length);
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -1349,7 +1349,10 @@ namespace IcqRevival.Patch
                 string state = RemovalState(r);
                 if (Jobs.IsWanted(skip, r.What))
                 {
-                    if (state == "original") PatchFiles.Rename(path, PatchFiles.Leaf(path) + Suffix);
+                    // A reinstall puts it back next to the copy kept the first
+                    // time; that copy already holds the original.
+                    if (state == "original" && PatchFiles.Exists(path + Suffix)) PatchFiles.Discard(path);
+                    else if (state == "original") PatchFiles.Rename(path, PatchFiles.Leaf(path) + Suffix);
                 }
                 else if (state == "patched")
                 {
@@ -1426,6 +1429,12 @@ namespace IcqRevival.Patch
             {
                 RestoreFromBackup(At(SignIn.File));
             }
+
+            // Last, once every file is as it stays: the client's update
+            // manifests list them so, and it does not put the originals back
+            // from update.icq.com (see UpdateManifests, in Common).
+            PatchSteps.Step("Update manifests...");
+            UpdateManifests.Sync(Root, AllSuffixes, Suffix);
 
             var report = new List<string>();
             PatchSteps.Step("Checking the result...");

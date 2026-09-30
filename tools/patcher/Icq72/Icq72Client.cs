@@ -1,5 +1,9 @@
 // What the patch for ICQ 7.2 (build 3143) changes in the client's folder.
 //
+// Build 3143 is what the installer puts in; on its first start the client
+// updates itself to build 3525 from update.icq.com, which still answers. The
+// patch takes either.
+//
 // ICQ 7.2 is the same Boxely client as ICQ 6.5 in another layout: the
 // interface under imApp (content, theme, resources), the configuration under
 // packages\ICQ\ConfigFiles, add-ons and translations under packages. Unlike
@@ -8,11 +12,12 @@
 // configuration, DTDs - and renames one DLL; only when asked for does it put
 // a DLL of ours in place of the client's Flash wrapper. No code is patched.
 //
-//   1. Interface. SMS, the games and Zones buttons, Xtraz, the Lifestream and
-//      "My box" tabs, and the advertising frames are taken out of the
-//      client's own markup: an element is marked collapsed="true" - how the
-//      client hides its own optional parts - a style is given no size, or a
-//      tab is dropped from the list the main window builds its tabs from.
+//   1. Interface. SMS, the games and Zones buttons, Xtraz, the tab strip of
+//      the main window with its Lifestream and "My box" tabs, and the
+//      advertising frames are taken out of the client's own markup: an
+//      element is marked collapsed="true" - how the client hides its own
+//      optional parts - a style is given no size, or a tab is dropped from
+//      the list the main window builds its tabs from.
 //   2. Links. The pages the client opens on ICQ.com - help, search, "My
 //      page", About, the legal notice, registration and password, the add-on
 //      galleries, the Xtraz pages - are pointed at our server, which is also
@@ -31,6 +36,12 @@
 // up next to itself, and "Restore original" puts them all back. Apply makes
 // the client match the selection: each file is rebuilt from its original with
 // the wanted changes only. The user's profile is never touched.
+//
+// The client puts back from update.icq.com every file its update manifests
+// list with another checksum - the configuration files, the translations of
+// its language packages - so the manifests are kept listing the files as the
+// patch leaves them (UpdateManifests, in Common). A file the client has put
+// back before that is an original again: it becomes the backup.
 
 using System;
 using System.Collections.Generic;
@@ -66,42 +77,67 @@ namespace IcqRevival.Patch
 
         // --- identity ------------------------------------------------------------
         //
-        // The files of build 3143 this patch changes, by their checksum as they
-        // come with the client. Before anything is written, the original of
-        // every file to change - its backup once changed - has to match;
-        // another build is refused rather than patched where its markup may
-        // differ. The translations of language packages are not listed: they
-        // come in versions of their own, and only addresses inside their
-        // sentences are changed there.
+        // The files this patch changes, by their checksum as they come with
+        // build 3143 and, where 3525 changed them, as build 3525 and the
+        // configuration update of update.icq.com have them. Before anything is
+        // written, the original of every file to change - its backup once
+        // changed - has to be one of them; another build is refused rather
+        // than patched where its markup may differ. The translations of
+        // language packages are not listed: they come in versions of their
+        // own, and only addresses inside their sentences are changed there.
 
-        static readonly Dictionary<string, string> Originals = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        static readonly Dictionary<string, string[]> Originals = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
-            { @"imApp\content\data.dtd", "FA3E177B9BBE096922AFCA5F11DCA347D14E62C6B2D76E83AE1724E88EAB8685" },
-            { @"imApp\content\MUICore\MainDlg.box", "AC16E8131AAD78B82ECBE502C0B10A0223204F50C7F83FA7529BC5844BF795DE" },
-            { @"imApp\content\MUICore\MainDlgPanelOwner.box", "B499DE0AB43F61738760838CCAB061D2C799C9D0ABBF206FDA39678C6E503FD6" },
-            { @"imApp\content\MUICore\PopupMenus.box", "121C60DB9922BE901A109673686808476A874A1183A923B1DC03239660F8392D" },
-            { @"imApp\content\MUICore\HistorySearchDlg.box", "A4BDD3630F4DA954B2E5E0765C9042B68498D3150CCE800EF6BF0CAF88F00285" },
-            { @"imApp\content\MUICore\ContactList\MiniUserProfileDlg.gadgets.box", "BFF7BD00E07F0CD6C3842EAC048F430C3C4C67D7AAC7F4C5AE12A1C971A8A04A" },
-            { @"imApp\content\MUICore\Preferences\OPrefsPanelNotifications.box", "F9C3BA5A0C8B51F020057E6BFB8CC0D6C2DFA0C2E41BB0E409F4ED2A0D70FB08" },
-            { @"imApp\content\MUICore\Preferences\OPrefsPanelHistory.box", "D01350E6CE40DDCD6DFEA9E0EFD1DF3146379D5595C4C015F4DDBA5042FC818F" },
-            { @"imApp\content\MUICore\Preferences\OPrefsPanelSkin.box", "5E968717120B8FFBD1F0779CC64481F3D3D48A0221FA5F36CC7D27FCF227DD8F" },
-            { @"imApp\content\MUIMessage\MsgSessionPanel.box", "92849D6782F57B5E05F88FDA2AA7B499F48FF88545BBF70ABFF4FC942B73BC0D" },
-            { @"imApp\theme\MUICore\MainDlgPanelOwner.style.box", "1F75401091A588573BAA1B167C58D826A9F9A9398708EE442C4CA568A52FE1D6" },
-            { @"imApp\theme\MUIMessage\MsgSessionDlg.style.box", "B101615D74BC8B51B42CC494C129806062165E8F17D72E36F3235C5970D247B9" },
-            { @"packages\ICQ\ConfigFiles\AppConfig.xml", "34CB955EFAE0268EC76FEA4C0EF8C4A18C5A5C145BC58DEA2F31531A0D7662E8" },
-            { @"packages\ICQ\ConfigFiles\links.xml", "8E9E685E516C778F26830162C5EC684B7409D5341F0E61ECB2D1E5E55F80D8B4" },
-            { @"packages\ICQ\ConfigFiles\System.xml", "D9F222A2B989B6FEE31D3CEF277A2B1575C446B0621B1DC06E16052AC3E11C37" },
-            { @"packages\ICQ\ConfigFiles\XtraConfig.xml", "D23E528686726B5C38DD1DC056CCDD5B860681480BA3C3C382D0E05F24161A2C" },
-            { @"packages\ICQ\ConfigFiles\SMSConfig.xml", "892182B0206EDD193A88CDDF50F7FB2587A1FF82FC185EC1451ED086D0320BAE" },
-            { @"packages\ICQ\ConfigFiles\tzer.xml", "C423F7ED899E71DA064837C6C38F4E8FBCFCB300143FAA2573C06AFB5DB9021D" },
-            { @"packages\ICQ\ConfigFiles\tzerDe.xml", "71BB9ABC59F4FFC50952AF1B9EA5B260E78C7034EDC78C3F77BEEA8D03139638" },
-            { @"packages\ICQ\ConfigFiles\adConfig.xml", "33EA75F797723F893FAA5FF04C0E8605716B41098A3DE366CCDE95BCB8421B10" },
-            { @"packages\ICQ\ConfigFiles\UIOwnerPanelConfig.xml", "01F398318EBE909419B66A4F36E7BF834F9168A734E54FE0C682C041E2C763BE" },
-            { @"imApp\resources\en-US\AboutDlg.dtd", "4C1227E5F07C1A8D77005AC88440743BBC0210A9EC9C6290EF89F96561DE085A" },
-            { @"imApp\resources\en-US\MsgSessionPanel.dtd", "5EF756E965508FFAF20250B3BB573888D0C53A7580DBAF0CA3DA55758C53760C" },
-            { @"imApp\resources\en-US\SMS.dtd", "917D549E4BEB72E70F178C1494ABF6A1FC4AF2FF6C78117D681E22BB8B6EFBA7" },
-            { @"imApp\resources\en-US\Errors.dtd", "E516C9A97F980A617C665907A72E4B573B20A2EB2E98D4D333FFE0C2E05EDD9B" },
-            { @"imApp\resources\en-US\common.dtd", "94D6F7034666D77D467891BA63086698E008D7DF4FCF3D3DF96627B1829588D5" },
+            { @"imApp\content\data.dtd", new[] { "FA3E177B9BBE096922AFCA5F11DCA347D14E62C6B2D76E83AE1724E88EAB8685" } },
+            { @"imApp\content\MUICore\MainDlg.box", new[] { "AC16E8131AAD78B82ECBE502C0B10A0223204F50C7F83FA7529BC5844BF795DE" } },
+            { @"imApp\content\MUICore\MainDlgPanelOwner.box", new[] { "B499DE0AB43F61738760838CCAB061D2C799C9D0ABBF206FDA39678C6E503FD6" } },
+            { @"imApp\content\MUICore\PopupMenus.box", new[] { "121C60DB9922BE901A109673686808476A874A1183A923B1DC03239660F8392D" } },
+            { @"imApp\content\MUICore\HistorySearchDlg.box", new[] {
+                "A4BDD3630F4DA954B2E5E0765C9042B68498D3150CCE800EF6BF0CAF88F00285",
+                "0F8A8710088F173924381C385A76D8980EE1C772DCF48CF92610A7449FCA7E84" } },
+            { @"imApp\content\MUICore\ContactList\MiniUserProfileDlg.gadgets.box", new[] { "BFF7BD00E07F0CD6C3842EAC048F430C3C4C67D7AAC7F4C5AE12A1C971A8A04A" } },
+            { @"imApp\content\MUICore\Preferences\OPrefsPanelNotifications.box", new[] { "F9C3BA5A0C8B51F020057E6BFB8CC0D6C2DFA0C2E41BB0E409F4ED2A0D70FB08" } },
+            { @"imApp\content\MUICore\Preferences\OPrefsPanelHistory.box", new[] { "D01350E6CE40DDCD6DFEA9E0EFD1DF3146379D5595C4C015F4DDBA5042FC818F" } },
+            { @"imApp\content\MUICore\Preferences\OPrefsPanelSkin.box", new[] { "5E968717120B8FFBD1F0779CC64481F3D3D48A0221FA5F36CC7D27FCF227DD8F" } },
+            { @"imApp\content\MUIMessage\MsgSessionPanel.box", new[] { "92849D6782F57B5E05F88FDA2AA7B499F48FF88545BBF70ABFF4FC942B73BC0D" } },
+            { @"imApp\theme\MUICore\MainDlgPanelOwner.style.box", new[] {
+                "1F75401091A588573BAA1B167C58D826A9F9A9398708EE442C4CA568A52FE1D6",
+                "EF8E145DC0AAC5DAE986858D4C7B496EF2B59961FD5CA15C5BBFFDA9E5BFF1C5" } },
+            { @"imApp\theme\MUIMessage\MsgSessionDlg.style.box", new[] {
+                "B101615D74BC8B51B42CC494C129806062165E8F17D72E36F3235C5970D247B9",
+                "DB92ED81A527695FAE2265C0CF54E42E27B4AC9C78364F49F6757B9B4DFDE91C" } },
+            { @"packages\ICQ\ConfigFiles\AppConfig.xml", new[] {
+                "34CB955EFAE0268EC76FEA4C0EF8C4A18C5A5C145BC58DEA2F31531A0D7662E8",
+                "935B596B51DD057667B4A4B9B0A6DC055F4DAC1F51628EECFBAFE7F2469EAB49" } },
+            { @"packages\ICQ\ConfigFiles\links.xml", new[] {
+                "8E9E685E516C778F26830162C5EC684B7409D5341F0E61ECB2D1E5E55F80D8B4",
+                "ADBC1C006E64FC8CF8F4D27C476070EC3206F27543BC3B4E3BF3D3FC30B5207A" } },
+            { @"packages\ICQ\ConfigFiles\System.xml", new[] { "D9F222A2B989B6FEE31D3CEF277A2B1575C446B0621B1DC06E16052AC3E11C37" } },
+            { @"packages\ICQ\ConfigFiles\XtraConfig.xml", new[] { "D23E528686726B5C38DD1DC056CCDD5B860681480BA3C3C382D0E05F24161A2C" } },
+            { @"packages\ICQ\ConfigFiles\SMSConfig.xml", new[] {
+                "892182B0206EDD193A88CDDF50F7FB2587A1FF82FC185EC1451ED086D0320BAE",
+                "9B79ED8455091CFB6B4D0BD68B7B51DE8BFA129EBBD40CBD2CEEA3162CDC7779" } },
+            { @"packages\ICQ\ConfigFiles\tzer.xml", new[] {
+                "C423F7ED899E71DA064837C6C38F4E8FBCFCB300143FAA2573C06AFB5DB9021D",
+                "3ABB143649100F76A156DDA0B6B548D8822A5506928175C555F7237011163A8B" } },
+            { @"packages\ICQ\ConfigFiles\tzerDe.xml", new[] {
+                "71BB9ABC59F4FFC50952AF1B9EA5B260E78C7034EDC78C3F77BEEA8D03139638",
+                "2630FA4F6D1BE0216BB01F704615226FAD02EECB9A7CD7F7B17FEC7EE368F37A" } },
+            { @"packages\ICQ\ConfigFiles\adConfig.xml", new[] {
+                "33EA75F797723F893FAA5FF04C0E8605716B41098A3DE366CCDE95BCB8421B10",
+                "6D879322E28560AC663A7D9F9A0370AB7526683932AE219103B9D41A65CB1F50" } },
+            { @"packages\ICQ\ConfigFiles\UIOwnerPanelConfig.xml", new[] { "01F398318EBE909419B66A4F36E7BF834F9168A734E54FE0C682C041E2C763BE" } },
+            { @"imApp\resources\en-US\AboutDlg.dtd", new[] {
+                "4C1227E5F07C1A8D77005AC88440743BBC0210A9EC9C6290EF89F96561DE085A",
+                "A801CF979BABD80AF5CA9DEDEA96DDBBC2DF8FF999C597F213A595261BAA1F5F" } },
+            { @"imApp\resources\en-US\MsgSessionPanel.dtd", new[] {
+                "5EF756E965508FFAF20250B3BB573888D0C53A7580DBAF0CA3DA55758C53760C",
+                "CA4124D6354F50633B23C1745BB5BF0C2CA830FB44154FC8A8D4D06941A48A99" } },
+            { @"imApp\resources\en-US\SMS.dtd", new[] { "917D549E4BEB72E70F178C1494ABF6A1FC4AF2FF6C78117D681E22BB8B6EFBA7" } },
+            { @"imApp\resources\en-US\Errors.dtd", new[] {
+                "E516C9A97F980A617C665907A72E4B573B20A2EB2E98D4D333FFE0C2E05EDD9B",
+                "A776AFA6E1558DF57B0538EF72127CF72459463D8CC587A2F9C499DE6EC5BD30" } },
+            { @"imApp\resources\en-US\common.dtd", new[] { "94D6F7034666D77D467891BA63086698E008D7DF4FCF3D3DF96627B1829588D5" } },
         };
 
         // --- changes -----------------------------------------------------------------
@@ -185,15 +221,16 @@ namespace IcqRevival.Patch
         // The games button and the Zones ("Z") button share a pill at the right
         // end of the tab strip, and a smaller one for when the tabs fill the
         // strip; each shows one or the other, bound to that. With one of the
-        // buttons gone the pills are narrowed to the other, with both they are
-        // given no size.
+        // buttons gone the pills are narrowed to the other, with both - or with
+        // the strip - they are given no size.
         const string MainDlgPanel = Content + @"\MUICore\MainDlgPanelOwner.box";
         const string MainDlgPanelStyle = Theme + @"\MUICore\MainDlgPanelOwner.style.box";
         const string BigPill = "<part name=\"idGamesZonesBtn\" fill=\"url(#imgTranslucentBtn)\" fillSlice=\"7\" fillSize=\"both\" width=\"61\" height=\"26\"";
         const string SmallPill = "<part name=\"idSmallGamesZonesBtn\" fill=\"url(#imgTranslucentBtn)\" fillSlice=\"5 5 5 5\" fillSize=\"both\" width=\"15\" height=\"31\"";
 
-        static bool OneOf(Func<string, bool> wanted) { return wanted("games") != wanted("xtraz"); }
-        static bool Both(Func<string, bool> wanted) { return wanted("games") && wanted("xtraz"); }
+        // Without the tab strip the pills go with it, whatever is in them.
+        static bool OneOf(Func<string, bool> wanted) { return wanted("games") != wanted("xtraz") && !wanted("tabs"); }
+        static bool Both(Func<string, bool> wanted) { return wanted("games") && wanted("xtraz") || wanted("tabs"); }
         static bool Either(Func<string, bool> wanted) { return wanted("games") || wanted("xtraz"); }
 
         const string MsgPanel = Content + @"\MUIMessage\MsgSessionPanel.box";
@@ -240,9 +277,20 @@ namespace IcqRevival.Patch
             On(Content + @"\MUICore\Preferences\OPrefsPanelHistory.box", "the \"save Xtraz invitations\" option", Collapse("idSaveXtrazInvitations")),
             On(Content + @"\MUICore\HistorySearchDlg.box", "the Xtraz filter of the history search", Collapse("idMsgTypeXtrazInvitation")),
 
-            // The Lifestream and "My box" (mail) tabs, each a job of its own.
+            // The tab strip of the main window: the Lifestream and "My box"
+            // (mail) tabs are not made, and the strip - with the contacts tab
+            // alone on it - is collapsed, so the contact list under it takes
+            // its place. The strip stays in the markup, as the code fills and
+            // selects it; its panels show the contact list as before. The
+            // games and Zones pill sits on the strip: its buttons go with it
+            // (the pill itself is given no size above), the big pair by their
+            // box, the small pair each, so the games and Zones rows keep
+            // their own state.
             On(OwnerTabs, "the Lifestream tab", DropTab("LifeStream")),
             On(OwnerTabs, "the \"My box\" tab", DropTab("MeTab")),
+            On(MainDlgPanel, "the tab strip of the main window", Collapse("idMainTabs")),
+            Follows(MainDlgPanel, w => w("tabs"), t => Collapse("idBigGamesZonesBtn")(
+                Collapse("idGamesSmallButton")(Collapse("idZonesSmallButton")(Collapse("idGamesZonesSmallSeparator")(t))))),
 
             // Advertising. The ad element of the message window and its
             // container are looked up by the code, so they stay - collapsed and
@@ -733,8 +781,7 @@ namespace IcqRevival.Patch
             j.Add("sms", "Services that are gone", "SMS: the tab, the buttons, the menu item, the sounds and the filter");
             j.Add("games", "Services that are gone", "the games button of the main window");
             j.Add("xtraz", "Services that are gone", "Xtraz: the Zones (\"Z\") button, menus, options and filter");
-            j.Add("lifestream", "Services that are gone", "the Lifestream tab (feeds from friends)");
-            j.Add("mailbox", "Services that are gone", "the \"My box\" mail tab");
+            j.Add("tabs", "Services that are gone", "the tab strip of the main window, with the Lifestream and \"My box\" mail tabs: only the contact list stays");
             j.Add("ads", "Advertising", "advertising: the ad slots, boxes and the empty bands they leave");
             j.Add("fix", "Fixes", "the AOL Diagnostics module that crashes ICQ 7 (tbdiag.dll)");
             j.Add("links", "Your server", "the pages the client opens point at your server");
@@ -758,8 +805,9 @@ namespace IcqRevival.Patch
             j.Assign("the \"Xtraz invitation\" option", "xtraz");
             j.Assign("the \"save Xtraz invitations\" option", "xtraz");
             j.Assign("the Xtraz filter of the history search", "xtraz");
-            j.Assign("the Lifestream tab", "lifestream");
-            j.Assign("the \"My box\" tab", "mailbox");
+            j.Assign("the Lifestream tab", "tabs");
+            j.Assign("the \"My box\" tab", "tabs");
+            j.Assign("the tab strip of the main window", "tabs");
             j.Assign("the ad band of the main window", "ads");
             j.Assign("the ad box of the main window", "ads");
             j.Assign("the banner under the message window", "ads");
@@ -824,22 +872,40 @@ namespace IcqRevival.Patch
             return file.Contains("*") ? result.Where(p => PatchFiles.Exists(At(p))).ToList() : result;
         }
 
-        // The file as the client came with it, from this patch's backup; null
-        // while the file has not been changed yet.
-        static string OriginalText(string path)
+        // Whether the client has put a changed file back from its update
+        // server since: it is what the client's update manifest - as it came,
+        // before the patch listed its changes there - says, and the backup is
+        // not. That file is the original then, newer than the backup.
+        bool PutBackByClient(string relative)
         {
-            return PatchFiles.Exists(path + Suffix) ? PatchFiles.ReadText(path + Suffix).Text : null;
+            string path = At(relative);
+            if (!File.Exists(path) || !File.Exists(path + Suffix)) return false;
+            string listed = UpdateManifests.Listed(Root, relative, Suffix);
+            return listed != null && PatchFiles.Md5(path) == listed && PatchFiles.Md5(path + Suffix) != listed;
         }
 
-        // Whether the original of a listed file - its backup once changed - is
-        // not the one from build 3143.
+        // Where the original of a file is: the file itself until the patch
+        // changes it, its backup after that - unless the client has put an
+        // original back since.
+        string OriginalPath(string relative)
+        {
+            string path = At(relative);
+            return PatchFiles.Exists(path + Suffix) && !PutBackByClient(relative) ? path + Suffix : path;
+        }
+
+        // The file as the client came with it.
+        string OriginalText(string relative)
+        {
+            return PatchFiles.ReadText(OriginalPath(relative)).Text;
+        }
+
+        // Whether the original of a listed file is not one of the known ones.
         bool IsOtherVersion(string relative)
         {
-            string known;
+            string[] known;
             if (!Originals.TryGetValue(relative, out known)) return false;
-            string path = At(relative);
-            string source = PatchFiles.Exists(path + Suffix) ? path + Suffix : path;
-            return PatchFiles.Exists(source) && !Ps.Eq(PatchFiles.Sha256(source), known);
+            string source = OriginalPath(relative);
+            return PatchFiles.Exists(source) && !Ps.Contains(known, PatchFiles.Sha256(source));
         }
 
         // original / patched / other version / unknown (nothing to change:
@@ -850,7 +916,7 @@ namespace IcqRevival.Patch
             if (!PatchFiles.Exists(path)) return "missing";
             if (IsOtherVersion(relative)) return "other version";
             string current = PatchFiles.ReadText(path).Text;
-            string original = OriginalText(path) ?? current;
+            string original = OriginalText(relative);
             if (Ps.Ceq(c.Edit(original, domain), original)) return "unknown";
             return Ps.Ceq(c.Edit(current, domain), current) ? "patched" : "original";
         }
@@ -911,7 +977,7 @@ namespace IcqRevival.Patch
 
         // Makes the client match the selection and gives what changed, one line
         // per job. Throws, before anything is written, when a file to change is
-        // not the one from build 3143.
+        // not one of the known originals.
         public List<string> ApplyAll(string domain, ICollection<string> skip)
         {
             var notes = new List<string>();
@@ -951,11 +1017,11 @@ namespace IcqRevival.Patch
             {
                 if (PatchFiles.Exists(At(f.Key)) && IsOtherVersion(f.Key))
                 {
-                    throw new InvalidOperationException(f.Key + " is not the one from ICQ 7.2 build 3143; nothing was changed.");
+                    throw new InvalidOperationException(f.Key + " is not the one from ICQ 7.2 build 3143 or 3525; nothing was changed.");
                 }
             }
 
-            PatchSteps.Start(3 + files.Count + Removals.Length);
+            PatchSteps.Start(4 + files.Count + Removals.Length);
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -965,8 +1031,10 @@ namespace IcqRevival.Patch
                 PatchSteps.Step("Building " + PatchFiles.Leaf(f.Key) + "...");
                 string path = At(f.Key);
                 if (!PatchFiles.Exists(path)) continue;
+                // The client has put an original back: it is the backup now.
+                if (PutBackByClient(f.Key)) PatchFiles.Copy(path, path + Suffix, true);
                 TextFile file = PatchFiles.ReadText(path);
-                string text = OriginalText(path) ?? file.Text;
+                string text = OriginalText(f.Key);
                 foreach (Change c in f.Value)
                 {
                     if (isWanted(c)) text = c.Edit(text, domain);
@@ -986,7 +1054,10 @@ namespace IcqRevival.Patch
                 string state = RemovalState(r);
                 if (wanted(r.What))
                 {
-                    if (state == "original") PatchFiles.Rename(path, PatchFiles.Leaf(path) + Suffix);
+                    // A reinstall puts the file back next to the copy kept the
+                    // first time; that copy already holds the original.
+                    if (state == "original" && PatchFiles.Exists(path + Suffix)) PatchFiles.Discard(path);
+                    else if (state == "original") PatchFiles.Rename(path, PatchFiles.Leaf(path) + Suffix);
                 }
                 else if (state == "patched")
                 {
@@ -997,6 +1068,11 @@ namespace IcqRevival.Patch
             PatchSteps.Step("tZers player...");
             string playerNote = SetPlayer(wanted("tzers-player"));
             if (playerNote != null) notes.Add(playerNote);
+
+            // Last, once every file is as it stays: the client's update
+            // manifests list them so, and it does not put the originals back.
+            PatchSteps.Step("Update manifests...");
+            UpdateManifests.Sync(Root, new[] { Suffix }, Suffix);
 
             var report = new List<string>();
             PatchSteps.Step("Checking the result...");

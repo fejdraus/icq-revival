@@ -97,6 +97,13 @@ namespace IcqRevival.Patch
             });
         }
 
+        // Remove-Item -Recurse -Force, for a file or a folder.
+        public static void Discard(string path)
+        {
+            if (Directory.Exists(path)) Try(() => Directory.Delete(path, true));
+            else Remove(path);
+        }
+
         // The file as it was, next to it, before the first change.
         public static void BackupOnce(string path, string suffix)
         {
@@ -164,6 +171,16 @@ namespace IcqRevival.Patch
             using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
             {
                 return BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "");
+            }
+        }
+
+        // The checksum the clients' update manifests list, as lower-case hex.
+        public static string Md5(string path)
+        {
+            using (var md5 = MD5.Create())
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                return BitConverter.ToString(md5.ComputeHash(fs)).Replace("-", "").ToLowerInvariant();
             }
         }
 

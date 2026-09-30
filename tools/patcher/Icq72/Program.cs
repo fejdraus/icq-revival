@@ -8,7 +8,7 @@
 // Without arguments the window opens. For a scripted run:
 //   ICQ-7.2-Patch.exe -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>] [-Include tzers-player] [-Player <dll>]
 //   ICQ-7.2-Patch.exe -Restore [-Root <folder>]
-// -Skip takes job keys (sms, games, xtraz, lifestream, mailbox, ads, fix,
+// -Skip takes job keys (sms, games, xtraz, tabs, ads, fix,
 // links, sign-in, tzers-player), separated by commas; they are left out, or
 // taken out if in place. -Include takes the jobs that are off unless asked
 // for: tzers-player. -Player is our FlashPlayerControl-Ruffle.dll for it,
@@ -130,7 +130,7 @@ namespace IcqRevival.Patch
             root = Icq72Client.FindRoot();
 
             ui = new PatchWindow("ICQ 7.2 Patch",
-                "Removes what is left of the ICQ.com services - SMS, games, Xtraz, Lifestream, the mail tab and advertising - and points the client at your own server. Your profile and history are left untouched.",
+                "Removes what is left of the ICQ.com services - SMS, games, Xtraz, the tab strip with Lifestream and mail, and advertising - and points the client at your own server. Your profile and history are left untouched.",
                 "7.2", "#F5A43C", "#C4631A", "ICQ 7.2",
                 "Just the domain, e.g. icq.example.org. The patch fills in ports and paths, and ICQ signs in there. Remembered for next time.",
                 new KeyValuePair<string, int>("Change", 420), new KeyValuePair<string, int>("Where", 190));
