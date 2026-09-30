@@ -1,0 +1,31 @@
+// Version resource so the proxy DLL is identifiable in Explorer. ICQ 6.5 ships
+// no msimg32.dll of its own (it comes from system32), so its mere presence in
+// the client folder marks it as ours; these strings are for the reader.
+1 VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 0x2
+FILESUBTYPE 0x0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "ICQ Revival"
+            VALUE "FileDescription", "ICQ E2E observer (Phase 0) for ICQ 6.5"
+            VALUE "FileVersion", "0.1.0"
+            VALUE "InternalName", "ICQ-E2E-Probe"
+            VALUE "OriginalFilename", "msimg32.dll"
+            VALUE "ProductName", "ICQ Revival"
+            VALUE "ProductVersion", "0.1.0"
+            VALUE "LegalCopyright", "ICQ Revival contributors; MIT"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

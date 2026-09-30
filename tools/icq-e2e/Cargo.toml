@@ -1,0 +1,21 @@
+# Workspace for the ICQ end-to-end-encryption add-on (Phase 0: observation only).
+#
+# Two per-client loader stubs, tbdiag.dll (ICQ 7.2) and msimg32.dll (ICQ 6.5),
+# each statically linking one shared engine crate (icqe2e_core). The engine
+# hooks the client's own Winsock send/recv in coolcore5x/coolcore4x, reassembles
+# FLAP, parses ICBM/offline SNACs and logs the decoded message text. Every byte
+# is passed through unchanged; no crypto in this phase.
+#
+# Built for i686-pc-windows-msvc with a static CRT (the ICQ folder has no modern
+# VC++ runtime), the same way tools\icq65\flashplayer builds its DLL.
+
+[workspace]
+resolver = "2"
+members = ["core", "loader-tbdiag", "loader-msimg32", "testhost"]
+
+[profile.release]
+# Line tables but no full debug; keep the DLL small and let panics unwind to the
+# catch_unwind guards at the FFI boundary rather than abort the host.
+panic = "unwind"
+opt-level = 2
+strip = true

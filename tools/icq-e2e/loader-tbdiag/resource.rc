@@ -1,0 +1,31 @@
+// The version resource. The ICQ 7.2 patch recognises this DLL by its
+// ProductName and InternalName (tools\patcher\Icq72\Icq72Client.cs), so keep
+// those two as they are; Explorer shows the rest.
+1 VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0x0
+FILEOS 0x40004
+FILETYPE 0x2
+FILESUBTYPE 0x0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "ICQ Revival"
+            VALUE "FileDescription", "ICQ E2E observer (Phase 0) for ICQ 7.2"
+            VALUE "FileVersion", "0.1.0"
+            VALUE "InternalName", "ICQ-E2E-Probe"
+            VALUE "OriginalFilename", "tbdiag.dll"
+            VALUE "ProductName", "ICQ Revival"
+            VALUE "ProductVersion", "0.1.0"
+            VALUE "LegalCopyright", "ICQ Revival contributors; MIT"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

@@ -38,3 +38,10 @@ tools/icq65/flashplayer/target/
 # than kept in git.
 tools/icq65/patch/FlashPlayerControl-Ruffle.dll
 tools/icq72/patch/FlashPlayerControl-Ruffle.dll
+
+# Build output of the ICQ E2E observer (Phase 0, log-only; tools\icq-e2e, Rust)
+tools/icq-e2e/target/
+# ...and its copies next to ICQ-6.5-Patch.exe and ICQ-7.2-Patch.exe (owner-only
+# test build; not shipped in the public download zips)
+tools/icq65/patch/Icqe2eProbe-msimg32.dll
+tools/icq72/patch/Icqe2eProbe.dll

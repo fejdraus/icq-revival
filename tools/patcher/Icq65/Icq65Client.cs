@@ -868,6 +868,106 @@ namespace IcqRevival.Patch
             return null;
         }
 
+        // --- E2E observer (Phase 0, log-only) -------------------------------------------
+        //
+        // The end-to-end-encryption add-on's first phase is an observer: a DLL
+        // that hooks the client's own Winsock send/recv in coolcore49.dll,
+        // reassembles FLAP, parses ICBM/offline messages and writes the decoded
+        // text to a log (the file named by the ICQE2E_LOG environment variable).
+        // Every byte reaches the client and the server unchanged; there is no
+        // crypto and no rewriting in this phase. See tools\icq-e2e.
+        //
+        // ICQ 6.5 has no free load slot of its own, so the observer ships as a
+        // proxy msimg32.dll: MUtils.dll (loaded at process init) statically
+        // imports msimg32, which is not a KnownDLL, so a copy in the ICQ folder
+        // loads before any BOS connection. It forwards the real msimg32 exports
+        // to system32 and installs the hooks. This job, off unless chosen, puts
+        // the DLL in; "Restore original" takes it out (there is no stock
+        // msimg32.dll in the folder, so ours is simply removed).
+        //
+        // The patch does not carry the DLL; it takes Icqe2eProbe-msimg32.dll from
+        // next to its exe (gitignored, owner-only test build). Ours is told by
+        // its version resource.
+
+        public const string E2eProbeFile = "msimg32.dll";
+        // Our DLL as it is handed out, next to the patch.
+        public const string E2eProbeShipped = "Icqe2eProbe-msimg32.dll";
+        // What our DLL says in its version resource (tools\icq-e2e\loader-msimg32\resource.rc).
+        const string E2eProduct = "ICQ Revival";
+        const string E2eInternalName = "ICQ-E2E-Probe";
+
+        // Our DLL to put in: next to the patch unless given.
+        public string E2eSource;
+
+        public static string DefaultE2eSource()
+        {
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, E2eProbeShipped);
+        }
+
+        static bool IsOurE2e(string path)
+        {
+            if (!File.Exists(path)) return false;
+            try
+            {
+                var v = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+                return v.ProductName == E2eProduct && v.InternalName == E2eInternalName;
+            }
+            catch { return false; }
+        }
+
+        // Why our DLL cannot be put in, or null when it can.
+        string E2eMissing()
+        {
+            if (string.IsNullOrEmpty(E2eSource) || !File.Exists(E2eSource))
+            {
+                return "no " + Path.GetFileName(E2eSource ?? E2eProbeShipped) + " next to the patch";
+            }
+            if (!IsOurE2e(E2eSource)) return Path.GetFileName(E2eSource) + " is not the E2E observer";
+            return null;
+        }
+
+        // patched (ours in place) / original (can be put in) / unavailable.
+        string E2eState()
+        {
+            string path = At(E2eProbeFile);
+            if (IsOurE2e(path))
+            {
+                if (E2eMissing() != null || SameFile(path, E2eSource)) return "patched";
+                return Ps.Eq(PatchFiles.Sha256(path), PatchFiles.Sha256(E2eSource)) ? "patched" : "original";
+            }
+            return E2eMissing() != null ? "unavailable" : "original";
+        }
+
+        // Makes msimg32.dll match the selection. A line for the report when it
+        // could not be done, or null.
+        string SetE2e(bool wanted)
+        {
+            string path = At(E2eProbeFile);
+            if (!wanted)
+            {
+                if (!IsOurE2e(path)) return null;
+                // A stock msimg32 is not shipped in the folder, so ours normally
+                // has no backup: just remove it. If some foreign file was backed
+                // up first, put it back.
+                if (PatchFiles.Exists(path + Suffix)) PatchFiles.Copy(path + Suffix, path, true);
+                else PatchFiles.Discard(path);
+                return null;
+            }
+            string miss = E2eMissing();
+            if (miss != null) return "E2E observer left out: " + miss;
+            if (!IsOurE2e(path))
+            {
+                if (PatchFiles.Exists(path) && !AllSuffixes.Any(x => PatchFiles.Exists(path + x))) PatchFiles.BackupOnce(path, Suffix);
+                PatchFiles.Copy(E2eSource, path, true);
+            }
+            else if (!SameFile(path, E2eSource) && !Ps.Eq(PatchFiles.Sha256(path), PatchFiles.Sha256(E2eSource)))
+            {
+                PatchFiles.Copy(E2eSource, path, true);
+            }
+            if (!IsOurE2e(path)) return E2eProbeFile + " could not be put in - E2E observer left out";
+            return null;
+        }
+
         // --- sign-in server --------------------------------------------------------
         //
         // With automatic connection settings ICQ 6.5 signs in to ServerHostName of
@@ -907,10 +1007,11 @@ namespace IcqRevival.Patch
 
         public string Root;
 
-        public Icq65Client(string root, string player = null)
+        public Icq65Client(string root, string player = null, string e2e = null)
         {
             Root = root;
             PlayerSource = string.IsNullOrEmpty(player) ? DefaultPlayerSource() : Path.GetFullPath(player);
+            E2eSource = string.IsNullOrEmpty(e2e) ? DefaultE2eSource() : Path.GetFullPath(e2e);
         }
 
         string At(string relative) { return PatchFiles.Join(Root, relative); }
@@ -1153,6 +1254,9 @@ namespace IcqRevival.Patch
             // type library it registers is the user's, not the folder's.
             j.Add("tzers-player", "Your server", "tZers without Flash: our player (" + PlayerShipped + " next to this patch)", off: true);
             j.Rivals("tzers-player", "tzers");
+            // Off until chosen: the E2E observer (Phase 0, log-only). Needs our
+            // DLL next to the patch and ICQE2E_LOG set to write a log.
+            j.Add("e2e-probe", "Your server", "E2E encryption observer (Phase 0, log-only): our " + E2eProbeShipped + " as msimg32.dll; set ICQE2E_LOG to log", off: true);
 
             j.Assign("the Xtraz strip above the contact list", "xtraz");
             j.Assign("the Xtraz panel below the contact list", "xtraz");
@@ -1197,6 +1301,7 @@ namespace IcqRevival.Patch
             j.Assign("the tZers player", "tzers-player");
             j.Assign("the Flash type library", "tzers-player");
             j.Assign("the tZers list", "tzers-player");
+            j.Assign("the E2E observer (msimg32.dll)", "e2e-probe");
             return j;
         }
 
@@ -1220,6 +1325,8 @@ namespace IcqRevival.Patch
             add("the tZers player", PlayerFile, player);
             add("the Flash type library", PlayerFile, TypeLibState());
             add("the tZers list", PatchFiles.Leaf(TzerList), TzerListState(domain));
+            string e2e = E2eState();
+            add("the E2E observer (msimg32.dll)", E2eProbeFile, e2e);
             List<PatchItem> rows = Jobs.Merge(items);
             // Without our DLL there is nothing to put in: the row says why.
             if (player == "unavailable")
@@ -1228,6 +1335,14 @@ namespace IcqRevival.Patch
                 {
                     row.State = "unavailable";
                     row.Where = PlayerMissing();
+                }
+            }
+            if (e2e == "unavailable")
+            {
+                foreach (PatchItem row in rows.Where(r => r.Key == "e2e-probe"))
+                {
+                    row.State = "unavailable";
+                    row.Where = E2eMissing();
                 }
             }
             return rows;
@@ -1281,6 +1396,11 @@ namespace IcqRevival.Patch
                 notes.Add("tZers player left out: " + PlayerMissing());
                 asked.Add("tzers-player");
             }
+            if (Jobs.IsWanted(asked, "e2e-probe") && E2eState() == "unavailable")
+            {
+                notes.Add("E2E observer left out: " + E2eMissing());
+                asked.Add("e2e-probe");
+            }
             skip = Jobs.Settle(asked);
             bool player = Jobs.IsWanted(skip, "tzers-player");
 
@@ -1296,7 +1416,7 @@ namespace IcqRevival.Patch
             // Group-Object File: the edits of one file together, in the order
             // the files first come up.
             var groups = MarkupEdits.GroupBy(e => e.File, Ps.Keys).ToList();
-            PatchSteps.Start(6 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + CodeLinks.Length);
+            PatchSteps.Start(7 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + CodeLinks.Length);
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -1420,6 +1540,10 @@ namespace IcqRevival.Patch
             string playerNote = SetPlayer(player);
             if (playerNote != null) notes.Add(playerNote);
 
+            PatchSteps.Step("E2E observer...");
+            string e2eNote = SetE2e(Jobs.IsWanted(skip, "e2e-probe"));
+            if (e2eNote != null) notes.Add(e2eNote);
+
             PatchSteps.Step("Sign-in server...");
             if (Jobs.IsWanted(skip, "sign-in"))
             {
@@ -1457,6 +1581,14 @@ namespace IcqRevival.Patch
             string note = UnregisterPlayer();
             if (note != null) PatchFiles.Error(note);
             int count = 0;
+            // Our msimg32.dll proxy has no stock to back up (ICQ 6.5 ships none),
+            // so the backup sweep below would not remove it: take it out here.
+            string e2ePath = At(E2eProbeFile);
+            if (IsOurE2e(e2ePath) && !AllSuffixes.Any(x => PatchFiles.Exists(e2ePath + x)))
+            {
+                PatchFiles.Discard(e2ePath);
+                count++;
+            }
             Func<string, string> suffixOf = name => AllSuffixes.FirstOrDefault(s => name.EndsWith(s));
             List<FileSystemInfo> items = PatchFiles.Tree(Root).Where(i => suffixOf(i.Name) != null).ToList();
             PatchSteps.Start(items.Count);

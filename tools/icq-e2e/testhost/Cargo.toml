@@ -1,0 +1,14 @@
+[package]
+name = "icqe2e_testhost"
+version = "0.1.0"
+edition = "2021"
+description = "In-process harness that drives the E2E observer engine with synthetic frames"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "icqe2e_testhost"
+path = "src/main.rs"
+
+[dependencies]
+icqe2e_core = { path = "../core" }

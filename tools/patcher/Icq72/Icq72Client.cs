@@ -768,6 +768,111 @@ namespace IcqRevival.Patch
             return null;
         }
 
+        // --- E2E observer (Phase 0, log-only) -------------------------------------------
+        //
+        // The end-to-end-encryption add-on's first phase is an observer: a DLL
+        // that hooks the client's own Winsock send/recv in coolcore59.dll,
+        // reassembles FLAP, parses ICBM/offline messages and writes the decoded
+        // text to a log (the file named by the ICQE2E_LOG environment variable).
+        // Every byte reaches the client and the server unchanged; there is no
+        // crypto and no rewriting in this phase. See tools\icq-e2e.
+        //
+        // ICQ.exe (3525) loads tbdiag.dll from its own folder at startup, so the
+        // observer ships as tbdiag.dll - the same slot the "fix" job frees by
+        // renaming the stock AOL Diagnostics module aside. This job, off unless
+        // chosen, puts our DLL in that slot:
+        //   - with "fix" on, the stock is already renamed aside; ours goes in the
+        //     empty slot.
+        //   - with "fix" off, the stock is backed up first, then ours goes over
+        //     it. The stock crashes ICQ 7; ours does not.
+        // "Restore original" puts the stock tbdiag.dll back from its backup.
+        //
+        // The patch does not carry the DLL; it takes Icqe2eProbe.dll from next to
+        // its exe (gitignored, owner-only test build). Ours is told from the
+        // stock by its version resource.
+
+        public const string E2eProbeFile = "tbdiag.dll";
+        // Our DLL as it is handed out, next to the patch.
+        public const string E2eProbeShipped = "Icqe2eProbe.dll";
+        // What our DLL says in its version resource (tools\icq-e2e\loader-tbdiag\resource.rc).
+        const string E2eProduct = "ICQ Revival";
+        const string E2eInternalName = "ICQ-E2E-Probe";
+
+        // Our DLL to put in: next to the patch unless given.
+        public string E2eSource;
+
+        public static string DefaultE2eSource()
+        {
+            return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, E2eProbeShipped);
+        }
+
+        static bool IsOurE2e(string path)
+        {
+            if (!File.Exists(path)) return false;
+            try
+            {
+                var v = System.Diagnostics.FileVersionInfo.GetVersionInfo(path);
+                return v.ProductName == E2eProduct && v.InternalName == E2eInternalName;
+            }
+            catch { return false; }
+        }
+
+        // Why our DLL cannot be put in, or null when it can.
+        string E2eMissing()
+        {
+            if (string.IsNullOrEmpty(E2eSource) || !File.Exists(E2eSource))
+            {
+                return "no " + Path.GetFileName(E2eSource ?? E2eProbeShipped) + " next to the patch";
+            }
+            if (!IsOurE2e(E2eSource)) return Path.GetFileName(E2eSource) + " is not the E2E observer";
+            return null;
+        }
+
+        // patched (ours in place) / original (can be put in) / unavailable
+        // (our DLL not next to the patch).
+        string E2eState()
+        {
+            string path = At(E2eProbeFile);
+            if (IsOurE2e(path))
+            {
+                if (E2eMissing() != null || SameFile(path, E2eSource)) return "patched";
+                return Ps.Eq(PatchFiles.Sha256(path), PatchFiles.Sha256(E2eSource)) ? "patched" : "original";
+            }
+            return E2eMissing() != null ? "unavailable" : "original";
+        }
+
+        // Makes tbdiag.dll match the selection, cooperating with the "fix"
+        // removal (which runs first and may already have renamed the stock
+        // aside). A line for the report when it could not be done, or null.
+        string SetE2e(bool wanted)
+        {
+            string path = At(E2eProbeFile);
+            if (!wanted)
+            {
+                if (!IsOurE2e(path)) return null;
+                // Put the stock back from its backup, or, with none known, just
+                // remove ours.
+                if (PatchFiles.Exists(path + Suffix)) PatchFiles.Copy(path + Suffix, path, true);
+                else PatchFiles.Discard(path);
+                return null;
+            }
+            string miss = E2eMissing();
+            if (miss != null) return "E2E observer left out: " + miss;
+            if (!IsOurE2e(path))
+            {
+                // Save the stock only if it is still there (fix off); with fix on
+                // it is already the backup.
+                if (PatchFiles.Exists(path) && !PatchFiles.Exists(path + Suffix)) PatchFiles.BackupOnce(path, Suffix);
+                PatchFiles.Copy(E2eSource, path, true);
+            }
+            else if (!SameFile(path, E2eSource) && !Ps.Eq(PatchFiles.Sha256(path), PatchFiles.Sha256(E2eSource)))
+            {
+                PatchFiles.Copy(E2eSource, path, true);
+            }
+            if (!IsOurE2e(path)) return E2eProbeFile + " could not be put in - E2E observer left out";
+            return null;
+        }
+
         // --- files taken out of the way -------------------------------------------------
 
         sealed class Removal
@@ -804,6 +909,9 @@ namespace IcqRevival.Patch
             // Off until chosen: it needs our DLL next to the patch, and the
             // registration it makes is the user's, not the folder's.
             j.Add("tzers-player", "Your server", "tZers and Flash avatars without Flash: our player (" + PlayerShipped + " next to this patch)", off: true);
+            // Off until chosen: the E2E observer (Phase 0, log-only). Needs our
+            // DLL next to the patch and ICQE2E_LOG set to write a log.
+            j.Add("e2e-probe", "Your server", "E2E encryption observer (Phase 0, log-only): our " + E2eProbeShipped + " as tbdiag.dll; set ICQE2E_LOG to log", off: true);
 
             j.Assign("the SMS tab of the main window", "sms");
             j.Assign("the Zlango buttons of the message window", "zlango");
@@ -841,6 +949,7 @@ namespace IcqRevival.Patch
             j.Assign("the tZers player", "tzers-player");
             j.Assign("the Flash registration", "tzers-player");
             j.Assign("the tZers list", "tzers-player");
+            j.Assign("the E2E observer (tbdiag.dll)", "e2e-probe");
             return j;
         }
 
@@ -850,10 +959,11 @@ namespace IcqRevival.Patch
         // Our DLL to put in: next to the patch unless given.
         public string PlayerSource;
 
-        public Icq72Client(string root, string player = null)
+        public Icq72Client(string root, string player = null, string e2e = null)
         {
             Root = root;
             PlayerSource = string.IsNullOrEmpty(player) ? DefaultPlayerSource() : Path.GetFullPath(player);
+            E2eSource = string.IsNullOrEmpty(e2e) ? DefaultE2eSource() : Path.GetFullPath(e2e);
         }
 
         string At(string relative) { return PatchFiles.Join(Root, relative); }
@@ -977,6 +1087,8 @@ namespace IcqRevival.Patch
             string player = PlayerState();
             add("the tZers player", PlayerFile, player);
             add("the Flash registration", PlayerFile, RegistrationState());
+            string e2e = E2eState();
+            add("the E2E observer (tbdiag.dll)", E2eProbeFile, e2e);
             List<PatchItem> rows = Jobs.Merge(items);
             // Without our DLL there is nothing to put in: the row says why.
             if (player == "unavailable")
@@ -985,6 +1097,14 @@ namespace IcqRevival.Patch
                 {
                     row.State = "unavailable";
                     row.Where = PlayerMissing();
+                }
+            }
+            if (e2e == "unavailable")
+            {
+                foreach (PatchItem row in rows.Where(r => r.Key == "e2e-probe"))
+                {
+                    row.State = "unavailable";
+                    row.Where = E2eMissing();
                 }
             }
             return rows;
@@ -1006,6 +1126,11 @@ namespace IcqRevival.Patch
             {
                 notes.Add("tZers player left out: " + PlayerMissing());
                 asked.Add("tzers-player");
+            }
+            if (Jobs.IsWanted(asked, "e2e-probe") && E2eState() == "unavailable")
+            {
+                notes.Add("E2E observer left out: " + E2eMissing());
+                asked.Add("e2e-probe");
             }
             skip = asked;
             Func<string, bool> wanted = key => Jobs.IsWanted(skip, key);
@@ -1038,7 +1163,7 @@ namespace IcqRevival.Patch
                 }
             }
 
-            PatchSteps.Start(4 + files.Count + Removals.Length);
+            PatchSteps.Start(5 + files.Count + Removals.Length);
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -1085,6 +1210,12 @@ namespace IcqRevival.Patch
             PatchSteps.Step("tZers player...");
             string playerNote = SetPlayer(wanted("tzers-player"));
             if (playerNote != null) notes.Add(playerNote);
+
+            // The E2E observer after the fix removal, so ours goes into a freed
+            // slot or over the stock, as the two selections require.
+            PatchSteps.Step("E2E observer...");
+            string e2eNote = SetE2e(wanted("e2e-probe"));
+            if (e2eNote != null) notes.Add(e2eNote);
 
             // Last, once every file is as it stays: the client's update
             // manifests list them so, and it does not put the originals back.

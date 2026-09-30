@@ -1,0 +1,22 @@
+[package]
+name = "icqe2e_tbdiag"
+version = "0.1.0"
+edition = "2021"
+description = "ICQ 7.2 loader stub: ships as tbdiag.dll, loaded by ICQ.exe at startup, installs the E2E observer"
+license = "MIT"
+publish = false
+
+[lib]
+# ICQ.exe loads this file by this exact name from its own folder.
+name = "tbdiag"
+crate-type = ["cdylib"]
+
+[dependencies]
+icqe2e_core = { path = "../core" }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+] }
+
+[build-dependencies]
+embed-resource = "3"

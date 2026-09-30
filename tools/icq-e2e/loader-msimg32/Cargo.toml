@@ -1,0 +1,24 @@
+[package]
+name = "icqe2e_msimg32"
+version = "0.1.0"
+edition = "2021"
+description = "ICQ 6.5 loader stub: ships as msimg32.dll, proxies the real msimg32, installs the E2E observer"
+license = "MIT"
+publish = false
+
+[lib]
+# MUtils.dll imports this by name from the app directory (a non-KnownDLL), so it
+# loads at process init, before any BOS connection.
+name = "msimg32"
+crate-type = ["cdylib"]
+
+[dependencies]
+icqe2e_core = { path = "../core" }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemInformation",
+] }
+
+[build-dependencies]
+embed-resource = "3"

@@ -1,0 +1,204 @@
+//! SNAC header parsing and small big-endian / TLV readers.
+//!
+//! A FLAP data-channel payload is a SNAC: `foodGroup:u16 | subGroup:u16 |
+//! flags:u16 | requestID:u32` (all big-endian), then the SNAC body. When the
+//! 0x8000 flag is set the body starts with an extra unnamed TLV block whose
+//! length is a u16; we skip it so the real body lines up.
+
+/// OSCAR food groups and subgroups we care about (see wire/snacs.go).
+pub const FOOD_ICBM: u16 = 0x0004;
+pub const FOOD_ICQ: u16 = 0x0015;
+
+pub const ICBM_MSG_TO_HOST: u16 = 0x0006; // outbound (client -> server)
+pub const ICBM_MSG_TO_CLIENT: u16 = 0x0007; // inbound (server -> client)
+
+pub const ICQ_DB_QUERY: u16 = 0x0002; // ICQ meta request/reply envelope
+
+/// A parsed SNAC header plus the body that follows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Snac<'a> {
+    pub food_group: u16,
+    pub sub_group: u16,
+    pub flags: u16,
+    pub request_id: u32,
+    pub body: &'a [u8],
+}
+
+/// Parses a SNAC header from a FLAP data payload. Returns `None` if the payload
+/// is too short or an announced sub-TLV block runs past the end.
+pub fn parse<'a>(payload: &'a [u8]) -> Option<Snac<'a>> {
+    if payload.len() < 10 {
+        return None;
+    }
+    let food_group = u16::from_be_bytes([payload[0], payload[1]]);
+    let sub_group = u16::from_be_bytes([payload[2], payload[3]]);
+    let flags = u16::from_be_bytes([payload[4], payload[5]]);
+    let request_id = u32::from_be_bytes([payload[6], payload[7], payload[8], payload[9]]);
+    let mut off = 10;
+    if flags & 0x8000 != 0 {
+        if payload.len() < off + 2 {
+            return None;
+        }
+        let extra = u16::from_be_bytes([payload[off], payload[off + 1]]) as usize;
+        off += 2 + extra;
+        if off > payload.len() {
+            return None;
+        }
+    }
+    Some(Snac {
+        food_group,
+        sub_group,
+        flags,
+        request_id,
+        body: &payload[off..],
+    })
+}
+
+/// A minimal big-endian cursor over a byte slice. Every read is checked; a read
+/// past the end returns `None` so callers stop rather than panic.
+pub struct Reader<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Reader { data, pos: 0 }
+    }
+    pub fn remaining(&self) -> usize {
+        self.data.len().saturating_sub(self.pos)
+    }
+    pub fn u8(&mut self) -> Option<u8> {
+        let b = *self.data.get(self.pos)?;
+        self.pos += 1;
+        Some(b)
+    }
+    pub fn u16(&mut self) -> Option<u16> {
+        let hi = *self.data.get(self.pos)?;
+        let lo = *self.data.get(self.pos + 1)?;
+        self.pos += 2;
+        Some(u16::from_be_bytes([hi, lo]))
+    }
+    pub fn u32(&mut self) -> Option<u32> {
+        if self.pos + 4 > self.data.len() {
+            return None;
+        }
+        let v = u32::from_be_bytes([
+            self.data[self.pos],
+            self.data[self.pos + 1],
+            self.data[self.pos + 2],
+            self.data[self.pos + 3],
+        ]);
+        self.pos += 4;
+        Some(v)
+    }
+    pub fn bytes(&mut self, n: usize) -> Option<&'a [u8]> {
+        if self.pos + n > self.data.len() {
+            return None;
+        }
+        let s = &self.data[self.pos..self.pos + n];
+        self.pos += n;
+        Some(s)
+    }
+    /// A byte run prefixed by a u8 length (a "screen name" in ICBM).
+    pub fn len8(&mut self) -> Option<&'a [u8]> {
+        let n = self.u8()? as usize;
+        self.bytes(n)
+    }
+    pub fn skip(&mut self, n: usize) -> Option<()> {
+        if self.pos + n > self.data.len() {
+            return None;
+        }
+        self.pos += n;
+        Some(())
+    }
+}
+
+/// One TLV: tag, and the value slice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tlv<'a> {
+    pub tag: u16,
+    pub value: &'a [u8],
+}
+
+/// Reads a TLV block (each entry `tag:u16 | len:u16 | value`) to the end of the
+/// slice. A malformed tail simply stops the walk.
+pub fn read_tlvs(data: &[u8]) -> Vec<Tlv<'_>> {
+    let mut out = Vec::new();
+    let mut r = Reader::new(data);
+    while r.remaining() >= 4 {
+        let tag = match r.u16() {
+            Some(v) => v,
+            None => break,
+        };
+        let len = match r.u16() {
+            Some(v) => v as usize,
+            None => break,
+        };
+        match r.bytes(len) {
+            Some(value) => out.push(Tlv { tag, value }),
+            None => break,
+        }
+    }
+    out
+}
+
+/// Finds the first TLV with the given tag.
+pub fn find_tlv<'a>(tlvs: &[Tlv<'a>], tag: u16) -> Option<&'a [u8]> {
+    tlvs.iter().find(|t| t.tag == tag).map(|t| t.value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_header() {
+        let mut p = Vec::new();
+        p.extend_from_slice(&FOOD_ICBM.to_be_bytes());
+        p.extend_from_slice(&ICBM_MSG_TO_HOST.to_be_bytes());
+        p.extend_from_slice(&0u16.to_be_bytes());
+        p.extend_from_slice(&0x1234u32.to_be_bytes());
+        p.extend_from_slice(b"body");
+        let s = parse(&p).unwrap();
+        assert_eq!(s.food_group, FOOD_ICBM);
+        assert_eq!(s.sub_group, ICBM_MSG_TO_HOST);
+        assert_eq!(s.request_id, 0x1234);
+        assert_eq!(s.body, b"body");
+    }
+
+    #[test]
+    fn skips_extra_tlv_block_when_flag_set() {
+        let mut p = Vec::new();
+        p.extend_from_slice(&FOOD_ICBM.to_be_bytes());
+        p.extend_from_slice(&ICBM_MSG_TO_CLIENT.to_be_bytes());
+        p.extend_from_slice(&0x8000u16.to_be_bytes()); // flag set
+        p.extend_from_slice(&1u32.to_be_bytes());
+        p.extend_from_slice(&3u16.to_be_bytes()); // extra block len
+        p.extend_from_slice(&[0xAA, 0xBB, 0xCC]); // extra block
+        p.extend_from_slice(b"real");
+        let s = parse(&p).unwrap();
+        assert_eq!(s.body, b"real");
+    }
+
+    #[test]
+    fn tlv_walk() {
+        let mut d = Vec::new();
+        d.extend_from_slice(&2u16.to_be_bytes());
+        d.extend_from_slice(&3u16.to_be_bytes());
+        d.extend_from_slice(b"abc");
+        d.extend_from_slice(&5u16.to_be_bytes());
+        d.extend_from_slice(&1u16.to_be_bytes());
+        d.extend_from_slice(b"x");
+        let tlvs = read_tlvs(&d);
+        assert_eq!(tlvs.len(), 2);
+        assert_eq!(find_tlv(&tlvs, 2), Some(&b"abc"[..]));
+        assert_eq!(find_tlv(&tlvs, 5), Some(&b"x"[..]));
+        assert_eq!(find_tlv(&tlvs, 9), None);
+    }
+
+    #[test]
+    fn short_payload_is_none() {
+        assert!(parse(&[0, 4, 0, 6]).is_none());
+    }
+}

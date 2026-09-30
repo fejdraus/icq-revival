@@ -9,9 +9,9 @@
 //   ICQ-7.2-Patch.exe -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>] [-Include tzers-player] [-Player <dll>]
 //   ICQ-7.2-Patch.exe -Restore [-Root <folder>]
 // -Skip takes job keys (sms, games, xtraz, zlango, tabs, ads, fix,
-// links, sign-in, tzers-player), separated by commas; they are left out, or
-// taken out if in place. -Include takes the jobs that are off unless asked
-// for: tzers-player. -Player is our FlashPlayerControl-Ruffle.dll for it,
+// links, sign-in, tzers-player, e2e-probe), separated by commas; they are left
+// out, or taken out if in place. -Include takes the jobs that are off unless
+// asked for: tzers-player, e2e-probe. -Player is our FlashPlayerControl-Ruffle.dll for it,
 // when not next to this exe. The run reports on the standard output ("applied: ...", "changes
 // made: N", "files restored: N") and exits with 0, or with 1 and the reason
 // on the standard error.
@@ -215,6 +215,7 @@ namespace IcqRevival.Patch
             if (done.Count > 12) msg += "\n  ...";
             if (ui.IsSelected("sign-in")) msg += "\n\nWith automatic connection settings ICQ signs in to " + server + ".";
             if (ui.IsSelected("tzers-player")) msg += "\n\ntZers and Flash avatars play for the Windows user " + Environment.UserName + ", who has to be the one starting ICQ.";
+            if (ui.IsSelected("e2e-probe")) msg += "\n\nThe E2E observer (Phase 0) is in place. Set the ICQE2E_LOG environment variable to a file path before starting ICQ to log decoded message text; it changes nothing on the wire.";
             msg += "\n\nYou can start ICQ now.";
             MessageBox.Show(msg, "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }

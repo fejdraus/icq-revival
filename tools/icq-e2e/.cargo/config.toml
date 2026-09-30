@@ -1,0 +1,8 @@
+# ICQ 6.5 and 7.2 are 32-bit programs, so the DLLs (and the tests, which run
+# under WOW64) are 32-bit. The CRT is linked statically: the ICQ folder has no
+# VC++ 2015+ runtime. This mirrors tools\icq65\flashplayer\.cargo\config.toml.
+[build]
+target = "i686-pc-windows-msvc"
+
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
