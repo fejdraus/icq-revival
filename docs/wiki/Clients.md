@@ -13,9 +13,10 @@
 | ICQ 95-99 | Supported by the server over the legacy UDP protocol (v2-v5); not yet tried with real clients here |
 | Everything Open OSCAR Server supports | AIM 1.x-7.x, ICQ 98-5, Pidgin, TOC clients - see [its documentation](https://github.com/mk6i/open-oscar-server#readme) |
 
-ICQ 7 and later do not work: they reach the stage of signing in and stop at a
-challenge the server does not answer yet. R&Q after 2019 dropped OSCAR
-altogether.
+ICQ 7 and later are out of scope on purpose: ICQ Revival covers the clients of
+the Mirabilis and AOL years, not those released after ICQ passed to Mail.ru.
+(They reach the stage of signing in and stop at a challenge the server does not
+answer.) R&Q after 2019 dropped OSCAR altogether.
 
 ## Connecting a client
 
