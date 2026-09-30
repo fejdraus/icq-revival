@@ -87,9 +87,12 @@ namespace IcqRevival.Patch
                 CliParam p = Resolve(name, spec);
                 if (p == null)
                 {
-                    // Not one of ours: passed over, with its value.
-                    if (joined == null && i + 1 < args.Length && !args[i + 1].StartsWith("-")) i++;
-                    continue;
+                    // Refused rather than passed over: a misspelt -Root would
+                    // otherwise send the run to the client found on its own.
+                    var names = new List<string>();
+                    foreach (CliParam s in spec) names.Add("-" + s.Name);
+                    throw new CliException("A parameter cannot be found that matches parameter name '" + name + "'. " +
+                        "The parameters are: " + string.Join(", ", names));
                 }
                 if (result.Has(p.Name))
                 {

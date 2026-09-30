@@ -153,10 +153,14 @@ namespace IcqRevival.Patch
                 DateTime time = File.GetLastWriteTimeUtc(m.Path);
                 PatchFiles.BackupOnce(m.Path, suffix);
                 string head = Regex.Replace(m.Head, "[0-9a-f]{32}", Md5(body));
+                // The client keeps its manifests hidden, and a hidden file
+                // can't be overwritten: the attributes go and come back.
                 FileAttributes a = File.GetAttributes(m.Path);
-                if ((a & FileAttributes.ReadOnly) != 0) File.SetAttributes(m.Path, a & ~FileAttributes.ReadOnly);
+                FileAttributes clear = a & ~(FileAttributes.ReadOnly | FileAttributes.Hidden);
+                if (clear != a) File.SetAttributes(m.Path, clear);
                 File.WriteAllBytes(m.Path, Bytes.GetBytes(head + body));
                 File.SetLastWriteTimeUtc(m.Path, time);
+                if (clear != a) File.SetAttributes(m.Path, a);
                 changed.Add(m.Path);
             }
             return changed;
