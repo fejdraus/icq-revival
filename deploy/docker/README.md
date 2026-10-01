@@ -75,7 +75,10 @@ machine with the plugin builds and both engine builds:
     python tools/miranda-icq/make-update-packages.py out
 
 and copy `out/x32` and `out/x64` to `deploy/miranda-updates/` here, then
-`docker compose kill -s HUP legacy-web` (or restart it). Without the folder
+`docker compose exec legacy-web kill -HUP 1` (or restart it). Not
+`docker compose kill -s HUP`: Docker counts any `kill` as a manual stop, and
+`restart: unless-stopped` then leaves the service down after the next reboot.
+Without the folder
 there is nothing of ours to update to, but upstream's lines and delete rules
 for our files are still left out, so PluginUpdater leaves them as they are.
 
