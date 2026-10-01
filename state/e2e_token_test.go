@@ -21,10 +21,15 @@ func TestE2EToken(t *testing.T) {
 	instance, err := sm.AddSession(context.Background(), "Alice", false)
 	require.NoError(t, err)
 	instance.Session().SetSignonTime(time.Now())
-	instance.SetSignonComplete()
 
 	token, err := IssueE2EToken(baker, instance, time.Hour)
 	require.NoError(t, err)
+
+	// The token comes in the MOTD, during sign-on, and holds at once.
+	early, _, err := CrackE2EToken(baker, token)
+	require.NoError(t, err)
+	assert.Same(t, instance, early.Live(sm), "before the sign-on completes")
+	instance.SetSignonComplete()
 	assert.Less(t, len(token), 128, "the login cookie padding is dropped")
 
 	got, expiry, err := CrackE2EToken(baker, token)

@@ -35,8 +35,8 @@ type CookieBaker interface {
 	Crack(data []byte) ([]byte, time.Time, error)
 }
 
-// SessionRetriever finds an account's signed-on session
-// (state.InMemorySessionManager).
+// SessionRetriever finds an account's session, also while it is still
+// signing on (state.InMemorySessionManager).
 type SessionRetriever interface {
-	RetrieveSession(screenName state.IdentScreenName) *state.Session
+	RetrieveSessionSigningOn(screenName state.IdentScreenName) *state.Session
 }

@@ -102,11 +102,13 @@ func CrackE2EToken(baker interface {
 }
 
 // Live returns the session instance the token was issued to if it is still
-// signed on, or nil.
+// open, or nil. The instance may still be signing on: the token comes in the
+// MOTD, before ClientOnline completes the sign-on, and a client may use it at
+// once.
 func (t E2EToken) Live(sessions interface {
-	RetrieveSession(screenName IdentScreenName) *Session
+	RetrieveSessionSigningOn(screenName IdentScreenName) *Session
 }) *SessionInstance {
-	sess := sessions.RetrieveSession(t.ScreenName)
+	sess := sessions.RetrieveSessionSigningOn(t.ScreenName)
 	if sess == nil || sess.IsClosed() || !sess.SignonTime().Equal(t.SignonTime) {
 		return nil
 	}

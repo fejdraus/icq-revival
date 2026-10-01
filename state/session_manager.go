@@ -327,6 +327,20 @@ func (s *InMemorySessionManager) RetrieveSession(screenName IdentScreenName) *Se
 	return nil
 }
 
+// RetrieveSessionSigningOn returns the session of screenName whether or not
+// its sign-on has completed, or nil if there is none. RetrieveSession only
+// returns sessions with a live instance; the key directory token comes in the
+// MOTD during sign-on, and a client may use it before ClientOnline completes
+// the sign-on.
+func (s *InMemorySessionManager) RetrieveSessionSigningOn(screenName IdentScreenName) *Session {
+	s.mapMutex.RLock()
+	defer s.mapMutex.RUnlock()
+	if rec, ok := s.store[screenName]; ok {
+		return rec.session
+	}
+	return nil
+}
+
 func (s *InMemorySessionManager) retrieveByScreenNames(screenNames []IdentScreenName) []*Session {
 	s.mapMutex.RLock()
 	defer s.mapMutex.RUnlock()
