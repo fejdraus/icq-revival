@@ -26,10 +26,10 @@ stage owns it yet - decide before the stage that needs it).
 | # | Requirement | Ours | Status |
 |---|---|---|---|
 | 1.1 | A device publishes its identity key, a signed key and a pool of one-time keys (a "bundle"). | Key directory: device keys, fallback key, one-time keys, all signed. | done (stage 1) |
-| 1.2 | The pool holds about 100 one-time keys and never fewer than 25; the client refills it. | Server caps the pool (`E2E_MAX_ONE_TIME_KEYS`, 100). The client must watch the count and refill below 25. | server done; client stage 3 |
+| 1.2 | The pool holds about 100 one-time keys and never fewer than 25; the client refills it. | Server caps the pool (`E2E_MAX_ONE_TIME_KEYS`, 100). The client must watch the count and refill below 25. | done (stage 3) |
 | 1.3 | Every key exchange uses a one-time key; exchanges without one are rejected. | vodozemac falls back to the fallback key when the pool is empty - decide whether to accept that (Olm's design) or require a one-time key (OMEMO). | open |
-| 1.4 | The signed key is rotated every week to month; the old private part is kept one more period for late messages. | Fallback key rotation on the client; the server stores the current one. | stage 3 |
-| 1.5 | A one-time key is used once: the receiver removes it from its bundle and eventually deletes the private part. | Server hands out each one-time key once (atomic claim). Client deletes the private part after use. | server done; client stage 3 |
+| 1.4 | The signed key is rotated every week to month; the old private part is kept one more period for late messages. | Fallback key rotation on the client; the server stores the current one. | done (stage 3) |
+| 1.5 | A one-time key is used once: the receiver removes it from its bundle and eventually deletes the private part. | Server hands out each one-time key once (atomic claim). Client deletes the private part after use. | done (stage 3) |
 | 1.6 | A new device id is checked for collisions before first publish. | Server keeps device ids unique per UIN; the client retries on conflict. | server done; client stage 4 |
 | 1.7 | Device labels, if any, are signed; an unsigned label is ignored. | Include the label in what the account key signs, or drop labels. | open |
 
@@ -37,23 +37,23 @@ stage owns it yet - decide before the stage that needs it).
 
 | # | Requirement | Ours | Status |
 |---|---|---|---|
-| 2.1 | Build a session only right before sending, not when a device appears (avoids two sides claiming the same one-time key). | Lazy session creation in the client. | stage 3 |
+| 2.1 | Build a session only right before sending, not when a device appears (avoids two sides claiming the same one-time key). | Lazy session creation in the client. | done (stage 3) |
 | 2.2 | After accepting a key exchange, answer with an empty message so the sender stops sending key-exchange messages. | Empty (content-less) control message. | stage 3 |
 | 2.3 | Heartbeat: if a device has only received for a while, send an empty message so the ratchet advances (break-in recovery). | Same, from the client. | stage 3 |
-| 2.4 | Skipped message keys: keep at most ~1000 per session, FIFO; limit how many one message may skip (~1000). | vodozemac has its own limits - check and document them. | stage 3 |
-| 2.5 | Decryption errors must NOT start new sessions automatically (an attacker could force it). Tell the user instead. | Show "could not be read on this device"; no auto re-key. | stage 3 |
-| 2.6 | A message without a key for this device: show a warning, not garbage. | Same. | stage 3 |
+| 2.4 | Skipped message keys: keep at most ~1000 per session, FIFO; limit how many one message may skip (~1000). | vodozemac has its own limits - check and document them. | done (stage 3) |
+| 2.5 | Decryption errors must NOT start new sessions automatically (an attacker could force it). Tell the user instead. | Show "could not be read on this device"; no auto re-key. | done (stage 3) |
+| 2.6 | A message without a key for this device: show a warning, not garbage. | Same. | done (stage 3) |
 
 ## 3. Message format and content protection (XEP-0384 §4.4-4.5, §5.5; XEP-0420)
 
 | # | Requirement | Ours | Status |
 |---|---|---|---|
 | 3.1 | Encrypt the payload once with a fresh key; wrap that key for every recipient device and every other device of the sender (not the sending device itself). | `wraps[]` in the container (`DESIGN.md` §7). | stage 3 (one device), stage 4 (many) |
-| 3.2 | Encrypt the whole content, not only plain text: formatting (our HTML), smileys (`<FONT sml=...>`), anything the message carries. | Encrypt the full text fragment as the client produced it. | stage 3 |
-| 3.3 | Random padding inside the ciphertext: pad to a minimum size, then add 0-200 random units, so length leaks nothing. Longer padding than expected must be accepted. | Padding field inside the encrypted envelope. | stage 3 |
+| 3.2 | Encrypt the whole content, not only plain text: formatting (our HTML), smileys (`<FONT sml=...>`), anything the message carries. | Encrypt the full text fragment as the client produced it. | done (stage 3) |
+| 3.3 | Random padding inside the ciphertext: pad to a minimum size, then add 0-200 random units, so length leaks nothing. Longer padding than expected must be accepted. | Padding field inside the encrypted envelope. | done (stage 3) |
 | 3.4 | The sender's identity inside the ciphertext (`<from/>`), checked by the receiver against who the server says sent it. | Sender UIN inside the envelope; mismatch = alert and reject. | stage 3 |
-| 3.5 | A timestamp inside the ciphertext (`<time/>`), checked against the delivery time within a margin (replay of old messages). | Send time inside the envelope; offline messages have the server's stamp to compare with. | stage 3 |
-| 3.6 | The recipient inside the ciphertext (`<to/>`) where the server could redirect (group vs private). | Include the recipient UIN too - cheap, and it stops the server from re-addressing a message. | stage 3 |
+| 3.5 | A timestamp inside the ciphertext (`<time/>`), checked against the delivery time within a margin (replay of old messages). | Send time inside the envelope; offline messages have the server's stamp to compare with. | done (stage 3) |
+| 3.6 | The recipient inside the ciphertext (`<to/>`) where the server could redirect (group vs private). | Include the recipient UIN too - cheap, and it stops the server from re-addressing a message. | done (stage 3) |
 | 3.7 | Each message is marked with the scheme it uses, so a client that cannot read it says so instead of showing noise (XEP-0380). | Capability GUID + a readable one-line hint before the container for clients without the add-on. | stage 2-3 |
 | 3.8 | Key material ride in empty messages; these are exempt from the trust rule (4.1). | Control messages carry no content. | stage 3 |
 | 3.9 | An encrypted message, longer than the plain one, still fits what the recipient's client takes. | The server announces `MaxIncomingICBMLen` 8000 and enforces it: it refuses a longer ICBM (`REQUEST_DENIED`), and one longer than any of the recipient's clients set with `ICBMAddParameters` (`REFUSED_BY_CLIENT`). Measured on the message TLV (`0x0002`, channels 1 and 3) or the data TLV (`0x0005`, others). The add-on keeps a container within the limit or splits it. | server done; client stage 3 |
@@ -135,7 +135,25 @@ vodozemac for the ratchet. What Signal has and the planned stages (1-5) do not:
 | 9.6 | Device linking convenience (Signal: scan a QR code). | **Owner's decision: for the first versions the management page in an ICQ Xtra window plus entering a short code is good enough.** A QR flow can come later. | decided for v1 |
 | 9.7 | Independent review. | Each part is proven, the combination is ours: have the scheme and the code reviewed independently before calling it Signal-grade to users. | open - before release |
 
-## 10. Not covered (same as OMEMO)
+## 10. User control, visibility and downgrade protection (owner's rules)
+
+Owner's decisions (2026-10-01). Until now the add-on encrypts silently; the user
+must see and control it, and a server must not be able to switch a conversation
+to clear text unnoticed. All of it is add-on logic; the server needs no change.
+
+| # | Rule | Where | Status |
+|---|---|---|---|
+| 10.1 | One setting per contact: encryption **on** or **off** for outgoing messages, remembered across restarts (in the add-on's state). Default for a new chat: on, if the contact can receive encrypted messages (10.6). | add-on | stage 3 follow-up |
+| 10.2 | Commands typed in the chat and never sent to the contact: `/e2e on`, `/e2e off`, `/e2e status`, and `/e2e plain` to send one message in clear after a downgrade warning (10.7). | add-on | stage 3 follow-up |
+| 10.3 | Status shown in the chat as a note: when the chat is first used in a session, on every change ("Encryption is on in this chat" / "off" / "the contact has no encryption"), and on automatic switch-on (10.5). | add-on | stage 3 follow-up |
+| 10.4 | Every decrypted incoming message is marked (a lock, e.g. `🔒 ` before the text) so the reader sees it came encrypted. Incoming encrypted messages are **always** decrypted, whatever the setting - the setting governs only what the user sends. | add-on | stage 3 follow-up |
+| 10.5 | Automatic switch-on: an incoming encrypted message turns encryption on for that contact, with a note - **unless the user switched it off by hand**; then only a hint ("the contact encrypts; /e2e on to answer encrypted"). An encrypted message cannot be forged without keys, so this cannot be abused by the server. | add-on | stage 3 follow-up |
+| 10.6 | Whether a contact can receive encrypted messages is decided by the **key directory** (signed devices of the account) and the add-on's remembered state - not by the OSCAR capability alone, which a server can strip. The capability is only a hint for the interface. (This also covers an account that has the add-on on one device and a client without it on another.) | add-on | stage 3 follow-up |
+| 10.7 | **Downgrade protection (sticky):** once a contact has been seen with signed devices or has exchanged an encrypted message, the add-on remembers it. If the server later shows no encryption for that contact, nothing is sent in clear silently: the message is held and the chat says encryption was seen before and is missing now; the user sends in clear only with `/e2e plain`. A contact never seen encrypting stays trust-on-first-use (closed only by comparing safety numbers, 4.2). | add-on | stage 3 follow-up |
+| 10.8 | With encryption switched on by hand for a contact, nothing ever goes to that contact in clear: no keys - the message is not sent and the chat says why. | add-on | stage 3 follow-up |
+| 10.9 | A button with a lock in the message window of ICQ 6.5 and 7.2, showing the state and opening the management page for that contact (status, on/off, safety number). Until stage 5 the commands of 10.2 do the job. | patches (client markup) + management page | stage 5 |
+
+## 11. Not covered (same as OMEMO)
 
 - Metadata and traffic analysis: the server still sees who talks to whom and when.
 - A device an attacker controls permanently.
