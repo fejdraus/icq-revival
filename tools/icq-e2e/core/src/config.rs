@@ -40,6 +40,11 @@
 //!   session (stages C1-C3 of `docs/e2e/CALLS-RESEARCH.md`); any other call
 //!   stays exactly as it is. Off by default; only in encrypt mode, and only
 //!   where frames may be added.
+//! - `ICQE2E_AUDITORS` - overrides the `auditors=` line of `icq-e2e.ini`: the
+//!   verifier keys of the key log's auditors, comma-separated, as
+//!   `e2e-kt-auditor -print-key` prints them (docs/e2e/KEY-TRANSPARENCY.md).
+//!   Given, exactly these auditors are trusted, whatever the server names;
+//!   absent or empty, the ones the server names are pinned on first use.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -86,6 +91,11 @@ pub struct Policy {
     /// `calls_encrypt=on`: offer, answer and encrypt calls (stages C1-C3).
     /// What the ini says; [`Policy::encrypts_calls`] is whether it applies.
     pub calls_encrypt: bool,
+    /// `auditors=`: the key log's auditors to trust, exactly; `None` when
+    /// the line is absent, and the server's are pinned on first use.
+    pub auditors: Option<Vec<String>>,
+    /// Keys on the `auditors=` line that do not read, for the log.
+    pub auditors_unread: Vec<String>,
 }
 
 /// What `server=`, `tls=` and `tls_pin=` say (STAGE-TLS 3.5).
@@ -259,6 +269,8 @@ impl Policy {
             tls: TlsPolicy::NoServer,
             calls_log: false,
             calls_encrypt: false,
+            auditors: None,
+            auditors_unread: Vec::new(),
         }
     }
 
@@ -273,6 +285,8 @@ impl Policy {
             tls: TlsPolicy::NoServer,
             calls_log: false,
             calls_encrypt: false,
+            auditors: None,
+            auditors_unread: Vec::new(),
         }
     }
 
@@ -333,6 +347,7 @@ impl Policy {
             tls_pin: pick(s.tls_pin, env("ICQE2E_TLS_PIN")),
             calls_log: env("ICQE2E_CALLS_LOG"),
             calls_encrypt: env("ICQE2E_CALLS_ENCRYPT"),
+            auditors: env("ICQE2E_AUDITORS").filter(|a| !a.trim().is_empty()),
         })
     }
 
@@ -366,6 +381,13 @@ impl Policy {
         let tls_pin = raw.tls_pin.clone().or_else(|| ini("tls_pin"));
         let calls_log = raw.calls_log.clone().or_else(|| ini("calls_log"));
         let calls_encrypt = raw.calls_encrypt.clone().or_else(|| ini("calls_encrypt"));
+        let (auditors, auditors_unread) = match raw.auditors.clone().or_else(|| ini("auditors")) {
+            Some(line) => {
+                let (good, bad) = crate::kt::parse_auditor_list(&line);
+                (Some(good), bad)
+            }
+            None => (None, Vec::new()),
+        };
         Policy {
             mode,
             peers: (!peers.is_empty()).then_some(peers),
@@ -378,6 +400,8 @@ impl Policy {
             tls: TlsPolicy::parse(server.as_deref(), tls.as_deref(), tls_pin.as_deref()),
             calls_log: switched_on(calls_log.as_deref()),
             calls_encrypt: switched_on(calls_encrypt.as_deref()),
+            auditors,
+            auditors_unread,
         }
     }
 
@@ -424,8 +448,20 @@ impl Policy {
             None => String::new(),
             Some(p) => format!(", peers={}", p.join(",")),
         };
+        let auditors = match &self.auditors {
+            None => String::new(),
+            Some(a) if self.auditors_unread.is_empty() => {
+                format!(", auditors={} pinned by icq-e2e.ini", a.len())
+            }
+            Some(a) => format!(
+                ", auditors={} pinned by icq-e2e.ini ({} left out, not auditor keys: {})",
+                a.len(),
+                self.auditors_unread.len(),
+                self.auditors_unread.join(",")
+            ),
+        };
         format!(
-            "{what}{peers}, directory={}, frames={}, {}, home={}{}{}",
+            "{what}{peers}, directory={}, frames={}, {}, home={}{}{}{auditors}",
             self.directory.as_deref().unwrap_or("unset"),
             if self.inject {
                 "may be added"
@@ -476,6 +512,7 @@ struct Raw {
     tls_pin: Option<String>,
     calls_log: Option<String>,
     calls_encrypt: Option<String>,
+    auditors: Option<String>,
 }
 
 /// Whether a switch that is off unless asked for (`calls_log=`) is on: only a
@@ -547,7 +584,59 @@ mod tests {
             tls_pin: own(s.tls_pin),
             calls_log: None,
             calls_encrypt: None,
+            auditors: None,
         })
+    }
+
+    /// `auditors=` pins exactly the keys it gives; without it, nothing is
+    /// pinned here and the server's auditors are trusted on first use.
+    #[test]
+    fn the_auditors_line_pins_its_keys() {
+        let dir = std::env::temp_dir().join("icqe2e-ini-auditors-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ini = dir.join("icq-e2e.ini");
+        let path = ini.to_str().unwrap();
+        let read = |text: &str| {
+            std::fs::write(&ini, text).unwrap();
+            policy(Settings {
+                ini_path: Some(path),
+                ..Default::default()
+            })
+        };
+        let a = crate::kt::cosign("a.test/icq", &[1; 32], "", 0).1;
+        let b = crate::kt::cosign("b.test/icq", &[2; 32], "", 0).1;
+
+        let p = read(
+            "directory = https://x/
+",
+        );
+        assert_eq!(p.auditors, None);
+        assert!(!p.describe().contains("auditors="));
+        assert_eq!(
+            read(
+                "auditors =
+"
+            )
+            .auditors,
+            None,
+            "empty is absent"
+        );
+
+        let p = read(&format!(
+            "auditors = {a}, {b},{a}
+"
+        ));
+        assert_eq!(p.auditors, Some(vec![a.clone(), b.clone()]));
+        assert!(p.describe().contains("auditors=2 pinned by icq-e2e.ini"));
+
+        let p = read(&format!(
+            "AUDITORS={a},nonsense
+"
+        ));
+        assert_eq!(p.auditors, Some(vec![a.clone()]));
+        assert_eq!(p.auditors_unread, vec!["nonsense".to_string()]);
+        assert!(p.describe().contains("1 left out"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

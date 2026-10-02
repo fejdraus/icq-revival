@@ -241,12 +241,18 @@ pub struct LogState {
     /// earlier size is checked against.
     #[serde(default)]
     pub hashes: String,
-    /// The auditors' verifier keys, pinned on first sight.
+    /// The auditors' verifier keys we trust: pinned on first sight from
+    /// `GET /log/auditors`, or, when `icq-e2e.ini` has an `auditors =` line,
+    /// exactly the keys it gives.
     #[serde(default)]
     pub auditors: Vec<String>,
-    /// The latest cosignature that checked out.
+    /// The latest cosignature that checked out, by any auditor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audited: Option<Audited>,
+    /// Per trusted auditor, its latest cosignature that checked out. A state
+    /// file from before several auditors has none; it fills on the next look.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audits: Vec<Audited>,
 }
 
 /// A checkpoint an auditor cosigned and that agrees with our copy.
@@ -677,10 +683,10 @@ pub enum AuditError {
     NoAuditor,
     /// The server could not be reached; try again later.
     Net(String),
-    /// The auditor has cosigned more of the log than our copy has: bring it
+    /// An auditor has cosigned more of the log than our copy has: bring it
     /// up to date and look again.
     Behind,
-    /// No cosignature by an auditor we know is recent enough.
+    /// No cosignature by an auditor we trust is recent enough.
     Stale(String),
     /// An auditor cosigned a checkpoint that is not in our copy: the server
     /// shows us a different log than it showed the auditor.
@@ -699,16 +705,75 @@ impl std::fmt::Display for AuditError {
     }
 }
 
-/// Looks for a recent cosignature by an auditor we know over a checkpoint of
-/// our copy of the log. The state that comes back may have the auditors
-/// pinned, whatever the result.
+/// One trusted auditor and its newest cosignature that agrees with our copy;
+/// `None` if the server handed out none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditorView {
+    pub name: String,
+    pub last: Option<Audited>,
+}
+
+impl AuditorView {
+    /// Whether its word is recent enough to vouch for the log at `now`.
+    pub fn fresh(&self, now: u64) -> bool {
+        self.last
+            .as_ref()
+            .is_some_and(|a| now <= a.time.saturating_add(AUDIT_MAX_AGE))
+    }
+}
+
+/// How long ago `time` was, in words: "N min ago" within the hour, "N h"
+/// beyond it.
+pub fn age(now: u64, time: u64) -> String {
+    let secs = now.saturating_sub(time);
+    if secs < 3600 {
+        format!("{} min ago", secs / 60)
+    } else {
+        format!("{} h", secs / 3600)
+    }
+}
+
+/// Reads a list of auditors' verifier keys - the `auditors =` line of
+/// `icq-e2e.ini`, or `GET /log/auditors` - separated by commas, semicolons
+/// or white space. Keys that do not read come back apart, for the log; a key
+/// given twice counts once.
+pub fn parse_auditor_list(line: &str) -> (Vec<String>, Vec<String>) {
+    let mut good: Vec<String> = Vec::new();
+    let mut bad = Vec::new();
+    for k in line
+        .split([',', ';', ' ', '\t', '\r', '\n'])
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+    {
+        if parse_cosigner(k).is_ok() {
+            if !good.iter().any(|g| g == k) {
+                good.push(k.to_string());
+            }
+        } else {
+            bad.push(k.to_string());
+        }
+    }
+    (good, bad)
+}
+
+/// Looks at the cosignatures of the auditors we trust (stage 2). Every one
+/// of them must agree with our copy - a cosigned checkpoint that our copy
+/// does not have is a split view, whichever auditor cosigned it - and at
+/// least one must be recent enough.
+///
+/// `pinned` is the `auditors =` line of `icq-e2e.ini`, when it has one: then
+/// exactly those auditors are trusted, whatever the server names, and they
+/// replace the ones the state file had. Without it, the auditors the server
+/// names are pinned on first sight, as before. The state that comes back may
+/// have the auditors pinned, whatever the result.
 pub fn audit(
     dir: &dyn DirectoryApi,
     state: &LogState,
     now: u64,
-) -> (LogState, Result<Audited, AuditError>) {
+    pinned: Option<&[String]>,
+) -> (LogState, Result<Vec<AuditorView>, AuditError>) {
     let mut next = state.clone();
-    let r = audit_into(dir, &mut next, now);
+    let r = audit_into(dir, &mut next, now, pinned);
     (next, r)
 }
 
@@ -716,18 +781,36 @@ fn audit_into(
     dir: &dyn DirectoryApi,
     next: &mut LogState,
     now: u64,
-) -> Result<Audited, AuditError> {
+    pinned: Option<&[String]>,
+) -> Result<Vec<AuditorView>, AuditError> {
     let neterr = |e: DirError| AuditError::Net(e.to_string());
-    if next.auditors.is_empty() {
-        let listed = dir.log_auditors().map_err(neterr)?.unwrap_or_default();
-        next.auditors = listed
-            .lines()
-            .filter(|l| parse_cosigner(l).is_ok())
-            .map(|l| l.trim().to_string())
-            .collect();
-        if next.auditors.is_empty() {
-            return Err(AuditError::NoAuditor);
+    match pinned {
+        Some(keys) => {
+            if next.auditors != keys {
+                // The patch's keys win over whatever was trusted on first
+                // use, for good: without the line again, these stay pinned.
+                next.auditors = keys.to_vec();
+                let names: Vec<String> = keys
+                    .iter()
+                    .filter_map(|k| parse_cosigner(k).ok())
+                    .map(|c| c.name)
+                    .collect();
+                next.audits.retain(|a| names.contains(&a.auditor));
+            }
+            if keys.is_empty() {
+                return Err(AuditError::Stale(
+                    "the auditors line of icq-e2e.ini holds no auditor key that reads".into(),
+                ));
+            }
         }
+        None if next.auditors.is_empty() => {
+            let listed = dir.log_auditors().map_err(neterr)?.unwrap_or_default();
+            next.auditors = parse_auditor_list(&listed).0;
+            if next.auditors.is_empty() {
+                return Err(AuditError::NoAuditor);
+            }
+        }
+        None => {}
     }
     let cosigners: Vec<Cosigner> = next
         .auditors
@@ -736,7 +819,8 @@ fn audit_into(
         .collect();
     let log_key = next.key.as_deref().ok_or(AuditError::Behind)?;
     let verifier = parse_verifier(log_key).map_err(AuditError::SplitView)?;
-    let mut best: Option<(Audited, Hash)> = None;
+    // Every cosignature by a trusted auditor over a checkpoint of the log.
+    let mut seen: Vec<(Audited, Hash)> = Vec::new();
     for note in dir.log_cosigned().map_err(neterr)? {
         let Ok(cp) = open_checkpoint(&note, &verifier) else {
             continue;
@@ -748,43 +832,82 @@ fn audit_into(
         for line in note[split + 2..].lines() {
             for c in &cosigners {
                 if let Some(time) = verify_cosignature(c, body, line) {
-                    if best.as_ref().is_none_or(|(b, _)| time > b.time) {
-                        best = Some((
-                            Audited {
-                                auditor: c.name.clone(),
-                                size: cp.size,
-                                time,
-                            },
-                            cp.root,
-                        ));
-                    }
+                    seen.push((
+                        Audited {
+                            auditor: c.name.clone(),
+                            size: cp.size,
+                            time,
+                        },
+                        cp.root,
+                    ));
                 }
             }
         }
     }
-    let Some((a, root)) = best else {
-        return Err(AuditError::Stale(
-            "no auditor has cosigned the key log".into(),
-        ));
-    };
-    if a.size > next.size {
+    // Any of them that our copy does not have means the server showed that
+    // auditor another log than us. One is enough, however many agree.
+    for (a, root) in &seen {
+        if a.size > 0 && a.size <= next.size && next.root_at(a.size) != Some(*root) {
+            return Err(AuditError::SplitView(format!(
+                "the key log's auditor {} saw a different log ({} entries) than this add-on was shown",
+                a.auditor, a.size
+            )));
+        }
+    }
+    if seen.iter().any(|(a, _)| a.size > next.size) {
         return Err(AuditError::Behind);
     }
-    if a.size > 0 && next.root_at(a.size) != Some(root) {
-        return Err(AuditError::SplitView(format!(
-            "the key log's auditor {} saw a different log ({} entries) than this add-on was shown",
-            a.auditor, a.size
-        )));
+    let views: Vec<AuditorView> = cosigners
+        .iter()
+        .map(|c| AuditorView {
+            name: c.name.clone(),
+            last: seen
+                .iter()
+                .filter(|(a, _)| a.auditor == c.name)
+                .map(|(a, _)| a.clone())
+                .max_by_key(|a| a.time),
+        })
+        .collect();
+    for a in views.iter().filter_map(|v| v.last.as_ref()) {
+        next.audits.retain(|o| o.auditor != a.auditor);
+        next.audits.push(a.clone());
     }
-    if now > a.time.saturating_add(AUDIT_MAX_AGE) {
-        return Err(AuditError::Stale(format!(
+    if let Some(newest) = views
+        .iter()
+        .filter_map(|v| v.last.clone())
+        .max_by_key(|a| a.time)
+    {
+        next.audited = Some(newest);
+    }
+    if views.iter().any(|v| v.fresh(now)) {
+        return Ok(views);
+    }
+    let why = if views.iter().all(|v| v.last.is_none()) {
+        "no auditor has cosigned the key log".to_string()
+    } else if let [v] = &views[..] {
+        format!(
             "the key log's auditor {} last vouched for it {} minutes ago",
-            a.auditor,
-            (now - a.time) / 60
-        )));
-    }
-    next.audited = Some(a.clone());
-    Ok(a)
+            v.name,
+            now.saturating_sub(v.last.as_ref().map_or(0, |a| a.time)) / 60
+        )
+    } else {
+        let said: Vec<String> = views
+            .iter()
+            .map(|v| match &v.last {
+                Some(a) => format!(
+                    "{} last vouched for it {} minutes ago",
+                    v.name,
+                    now.saturating_sub(a.time) / 60
+                ),
+                None => format!("{} never did", v.name),
+            })
+            .collect();
+        format!(
+            "no auditor of the key log has vouched for it within the hour ({})",
+            said.join(", ")
+        )
+    };
+    Err(AuditError::Stale(why))
 }
 
 #[cfg(test)]

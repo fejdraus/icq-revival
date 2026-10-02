@@ -7,6 +7,8 @@
 //
 // It should run somewhere the server's operator does not control alone. It
 // needs outbound HTTPS to the directory and nothing else.
+// deploy/e2e-kt-auditor has a systemd unit and an install script for it; a
+// server may have several auditors (E2E_KT_AUDITORS is a comma list).
 //
 //	e2e-kt-auditor -log https://icq.example.org:8102/e2e/v1/ -name auditor.example.org/icq -key auditor.key -state auditor.json
 //	e2e-kt-auditor -key auditor.key -name auditor.example.org/icq -print-key

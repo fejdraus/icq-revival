@@ -113,6 +113,7 @@ namespace IcqRevival.Patch
                 return 1;
             }
             foreach (string line in done) Console.WriteLine(line);
+            if (client.E2eAuditorsNote != null) Console.WriteLine(client.E2eAuditorsNote);
             Console.WriteLine("changes made: " + done.Count);
             return 0;
         }
@@ -198,9 +199,11 @@ namespace IcqRevival.Patch
             ui.SaveUnchecked(Icq65Client.SettingsKey);
             ui.StartWork("Applying...");
             List<string> done;
+            Icq65Client client;
             try
             {
-                done = new Icq65Client(root, player).ApplyAll(server, ui.Unchecked);
+                client = new Icq65Client(root, player);
+                done = client.ApplyAll(server, ui.Unchecked);
             }
             catch (Exception e)
             {
@@ -221,7 +224,7 @@ namespace IcqRevival.Patch
             // who starts ICQ.
             if (ui.IsSelected("tzers-player")) msg += "\n\ntZers play for the Windows user " + Environment.UserName + ", who has to be the one starting ICQ.";
             string e2e = E2eIni.Summary(server, ui.IsSelected(E2eIni.E2eJob), ui.IsSelected(E2eIni.TlsJob), ui.IsSelected(E2eIni.CallsJob),
-                ui.IsSelected("sign-in") ? server + ":" + E2eIni.TlsPort + " (the BUCP sign-in)" : null, Icq65Client.E2eProbeFile);
+                ui.IsSelected("sign-in") ? server + ":" + E2eIni.TlsPort + " (the BUCP sign-in)" : null, Icq65Client.E2eProbeFile, client.E2eAuditorsNote);
             if (e2e.Length > 0) msg += "\n\n" + e2e;
             msg += "\n\nYou can start ICQ now.";
             MessageBox.Show(msg, "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);

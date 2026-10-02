@@ -212,3 +212,76 @@ func TestCosignature_KeyAndLine(t *testing.T) {
 	_, err = ParseCosigner(strings.Replace(vkey, "w.example/x", "w.example/y", 1))
 	assert.Error(t, err, "the id is for another name")
 }
+
+// Several auditors: E2E_KT_AUDITORS names them all, /log/auditors lists each
+// once in that order, each one's cosignature is taken, and /log/cosigned hands
+// out the latest checkpoint of every one of them; a key that does not read is
+// left out of both.
+func TestHandler_SeveralAuditors(t *testing.T) {
+	d, srv, first := auditedDirectory(t)
+	ctx := context.Background()
+	account(t, d, "100001", 1)
+	names := []string{testAuditor, "b.test/icq", "c.test/icq"}
+	auditors := []*Auditor{first}
+	for _, name := range names[1:] {
+		_, priv := newKey(t)
+		d.handler.cfg.KTAuditors = append(d.handler.cfg.KTAuditors, CosignerKey(name, priv.Public().(ed25519.PublicKey)))
+		auditors = append(auditors, &Auditor{
+			Base: srv.URL + "/e2e/v1/", Name: name, Key: priv, Client: srv.Client(), Now: time.Now,
+		})
+	}
+	configured := append([]string(nil), d.handler.cfg.KTAuditors...)
+	d.handler.cfg.KTAuditors = append(d.handler.cfg.KTAuditors, "not+a+key", " ")
+
+	_, listed := d.get("/e2e/v1/log/auditors")
+	assert.Equal(t, strings.Join(configured, "\n")+"\n", listed)
+
+	// The first two cosign; the third has not yet.
+	for _, a := range auditors[:2] {
+		var st AuditState
+		require.NoError(t, a.Step(ctx, &st))
+	}
+	cosigned := func() map[string]string {
+		code, body := d.get("/e2e/v1/log/cosigned")
+		require.Equal(t, http.StatusOK, code)
+		var out cosignedJSON
+		require.NoError(t, json.Unmarshal([]byte(body), &out))
+		by := map[string]string{}
+		for _, cp := range out.Checkpoints {
+			lines := strings.Split(strings.TrimSpace(cp), "\n")
+			n, err := note.Open([]byte(cp), note.VerifierList(mustLogVerifier(t, d)))
+			require.NoError(t, err)
+			for i, k := range configured {
+				c, err := ParseCosigner(k)
+				require.NoError(t, err)
+				if _, err := c.VerifyCosignature(n.Text, lines[len(lines)-1]); err == nil {
+					by[names[i]] = n.Text
+				}
+			}
+		}
+		assert.Len(t, by, len(out.Checkpoints), "each checkpoint cosigned by one configured auditor")
+		return by
+	}
+	got := cosigned()
+	assert.Len(t, got, 2)
+	assert.Contains(t, got, testAuditor)
+	assert.Contains(t, got, "b.test/icq")
+
+	// The log grows; the third cosigns the new checkpoint and the first two
+	// keep theirs until they look again.
+	account(t, d, "100002", 1)
+	var st AuditState
+	require.NoError(t, auditors[2].Step(ctx, &st))
+	got = cosigned()
+	require.Len(t, got, 3)
+	assert.NotEqual(t, got[testAuditor], got["c.test/icq"])
+	assert.Equal(t, got[testAuditor], got["b.test/icq"])
+}
+
+func mustLogVerifier(t *testing.T, d *testDirectory) note.Verifier {
+	t.Helper()
+	_, vkey := d.get("/e2e/v1/log/key")
+	v, err := note.NewVerifier(strings.TrimSpace(vkey))
+	require.NoError(t, err)
+	return v
+}

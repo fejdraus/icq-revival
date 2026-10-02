@@ -104,8 +104,16 @@ stays the user's, and is not fail-closed. The way out is the row:
 sign-in on 5194/5195, so such a client does not sign in either; untick the
 row and apply, and the message box says so.
 
-The patch owns the `directory`, `server`, `e2e` and `tls` lines of the ini and
-keeps every other line (`tls_pin`, comments, anything added by hand). An ini
+The patch owns the `directory`, `server`, `e2e`, `tls`, `calls_encrypt` and
+`auditors` lines of the ini and keeps every other line (`tls_pin`, comments,
+anything added by hand). `auditors` it writes with the messages row: the
+verifier keys the server names on `GET /e2e/v1/log/auditors` at Apply, read
+over HTTPS (the certificate checked as for any web request), and listed in
+the message box. Applying again only adds keys the server names now; a key it
+no longer names stays pinned and the message box says so (delete the line and
+apply to start over). If the server cannot be asked, the line stays as it
+was, or is left out - the add-on then pins on first use - and the message box
+says that too. An ini
 from before the two rows has no `e2e` line, which reads as on: such an install
 shows both rows applied. `-Skip`/`-Include e2e-probe`, the key of the single
 row of earlier builds, still means both.
@@ -182,15 +190,25 @@ the add-on checks against it on its own, as Signal does
   keys are in it, checked (N entries)").
 - A server without a log (an older one) works as before.
 
-And as in Signal, an auditor - a program run apart from the server
-(`cmd/e2e-kt-auditor`) - follows the log, checks every entry against the
-directory's rules and cosigns it every minute. The add-on takes the log only
-with a recent cosignature that agrees with its own copy:
+And as in Signal, auditors - programs run apart from the server
+(`cmd/e2e-kt-auditor`, installed with `deploy/e2e-kt-auditor/`) - follow the
+log, check every entry against the directory's rules and cosign it every
+minute. A server may have several. The add-on takes the log only when every
+auditor it trusts agrees with its own copy and at least one has cosigned
+lately:
 
-- A cosigned log that differs from the one this add-on was shown is a
-  WARNING: the server is showing different users different logs.
-- No cosignature for over an hour is a warning, once per sign-on; messages go
-  on. `/e2e status` says "audited by <auditor> (N min ago)" when all is well.
+- A cosigned log that differs from the one this add-on was shown - by any of
+  the auditors, however many others agree - is a WARNING: the server is
+  showing different users different logs.
+- No cosignature by any of them for over an hour is a warning, once per
+  sign-on; messages go on. `/e2e status` lists each auditor: "audited by A
+  (1 min ago), B (2 min ago); C silent 3 h".
+- Which auditors are trusted: the `auditors =` line of `icq-e2e.ini`, which
+  the patch fills in at Apply with what the server names then (over HTTPS);
+  exactly those, whatever the server names later. Without the line (an older
+  patch, or the server could not be asked at Apply), the ones the server
+  names are pinned on first use, as before; the line, once there, replaces
+  them in the state file for good.
 
 ## No lock in the window (CHECKLIST 10.4, 10.9)
 
@@ -301,6 +319,7 @@ Environment variables, read when ICQ starts:
 | `ICQE2E_NO_INJECT` | `1`: never add or remove a frame. |
 | `ICQE2E_CALLS_LOG` | Overrides `calls_log =` of the ini (see "Call observation" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is off. |
 | `ICQE2E_CALLS_ENCRYPT` | Overrides `calls_encrypt =` of the ini (see "Call encryption" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is **off** (the default). |
+| `ICQE2E_AUDITORS` | Overrides `auditors =` of the ini: the key log's auditors to trust, their verifier keys comma-separated as `e2e-kt-auditor -print-key` prints them. Given, exactly these are trusted; absent or empty, the server's are pinned on first use. A key that does not read is left out and named in the start-up line. |
 | `ICQE2E_LOG` | File to append the log to (local-time stamps). Lines also go to `OutputDebugString`. Unset: `%LOCALAPPDATA%\icqe2e\icqe2e.log`. |
 
 At start-up the log says where it looked for the ini and whether it was there:

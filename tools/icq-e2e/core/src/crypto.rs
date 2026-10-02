@@ -589,8 +589,11 @@ pub struct Engine {
     /// that went.
     log_synced_at: Option<u64>,
     log_status: LogStatus,
-    /// What the log's auditor said about our copy, last time we looked.
+    /// What the log's auditors said about our copy, last time we looked.
     audit_status: AuditStatus,
+    /// The `auditors =` line of `icq-e2e.ini`, read: exactly the auditors
+    /// trusted, instead of the ones the server names on first sight.
+    pinned_auditors: Option<Vec<String>>,
 }
 
 impl Engine {
@@ -619,7 +622,15 @@ impl Engine {
             log_synced_at: None,
             log_status: LogStatus::Unknown,
             audit_status: AuditStatus::Unknown,
+            pinned_auditors: None,
         }
+    }
+
+    /// Trusts exactly these auditors (the `auditors =` line of
+    /// `icq-e2e.ini`), or, with `None`, the ones the server names when the
+    /// log is first audited.
+    pub fn set_auditors(&mut self, keys: Option<Vec<String>>) {
+        self.pinned_auditors = keys;
     }
 
     /// Switches call encryption on or off (`calls_encrypt=` of the ini).
@@ -860,13 +871,18 @@ impl Engine {
         true
     }
 
-    /// Looks for a recent cosignature by the log's auditor that agrees with
-    /// our copy (stage 2). A checkpoint the auditor saw that is not in our
-    /// copy means the server shows us another log than it showed the auditor:
-    /// the log is not trusted from then on, as for a rewritten one. A missing
-    /// or old cosignature is a warning, once per sign-on.
+    /// Looks at the cosignatures of the log's auditors (stage 2). A
+    /// checkpoint any of them saw that is not in our copy means the server
+    /// shows us another log than it showed that auditor: the log is not
+    /// trusted from then on, as for a rewritten one. No recent cosignature by
+    /// any of them is a warning, once per sign-on.
     fn audit_log(&mut self, now: u64, may_resync: bool) {
-        let (next, r) = kt::audit(&*self.dir, &self.keys.log, now);
+        let (next, r) = kt::audit(
+            &*self.dir,
+            &self.keys.log,
+            now,
+            self.pinned_auditors.as_deref(),
+        );
         if next != self.keys.log {
             self.keys.log = next;
             self.changed = true;
@@ -904,11 +920,23 @@ impl Engine {
         match &self.audit_status {
             AuditStatus::Unknown => String::new(),
             AuditStatus::None => "; no auditor".into(),
-            AuditStatus::Ok(a) => format!(
-                ", audited by {} ({} min ago)",
-                a.auditor,
-                now.saturating_sub(a.time) / 60
-            ),
+            AuditStatus::Ok(views) => {
+                // "audited by A (1 min ago), B (2 min ago); C silent 3 h"
+                let fresh: Vec<String> = views
+                    .iter()
+                    .filter(|v| v.fresh(now))
+                    .filter_map(|v| v.last.as_ref())
+                    .map(|a| format!("{} ({})", a.auditor, kt::age(now, a.time)))
+                    .collect();
+                let mut out = format!(", audited by {}", fresh.join(", "));
+                for v in views.iter().filter(|v| !v.fresh(now)) {
+                    out += &match &v.last {
+                        Some(a) => format!("; {} silent {}", v.name, kt::age(now, a.time)),
+                        None => format!("; {} silent (no cosignature)", v.name),
+                    };
+                }
+                out
+            }
             AuditStatus::Failed(e) => format!("; the auditor's word could not be read ({e})"),
             AuditStatus::Stale(why) => format!("; NOT AUDITED: {why}"),
         }
@@ -1791,8 +1819,9 @@ enum AuditStatus {
     Unknown,
     /// The server names no auditor.
     None,
-    /// A recent cosignature agrees with our copy.
-    Ok(kt::Audited),
+    /// Every trusted auditor's cosignature agrees with our copy, and at
+    /// least one is recent; what each of them last said.
+    Ok(Vec<kt::AuditorView>),
     /// The auditor's cosignatures could not be read just now.
     Failed(String),
     /// No recent cosignature, or one that does not agree with our copy.
@@ -3659,5 +3688,172 @@ mod tests {
         assert_eq!(e.keys().log.auditors, pinned);
         let again = restarted(&dir, &e);
         assert_eq!(again.keys().log.auditors, pinned);
+    }
+
+    // --- several auditors, and auditors pinned by the patch -------------------
+
+    const B_AUDITOR: &str = "b.test/icq";
+    const B_SEED: [u8; 32] = [0xb0; 32];
+    const C_AUDITOR: &str = "c.test/icq";
+    const C_SEED: [u8; 32] = [0xc0; 32];
+
+    /// An engine like [`running`] that trusts exactly `pinned`, as the
+    /// `auditors =` line of `icq-e2e.ini` says.
+    fn running_pinned(dir: &Arc<MemoryDirectory>, keys: OwnKeys, pinned: Vec<String>) -> Engine {
+        let who = keys.screen_name.clone();
+        let mut e = Engine::new(dir.clone(), keys);
+        e.set_auditors(Some(pinned));
+        e.set_token(&dir.token(&who));
+        assert!(matches!(e.publish(NOW), Progress::Done(_)));
+        e
+    }
+
+    #[test]
+    fn one_fresh_auditor_is_enough_and_each_is_listed() {
+        let (dir, a, _) = two_published();
+        dir.set_auditor(true);
+        dir.add_auditor(B_AUDITOR, B_SEED);
+        dir.add_auditor(C_AUDITOR, C_SEED);
+        dir.audit_log(NOW - 3 * 3600);
+        dir.audit_log_as(B_AUDITOR, &B_SEED, NOW - 60);
+        // C never cosigned.
+        let mut e = running(&dir, a);
+        assert!(notes(&mut e).is_empty(), "no warning while one is fresh");
+        assert_eq!(
+            e.keys().log.auditors.len(),
+            3,
+            "all three pinned on first use"
+        );
+        let s = status_of(&mut e, "100002", NOW);
+        assert!(
+            s.contains(
+                "audited by b.test/icq (1 min ago); auditor.test/icq silent 3 h; c.test/icq silent (no cosignature)"
+            ),
+            "{s}"
+        );
+        assert_eq!(e.keys().log.audits.len(), 2);
+        assert_eq!(e.keys().log.audited.as_ref().unwrap().auditor, B_AUDITOR);
+
+        // Every one of them stale: one warning, naming each.
+        let (dir, a, _) = two_published();
+        dir.set_auditor(true);
+        dir.add_auditor(B_AUDITOR, B_SEED);
+        dir.audit_log(NOW - 3 * 3600);
+        dir.audit_log_as(B_AUDITOR, &B_SEED, NOW - 2 * 3600);
+        let mut e = running(&dir, a);
+        let n = notes(&mut e);
+        assert!(
+            n.iter().any(|n| n.text.contains("Warning:")
+                && n.text
+                    .contains("auditor.test/icq last vouched for it 180 minutes ago")
+                && n.text
+                    .contains("b.test/icq last vouched for it 120 minutes ago")),
+            "{n:?}"
+        );
+        assert!(status_of(&mut e, "100002", NOW).contains("NOT AUDITED"));
+    }
+
+    #[test]
+    fn any_auditor_that_saw_another_log_is_a_split_view() {
+        let (dir, a, _) = two_published();
+        dir.set_auditor(true);
+        dir.add_auditor(B_AUDITOR, B_SEED);
+        // The usual auditor agrees and is fresh; B, older, was shown another
+        // log of the same size.
+        dir.audit_log(NOW);
+        dir.audit_root_as(B_AUDITOR, &B_SEED, 4, [7; 32], NOW - 2 * 3600);
+        let mut e = running(&dir, a);
+        let n = notes(&mut e);
+        assert!(
+            n.iter().any(|n| n.text.contains("WARNING")
+                && n.text
+                    .contains("auditor b.test/icq saw a different log (4 entries)")),
+            "{n:?}"
+        );
+        assert!(status_of(&mut e, "100002", NOW).contains("key log: NOT TRUSTED"));
+    }
+
+    #[test]
+    fn pinned_auditors_are_the_only_ones_trusted() {
+        let (dir, a, _) = two_published();
+        // The server names its own auditor, which cosigns, and even one that
+        // saw another log; neither is ours.
+        dir.set_auditor(true);
+        dir.add_auditor(C_AUDITOR, C_SEED);
+        dir.audit_log(NOW);
+        dir.audit_root_as(C_AUDITOR, &C_SEED, 4, [7; 32], NOW);
+        let b_key = kt::cosign(B_AUDITOR, &B_SEED, "", 0).1;
+        let mut e = running_pinned(&dir, a, vec![b_key.clone()]);
+        assert_eq!(e.keys().log.auditors, vec![b_key.clone()]);
+        let n = notes(&mut e);
+        assert!(
+            n.iter()
+                .any(|n| n.text.contains("Warning:") && n.text.contains("no auditor has cosigned")),
+            "{n:?}"
+        );
+        assert!(!n.iter().any(|n| n.text.contains("WARNING")), "{n:?}");
+        let s = status_of(&mut e, "100002", NOW);
+        assert!(
+            s.contains("NOT AUDITED") && !s.contains("NOT TRUSTED"),
+            "{s}"
+        );
+
+        // Our auditor cosigns, without the server naming it: audited.
+        dir.audit_log_as(B_AUDITOR, &B_SEED, NOW + LOG_SYNC_EVERY);
+        let s = status_of(&mut e, "100002", NOW + 2 * LOG_SYNC_EVERY);
+        assert!(s.contains("audited by b.test/icq (1 min ago)"), "{s}");
+        assert!(!s.contains("auditor.test/icq"), "{s}");
+    }
+
+    #[test]
+    fn the_patchs_auditors_replace_the_ones_pinned_on_first_use() {
+        let (dir, a, _) = two_published();
+        dir.set_auditor(true);
+        dir.audit_log(NOW);
+        let e = running(&dir, a);
+        assert_eq!(e.keys().log.auditors.len(), 1);
+        assert_eq!(e.keys().log.audits.len(), 1);
+
+        // The patch is applied again and pins B and the usual auditor.
+        let usual = kt::cosign(
+            crate::directory::MEMORY_AUDITOR,
+            &crate::directory::MEMORY_AUDITOR_SEED,
+            "",
+            0,
+        )
+        .1;
+        let b_key = kt::cosign(B_AUDITOR, &B_SEED, "", 0).1;
+        let keys: OwnKeys =
+            serde_json::from_str(&serde_json::to_string(e.keys()).unwrap()).unwrap();
+        let mut e = running_pinned(&dir, keys, vec![b_key.clone(), usual.clone()]);
+        assert_eq!(e.keys().log.auditors, vec![b_key.clone(), usual.clone()]);
+        let s = status_of(&mut e, "100002", NOW);
+        assert!(
+            s.contains(
+                "audited by auditor.test/icq (0 min ago); b.test/icq silent (no cosignature)"
+            ),
+            "{s}"
+        );
+
+        // Without the line again (an older patch), the pinned set stays and
+        // the server's naming no one changes nothing.
+        dir.set_auditor(false);
+        let again = restarted(&dir, &e);
+        assert_eq!(again.keys().log.auditors, vec![b_key, usual]);
+    }
+
+    #[test]
+    fn a_state_file_from_before_several_auditors_reads() {
+        let (dir, a, _) = two_published();
+        dir.set_auditor(true);
+        dir.audit_log(NOW);
+        let e = running(&dir, a);
+        let mut json: serde_json::Value = serde_json::to_value(e.keys()).unwrap();
+        json["log"].as_object_mut().unwrap().remove("audits");
+        let mut old = Engine::new(dir.clone(), serde_json::from_value(json).unwrap());
+        old.set_token(&dir.token("100001"));
+        assert!(matches!(old.publish(NOW), Progress::Done(_)));
+        assert!(status_of(&mut old, "100002", NOW).contains("audited by auditor.test/icq"));
+        assert_eq!(old.keys().log.audits.len(), 1);
     }
 }

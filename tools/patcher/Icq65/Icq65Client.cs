@@ -1002,11 +1002,31 @@ namespace IcqRevival.Patch
         // only the patch's own are set. Nothing is written when the text is
         // already what would be written, so applying twice in a row changes
         // nothing and reports nothing.
+        // What Apply found out about the key log's auditors, for the summary
+        // (E2eIni.PinAuditors), or null when the messages row was not applied.
+        public string E2eAuditorsNote;
+
+        // The auditors= line: with the messages row, the server's auditors
+        // added to those pinned before (E2eIni.PinAuditors); without it, the
+        // line stays as it was, since nothing reads it then.
+        string E2eAuditors(string current, string domain, bool e2e)
+        {
+            if (!e2e)
+            {
+                return current != null && Ps.Eq(E2eIni.Value(current, "server"), domain) ? E2eIni.Value(current, "auditors") : null;
+            }
+            string error;
+            string[] fetched = E2eIni.FetchAuditors(E2eDirectoryUrl(domain), out error);
+            E2eIni.AuditorPins pins = E2eIni.PinAuditors(current, domain, fetched, error);
+            E2eAuditorsNote = pins.Note;
+            return pins.Line;
+        }
+
         void WriteE2eIni(string domain, bool e2e, bool tls, bool calls)
         {
             string path = At(E2eIniFile);
             string current = E2eIniAt(path);
-            string text = E2eIni.Compose(E2eIniHeader, current, E2eDirectoryUrl(domain), domain, e2e, tls, calls);
+            string text = E2eIni.Compose(E2eIniHeader, current, E2eDirectoryUrl(domain), domain, e2e, tls, calls, E2eAuditors(current, domain, e2e));
             if (current != null && Ps.Ceq(current, text)) return;
             if (current != null && !E2eIniIsOurs()) PatchFiles.BackupOnce(path, Suffix);
             try

@@ -4,8 +4,9 @@ Stage 1: an append-only, signed log of every change in the key directory,
 which every client replays and checks, and in which each client watches its
 own account. Stage 2: an auditor, as Signal has, that follows the log on its
 own, checks every entry against the directory's rules and cosigns the
-checkpoints; clients take the log only with a recent cosignature that agrees
-with their own copy.
+checkpoints; clients take the log only when every auditor they trust agrees
+with their own copy and at least one has cosigned lately. There may be
+several, and the client patches pin their keys.
 
 Why: the directory is untrusted (`KEY-DIRECTORY-API.md`, section 1). Clients
 pin a contact's account key on first use and compare safety numbers by hand.
@@ -102,8 +103,8 @@ Public, no token, like the other `GET /users/...` endpoints.
 | `GET /e2e/v1/log/checkpoint` | the signed checkpoint, `text/plain` |
 | `GET /e2e/v1/log/key` | the log's verifier key, `text/plain` (`<origin>+<key hash>+<base64 key>`) |
 | `GET /e2e/v1/log/entries?start=N&count=M` | `{"start": N, "entries": ["<base64 leaf>", ...]}`, at most 1000 per request; fewer at the end of the log |
-| `GET /e2e/v1/log/auditors` | the auditors' verifier keys (`E2E_KT_AUDITORS`), one per line |
-| `GET /e2e/v1/log/cosigned` | `{"checkpoints": ["<note>", ...]}`: per auditor, the latest checkpoint it cosigned, signed by the log and by the auditor |
+| `GET /e2e/v1/log/auditors` | the auditors' verifier keys (`E2E_KT_AUDITORS`, comma-separated), one per line, in that order; a key that does not read is logged and left out |
+| `GET /e2e/v1/log/cosigned` | `{"checkpoints": ["<note>", ...]}`: per configured auditor, the latest checkpoint it cosigned, signed by the log and by the auditor |
 | `POST /e2e/v1/log/cosignature` | an auditor hands in `{"checkpoint": "<body>", "cosignature": "<line>"}`; kept only if it verifies under a configured auditor key, is within 10 minutes of the server's clock, and is over a checkpoint this log really had (204) |
 
 ## The auditor (stage 2)
@@ -131,12 +132,28 @@ log and vouches for it. `cmd/e2e-kt-auditor` (`server/e2e/audit.go`):
 Who runs it is the whole point: an auditor the server's operator runs alone
 catches a server taken over by someone else, but not the operator. Signal's
 are run by other organisations; ours should be run by someone else too, on a
-machine the operator cannot touch. More than one may be configured.
+machine the operator cannot touch.
 
 ```
 e2e-kt-auditor -log https://icq.example.org:8102/e2e/v1/ \
   -name auditor.example.net/icq -key auditor.key -state auditor.json
 ```
+
+### Several auditors
+
+`E2E_KT_AUDITORS` takes any number of keys, comma-separated; the server
+takes cosignatures from each and hands out the latest of every one. Each
+auditor works alone - they do not know of one another - so adding one is:
+install it (`deploy/e2e-kt-auditor/`: a hardened systemd unit and
+`install.sh`, which makes the key and prints the verifier key), add its key
+to `E2E_KT_AUDITORS`, restart the server, and apply the client patches again
+so they pin it (below).
+
+Auditors on different machines, networks and providers - a home machine
+behind NAT will do, since an auditor needs only outbound HTTPS - keep the log
+audited when one of them is down, and make a server taken over by someone
+else face several independent checks instead of one machine to silence. They
+are still the operator's if the operator runs them all (see Limits).
 
 ## The client
 
@@ -195,30 +212,68 @@ log's key, the size, the tree's right edge and every account replayed.
 
 ## Stage 2 in the client
 
-- **Auditors** are pinned on first sight from `GET /log/auditors`, like the
+- **Which auditors are trusted.** With an `auditors =` line in
+  `icq-e2e.ini` (or `ICQE2E_AUDITORS`), exactly the keys it gives; what the
+  server names on `GET /log/auditors` is not used for trust then, and no
+  other auditor is ever pinned. The ICQ 6.5 and 7.2 patches write the line
+  at Apply (below), as Signal's app carries its auditors' keys. Without the
+  line - an older patch, or a server that could not be asked at Apply - the
+  auditors are pinned on first sight from `GET /log/auditors`, like the
   log's key; a server that later names other auditors or none changes
-  nothing, and `/e2e resetlog` forgets them with the rest.
-- After every sync, the newest cosignature by a pinned auditor over a
-  checkpoint signed by the log's key is looked for (`GET /log/cosigned`). The
-  copy keeps every leaf hash, so a checkpoint of any earlier size is checked
-  against the root our copy had at that size; an older copy without them
-  reads its entries again once.
-- A cosigned checkpoint that our copy does not have is a **split view**: the
-  log is not trusted, as for a rewritten one (WARNING once per sign-on, keys
+  nothing, and `/e2e resetlog` forgets them with the rest. The line's keys
+  replace whatever the state file had pinned, and stay pinned there even if
+  the line goes away again.
+- After every sync, every cosignature by a trusted auditor over a checkpoint
+  signed by the log's key is looked at (`GET /log/cosigned`). The copy keeps
+  every leaf hash, so a checkpoint of any earlier size is checked against the
+  root our copy had at that size; an older copy without them reads its
+  entries again once.
+- A cosigned checkpoint that our copy does not have, by **any** trusted
+  auditor - however many others agree with us - is a **split view**: the log
+  is not trusted, as for a rewritten one (WARNING once per sign-on, keys
   trusted on first use).
-- No cosignature newer than an hour (`kt::AUDIT_MAX_AGE`; the auditor cosigns
-  every minute) is a warning once per sign-on, and `/e2e status` says
-  `NOT AUDITED`; messages go on, checked against the log. A server could
-  withhold newer cosignatures from one user, so an hour is the window in which
-  a split view goes unnoticed.
-- `/e2e status` ends the log's part with ", audited by <auditor> (N min
-  ago)".
+- At least one trusted auditor must have cosigned within the hour
+  (`kt::AUDIT_MAX_AGE`; an auditor cosigns every minute). If none has, it is
+  a warning once per sign-on naming each auditor's last word, and
+  `/e2e status` says `NOT AUDITED`; messages go on, checked against the log.
+  A server could withhold newer cosignatures from one user, so an hour is
+  the window in which a split view goes unnoticed.
+- `/e2e status` ends the log's part with every trusted auditor: ", audited by
+  A (1 min ago), B (2 min ago); C silent 3 h". The state file keeps each
+  auditor's latest cosignature (`LogState::audits`); a file from before
+  several auditors fills it on the next look.
+
+### Pinned by the patch
+
+The patches take only the domain from the user, so the keys come from the
+server the patch is pointed at: `GET https://<domain>:8102/e2e/v1/log/auditors`
+at Apply, over HTTPS checked against the certificate chain (Let's Encrypt) by
+.NET. The message box lists the keys pinned. Applying again only ever adds
+keys: a key the server no longer names stays pinned and the message box says
+so (an auditor taken out of service then shows as silent, which costs nothing
+while another vouches); deleting the line and applying starts over. If the
+request fails, the line stays as it was - or, with none, is left out and the
+add-on pins on first use - and the message box says so. Restore removes the
+ini with everything else.
+
+This is trust on first use moved from the add-on's first sign-on to Apply,
+and made explicit: a server that is already lying at Apply time can name
+auditors of its own. What it buys is that the set is fixed from then on,
+readable in a file the user can compare with others, and grows only when the
+user applies again.
 
 ## Limits
 
-- An auditor run by the server's operator does not protect against the
-  operator.
+- Auditors run by the server's operator do not protect against the
+  operator, however many there are and wherever they run: whoever holds
+  their keys can cosign anything. Several on different machines and
+  providers (home machines included) add location and provider diversity -
+  the auditing survives one machine down, and an intruder on the server or
+  on one auditor's machine is still caught by the others - but protection
+  against the operator needs an auditor someone else runs.
 - A split view younger than an hour, or a key used before the auditor's next
   look, is caught afterwards, not prevented - the same trade Signal makes.
-- Auditors are trusted on first use by the add-on; the patch could carry
-  their keys instead, as Signal's app does.
+- The patch pins the auditors the server names at Apply time; a server
+  already compromised then could name its own. Clients without the patch's
+  line still pin on first use, and take no auditor added later until they
+  are patched again (or `/e2e resetlog`).

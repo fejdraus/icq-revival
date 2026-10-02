@@ -1,0 +1,64 @@
+# The auditor of an ICQ Revival server's key transparency log
+# (docs/e2e/KEY-TRANSPARENCY.md, stage 2), on a machine of its own. install.sh
+# puts this file in /etc/systemd/system and writes /etc/e2e-kt-auditor.env.
+#
+# It needs outbound HTTPS to the server and nothing else: it listens on no
+# port. Its key and what it has checked live in /var/lib/e2e-kt-auditor; back
+# the key up (README.md).
+
+[Unit]
+Description=Auditor of an ICQ Revival key transparency log
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=e2e-kt-auditor
+Group=e2e-kt-auditor
+# E2E_KT_LOG (the server's key directory, https://<domain>:8102/e2e/v1/) and
+# E2E_KT_AUDITOR_NAME (this auditor's name; its key ID depends on it).
+EnvironmentFile=/etc/e2e-kt-auditor.env
+ExecStart=/usr/local/bin/e2e-kt-auditor -log ${E2E_KT_LOG} -name ${E2E_KT_AUDITOR_NAME} -key %S/e2e-kt-auditor/auditor.key -state %S/e2e-kt-auditor/auditor.json
+Restart=on-failure
+RestartSec=30
+# 3: the log broke a rule. The auditor never cosigns it again and the unit
+# stays failed, for monitoring to see. 2: the flags or the key cannot be read,
+# which no restart mends.
+RestartPreventExitStatus=2 3
+
+StateDirectory=e2e-kt-auditor
+StateDirectoryMode=0700
+UMask=0077
+
+# Nothing but outbound connections and its own state directory.
+SocketBindDeny=any
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+# A call outside the filter fails instead of killing the process.
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -378,6 +378,7 @@ fn account_session() -> Option<Arc<Mutex<Session>>> {
     match Session::open(dir, &policy().home, &uin) {
         Ok(mut sess) => {
             sess.engine().set_calls_encrypt(policy().encrypts_calls());
+            sess.engine().set_auditors(policy().auditors.clone());
             log::line(&format!(
                 "[ICQ E2E] device keys ready for {uin} (encrypt mode)"
             ));

@@ -474,7 +474,10 @@ struct Memory {
     /// The auditor named on `GET /log/auditors`, and the cosigned checkpoints
     /// handed out.
     kt_auditor: bool,
-    kt_cosigned: Vec<String>,
+    /// More auditors named on `GET /log/auditors`, by name and seed.
+    kt_more_auditors: Vec<(String, [u8; 32])>,
+    /// Per auditor's name, the cosigned checkpoint handed out.
+    kt_cosigned: std::collections::BTreeMap<String, String>,
 }
 
 impl Memory {
@@ -500,7 +503,7 @@ impl Memory {
 pub const MEMORY_LOG: &str = "memory.test/e2e-kt";
 /// The in-memory auditor's name and key.
 pub const MEMORY_AUDITOR: &str = "auditor.test/icq";
-const MEMORY_AUDITOR_SEED: [u8; 32] = [0xa0; 32];
+pub const MEMORY_AUDITOR_SEED: [u8; 32] = [0xa0; 32];
 
 #[derive(Default, Clone)]
 struct MemAccount {
@@ -633,28 +636,64 @@ impl MemoryDirectory {
     /// The in-memory auditor cosigns the log as it is now, at `time`: that
     /// is the cosigned checkpoint handed out from then on.
     pub fn audit_log(&self, time: u64) {
+        self.audit_log_as(MEMORY_AUDITOR, &MEMORY_AUDITOR_SEED, time);
+    }
+
+    /// The in-memory auditor cosigns a checkpoint of the server's choosing:
+    /// the log the server showed it, which need not be the one a client got.
+    pub fn audit_root(&self, size: u64, root: crate::kt::Hash, time: u64) {
+        self.audit_root_as(MEMORY_AUDITOR, &MEMORY_AUDITOR_SEED, size, root, time);
+    }
+
+    /// Names one more auditor on `GET /log/auditors`; its verifier key.
+    pub fn add_auditor(&self, name: &str, seed: [u8; 32]) -> String {
+        self.inner
+            .lock()
+            .unwrap()
+            .kt_more_auditors
+            .push((name.to_string(), seed));
+        crate::kt::cosign(name, &seed, "", 0).1
+    }
+
+    /// The auditor `name` (key `seed`) cosigns the log as it is now, at
+    /// `time`: its cosigned checkpoint handed out from then on.
+    pub fn audit_log_as(&self, name: &str, seed: &[u8; 32], time: u64) {
         let mut m = self.inner.lock().unwrap();
         let mut edge = crate::kt::Edge::default();
         for l in &m.kt {
             edge.push(crate::kt::leaf_hash(l));
         }
         let (size, root) = (edge.size, edge.root().unwrap_or_default());
-        Self::kt_cosign(&mut m, size, root, time);
+        Self::kt_cosign(&mut m, name, seed, size, root, time);
     }
 
-    /// The in-memory auditor cosigns a checkpoint of the server's choosing:
-    /// the log the server showed it, which need not be the one a client got.
-    pub fn audit_root(&self, size: u64, root: crate::kt::Hash, time: u64) {
+    /// The auditor `name` cosigns a checkpoint of the server's choosing.
+    pub fn audit_root_as(
+        &self,
+        name: &str,
+        seed: &[u8; 32],
+        size: u64,
+        root: crate::kt::Hash,
+        time: u64,
+    ) {
         let mut m = self.inner.lock().unwrap();
-        Self::kt_cosign(&mut m, size, root, time);
+        Self::kt_cosign(&mut m, name, seed, size, root, time);
     }
 
-    fn kt_cosign(m: &mut Memory, size: u64, root: crate::kt::Hash, time: u64) {
+    fn kt_cosign(
+        m: &mut Memory,
+        name: &str,
+        seed: &[u8; 32],
+        size: u64,
+        root: crate::kt::Hash,
+        time: u64,
+    ) {
         let (note, _) =
             crate::kt::sign_checkpoint(MEMORY_LOG, &[m.kt_seed.wrapping_add(1); 32], size, &root);
         let body = &note[..note.find("\n\n").expect("a signed note") + 1];
-        let (line, _) = crate::kt::cosign(MEMORY_AUDITOR, &MEMORY_AUDITOR_SEED, body, time);
-        m.kt_cosigned = vec![format!("{note}{line}\n")];
+        let (line, _) = crate::kt::cosign(name, seed, body, time);
+        m.kt_cosigned
+            .insert(name.to_string(), format!("{note}{line}\n"));
     }
 
     /// Adds a device to an account as it is, unchecked - as a server that
@@ -982,10 +1021,16 @@ impl DirectoryApi for MemoryDirectory {
         if m.offline {
             return Err(DirError::Net("offline (test)".into()));
         }
-        Ok(m.kt_auditor.then(|| {
-            let (_, vkey) = crate::kt::cosign(MEMORY_AUDITOR, &MEMORY_AUDITOR_SEED, "", 0);
-            vkey + "\n"
-        }))
+        let mut listed = String::new();
+        if m.kt_auditor {
+            listed += &crate::kt::cosign(MEMORY_AUDITOR, &MEMORY_AUDITOR_SEED, "", 0).1;
+            listed += "\n";
+        }
+        for (name, seed) in &m.kt_more_auditors {
+            listed += &crate::kt::cosign(name, seed, "", 0).1;
+            listed += "\n";
+        }
+        Ok((!listed.is_empty()).then_some(listed))
     }
 
     fn log_cosigned(&self) -> DirResult<Vec<String>> {
@@ -993,7 +1038,7 @@ impl DirectoryApi for MemoryDirectory {
         if m.offline {
             return Err(DirError::Net("offline (test)".into()));
         }
-        Ok(m.kt_cosigned.clone())
+        Ok(m.kt_cosigned.values().cloned().collect())
     }
 }
 
