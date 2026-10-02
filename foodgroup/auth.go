@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mk6i/open-oscar-server/config"
+	"github.com/mk6i/open-oscar-server/loginguard"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 
@@ -45,6 +46,7 @@ func NewAuthService(
 	feedbagManager FeedbagManager,
 	classes wire.RateLimitClasses,
 	createAccount state.CreateAccountFunc,
+	loginGuard LoginGuard,
 	logger *slog.Logger,
 ) *AuthService {
 	return &AuthService{
@@ -62,6 +64,7 @@ func NewAuthService(
 		timeNow:                    time.Now,
 		maxConcurrentLoginsPerUser: MaxConcurrentLoginsPerUser,
 		createAccount:              createAccount,
+		loginGuard:                 loginGuard,
 		logger:                     logger,
 	}
 }
@@ -85,6 +88,7 @@ type AuthService struct {
 	timeNow                    func() time.Time
 	maxConcurrentLoginsPerUser int
 	createAccount              state.CreateAccountFunc
+	loginGuard                 LoginGuard
 }
 
 // RegisterChatSession adds a user to a chat room. The authCookie param is an
@@ -381,6 +385,12 @@ func (s AuthService) KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_
 
 	cookie, loginOK := result.Bytes(wire.LoginTLVTagsAuthorizationCookie)
 	if !loginOK {
+		// The only Kerberos error code known to be understood is the auth
+		// failure; a throttled sign-in carries it with its own message.
+		message := "Auth failure"
+		if code, _ := result.Uint16BE(wire.LoginTLVTagsErrorSubcode); code == wire.LoginErrRateLimitExceeded {
+			message = "Rate limit exceeded. Try again later."
+		}
 		return wire.SNACMessage{
 			Frame: wire.SNACFrame{
 				FoodGroup: wire.Kerberos,
@@ -390,7 +400,7 @@ func (s AuthService) KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_
 				KerbRequestID: inBody.RequestID,
 				ScreenName:    inBody.ClientPrincipal,
 				ErrCode:       wire.KerberosErrAuthFailure,
-				Message:       "Auth failure",
+				Message:       message,
 			},
 		}, nil
 	}
@@ -580,6 +590,17 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, endpointCfg co
 		}
 	}
 
+	// A throttled sign-in is refused before the account is even looked up, so
+	// that it reveals neither the password nor whether the account exists.
+	account := props.screenName.IdentScreenName().String()
+	clientIP := loginguard.ClientIP(ctx)
+	if allowed, retryAfter := s.loginGuard.Allow(account, clientIP); !allowed {
+		s.logger.Debug("login: throttled after failed attempts",
+			"screen_name", props.screenName,
+			"retry_after", retryAfter)
+		return loginFailureResponse(props, wire.LoginErrRateLimitExceeded), nil
+	}
+
 	user, err := s.userManager.User(ctx, props.screenName.IdentScreenName())
 	if err != nil {
 		s.logger.Error("login: user lookup failed", "screen_name", props.screenName, "err", err.Error())
@@ -601,6 +622,7 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, endpointCfg co
 		if props.screenName.IsUIN() || byEmail {
 			loginErr = wire.LoginErrICQUserErr
 		}
+		s.loginGuard.Failure(account, clientIP)
 		s.logger.Debug("login: returning user not found error",
 			"screen_name", props.screenName,
 			"error_code", loginErr)
@@ -658,8 +680,10 @@ func (s AuthService) login(ctx context.Context, tlv wire.TLVList, endpointCfg co
 		s.logger.Debug("login: password validation failed",
 			"screen_name", props.screenName,
 			"auth_method", authMethod)
+		s.loginGuard.Failure(account, clientIP)
 		return loginFailureResponse(props, wire.LoginErrInvalidPassword), nil
 	}
+	s.loginGuard.Success(account, clientIP)
 
 	// limit concurrent logins per user
 	if props.multiConnFlag == uint8(wire.MultiConnFlagsRecentClient) {

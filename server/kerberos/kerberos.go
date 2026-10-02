@@ -8,10 +8,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/netip"
 
 	"golang.org/x/sync/errgroup"
 
 	"github.com/mk6i/open-oscar-server/config"
+	"github.com/mk6i/open-oscar-server/loginguard"
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
@@ -19,7 +21,10 @@ type AuthService interface {
 	KerberosLogin(ctx context.Context, inBody wire.SNAC_0x050C_0x0002_KerberosLoginRequest, endpointCfg config.Endpoint) (wire.SNACMessage, error)
 }
 
-func NewKerberosServer(groups []config.ListenerGroup, logger *slog.Logger, authService AuthService) *Server {
+// NewKerberosServer returns a server with a Kerberos endpoint for each listener
+// group that has one. trustedProxies are the reverse proxies whose X-Real-IP
+// and X-Forwarded-For name the client a sign-in is counted against.
+func NewKerberosServer(groups []config.ListenerGroup, logger *slog.Logger, authService AuthService, trustedProxies []netip.Prefix) *Server {
 	servers := make([]*http.Server, 0, len(groups))
 
 	for _, group := range groups {
@@ -40,7 +45,7 @@ func NewKerberosServer(groups []config.ListenerGroup, logger *slog.Logger, authS
 
 		servers = append(servers, &http.Server{
 			Addr:    group.KerberosListenAddress,
-			Handler: mux,
+			Handler: loginguard.ClientIPMiddleware(trustedProxies, mux),
 		})
 	}
 
@@ -123,7 +128,7 @@ func postHandler(w http.ResponseWriter, r *http.Request, authService AuthService
 		return
 	}
 
-	logger = logger.With("ip", r.RemoteAddr)
+	logger = logger.With("ip", loginguard.ClientIP(r.Context()))
 	switch v := response.Body.(type) {
 	case wire.SNAC_0x050C_0x0003_KerberosLoginSuccessResponse:
 		logger.InfoContext(r.Context(), "successful kerberos login", "screen_name", v.ClientPrincipal, "redirect_to", endpointCfg.AdvertisedHost())

@@ -239,6 +239,18 @@ type ClientSideBuddyListManager interface {
 	SetPDMode(ctx context.Context, me state.IdentScreenName, pdMode wire.FeedbagPDMode) error
 }
 
+// LoginGuard throttles password guessing. Allow is asked before the password
+// is checked; Failure and Success report how the check went.
+type LoginGuard interface {
+	// Allow reports whether a sign-in to account from ip may be checked now,
+	// and if not, how long until it may.
+	Allow(account, ip string) (allowed bool, retryAfter time.Duration)
+	// Failure records a wrong password or an unknown account.
+	Failure(account, ip string)
+	// Success records a sign-in that passed the password check.
+	Success(account, ip string)
+}
+
 // CookieBaker defines methods for issuing and verifying AIM authentication tokens ("cookies").
 // These tokens are used for authenticating client sessions with AIM services.
 type CookieBaker interface {

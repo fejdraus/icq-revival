@@ -202,7 +202,6 @@ func (s *LegacyServer) handlePacket(addr *net.UDPAddr, packet []byte) {
 			"version", version,
 			"addr", addr,
 			"size", len(packet),
-			"hex", fmt.Sprintf("%X", packet),
 		)
 		return
 	}

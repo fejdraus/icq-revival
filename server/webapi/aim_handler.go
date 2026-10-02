@@ -194,12 +194,7 @@ func (h *AimHandler) StartSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	screenName := cookie.ScreenName
-	tokenPreview := authToken
-	if len(tokenPreview) > 8 {
-		tokenPreview = tokenPreview[:8] + "..."
-	}
 	h.Logger.Info("authenticated session requested",
-		"token", tokenPreview,
 		"screenName", screenName)
 
 	var instance *state.SessionInstance

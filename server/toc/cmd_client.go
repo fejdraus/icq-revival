@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/mk6i/open-oscar-server/config"
+	"github.com/mk6i/open-oscar-server/server/oscar/middleware"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -165,8 +166,11 @@ func (s OSCARProxy) RecvClientCmd(
 		cmd, args = payload[:idx], payload[idx:]
 	}
 
-	if s.Logger.Enabled(ctx, slog.LevelDebug) {
-		s.Logger.DebugContext(ctx, "client request", "command", payload)
+	// The whole request only at trace level: its arguments carry message
+	// text, profiles, away messages and, in toc_signon, the roasted
+	// (reversible) password.
+	if s.Logger.Enabled(ctx, middleware.LevelTrace) {
+		s.Logger.Log(ctx, middleware.LevelTrace, "client request", "command", payload)
 	} else {
 		s.Logger.InfoContext(ctx, "client request", "command", cmd)
 	}
@@ -2335,8 +2339,11 @@ func (s OSCARProxy) Signon(ctx context.Context, args []byte, recalcWarning func(
 		return nil, s.runtimeErr(ctx, fmt.Errorf("AuthService.FLAPLogin: %w", err))
 	}
 
-	if block.HasTag(wire.LoginTLVTagsErrorSubcode) {
+	if code, ok := block.Uint16BE(wire.LoginTLVTagsErrorSubcode); ok {
 		s.Logger.DebugContext(ctx, "login failed")
+		if code == wire.LoginErrRateLimitExceeded {
+			return nil, []string{"ERROR:" + wire.TOCErrorAuthRatedFromLogin}
+		}
 		return nil, []string{"ERROR:" + wire.TOCErrorAuthIncorrectNickOrPassword}
 	}
 

@@ -130,9 +130,9 @@ func (s *InMemorySessionManager) RelayToScreenNames(ctx context.Context, screenN
 func (s *InMemorySessionManager) RelayToSelf(ctx context.Context, instance *SessionInstance, msg wire.SNACMessage) {
 	switch instance.RelayMessageToInstance(msg) {
 	case SessSendClosed:
-		s.logger.WarnContext(ctx, "can't send notification because the user's session is closed", "recipient", instance.IdentScreenName(), "message", msg)
+		s.logger.WarnContext(ctx, "can't send notification because the user's session is closed", "recipient", instance.IdentScreenName(), "food_group", wire.FoodGroupName(msg.Frame.FoodGroup), "sub_group", wire.SubGroupName(msg.Frame.FoodGroup, msg.Frame.SubGroup))
 	case SessQueueFull:
-		s.logger.WarnContext(ctx, "can't send notification because queue is full", "recipient", instance.IdentScreenName(), "message", msg)
+		s.logger.WarnContext(ctx, "can't send notification because queue is full", "recipient", instance.IdentScreenName(), "food_group", wire.FoodGroupName(msg.Frame.FoodGroup), "sub_group", wire.SubGroupName(msg.Frame.FoodGroup, msg.Frame.SubGroup))
 		instance.CloseInstance()
 	}
 }
@@ -144,9 +144,9 @@ func (s *InMemorySessionManager) RelayToOtherInstances(ctx context.Context, inst
 		}
 		switch inst.RelayMessageToInstance(msg) {
 		case SessSendClosed:
-			s.logger.WarnContext(ctx, "can't send notification because the user's session is closed", "recipient", instance.IdentScreenName(), "message", msg)
+			s.logger.WarnContext(ctx, "can't send notification because the user's session is closed", "recipient", instance.IdentScreenName(), "food_group", wire.FoodGroupName(msg.Frame.FoodGroup), "sub_group", wire.SubGroupName(msg.Frame.FoodGroup, msg.Frame.SubGroup))
 		case SessQueueFull:
-			s.logger.WarnContext(ctx, "can't send notification because queue is full", "recipient", instance.IdentScreenName(), "message", msg)
+			s.logger.WarnContext(ctx, "can't send notification because queue is full", "recipient", instance.IdentScreenName(), "food_group", wire.FoodGroupName(msg.Frame.FoodGroup), "sub_group", wire.SubGroupName(msg.Frame.FoodGroup, msg.Frame.SubGroup))
 			inst.CloseInstance()
 		}
 	}
@@ -180,9 +180,9 @@ func (s *InMemorySessionManager) maybeRelayMessage(ctx context.Context, msg wire
 		}
 		switch instance.RelayMessageToInstance(msg) {
 		case SessSendClosed:
-			s.logger.WarnContext(ctx, "can't send notification because the user's session is closed", "recipient", sess.IdentScreenName(), "message", msg)
+			s.logger.WarnContext(ctx, "can't send notification because the user's session is closed", "recipient", sess.IdentScreenName(), "food_group", wire.FoodGroupName(msg.Frame.FoodGroup), "sub_group", wire.SubGroupName(msg.Frame.FoodGroup, msg.Frame.SubGroup))
 		case SessQueueFull:
-			s.logger.WarnContext(ctx, "can't send notification because queue is full", "recipient", sess.IdentScreenName(), "message", msg)
+			s.logger.WarnContext(ctx, "can't send notification because queue is full", "recipient", sess.IdentScreenName(), "food_group", wire.FoodGroupName(msg.Frame.FoodGroup), "sub_group", wire.SubGroupName(msg.Frame.FoodGroup, msg.Frame.SubGroup))
 			instance.CloseInstance()
 		default:
 			s.logger.DebugContext(ctx, "maybeRelayMessage: relayed to instance",
@@ -201,9 +201,9 @@ func (s *InMemorySessionManager) maybeRelayMessageActiveOnly(ctx context.Context
 		}
 		switch instance.RelayMessageToInstance(msg) {
 		case SessSendClosed:
-			s.logger.WarnContext(ctx, "can't send notification because the user's session is closed", "recipient", sess.IdentScreenName(), "message", msg)
+			s.logger.WarnContext(ctx, "can't send notification because the user's session is closed", "recipient", sess.IdentScreenName(), "food_group", wire.FoodGroupName(msg.Frame.FoodGroup), "sub_group", wire.SubGroupName(msg.Frame.FoodGroup, msg.Frame.SubGroup))
 		case SessQueueFull:
-			s.logger.WarnContext(ctx, "can't send notification because queue is full", "recipient", sess.IdentScreenName(), "message", msg)
+			s.logger.WarnContext(ctx, "can't send notification because queue is full", "recipient", sess.IdentScreenName(), "food_group", wire.FoodGroupName(msg.Frame.FoodGroup), "sub_group", wire.SubGroupName(msg.Frame.FoodGroup, msg.Frame.SubGroup))
 			instance.CloseInstance()
 		}
 	}

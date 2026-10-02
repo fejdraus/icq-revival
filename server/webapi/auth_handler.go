@@ -177,6 +177,10 @@ func tokenTypeTTL(tokenType string) (time.Duration, error) {
 // password, as opposed to failing to answer at all.
 var errInvalidCredentials = errors.New("invalid screen name or password")
 
+// errLoginThrottled reports that the auth service refused to check the
+// credentials because of too many failed sign-ins; the client should try later.
+var errLoginThrottled = errors.New("too many failed sign-ins, try again later")
+
 // authenticateCredentials verifies the credentials and returns the auth cookie minted
 // by the OSCAR auth service. It returns errInvalidCredentials when the credentials are
 // rejected.
@@ -205,7 +209,10 @@ func (h *AuthHandler) authenticate(ctx context.Context, username string, passwor
 	if err != nil {
 		return nil, fmt.Errorf("FLAPLogin: %w", err)
 	}
-	if block.HasTag(wire.LoginTLVTagsErrorSubcode) {
+	if code, ok := block.Uint16BE(wire.LoginTLVTagsErrorSubcode); ok {
+		if code == wire.LoginErrRateLimitExceeded {
+			return nil, errLoginThrottled
+		}
 		return nil, errInvalidCredentials
 	}
 	authCookie, ok := block.Bytes(wire.LoginTLVTagsAuthorizationCookie)
@@ -322,6 +329,12 @@ func (h *AuthHandler) ClientLogin(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, errInvalidCredentials) {
 			SendErrorDetail(w, r, http.StatusUnauthorized, statusMoreAuthRequired, detailBadPassword,
 				"invalid screen name or password")
+			return
+		}
+		if errors.Is(err, errLoginThrottled) {
+			// On HTTP 200, as every rate limit answer: the client reads the
+			// envelope only on a 2xx.
+			SendEnvelopeStatus(w, r, statusRateLimited, "rate limit exceeded", h.Logger)
 			return
 		}
 		SendError(w, r, http.StatusInternalServerError, "internal server error")
@@ -569,6 +582,12 @@ func (h *AuthHandler) LoginPSP(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(err, errInvalidCredentials) {
 				h.Logger.DebugContext(r.Context(), "login.psp failed", "loginId", loginID)
 				data.Error = "Invalid screen name or password."
+				h.renderLoginPSP(w, r, data)
+				return
+			}
+			if errors.Is(err, errLoginThrottled) {
+				h.Logger.DebugContext(r.Context(), "login.psp throttled", "loginId", loginID)
+				data.Error = "Too many failed sign-in attempts. Please try again later."
 				h.renderLoginPSP(w, r, data)
 				return
 			}

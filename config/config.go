@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mk6i/open-oscar-server/loginguard"
 )
 
 var (
@@ -271,6 +273,21 @@ type Config struct {
 
 	// ICQ Legacy Protocol Configuration
 	ICQLegacy ICQLegacyConfig
+
+	// Throttling of failed sign-ins
+	LoginGuard LoginGuardConfig
+}
+
+// LoginGuardConfig holds the limits on failed sign-ins, shared by every
+// sign-in path: OSCAR (FLAP, BUCP), Kerberos, TOC, the WebAPI and legacy ICQ.
+type LoginGuardConfig struct {
+	AccountFailures  int           `envconfig:"LOGIN_GUARD_ACCOUNT_FAILURES" required:"false" default:"5" basic:"5" ssl:"5" description:"Failed sign-ins an account gets before it is paused. Each further failure doubles the pause, from LOGIN_GUARD_ACCOUNT_BASE_DELAY up to LOGIN_GUARD_ACCOUNT_MAX_DELAY. While paused, a sign-in is answered with the protocol's own 'rate limited, try later' error without the password being checked; an account that does not exist is treated the same. A sign-in that succeeds forgets the account's failures. 0 turns the account limit off."`
+	AccountBaseDelay time.Duration `envconfig:"LOGIN_GUARD_ACCOUNT_BASE_DELAY" required:"false" default:"1s" basic:"1s" ssl:"1s" description:"The first pause of an account that used up LOGIN_GUARD_ACCOUNT_FAILURES."`
+	AccountMaxDelay  time.Duration `envconfig:"LOGIN_GUARD_ACCOUNT_MAX_DELAY" required:"false" default:"15m" basic:"15m" ssl:"15m" description:"The longest pause of an account. An account that has not failed for this long after its pause ended starts over."`
+	IPFailures       int           `envconfig:"LOGIN_GUARD_IP_FAILURES" required:"false" default:"30" basic:"30" ssl:"30" description:"Failed sign-ins one client address gets per LOGIN_GUARD_IP_WINDOW, on any accounts; then it earns one attempt back every LOGIN_GUARD_IP_WINDOW / LOGIN_GUARD_IP_FAILURES. An IPv6 address counts as its /64. 0 turns the address limit off."`
+	IPWindow         time.Duration `envconfig:"LOGIN_GUARD_IP_WINDOW" required:"false" default:"10m" basic:"10m" ssl:"10m" description:"The period LOGIN_GUARD_IP_FAILURES is spread over."`
+	KnownAddressTTL  time.Duration `envconfig:"LOGIN_GUARD_KNOWN_ADDRESS_TTL" required:"false" default:"720h" basic:"720h" ssl:"720h" description:"How long an address an account signed in from is remembered as the owner's. Failures from such an address are counted on their own, so someone guessing the password from elsewhere does not pause the owner. Kept in memory only. 0 turns this off."`
+	TrustedProxies   []string      `envconfig:"LOGIN_GUARD_TRUSTED_PROXIES" required:"false" default:"127.0.0.0/8,::1/128" basic:"127.0.0.0/8,::1/128" ssl:"127.0.0.0/8,::1/128,172.16.0.0/12" description:"Addresses of the reverse proxies (such as nginx in front of Kerberos and the WebAPI) whose X-Real-IP or X-Forwarded-For header names the client of an HTTP sign-in. A request from anywhere else is counted under its own socket address, and its headers are ignored. A proxy in another container must be listed, or all of its clients share one address budget.\n\nFormat: comma-separated addresses or CIDR prefixes\n\nExamples:\n\t// nginx on the same host\n\t127.0.0.0/8,::1/128\n\t// nginx in a Docker bridge network\n\t127.0.0.0/8,::1/128,172.16.0.0/12"`
 }
 
 // TURNConfig holds the settings of the TURN relay that the STUN server runs
@@ -677,7 +694,43 @@ func (c *Config) Validate() error {
 		return err
 	}
 
+	if err := c.LoginGuard.validate(); err != nil {
+		return err
+	}
+
 	return c.TURN.validate(c.STUNListener)
+}
+
+// validate checks that the sign-in limits make sense.
+func (c LoginGuardConfig) validate() error {
+	if c.AccountFailures < 0 || c.IPFailures < 0 {
+		return errors.New("LOGIN_GUARD_ACCOUNT_FAILURES and LOGIN_GUARD_IP_FAILURES cannot be negative")
+	}
+	if c.AccountFailures > 0 && (c.AccountBaseDelay <= 0 || c.AccountMaxDelay < c.AccountBaseDelay) {
+		return errors.New("LOGIN_GUARD_ACCOUNT_BASE_DELAY must be positive and no longer than LOGIN_GUARD_ACCOUNT_MAX_DELAY")
+	}
+	if c.IPFailures > 0 && c.IPWindow <= 0 {
+		return errors.New("LOGIN_GUARD_IP_WINDOW must be positive")
+	}
+	if c.KnownAddressTTL < 0 {
+		return errors.New("LOGIN_GUARD_KNOWN_ADDRESS_TTL cannot be negative")
+	}
+	if _, err := loginguard.ParsePrefixes(c.TrustedProxies); err != nil {
+		return fmt.Errorf("invalid LOGIN_GUARD_TRUSTED_PROXIES: %w", err)
+	}
+	return nil
+}
+
+// Guard returns the limits as the login guard takes them.
+func (c LoginGuardConfig) Guard() loginguard.Config {
+	return loginguard.Config{
+		AccountFreeFailures: c.AccountFailures,
+		AccountBaseDelay:    c.AccountBaseDelay,
+		AccountMaxDelay:     c.AccountMaxDelay,
+		IPMaxFailures:       c.IPFailures,
+		IPWindow:            c.IPWindow,
+		KnownAddressTTL:     c.KnownAddressTTL,
+	}
 }
 
 // HasTLSListeners reports whether OSCAR_LISTENERS_TLS names a listener.

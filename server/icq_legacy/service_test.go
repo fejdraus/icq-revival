@@ -74,6 +74,26 @@ func TestICQLegacyService_AuthenticateUser(t *testing.T) {
 			},
 		},
 		{
+			name: "throttled after too many failed sign-ins",
+			req: AuthRequest{
+				UIN:      12345,
+				Password: password,
+				Version:  ICQLegacyVersionV5,
+			},
+			setupAuth: func(authSvc *mockAuthService) {
+				authSvc.EXPECT().FLAPLogin(mock.Anything, mock.Anything, config.Endpoint{}).
+					Return(wire.TLVRestBlock{
+						TLVList: []wire.TLV{
+							wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrRateLimitExceeded),
+						},
+					}, nil)
+			},
+			wantResult: &AuthResult{
+				Success:   false,
+				ErrorCode: uint16(ICQLegacyLoginErrRateLimit),
+			},
+		},
+		{
 			name: "user not found",
 			req: AuthRequest{
 				UIN:      99999,

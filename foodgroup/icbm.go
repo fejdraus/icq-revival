@@ -3,11 +3,12 @@ package foodgroup
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -171,13 +172,10 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 
 	if inBody.ChannelID == wire.ICBMChannelSIP {
 		// The signalling of an ICQ 6 call, relayed as it is. Logged by its
-		// first line, "INVITE sip:..." or "SIP/2.0 200 OK", and its SDP body -
-		// the addresses offered for the sound - to see a call through when it
-		// fails.
+		// method or status and its size, to see a call through when it fails -
+		// not its URIs nor its SDP body, the peers' addresses (sipLogAttrs).
 		sip, _ := inBody.Bytes(0x0005)
-		first, _, _ := strings.Cut(string(sip), "\r\n")
-		_, sdp, _ := strings.Cut(string(sip), "\r\n\r\n")
-		s.logger.InfoContext(ctx, "call signalling", "to", recip.String(), "bytes", len(sip), "first_line", first, "sdp", sdp)
+		s.logger.InfoContext(ctx, "call signalling", append([]any{"to", recip.String()}, sipLogAttrs(sip)...)...)
 	}
 
 	if inBody.ChannelID == wire.ICBMChannelICQ {
@@ -377,6 +375,68 @@ func (s *ICBMService) sendOfflineMessage(ctx context.Context, instance *state.Se
 	return nil, nil
 }
 
+// sipLogAttrs describes a SIP message of an ICQ 6 call for the log: the
+// method of a request ("INVITE") or the status of a response ("200 OK"), its
+// size and the size of its SDP body - not the URIs, the headers or the SDP,
+// which name the peers and their addresses.
+func sipLogAttrs(sip []byte) []any {
+	first, _, _ := strings.Cut(string(sip), "\r\n")
+	_, sdp, _ := strings.Cut(string(sip), "\r\n\r\n")
+	what, rest, _ := strings.Cut(first, " ")
+	if strings.HasPrefix(what, "SIP/") {
+		what = rest
+	}
+	return []any{"what", what, "bytes", len(sip), "sdp_bytes", len(sdp)}
+}
+
+// rendezvousLogAttrs describes a rendezvous proposal for the log without
+// anything that identifies the transfer or the people in it: the capability,
+// the sequence number, which tags it has (not their values), whether it asks
+// for the proxy, the kind of the proposed address and how many bytes of
+// service data it carries - and, for a file transfer, how many files. Not
+// the cookie, the addresses, the port, the file names or the sizes.
+func rendezvousLogAttrs(frag wire.ICBMCh2Fragment, proposed []byte, port uint16, sameNetwork bool) []any {
+	tags := make([]string, 0, len(frag.TLVList))
+	for _, t := range frag.TLVList {
+		tags = append(tags, fmt.Sprintf("%04X", t.Tag))
+	}
+	seq, _ := frag.Uint16BE(wire.ICBMRdvTLVTagsSeqNum)
+	svc, _ := frag.Bytes(wire.ICBMRdvTLVTagsSvcData)
+	attrs := []any{
+		"capability", fmt.Sprintf("%X", frag.Capability),
+		"seq", seq,
+		"tags", strings.Join(tags, " "),
+		"use_ars", frag.HasTag(wire.ICBMRdvTLVTagsUseARS),
+		"proposed_addr", addrClass(proposed),
+		"has_port", port != 0,
+		"service_data_bytes", len(svc),
+		"same_network", sameNetwork,
+	}
+	// File transfer service data: u16 multiple-files flag, u16 file count,
+	// u32 total size, then the name.
+	if frag.Capability == wire.CapFileTransfer && len(svc) >= 4 {
+		attrs = append(attrs, "files", binary.BigEndian.Uint16(svc[2:4]))
+	}
+	return attrs
+}
+
+// addrClass names the kind of an IPv4 address without giving it.
+func addrClass(b []byte) string {
+	addr, ok := netip.AddrFromSlice(b)
+	switch {
+	case !ok:
+		return "none"
+	case addr.IsUnspecified():
+		return "unspecified"
+	case addr.IsLoopback():
+		return "loopback"
+	case addr.IsPrivate(), addr.IsLinkLocalUnicast():
+		return "private"
+	default:
+		return "public"
+	}
+}
+
 // addExternalIP sets the proposing client's address in an ICBM rendezvous
 // proposal: file transfer, and the voice and video calls of ICQ 6.
 //
@@ -409,26 +469,7 @@ func (s *ICBMService) addExternalIP(ctx context.Context, instance *state.Session
 			break
 		}
 	}
-	var tags []string
-	for _, t := range frag.TLVList {
-		v := t.Value
-		if len(v) > 256 {
-			v = v[:256]
-		}
-		tags = append(tags, fmt.Sprintf("%04X=%X", t.Tag, v))
-	}
-	svc, _ := frag.Bytes(wire.ICBMRdvTLVTagsSvcData)
-	if len(svc) > 1024 {
-		svc = svc[:1024]
-	}
-	s.logger.InfoContext(ctx, "rendezvous proposal",
-		"capability", fmt.Sprintf("%X", frag.Capability),
-		"tlvs", strings.Join(tags, " "),
-		"service_data", fmt.Sprintf("%X", svc),
-		"proposed_ip", net.IP(proposed).String(),
-		"seen_ip", ip.String(),
-		"port", port,
-		"same_network", sameNetwork)
+	s.logger.InfoContext(ctx, "rendezvous proposal", rendezvousLogAttrs(frag, proposed, port, sameNetwork)...)
 	if !sameNetwork {
 		frag.Set(wire.NewTLVBE(wire.ICBMRdvTLVTagsRequesterIP, ip.AsSlice()))
 	}

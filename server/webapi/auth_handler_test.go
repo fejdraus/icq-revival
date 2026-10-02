@@ -485,6 +485,41 @@ func TestAuthHandler_ClientLogin(t *testing.T) {
 			},
 		},
 		{
+			// The auth service refused to check the password after too many
+			// failed sign-ins: the client is told to wait, on HTTP 200 so that it
+			// reads the envelope, and not that the password is wrong.
+			name:        "Error_Throttled",
+			method:      "POST",
+			contentType: "application/x-www-form-urlencoded",
+			body:        "s=testuser&pwd=testpass&f=json",
+			auth: &testAuthService{
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
+					return throttledLoginBlock(), nil
+				},
+			},
+			expectedStatusCode: http.StatusOK,
+			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"statusCode":430`)
+				assert.NotContains(t, body, "3011")
+				assert.NotContains(t, body, `"token"`)
+			},
+		},
+		{
+			name:        "Error_ThrottledDigest",
+			method:      "POST",
+			contentType: "application/x-www-form-urlencoded",
+			body:        "s=testuser&pwd=" + url.QueryEscape(base64.StdEncoding.EncodeToString(make([]byte, 16))) + "&digest=1&f=json",
+			auth: &testAuthService{
+				flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
+					return throttledLoginBlock(), nil
+				},
+			},
+			expectedStatusCode: http.StatusOK,
+			checkResponse: func(t *testing.T, body string) {
+				assert.Contains(t, body, `"statusCode":430`)
+			},
+		},
+		{
 			name:        "Error_LoginResponseHasNoCookie",
 			method:      "POST",
 			contentType: "application/x-www-form-urlencoded",
@@ -829,6 +864,39 @@ func TestAuthHandler_LoginPSP_POST_InvalidCredentials(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Body.String(), "Invalid screen name or password")
+}
+
+func TestAuthHandler_LoginPSP_POST_Throttled(t *testing.T) {
+	handler := &AuthHandler{
+		AuthService: &testAuthService{
+			flapLogin: func(ctx context.Context, inFrame wire.FLAPSignonFrame, endpointCfg config.Endpoint) (wire.TLVRestBlock, error) {
+				return throttledLoginBlock(), nil
+			},
+		},
+		Logger: slog.Default(),
+	}
+
+	form := url.Values{}
+	form.Set("loginId", "testuser")
+	form.Set("password", "whatever")
+	req := httptest.NewRequest(http.MethodPost, "/_cqr/login/login.psp", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	handler.LoginPSP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Too many failed sign-in attempts")
+	assert.NotContains(t, rr.Body.String(), "Invalid screen name or password")
+}
+
+// throttledLoginBlock is the auth service's answer to a sign-in it refused to
+// check after too many failed attempts.
+func throttledLoginBlock() wire.TLVRestBlock {
+	return wire.TLVRestBlock{TLVList: wire.TLVList{
+		wire.NewTLVBE(wire.LoginTLVTagsScreenName, "testuser"),
+		wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrRateLimitExceeded),
+	}}
 }
 
 func TestDefaultLoginSuccURL(t *testing.T) {

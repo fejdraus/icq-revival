@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/mk6i/open-oscar-server/config"
+	"github.com/mk6i/open-oscar-server/loginguard"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -194,7 +196,7 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, session
 			SendError(w, r, http.StatusNotFound, "not found")
 		})
 
-		return RequestLogger(logger, corsHandler.Handler(mux))
+		return RequestLogger(logger, loginguard.ClientIPMiddleware(handler.TrustedProxies, corsHandler.Handler(mux)))
 	}
 
 	for _, l := range listeners {
@@ -400,6 +402,9 @@ type Handler struct {
 	// E2EKeyDirectory serves the key directory of the end-to-end encryption
 	// add-on under /e2e/v1/.
 	E2EKeyDirectory E2EKeyDirectory
+	// TrustedProxies are the reverse proxies whose X-Real-IP and
+	// X-Forwarded-For name the client a sign-in is counted against.
+	TrustedProxies []netip.Prefix
 }
 
 // E2EKeyDirectory adds the routes of the end-to-end encryption key directory

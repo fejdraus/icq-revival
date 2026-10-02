@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+
+	"github.com/mk6i/open-oscar-server/loginguard"
 )
 
 // V1Handler handles ICQ V1 protocol packets.
@@ -81,7 +83,6 @@ func (h *V1Handler) handleV1Login(session *LegacySession, addr *net.UDPAddr, pac
 		"seq", seqNum,
 		"uin", uin,
 		"data_len", len(data),
-		"data_hex", fmt.Sprintf("%X", data),
 	)
 
 	// Parse password from data: PWD_LEN(2) + PASSWORD
@@ -115,6 +116,7 @@ func (h *V1Handler) handleV1Login(session *LegacySession, addr *net.UDPAddr, pac
 	)
 
 	// Authenticate using service layer
+	ctx = loginguard.WithClientIP(ctx, addr.String())
 	authReq := AuthRequest{
 		UIN:      uin,
 		Password: password,

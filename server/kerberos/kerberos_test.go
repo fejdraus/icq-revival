@@ -204,10 +204,10 @@ func TestKerberosLoginHandler(t *testing.T) {
 						KerberosLogin(mock.Anything, tt.request.Body, mock.Anything).
 						Return(tt.response, tt.responseErr)
 				}
-				srv = NewKerberosServer(tt.listeners, log, mockAuth)
+				srv = NewKerberosServer(tt.listeners, log, mockAuth, nil)
 			} else {
 				// For no listeners case, we don't need auth service or request data
-				srv = NewKerberosServer(tt.listeners, log, nil)
+				srv = NewKerberosServer(tt.listeners, log, nil, nil)
 			}
 
 			wg := sync.WaitGroup{}
@@ -310,7 +310,7 @@ func TestNewKerberosServer_ServesSSLGroupsOnly(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			srv := NewKerberosServer(tt.listeners, slog.Default(), newMockAuthService(t))
+			srv := NewKerberosServer(tt.listeners, slog.Default(), newMockAuthService(t), nil)
 
 			haveAddrs := make([]string, 0, len(srv.servers))
 			for _, s := range srv.servers {

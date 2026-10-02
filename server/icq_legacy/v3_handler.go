@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 
+	"github.com/mk6i/open-oscar-server/loginguard"
+	"github.com/mk6i/open-oscar-server/server/oscar/middleware"
 	"github.com/mk6i/open-oscar-server/state"
 )
 
@@ -58,7 +60,7 @@ func (h *V3Handler) Handle(session *LegacySession, addr *net.UDPAddr, packet []b
 	// VERSION(2) + COMMAND(2) + SEQ1(2) + SEQ2(2) + UIN(4) + DATA...
 	// Total header: 12 bytes (NO checksum in V3!)
 
-	h.logger.Debug("raw V3 packet",
+	h.logger.Log(context.Background(), middleware.LevelTrace, "raw V3 packet",
 		"hex", fmt.Sprintf("%X", packet),
 		"len", len(packet),
 	)
@@ -247,6 +249,7 @@ func (h *V3Handler) handleGetDeps(addr *net.UDPAddr, seq1, seq2 uint16, data []b
 	)
 
 	// 2. Call service layer with typed request
+	ctx = loginguard.WithClientIP(ctx, addr.String())
 	authReq := AuthRequest{
 		UIN:      uin,
 		Password: password,
@@ -331,6 +334,7 @@ func (h *V3Handler) handleLogin(session *LegacySession, addr *net.UDPAddr, seq1,
 	)
 
 	// 2. Call service layer with typed request
+	ctx = loginguard.WithClientIP(ctx, addr.String())
 	authReq := AuthRequest{
 		UIN:      uin,
 		Password: password,
@@ -1653,7 +1657,7 @@ func (h *V3Handler) sendOnlineMessage(session *LegacySession, fromUIN uint32, ms
 	h.logger.Debug("V3 sending online message packet",
 		"to", session.UIN,
 		"from", fromUIN,
-		"packet_hex", fmt.Sprintf("%X", pkt[:offset]),
+		"message_bytes", len(msgBytes),
 	)
 
 	return h.sender.SendToSession(session, pkt[:offset])

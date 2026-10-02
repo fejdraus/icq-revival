@@ -1093,6 +1093,7 @@ func TestAuthService_BUCPLoginRequest(t *testing.T) {
 				maxConcurrentLoginsPerUser: 2,
 				createAccount:              tc.createAccount,
 				logger:                     slog.Default(),
+				loginGuard:                 newTestLoginGuard(),
 			}
 			outputSNAC, err := svc.BUCPLogin(context.Background(), tc.inputSNAC, tc.endpointCfg)
 			assert.ErrorIs(t, err, tc.wantErr)
@@ -1898,6 +1899,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 				sessionRetriever:           sessionRetriever,
 				maxConcurrentLoginsPerUser: 2,
 				logger:                     slog.Default(),
+				loginGuard:                 newTestLoginGuard(),
 			}
 			outputSNAC, err := svc.FLAPLogin(context.Background(), tc.inputSNAC, tc.endpointCfg)
 			assert.ErrorIs(t, err, tc.wantErr)
@@ -2249,6 +2251,7 @@ func TestAuthService_KerberosLogin(t *testing.T) {
 				maxConcurrentLoginsPerUser: 2,
 				createAccount:              tc.createAccount,
 				logger:                     slog.Default(),
+				loginGuard:                 newTestLoginGuard(),
 			}
 			outputSNAC, err := svc.KerberosLogin(context.Background(), tc.inputSNAC, tc.endpointCfg)
 			assert.ErrorIs(t, err, tc.wantErr)
@@ -2433,7 +2436,7 @@ func TestAuthService_RegisterChatSession_HappyPath(t *testing.T) {
 	chatCookieBuf := &bytes.Buffer{}
 	assert.NoError(t, wire.MarshalBE(serverCookie, chatCookieBuf))
 
-	svc := NewAuthService(config.Config{}, nil, nil, chatSessionRegistry, nil, nil, nil, nil, nil, nil, wire.DefaultRateLimitClasses(), nil, slog.Default())
+	svc := NewAuthService(config.Config{}, nil, nil, chatSessionRegistry, nil, nil, nil, nil, nil, nil, wire.DefaultRateLimitClasses(), nil, newTestLoginGuard(), slog.Default())
 
 	have, err := svc.RegisterChatSession(context.Background(), serverCookie, nil)
 	assert.NoError(t, err)
@@ -2798,7 +2801,7 @@ func TestAuthService_RegisterBOSSession(t *testing.T) {
 					Return(params.result, params.err)
 			}
 
-			svc := NewAuthService(tc.cfg, sessionRegistry, nil, nil, userManager, nil, nil, accountManager, bartItemManager, nil, wire.DefaultRateLimitClasses(), tc.createAccount, slog.Default())
+			svc := NewAuthService(tc.cfg, sessionRegistry, nil, nil, userManager, nil, nil, accountManager, bartItemManager, nil, wire.DefaultRateLimitClasses(), tc.createAccount, newTestLoginGuard(), slog.Default())
 
 			have, err := svc.RegisterBOSSession(context.Background(), tc.cookie, nil)
 			if tc.wantErr != nil {
@@ -2833,7 +2836,7 @@ func TestAuthService_RetrieveBOSSession_HappyPath(t *testing.T) {
 		User(matchContext(), instance.IdentScreenName()).
 		Return(&state.User{IdentScreenName: instance.IdentScreenName()}, nil)
 
-	svc := NewAuthService(config.Config{}, nil, sessionRetriever, nil, userManager, nil, nil, nil, nil, nil, wire.DefaultRateLimitClasses(), nil, slog.Default())
+	svc := NewAuthService(config.Config{}, nil, sessionRetriever, nil, userManager, nil, nil, nil, nil, nil, wire.DefaultRateLimitClasses(), nil, newTestLoginGuard(), slog.Default())
 
 	have, err := svc.RetrieveBOSSession(context.Background(), aimAuthCookie)
 	assert.NoError(t, err)
@@ -2858,7 +2861,7 @@ func TestAuthService_RetrieveBOSSession_SessionNotFound(t *testing.T) {
 		User(matchContext(), instance.IdentScreenName()).
 		Return(&state.User{IdentScreenName: instance.IdentScreenName()}, nil)
 
-	svc := NewAuthService(config.Config{}, nil, sessionRetriever, nil, userManager, nil, nil, nil, nil, nil, wire.DefaultRateLimitClasses(), nil, slog.Default())
+	svc := NewAuthService(config.Config{}, nil, sessionRetriever, nil, userManager, nil, nil, nil, nil, nil, wire.DefaultRateLimitClasses(), nil, newTestLoginGuard(), slog.Default())
 
 	have, err := svc.RetrieveBOSSession(context.Background(), aimAuthCookie)
 	assert.NoError(t, err)
@@ -2951,7 +2954,7 @@ func TestAuthService_SignoutChat(t *testing.T) {
 					RemoveSession(matchUserSession(params.screenName))
 			}
 
-			svc := NewAuthService(config.Config{}, nil, nil, sessionManager, nil, nil, chatMessageRelayer, nil, nil, nil, wire.DefaultRateLimitClasses(), nil, slog.Default())
+			svc := NewAuthService(config.Config{}, nil, nil, sessionManager, nil, nil, chatMessageRelayer, nil, nil, nil, wire.DefaultRateLimitClasses(), nil, newTestLoginGuard(), slog.Default())
 			svc.SignoutChat(context.Background(), tt.instance.Session())
 		})
 	}
@@ -2996,7 +2999,7 @@ func TestAuthService_Signout(t *testing.T) {
 			for _, params := range tt.mockParams.removeSessionParams {
 				sessionManager.EXPECT().RemoveSession(matchUserSession(params.screenName))
 			}
-			svc := NewAuthService(config.Config{}, sessionManager, nil, nil, nil, nil, nil, nil, nil, nil, wire.DefaultRateLimitClasses(), nil, slog.Default())
+			svc := NewAuthService(config.Config{}, sessionManager, nil, nil, nil, nil, nil, nil, nil, nil, wire.DefaultRateLimitClasses(), nil, newTestLoginGuard(), slog.Default())
 
 			svc.Signout(context.Background(), tt.instance.Session())
 		})
@@ -3211,6 +3214,7 @@ func TestAuthService_BUCPLogin_RedirectByListener(t *testing.T) {
 				feedbagManager:             feedbagManager,
 				maxConcurrentLoginsPerUser: 2,
 				logger:                     slog.Default(),
+				loginGuard:                 newTestLoginGuard(),
 			}
 			out, err := svc.BUCPLogin(context.Background(), wire.SNAC_0x17_0x02_BUCPLoginRequest{
 				TLVRestBlock: wire.TLVRestBlock{TLVList: tlvs},

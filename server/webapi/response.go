@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mk6i/open-oscar-server/server/oscar/middleware"
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
@@ -365,7 +366,13 @@ func sendJSON(w http.ResponseWriter, data any, logger *slog.Logger) {
 		return
 	}
 	if logger != nil {
-		logger.Debug("JSON response", "body", string(body))
+		// The body only at trace level: it carries session tokens, messages
+		// and buddy lists.
+		if logger.Enabled(context.Background(), middleware.LevelTrace) {
+			logger.Log(context.Background(), middleware.LevelTrace, "JSON response", "body", string(body))
+		} else {
+			logger.Debug("JSON response", "bytes", len(body))
+		}
 	}
 	if _, err := w.Write(body); err != nil && logger != nil {
 		logger.Error("failed to write JSON response", "err", err.Error())

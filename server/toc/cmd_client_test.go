@@ -6934,6 +6934,32 @@ func TestOSCARProxy_Signon(t *testing.T) {
 			wantMsg: []string{"ERROR:980"},
 		},
 		{
+			name:     "login throttled after too many failed attempts",
+			givenCmd: []byte(`toc_signon "" "" me "0x` + hex.EncodeToString(roastedPass) + `"`),
+			mockParams: mockParams{
+				authParams: authParams{
+					flapLoginParams: flapLoginParams{
+						{
+							frame: wire.FLAPSignonFrame{
+								TLVRestBlock: wire.TLVRestBlock{
+									TLVList: wire.TLVList{
+										wire.NewTLVBE(wire.LoginTLVTagsScreenName, "me"),
+										wire.NewTLVBE(wire.LoginTLVTagsRoastedTOCPassword, roastedPass),
+									},
+								},
+							},
+							tlv: wire.TLVRestBlock{
+								TLVList: wire.TLVList{
+									wire.NewTLVBE(wire.LoginTLVTagsErrorSubcode, wire.LoginErrRateLimitExceeded),
+								},
+							},
+						},
+					},
+				},
+			},
+			wantMsg: []string{"ERROR:983"},
+		},
+		{
 			name:     "bad command",
 			givenCmd: []byte(`toc_bad "" "" me "0x` + hex.EncodeToString(roastedPass) + `"`),
 			wantMsg:  []string{cmdInternalSvcErr},

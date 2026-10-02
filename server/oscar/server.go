@@ -18,6 +18,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/mk6i/open-oscar-server/config"
+	"github.com/mk6i/open-oscar-server/loginguard"
 	"github.com/mk6i/open-oscar-server/server/oscar/middleware"
 	"github.com/mk6i/open-oscar-server/server/tlsfront"
 	"github.com/mk6i/open-oscar-server/state"
@@ -467,6 +468,7 @@ func (s oscarServer) receiveSessMessages(ctx context.Context, instance *state.Se
 }
 
 func (s oscarServer) authenticate(ctx context.Context, flap wire.FLAPSignonFrame, ip string, conn net.Conn, flapc *wire.FlapClient, endpointCfg config.Endpoint) error {
+	ctx = loginguard.WithClientIP(ctx, ip)
 	if ok, isBUCP := s.ipRateLimiter.Allow(ip); !ok {
 		s.logger.InfoContext(ctx, "user rate limited at login, dropping connection")
 		tlv := wire.TLVRestBlock{
@@ -695,14 +697,21 @@ func (s oscarServer) dispatchIncomingMessages(
 					if errors.Is(err, ErrRouteNotFound) {
 						// What a client asks for that the server does not know: the
 						// only way to find out what a feature of a client needs.
+						// Its body only at trace level: it may carry anything,
+						// message text or addresses included.
 						body := flapBuf.Bytes()
-						if len(body) > 512 {
-							body = body[:512]
-						}
-						s.logger.InfoContext(ctx, "unknown SNAC",
+						attrs := []any{
 							"food_group", fmt.Sprintf("0x%04X", inFrame.FoodGroup),
 							"sub_group", fmt.Sprintf("0x%04X", inFrame.SubGroup),
-							"body", fmt.Sprintf("%X", body))
+							"body_bytes", len(body),
+						}
+						if s.logger.Enabled(ctx, middleware.LevelTrace) {
+							if len(body) > 512 {
+								body = body[:512]
+							}
+							attrs = append(attrs, "body", fmt.Sprintf("%X", body))
+						}
+						s.logger.InfoContext(ctx, "unknown SNAC", attrs...)
 						if err1 := sendInvalidSNACErr(inFrame, flapc); err1 != nil {
 							return errors.Join(err1, err)
 						}

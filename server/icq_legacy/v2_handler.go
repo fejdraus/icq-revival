@@ -9,6 +9,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/mk6i/open-oscar-server/loginguard"
+	"github.com/mk6i/open-oscar-server/server/oscar/middleware"
 	"github.com/mk6i/open-oscar-server/state"
 )
 
@@ -50,8 +52,8 @@ func (h *V2Handler) SetDispatcher(dispatcher MessageDispatcher) {
 
 // Handle processes a V2 protocol packet
 func (h *V2Handler) Handle(session *LegacySession, addr *net.UDPAddr, packet []byte) error {
-	// Debug: dump raw packet
-	h.logger.Debug("raw V2 packet",
+	// The raw packet only at trace level: it holds passwords and messages
+	h.logger.Log(context.Background(), middleware.LevelTrace, "raw V2 packet",
 		"hex", fmt.Sprintf("%X", packet),
 		"len", len(packet),
 	)
@@ -66,7 +68,6 @@ func (h *V2Handler) Handle(session *LegacySession, addr *net.UDPAddr, packet []b
 		"uin", pkt.UIN,
 		"seq", pkt.SeqNum,
 		"addr", addr.String(),
-		"data_hex", fmt.Sprintf("%X", pkt.Data),
 	)
 
 	// Update session activity if we have one
@@ -197,6 +198,7 @@ func (h *V2Handler) handleLogin(session *LegacySession, addr *net.UDPAddr, pkt *
 	)
 
 	// 2. Call service layer with typed request
+	ctx = loginguard.WithClientIP(ctx, addr.String())
 	authReq := AuthRequest{
 		UIN:      pkt.UIN,
 		Password: loginData.Password,
@@ -996,7 +998,6 @@ func (h *V2Handler) handleGetDeps(addr *net.UDPAddr, packet []byte) error {
 		"seq2", seq2,
 		"uin", uin,
 		"data_len", len(data),
-		"data_hex", fmt.Sprintf("%X", data),
 	)
 
 	// Parse password from data
@@ -1023,6 +1024,7 @@ func (h *V2Handler) handleGetDeps(addr *net.UDPAddr, packet []byte) error {
 	)
 
 	// Validate credentials using service layer
+	ctx = loginguard.WithClientIP(ctx, addr.String())
 	authReq := AuthRequest{
 		UIN:      uin,
 		Password: password,
@@ -1292,7 +1294,6 @@ func (h *V2Handler) handleRegNewUser(addr *net.UDPAddr, pkt *V2ClientPacket) err
 	h.logger.Debug("registration packet (0x03FC)",
 		"addr", addr.String(),
 		"data_len", len(pkt.Data),
-		"data_hex", fmt.Sprintf("%X", pkt.Data),
 	)
 
 	// Need at least: CONST(2) + PWD_LEN(2) + 1 byte password + null

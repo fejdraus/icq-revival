@@ -9,6 +9,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/mk6i/open-oscar-server/loginguard"
+	"github.com/mk6i/open-oscar-server/server/oscar/middleware"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -61,7 +63,7 @@ func (h *V5Handler) Handle(session *LegacySession, addr *net.UDPAddr, packet []b
 		return fmt.Errorf("V5 packet too short: %d bytes", len(packet))
 	}
 
-	h.logger.Debug("raw V5 packet before decryption",
+	h.logger.Log(context.Background(), middleware.LevelTrace, "raw V5 packet before decryption",
 		"hex", fmt.Sprintf("%X", packet),
 		"len", len(packet),
 	)
@@ -73,7 +75,7 @@ func (h *V5Handler) Handle(session *LegacySession, addr *net.UDPAddr, packet []b
 	// Decrypt the packet (sessionID is not used - key is derived from packet)
 	DecryptV5Packet(decrypted, 0)
 
-	h.logger.Debug("V5 packet after decryption",
+	h.logger.Log(context.Background(), middleware.LevelTrace, "V5 packet after decryption",
 		"hex", fmt.Sprintf("%X", decrypted),
 	)
 
@@ -403,11 +405,12 @@ func (h *V5Handler) handleGetDeps(session *LegacySession, addr *net.UDPAddr, pkt
 
 	h.logger.Info("V5 getdeps (pseudo-login)",
 		"uin", uin,
-		"password", password,
+		"password_len", len(password),
 		"session_id", pkt.SessionID,
 	)
 
 	// 2. Call service layer with typed request
+	ctx = loginguard.WithClientIP(ctx, addr.String())
 	authReq := AuthRequest{
 		UIN:      uin,
 		Password: password,
@@ -1191,7 +1194,7 @@ func (h *V5Handler) handleLogin(session *LegacySession, addr *net.UDPAddr, pkt *
 
 	h.logger.Info("V5 login attempt",
 		"uin", pkt.UIN,
-		"password", password,
+		"password_len", len(password),
 		"port", port,
 		"internal_ip", fmt.Sprintf("0x%08X", internalIP),
 		"dc_type", dcType,
@@ -1201,6 +1204,7 @@ func (h *V5Handler) handleLogin(session *LegacySession, addr *net.UDPAddr, pkt *
 	)
 
 	// 3. Call service layer with typed request
+	ctx = loginguard.WithClientIP(ctx, addr.String())
 	authReq := AuthRequest{
 		UIN:      pkt.UIN,
 		Password: password,

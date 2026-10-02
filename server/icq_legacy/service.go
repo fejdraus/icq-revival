@@ -149,8 +149,14 @@ func (s *ICQLegacyService) AuthenticateUser(ctx context.Context, req AuthRequest
 			"uin", req.UIN,
 			"error_code", fmt.Sprintf("0x%04X", errCode),
 		)
-		if errCode == wire.LoginErrICQUserErr {
+		switch errCode {
+		case wire.LoginErrICQUserErr:
 			result.ErrorCode = 0x0002 // User not found
+		case wire.LoginErrRateLimitExceeded:
+			// Too many failed sign-ins: the password was not checked. The
+			// handlers still answer with the wrong-password packet, the only
+			// refusal every legacy client is known to handle.
+			result.ErrorCode = uint16(ICQLegacyLoginErrRateLimit)
 		}
 		return result, nil
 	}

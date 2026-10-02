@@ -19,6 +19,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 
+	"github.com/mk6i/open-oscar-server/loginguard"
+	"github.com/mk6i/open-oscar-server/server/oscar/middleware"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -359,6 +361,8 @@ func (s *Server) dispatchFLAP(ctx context.Context, conn net.Conn) error {
 		return err
 	}
 
+	ctx = loginguard.WithClientIP(ctx, ip)
+
 	if ok := s.loginIPRateLimiter.Allow(ip); !ok {
 		s.logger.InfoContext(ctx, "user rate limited at login, dropping connection")
 		if err := clientFlap.SendDataFrame([]byte("ERROR:983")); err != nil {
@@ -480,8 +484,10 @@ func (s *Server) sendToClient(ctx context.Context, toClient <-chan []string, cli
 				if err := clientFlap.SendDataFrame([]byte(m)); err != nil {
 					return fmt.Errorf("clientFlap.SendDataFrame: %w", err)
 				}
-				if s.logger.Enabled(ctx, slog.LevelDebug) {
-					s.logger.DebugContext(ctx, "server response", "command", m)
+				// The whole response only at trace level: it carries
+				// message text, profiles and away messages.
+				if s.logger.Enabled(ctx, middleware.LevelTrace) {
+					s.logger.Log(ctx, middleware.LevelTrace, "server response", "command", m)
 				} else {
 					// just log the command, omit params
 					idx := len(m)

@@ -19,6 +19,7 @@ import (
 
 	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/foodgroup"
+	"github.com/mk6i/open-oscar-server/loginguard"
 	"github.com/mk6i/open-oscar-server/server/e2e"
 	"github.com/mk6i/open-oscar-server/server/http"
 	"github.com/mk6i/open-oscar-server/server/icq_legacy"
@@ -48,6 +49,8 @@ type Container struct {
 	Listeners              []config.ListenerGroup
 	feedbagSvc             *foodgroup.FeedbagService
 	icqService             *foodgroup.ICQService
+	loginGuard             *loginguard.Guard
+	trustedProxies         []netip.Prefix
 }
 
 // MakeCommonDeps creates common dependencies used by the food group services.
@@ -89,6 +92,13 @@ func MakeCommonDeps() (Container, error) {
 	c.webAPISessionManager = webapi.NewSessionManager()
 	c.rateLimitClasses = wire.DefaultRateLimitClasses()
 	c.snacRateLimits = wire.DefaultSNACRateLimits()
+
+	// One guard for every sign-in path, so that failures add up across them.
+	c.loginGuard = loginguard.New(c.cfg.LoginGuard.Guard(), c.logger.With("svc", "LoginGuard"))
+	c.trustedProxies, err = loginguard.ParsePrefixes(c.cfg.LoginGuard.TrustedProxies)
+	if err != nil {
+		return c, fmt.Errorf("invalid LOGIN_GUARD_TRUSTED_PROXIES: %w", err)
+	}
 
 	c.feedbagSvc = foodgroup.NewFeedbagService(
 		c.logger,
@@ -299,6 +309,7 @@ func OSCAR(deps Container) *oscar.Server {
 		deps.sqLiteUserStore,
 		deps.rateLimitClasses,
 		state.NewAccountCreator(deps.sqLiteUserStore.InsertUser),
+		deps.loginGuard,
 		logger,
 	)
 	bartService := foodgroup.NewBARTService(
@@ -441,9 +452,10 @@ func KerberosAPI(deps Container) *kerberos.Server {
 		deps.sqLiteUserStore,
 		deps.rateLimitClasses,
 		state.NewAccountCreator(deps.sqLiteUserStore.InsertUser),
+		deps.loginGuard,
 		logger,
 	)
-	return kerberos.NewKerberosServer(deps.Listeners, logger, authService)
+	return kerberos.NewKerberosServer(deps.Listeners, logger, authService, deps.trustedProxies)
 }
 
 // MgmtAPI creates an HTTP server for the management API.
@@ -515,6 +527,7 @@ func TOC(deps Container) *toc.Server {
 				deps.sqLiteUserStore,
 				deps.rateLimitClasses,
 				state.NewAccountCreator(deps.sqLiteUserStore.InsertUser),
+				deps.loginGuard,
 				logger,
 			),
 			BuddyListRegistry: deps.sqLiteUserStore,
@@ -629,6 +642,7 @@ func WebAPI(deps Container) *webapi.Server {
 			deps.sqLiteUserStore,
 			deps.rateLimitClasses,
 			state.NewAccountCreator(deps.sqLiteUserStore.InsertUser),
+			deps.loginGuard,
 			logger,
 		),
 		BuddyListRegistry: deps.sqLiteUserStore,
@@ -672,6 +686,7 @@ func WebAPI(deps Container) *webapi.Server {
 			deps.inMemorySessionManager,
 			logger.With("svc", "e2e"),
 		),
+		TrustedProxies: deps.trustedProxies,
 	}
 
 	return webapi.NewServer(deps.cfg.WebAPIListeners, logger, handler, deps.webAPISessionManager)
@@ -701,6 +716,7 @@ func ICQLegacy(deps Container) *icq_legacy.LegacyServer {
 		deps.sqLiteUserStore,
 		deps.rateLimitClasses,
 		state.NewAccountCreator(deps.sqLiteUserStore.InsertUser),
+		deps.loginGuard,
 		logger,
 	)
 

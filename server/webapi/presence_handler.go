@@ -507,7 +507,7 @@ func (h *PresenceHandler) SetStatus(w http.ResponseWriter, r *http.Request, sess
 
 	h.Logger.InfoContext(ctx, "status message updated",
 		"screenName", session.ScreenName.String(),
-		"statusMsg", statusMsg,
+		"statusMsg_len", len(statusMsg),
 		"statusCode", statusCode,
 		"mood", r.URL.Query().Get("mood"),
 	)

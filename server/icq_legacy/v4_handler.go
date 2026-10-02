@@ -9,6 +9,8 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/mk6i/open-oscar-server/loginguard"
+	"github.com/mk6i/open-oscar-server/server/oscar/middleware"
 	"github.com/mk6i/open-oscar-server/state"
 )
 
@@ -73,7 +75,7 @@ func (h *V4Handler) Handle(session *LegacySession, addr *net.UDPAddr, packet []b
 		return fmt.Errorf("V4 packet too short: %d bytes", len(packet))
 	}
 
-	h.logger.Debug("raw V4 packet before decryption",
+	h.logger.Log(context.Background(), middleware.LevelTrace, "raw V4 packet before decryption",
 		"hex", fmt.Sprintf("%X", packet),
 		"len", len(packet),
 	)
@@ -88,7 +90,7 @@ func (h *V4Handler) Handle(session *LegacySession, addr *net.UDPAddr, packet []b
 		return err
 	}
 
-	h.logger.Debug("V4 packet after decryption",
+	h.logger.Log(context.Background(), middleware.LevelTrace, "V4 packet after decryption",
 		"hex", fmt.Sprintf("%X", decrypted),
 	)
 
@@ -466,6 +468,7 @@ func (h *V4Handler) handleGetDeps(addr *net.UDPAddr, seq1, seq2 uint16, uin uint
 	)
 
 	// 2. Call service layer with typed request
+	ctx = loginguard.WithClientIP(ctx, addr.String())
 	authReq := AuthRequest{
 		UIN:      dataUIN,
 		Password: password,
@@ -589,6 +592,7 @@ func (h *V4Handler) handleLogin(session *LegacySession, addr *net.UDPAddr, seq1,
 	)
 
 	// 3. Call service layer with typed request
+	ctx = loginguard.WithClientIP(ctx, addr.String())
 	authReq := AuthRequest{
 		UIN:      uin,
 		Password: password,
