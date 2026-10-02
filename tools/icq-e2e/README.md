@@ -203,7 +203,9 @@ earlier build kept a file per contact for the button under
 | `rewrite.rs` | Which SNACs are messages, and what happens to each one. |
 | `icbm.rs`, `snac.rs`, `text.rs`, `caps.rs` | Decoding, and the add-on's capability and account-key announcement. |
 | `hook.rs`, `log.rs` | Winsock, and the log. |
-| `calls.rs`, `hook_calls.rs` | Call observation (`calls_log=on`, stage C0 of `docs/e2e/CALLS-RESEARCH.md`): the media sockets of `sipXtapi.dll` / `sipXmediaLib.dll`, each datagram classified (STUN, TURN, RTP, RTCP, other) without content, and the SIP of a call (ICBM channel 6) reduced to its media fields. Nothing is changed. |
+| `calls.rs`, `hook_calls.rs` | Call observation (`calls_log=on`, stage C0 of `docs/e2e/CALLS-RESEARCH.md`): the media sockets of `sipXtapi.dll` / `sipXmediaLib.dll`, each datagram classified (STUN, TURN, RTP, RTCP, other) without content, and the SIP of a call (ICBM channel 6) reduced to its media fields. With `calls_encrypt=on` the same hooks encrypt the media of a call both add-ons agreed on. |
+| `callneg.rs` | Call encryption, key agreement (`calls_encrypt=on`, stages C1/C3): offer / answer / confirm as hidden control messages in the E2E session, keyed by the Call-ID; the state of each call; which datagrams belong to an agreed call; the notes. |
+| `callmedia.rs` | Call encryption, media (stage C2): HKDF keys per direction, AES-128-GCM over RTP (RFC 7714, explicit rollover counter) and RTCP (SRTCP index), the replay window, and the TURN / ChannelData framing around them. |
 | `route.rs` | Which connections go to our server (`server=` in `icq-e2e.ini`), and the TLS port and ALPN they go to instead (docs/e2e/STAGE-TLS.md). |
 | `tls.rs`, `hook_tls.rs` | TLS 1.3 as byte buffers (rustls), and TLS at the bottom of the hooked sockets: the pump thread, `recv`/`send`/`FIONREAD`/`closesocket`/`getpeername`, fail closed with a message box; `tls=off` is the opt-out. |
 
@@ -263,6 +265,7 @@ Environment variables, read when ICQ starts:
 | `ICQE2E_PEERS` | `uin1,uin2`: encrypt outbound messages only to these contacts. Unset: to everybody. |
 | `ICQE2E_NO_INJECT` | `1`: never add or remove a frame. |
 | `ICQE2E_CALLS_LOG` | Overrides `calls_log =` of the ini (see "Call observation" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is off. |
+| `ICQE2E_CALLS_ENCRYPT` | Overrides `calls_encrypt =` of the ini (see "Call encryption" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is **off** (the default). |
 | `ICQE2E_LOG` | File to append the log to (local-time stamps). Lines also go to `OutputDebugString`. Unset: `%LOCALAPPDATA%\icqe2e\icqe2e.log`. |
 
 At start-up the log says where it looked for the ini and whether it was there:
@@ -348,7 +351,7 @@ calls_log = on
 ```
 
 or `ICQE2E_CALLS_LOG=on`. The start-up line then ends in `calls_log=on (call
-media observed, nothing changed)`.
+media observed)`.
 
 What it does, and nothing more - **no byte of a call is changed, held or
 dropped**:
@@ -378,7 +381,7 @@ dropped**:
   relay is).
 
 ```
-calls_log=on: call media and signalling are observed (classes, sizes, ports; never content); nothing is changed
+calls_log=on: call media and signalling are observed (classes, sizes, ports; never content)
 call hooks installed in sipXtapi.dll at 0x10000000 (on load): patched [sendto#20, recvfrom#17, ...]; observation only, nothing is changed
 call SIP OUT peer=100002 INVITE cseq=1 INVITE call=5d41402a from=100001 to=100002 1834 B sdp: audio port=16384 RTP/AVP pt=[103,0,8] rtpmap=[103=ISAC/16000,...] c=private crypto=0 candidates=3 (host 1, relay 1, srflx 1) attrs=[sendrecv]
 call media: sipXtapi.dll bind sock=1234 -> L:16384 (udp)
@@ -389,6 +392,79 @@ call media: sipXtapi.dll sock=1234 L:16384 OUT -> server:3478 5.0s: turn-send/rt
 
 `docs/e2e/CALLS-RESEARCH.md` section 8 says how the owner runs the test and
 what each line answers.
+
+## Call encryption (`calls_encrypt`)
+
+Stages C1-C3 of `docs/e2e/CALLS-RESEARCH.md` (section 9 there has the
+details and the live test). **Off by default**, until the C0 data is in;
+turned on by a line in `icq-e2e.ini` next to `ICQ.exe` (the patch keeps it),
+on **both** clients:
+
+```
+calls_encrypt = on
+```
+
+or `ICQE2E_CALLS_ENCRYPT=on`. It needs encrypt mode (not `e2e=off`) and
+frames allowed (not `ICQE2E_NO_INJECT`); otherwise the start-up line says
+`calls_encrypt=on but inactive`. In effect, the start-up line ends in
+`calls_encrypt=on (call media encrypted when both add-ons agree; any other
+call untouched)`. It can be combined with `calls_log = on`.
+
+The rule the owner set: **a call is never blocked, and a call that is not
+encrypted is exactly what it was without the add-on** - no byte of it
+changed. Encryption happens only when both add-ons agreed on keys for that
+Call-ID; anything else passes untouched.
+
+- **Key agreement** (`callneg.rs`): when the client sends an INVITE (ICBM
+  channel 6) to a contact with E2E keys, the add-on first puts a hidden
+  control message in the E2E session: `{call, device, device key, ephemeral
+  X25519 key, SDP hash, suites}`. The callee's add-on, when its client sends
+  the 200 OK, first answers the same way; the caller confirms with a tag
+  only the same keys produce. Each control message goes on the wire before
+  the SIP message it belongs to, so the decision needs no timer: no offer at
+  the callee's answer, or no answer at the caller's 200 OK, means plain. An
+  add-on without call support (older, or `calls_encrypt` off) takes the
+  offer as an ordinary control message: nothing shown, nothing answered, and
+  the call is plain.
+- **Keys**: HKDF-SHA256 over the X25519 secret; salt: the Call-ID's SHA-256,
+  both UINs, both device ids and Curve25519 device keys; info: both
+  ephemeral keys and a label. Separate keys for caller-to-callee and
+  callee-to-caller, and for RTP and RTCP. Dropped 10 s after BYE.
+- **Media** (`callmedia.rs`): AES-128-GCM per RFC 7714 - the RTP header in
+  the clear as associated data, the payload encrypted, the 16-byte tag, then
+  the 4-byte rollover counter (explicit, so loss and reordering never confuse
+  the index); RTCP with the first 8 bytes clear and an SRTCP index. 20 bytes
+  more per packet. A 128-packet replay window per SSRC and direction. Inside
+  TURN Send / Data Indication (the attribute and message lengths fixed),
+  RFC 5766 ChannelData, or bare (direct path, or relayed after Set Active
+  Destination). STUN and TURN control are never touched.
+- **Fail closed, only for an agreed call**: a packet that does not
+  authenticate, a replay, or plain RTP in an encrypted call is dropped; a
+  packet that cannot be encrypted is dropped, never sent plain; a panic in a
+  hook drops the packet of an agreed call and passes anything else.
+- The callee holds the call as *answered* until the caller proves it has the
+  keys (its confirmation, or its first packet that decrypts); without either
+  in 8 s it goes plain too, so the two sides never disagree.
+- **Notes** in the chat with the contact: `This call with 100002 is
+  end-to-end encrypted ...`, or `This call with 100002 is not end-to-end
+  encrypted: <reason>.`; for a contact under `/e2e on` or verified, it adds
+  that calls are never blocked and to hang up if the call must stay private.
+- **Packet size**: an encrypted datagram over 1472 bytes of UDP payload is
+  logged (`... is over 1472 B of UDP payload; sent unfragmented by us`); the
+  add-on does not fragment.
+
+In the log, per call (`call=` is the same 8-hex label as the C0 lines):
+
+```
+calls_encrypt=on: a call is encrypted end to end when both add-ons agree on its keys through the E2E session; any other call is left exactly as it is
+call 5d41402a with 100002 (we call): INVITE out, key offer sent first (local media ports {16384, 16385})
+call 5d41402a with 100002 (we call): key answer in; media keys agreed (AES-128-GCM), confirmation queued
+call 5d41402a with 100002 (we call): 200 OK in, the call is end-to-end encrypted
+call 5d41402a with 100002 (we call): first media packet encrypted (local port 16384, 72 B -> 92 B)
+call 5d41402a with 100002 (we call): first media packet decrypted (local port 16384)
+call 5d41402a with 100002 (we call): BYE; keys kept 10 s for packets on the way
+call 5d41402a with 100002 (we call): forgotten (ended); media: out: 1500 RTP + 30 RTCP encrypted (...); in: ...; dropped: 0 plain, 0 failed authentication, 0 replayed, 0 other
+```
 
 ## Build
 

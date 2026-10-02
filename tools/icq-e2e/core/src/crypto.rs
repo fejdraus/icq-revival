@@ -86,6 +86,23 @@ pub trait Crypto {
     /// How many messages have gone to `peer` since we last sent a control
     /// message, which is what the heartbeat counts.
     fn since_control(&self, peer: &str) -> u32;
+
+    /// The SIP message of a call with `peer` (ICBM channel 6) passing in
+    /// `dir`, with `calls_encrypt=on` (`callneg.rs`). Returns the control
+    /// containers to put on the wire to `peer` *before* that message; the
+    /// message itself is never changed. Nothing by default: an engine that
+    /// does not encrypt calls leaves them as they are.
+    fn call_sip(
+        &mut self,
+        dir: crate::icbm::Direction,
+        peer: &str,
+        sip: &[u8],
+        now: u64,
+        lines: &mut Vec<String>,
+    ) -> Vec<Vec<u8>> {
+        let _ = (dir, peer, sip, now, lines);
+        Vec::new()
+    }
 }
 
 /// The engine of an install with `e2e=off` (the patch's "encrypted connection
@@ -557,6 +574,12 @@ pub struct Engine {
     /// A publish this sign-on failed in a way the user was told about, so a
     /// later success is worth one note.
     publish_failed: bool,
+    /// `calls_encrypt=on`: calls are offered, answered and encrypted
+    /// ([`crate::callneg`]). Off, a call payload is an ordinary control
+    /// message, exactly as for an add-on without call support.
+    calls_encrypt: bool,
+    /// The calls, shared with the media hooks.
+    calls: Arc<std::sync::Mutex<crate::callneg::CallTable>>,
 }
 
 impl Engine {
@@ -580,6 +603,107 @@ impl Engine {
             safety_shown: HashMap::new(),
             changed: false,
             publish_failed: false,
+            calls_encrypt: false,
+            calls: crate::callneg::shared(),
+        }
+    }
+
+    /// Switches call encryption on or off (`calls_encrypt=` of the ini).
+    pub fn set_calls_encrypt(&mut self, on: bool) {
+        self.calls_encrypt = on;
+    }
+
+    /// Gives the engine a call table of its own instead of the one the hooks
+    /// share: two engines in one test process.
+    pub fn use_call_table(&mut self, t: Arc<std::sync::Mutex<crate::callneg::CallTable>>) {
+        self.calls = t;
+    }
+
+    /// What a call note needs to know about `peer`: under `/e2e on`, or
+    /// verified.
+    fn peer_info(&self, peer: &str) -> crate::callneg::PeerInfo {
+        let verified = self.keys.pinned(peer).is_some_and(|p| p.is_verified());
+        crate::callneg::PeerInfo {
+            strict: verified || self.remembered(peer).setting == Setting::On,
+            verified,
+        }
+    }
+
+    /// This device, for a call key exchange with `peer`, or why there is
+    /// none: the same rules as a message, minus anything that would hold a
+    /// call (a call is never held, only left unencrypted).
+    fn call_me(&mut self, peer: &str, now: u64) -> Result<crate::callneg::Me, String> {
+        if self.remembered(peer).setting == Setting::Off {
+            return Err("encryption is off in this chat (/e2e off)".into());
+        }
+        if !self.ready || self.token.is_none() {
+            return Err("this add-on's keys are not in the key directory yet".into());
+        }
+        if self.keys.pinned(peer).is_some_and(|p| p.held) {
+            return Err(format!(
+                "{peer}'s safety number changed and is not verified again yet (/e2e safety)"
+            ));
+        }
+        match self.contact(peer, now) {
+            Ok(_) => {}
+            Err(Lookup::NoKeys) => {
+                return Err(format!(
+                    "{peer} has no encryption keys in the key directory"
+                ))
+            }
+            Err(Lookup::Transient(e)) => {
+                return Err(format!("the key directory could not be reached ({e})"))
+            }
+        }
+        let key = self
+            .keys
+            .account()
+            .map(|a| *a.curve25519_key().as_bytes())
+            .ok_or("this device's keys cannot be read")?;
+        Ok(crate::callneg::Me {
+            uin: self.keys.screen_name.clone(),
+            device: self.keys.device_id,
+            key,
+        })
+    }
+
+    /// A call payload as a control container for `peer`, through the Olm
+    /// session with each of their devices.
+    fn encrypt_call_payload(
+        &mut self,
+        peer: &str,
+        payload: &[u8],
+        now: u64,
+    ) -> Result<Vec<u8>, String> {
+        let bearer = self.bearer().ok_or("no key directory token")?;
+        let contact = match self.contact(peer, now) {
+            Ok(c) => c,
+            Err(Lookup::NoKeys) => return Err(format!("{peer} has no encryption keys")),
+            Err(Lookup::Transient(e)) => return Err(e),
+        };
+        if self.keys.pinned(peer).is_some_and(|k| k.held) {
+            return Err(format!("{peer}'s safety number changed"));
+        }
+        let out = keys::Outgoing {
+            peer: peer.to_string(),
+            form: Form::Fragment {
+                charset: 0,
+                language: 0,
+            },
+            text: payload.to_vec(),
+            now,
+        };
+        self.changed = true;
+        match self
+            .keys
+            .encrypt_control(&*self.dir, &bearer, &out, &contact)
+        {
+            Ok(Outbound::Encrypted(wire)) => {
+                container::find_armor(&wire).ok_or_else(|| "no container".to_string())
+            }
+            Ok(Outbound::Refused(note)) => Err(note),
+            Ok(Outbound::Clear { note, .. }) => Err(note),
+            Err(e) => Err(e.to_string()),
         }
     }
 
@@ -1223,12 +1347,26 @@ impl Crypto for Engine {
     ) -> Inbound {
         let got = self.keys.decrypt(&*self.dir, peer, container, now);
         self.changed = true;
+        // A call key exchange (`calls_encrypt=on` only): it goes to the call
+        // table and is answered by the call's own SIP, not by a control
+        // message of ours. Off, it is taken below like any control message,
+        // as an add-on without call support takes it.
+        if self.calls_encrypt {
+            if let Inbound::Control(payload) = &got {
+                if let Some(msg) = crate::callneg::Msg::decode(payload) {
+                    let table = self.calls.clone();
+                    lock_calls(&table).control(peer, container.sender_device, msg, now * 1000);
+                    self.remember(peer, |r| r.seen_encrypting = true);
+                    return got;
+                }
+            }
+        }
         match &got {
             // An incoming key exchange means the contact may keep sending them,
             // so one control message of our own is due (CHECKLIST 2.2). It is
             // an encrypted exchange too, so the contact is remembered as
             // encrypting; nothing is shown for it.
-            Inbound::Control => {
+            Inbound::Control(_) => {
                 let p = sign::ident(peer);
                 if !self.owed_control.contains(&p) {
                     self.owed_control.push(p);
@@ -1251,6 +1389,11 @@ impl Crypto for Engine {
     }
 
     fn take_note(&mut self) -> Option<Note> {
+        if self.calls_encrypt {
+            let table = self.calls.clone();
+            let mut t = lock_calls(&table);
+            self.notes.extend(t.take_notes());
+        }
         if self.notes.is_empty() {
             None
         } else {
@@ -1259,6 +1402,17 @@ impl Crypto for Engine {
     }
 
     fn take_control(&mut self, peer: &str) -> Option<Vec<u8>> {
+        // A call's confirmation that no SIP message has carried yet.
+        if self.calls_encrypt {
+            let table = self.calls.clone();
+            let waiting = lock_calls(&table).take_outbox(peer);
+            if let Some(payload) = waiting {
+                match self.encrypt_call_payload(peer, &payload, unix_now()) {
+                    Ok(c) => return Some(c),
+                    Err(why) => lock_calls(&table).send_failed(&payload, &why),
+                }
+            }
+        }
         let p = sign::ident(peer);
         let owed = self.owed_control.iter().any(|x| *x == p);
         let due = self.counted.get(&p).copied().unwrap_or(0) >= HEARTBEAT;
@@ -1300,6 +1454,45 @@ impl Crypto for Engine {
     fn since_control(&self, peer: &str) -> u32 {
         self.counted.get(&sign::ident(peer)).copied().unwrap_or(0)
     }
+
+    fn call_sip(
+        &mut self,
+        dir: crate::icbm::Direction,
+        peer: &str,
+        sip: &[u8],
+        now: u64,
+        lines: &mut Vec<String>,
+    ) -> Vec<Vec<u8>> {
+        if !self.calls_encrypt {
+            return Vec::new();
+        }
+        let Some(parsed) = crate::callneg::Sip::parse(sip) else {
+            return Vec::new();
+        };
+        let info = self.peer_info(peer);
+        let table = self.calls.clone();
+        let payloads = {
+            let mut t = lock_calls(&table);
+            let mut me = || self.call_me(peer, now);
+            t.sip(dir, peer, &parsed, info, &mut me, now * 1000)
+        };
+        let mut out = Vec::new();
+        for p in payloads {
+            match self.encrypt_call_payload(peer, &p, now) {
+                Ok(c) => out.push(c),
+                Err(why) => lock_calls(&table).send_failed(&p, &why),
+            }
+        }
+        lines.extend(lock_calls(&table).take_log());
+        out
+    }
+}
+
+/// The call table, even if a panic poisoned its lock.
+fn lock_calls(
+    t: &std::sync::Mutex<crate::callneg::CallTable>,
+) -> std::sync::MutexGuard<'_, crate::callneg::CallTable> {
+    t.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Why a contact was not found, which decides whether the answer is worth
@@ -1865,7 +2058,7 @@ mod tests {
             other => panic!("{other:?}"),
         };
         let c = container::Container::from_bytes(&container::find_armor(&wire).unwrap()).unwrap();
-        assert!(matches!(ea.inbound("100002", &c, NOW), Inbound::Control));
+        assert!(matches!(ea.inbound("100002", &c, NOW), Inbound::Control(_)));
         assert!(
             ea.since_control("100001") == 0,
             "a control message is not counted"
@@ -2561,5 +2754,262 @@ mod tests {
             ea.outbound("100002", form(), b"reply", NOW),
             Outbound::Refused(_)
         ));
+    }
+
+    // --- calls (calls_encrypt) ------------------------------------------------
+
+    use crate::callmedia::Verdict;
+    use crate::callneg::CallTable;
+    use crate::icbm::Direction;
+    use std::sync::Mutex;
+
+    type Table = Arc<Mutex<CallTable>>;
+
+    /// Two running engines, each with its own call table and calls on or off.
+    fn callers(a_on: bool, b_on: bool) -> (Engine, Engine, Table, Table) {
+        let (dir, a, b) = two_published();
+        let mut ea = running(&dir, a);
+        let mut eb = running(&dir, b);
+        let (ta, tb): (Table, Table) = Default::default();
+        ea.use_call_table(ta.clone());
+        eb.use_call_table(tb.clone());
+        ea.set_calls_encrypt(a_on);
+        eb.set_calls_encrypt(b_on);
+        (ea, eb, ta, tb)
+    }
+
+    fn sip(first: &str, call: &str, cseq: &str, port: Option<u16>) -> Vec<u8> {
+        let mut m = format!("{first}\r\nCall-ID: {call}\r\nCSeq: {cseq}\r\n");
+        match port {
+            Some(p) => m.push_str(&format!(
+                "Content-Type: application/sdp\r\n\r\nv=0\r\nm=audio {p} RTP/AVP 103\r\n"
+            )),
+            None => m.push_str("\r\n"),
+        }
+        m.into_bytes()
+    }
+
+    fn invite(call: &str) -> Vec<u8> {
+        sip("INVITE sip:100002@h SIP/2.0", call, "1 INVITE", Some(16384))
+    }
+
+    fn ok200(call: &str) -> Vec<u8> {
+        sip("SIP/2.0 200 OK", call, "1 INVITE", Some(20000))
+    }
+
+    fn ack(call: &str) -> Vec<u8> {
+        sip("ACK sip:100002@h SIP/2.0", call, "1 ACK", None)
+    }
+
+    /// What the receiving engine makes of control containers, as the stream
+    /// hands them over. Every one is flagged as a control message, so an
+    /// add-on without call support shows nothing for it.
+    fn hand(to: &mut Engine, from: &str, containers: Vec<Vec<u8>>) -> Vec<Inbound> {
+        containers
+            .iter()
+            .map(|c| {
+                let c = container::Container::from_bytes(c).unwrap();
+                assert!(c.is_control());
+                to.inbound(from, &c, NOW)
+            })
+            .collect()
+    }
+
+    /// One call from A (100001) to B (100002), every step through the
+    /// engines and their Olm sessions.
+    fn place_call(ea: &mut Engine, eb: &mut Engine, call: &str) {
+        let mut lines = Vec::new();
+        let offer = ea.call_sip(
+            Direction::Outbound,
+            "100002",
+            &invite(call),
+            NOW,
+            &mut lines,
+        );
+        hand(eb, "100001", offer);
+        assert!(eb
+            .call_sip(Direction::Inbound, "100001", &invite(call), NOW, &mut lines)
+            .is_empty());
+        let answer = eb.call_sip(Direction::Outbound, "100001", &ok200(call), NOW, &mut lines);
+        hand(ea, "100002", answer);
+        ea.call_sip(Direction::Inbound, "100002", &ok200(call), NOW, &mut lines);
+        let confirm = ea.call_sip(Direction::Outbound, "100002", &ack(call), NOW, &mut lines);
+        hand(eb, "100001", confirm);
+        eb.call_sip(Direction::Inbound, "100001", &ack(call), NOW, &mut lines);
+    }
+
+    fn rtp(seq: u16) -> Vec<u8> {
+        let mut p = vec![0x80, 103];
+        p.extend_from_slice(&seq.to_be_bytes());
+        p.extend_from_slice(&[0, 0, 1, 0, 0xAB, 0xCD, 0xEF, 0x01]);
+        p.extend_from_slice(&[0x77; 40]);
+        p
+    }
+
+    fn texts(e: &mut Engine) -> Vec<String> {
+        notes(e).into_iter().map(|n| n.text).collect()
+    }
+
+    #[test]
+    fn a_call_between_two_add_ons_with_calls_on_is_encrypted() {
+        let (mut ea, mut eb, ta, tb) = callers(true, true);
+        place_call(&mut ea, &mut eb, "c1@h");
+        assert_eq!(ta.lock().unwrap().state_of("c1@h"), Some("agreed"));
+        assert_eq!(tb.lock().unwrap().state_of("c1@h"), Some("agreed"));
+        let (na, nb) = (texts(&mut ea), texts(&mut eb));
+        assert!(
+            na.iter()
+                .any(|n| n.contains("This call with 100002 is end-to-end encrypted")),
+            "{na:?}"
+        );
+        assert!(
+            nb.iter()
+                .any(|n| n.contains("This call with 100001 is end-to-end encrypted")),
+            "{nb:?}"
+        );
+        // No ordinary control message is owed for a call exchange.
+        assert!(ea.take_control("100002").is_none() && eb.take_control("100001").is_none());
+        // The media keys are the same on both sides.
+        let e = match ta.lock().unwrap().media_out(16384, &rtp(1), NOW * 1000) {
+            Verdict::Replace(e) => e,
+            v => panic!("{v:?}"),
+        };
+        assert_ne!(e, rtp(1));
+        assert_eq!(
+            tb.lock().unwrap().media_in(20000, &e, NOW * 1000),
+            Verdict::Replace(rtp(1))
+        );
+    }
+
+    #[test]
+    fn a_callee_with_calls_off_takes_the_offer_as_an_old_add_on_would() {
+        let (mut ea, mut eb, ta, tb) = callers(true, false);
+        let mut lines = Vec::new();
+        let offer = ea.call_sip(
+            Direction::Outbound,
+            "100002",
+            &invite("c2@h"),
+            NOW,
+            &mut lines,
+        );
+        assert_eq!(offer.len(), 1, "an offer is made");
+        // B (calls off, or an add-on from before calls) sees an ordinary
+        // control message: nothing shown, one control message owed back.
+        let got = hand(&mut eb, "100001", offer);
+        assert!(matches!(got[0], Inbound::Control(_)));
+        assert!(eb.take_control("100001").is_some());
+        assert!(eb
+            .call_sip(
+                Direction::Outbound,
+                "100001",
+                &ok200("c2@h"),
+                NOW,
+                &mut lines
+            )
+            .is_empty());
+        assert_eq!(
+            tb.lock().unwrap().state_of("c2@h"),
+            None,
+            "B's table is untouched"
+        );
+        // A sees the 200 OK with no answer: plain, and says why.
+        ea.call_sip(
+            Direction::Inbound,
+            "100002",
+            &ok200("c2@h"),
+            NOW,
+            &mut lines,
+        );
+        assert_eq!(ta.lock().unwrap().state_of("c2@h"), Some("plain"));
+        let n = texts(&mut ea);
+        assert!(
+            n.iter()
+                .any(|n| n.contains("is not end-to-end encrypted") && n.contains("did not answer")),
+            "{n:?}"
+        );
+        assert_eq!(
+            ta.lock().unwrap().media_out(16384, &rtp(1), NOW * 1000),
+            Verdict::Pass,
+            "the media is the client's own"
+        );
+        assert!(texts(&mut eb).is_empty(), "B, with calls off, says nothing");
+    }
+
+    #[test]
+    fn a_caller_with_calls_off_sends_nothing_and_the_callee_goes_plain() {
+        let (mut ea, mut eb, ta, tb) = callers(false, true);
+        let mut lines = Vec::new();
+        assert!(ea
+            .call_sip(
+                Direction::Outbound,
+                "100002",
+                &invite("c3@h"),
+                NOW,
+                &mut lines
+            )
+            .is_empty());
+        assert_eq!(ta.lock().unwrap().state_of("c3@h"), None);
+        eb.call_sip(
+            Direction::Inbound,
+            "100001",
+            &invite("c3@h"),
+            NOW,
+            &mut lines,
+        );
+        assert!(eb
+            .call_sip(
+                Direction::Outbound,
+                "100001",
+                &ok200("c3@h"),
+                NOW,
+                &mut lines
+            )
+            .is_empty());
+        assert_eq!(tb.lock().unwrap().state_of("c3@h"), Some("plain"));
+        assert!(texts(&mut eb).iter().any(|n| n.contains("did not offer")));
+    }
+
+    #[test]
+    fn e2e_off_for_the_caller_declines_and_both_say_why() {
+        let (mut ea, mut eb, ta, tb) = callers(true, true);
+        assert!(eb.command("100001", "/e2e off", NOW));
+        texts(&mut eb);
+        place_call(&mut ea, &mut eb, "c4@h");
+        assert_eq!(ta.lock().unwrap().state_of("c4@h"), Some("plain"));
+        assert_eq!(tb.lock().unwrap().state_of("c4@h"), Some("plain"));
+        assert!(texts(&mut ea).iter().any(|n| n.contains("declined")));
+        assert!(texts(&mut eb).iter().any(|n| n.contains("/e2e off")));
+    }
+
+    #[test]
+    fn a_verified_contact_s_plain_call_is_said_in_strong_words_not_blocked() {
+        let (mut ea, mut eb, ta, _) = callers(true, false);
+        assert!(ea.command("100002", "/e2e on", NOW));
+        texts(&mut ea);
+        let mut lines = Vec::new();
+        let offer = ea.call_sip(
+            Direction::Outbound,
+            "100002",
+            &invite("c5@h"),
+            NOW,
+            &mut lines,
+        );
+        hand(&mut eb, "100001", offer);
+        ea.call_sip(
+            Direction::Inbound,
+            "100002",
+            &ok200("c5@h"),
+            NOW,
+            &mut lines,
+        );
+        let n = texts(&mut ea);
+        assert!(
+            n.iter().any(|n| n.contains("calls are never blocked")),
+            "{n:?}"
+        );
+        assert_eq!(
+            ta.lock().unwrap().media_out(1, &rtp(1), NOW * 1000),
+            Verdict::Pass
+        );
     }
 }

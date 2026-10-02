@@ -1,11 +1,12 @@
 # Encrypted voice and video calls - research
 
-Status: research (2026-10-02); stage C0, the observation spike, is built
-(section 8) and its live test is the owner's next step. Sections 1-6 are
-static analysis of the import, export and string tables of the shipped DLLs
-and of their configuration; native code paths were not reversed. Nothing here
-was seen on a live call yet - sections 7 and 8 say what a live test must
-confirm.
+Status: research (2026-10-02). Stage C0, the observation spike, is built
+(section 8). Stages C1-C3 - key agreement, media encryption, policy and
+notes - are built behind `calls_encrypt = on`, **off by default** (section
+9). Neither has run on a live call yet: the owner's live test (sections 8.1
+and 9.4) is the next step. Sections 1-6 are static analysis of the import,
+export and string tables of the shipped DLLs and of their configuration;
+native code paths were not reversed.
 
 Files examined: ICQ 7.2 as installed (read only), ICQ 6.5 from the pristine
 copy in the scratchpad. Offsets below are file offsets of strings, IAT
@@ -209,6 +210,9 @@ everything else alone.
     all media and say in the chat "Call not encrypted: <uin> has no add-on;
     call blocked" (the user hangs up; BYE is not forged). Otherwise allow
     plain with a note "This call is not encrypted".
+    **Superseded** by the owner's rule (section 9): a call is never blocked;
+    a call that is not encrypted is exactly what it was without the add-on,
+    and the note says so, in stronger words for such a contact.
   - Once agreed: a packet that fails authentication is dropped, never
     passed on; a plain RTP packet on an encrypted call is dropped
     (downgrade); a panic in the hook drops the packet (never falls back to
@@ -271,6 +275,8 @@ already authenticated by Olm.
 | C1 key exchange | Call control message over Olm (ephemeral X25519, `Call-ID`, SDP hash), timeouts, capability bit for "calls v1" | 2-3 days |
 | C2 media transform | AEAD for RTP/RTCP, replay window, TURN Send/Data Indication, unit tests in `testhost` with captured packet shapes | 3-4 days |
 | C3 policy | ini line, refuse/allow rules, chat notes, fail-closed, patch row per "one row per job" if the owner wants one | 1-2 days |
+
+C1-C3 are built (section 9); C4 is the live test of section 9.4.
 | C4 live | direct, forced TURN, video, loss, no-add-on peer, long call | 2-3 days |
 | C5 7.2 | only if 7.2 calls work at all | open |
 
@@ -438,3 +444,183 @@ SDP's PT and clean sequence numbers is what "plain RTP" means.
 C0 is done when the two logs answer: which module carries RTP; direct or TURN
 (and which TURN framing); codecs and payload types; packet sizes (audio and
 video maxima); and that the SDP says `RTP/AVP` with no `a=crypto`.
+
+## 9. C1-C3 status
+
+**Built, off by default, not yet run on a live call.** `calls_encrypt = on`
+in `icq-e2e.ini` (or `ICQE2E_CALLS_ENCRYPT=on`) turns it on; it needs
+encrypt mode and frames allowed (not `e2e=off`, not `ICQE2E_NO_INJECT`). Off,
+the add-on behaves exactly as with C0 alone: nothing is offered, an incoming
+offer is an ordinary control message, no datagram is ever changed. The
+server is not changed. Code: `tools/icq-e2e/core/src/callneg.rs` (C1, C3),
+`callmedia.rs` (C2), `hook_calls.rs` (the hooks), `stream.rs` and
+`crypto.rs` (the control messages); README "Call encryption".
+
+The owner's rule, which overrides section 5a: **backward compatibility of
+calls**. A call where either side has no add-on, an older one, or
+`calls_encrypt` off works exactly as today - plain, every byte untouched.
+Encryption only after both add-ons agreed for that Call-ID; anything not
+agreed passes untouched. A call is never blocked.
+
+### 9.1 Key agreement (C1)
+
+Hidden control messages in the existing Olm session (`container.rs` kind 0,
+`FLAG_CONTROL`), payload `IQC1 | type | call (first 16 bytes of the Call-ID's
+SHA-256) | ...`:
+
+| Message | Sent | Fields |
+|---|---|---|
+| Offer | by the caller, just **before** its INVITE goes out | device id, device Curve25519 key, ephemeral X25519 key, SDP hash, suites |
+| Answer | by the callee, just **before** its 200 OK goes out | device id, device key, ephemeral key, SDP hash, the suite |
+| Decline | instead of an answer, when the callee's add-on refuses (`/e2e off` for the caller, no common suite) | reason |
+| Confirm | by the caller, before the next SIP message (the ACK) | HMAC tag under a key both sides derived |
+
+- Because each control message goes on the same connection just before
+  the SIP message it belongs to, and the server relays both in order, the
+  decision needs no timer: the callee knows at the INVITE whether there was
+  an offer, the caller at the 200 OK whether there was an answer.
+- An offer is made only to a contact with signed devices in the key
+  directory, under the message rules (not `/e2e off`, our keys published,
+  not a changed safety number of a verified contact). An add-on without call
+  support (C0 or older, or `calls_encrypt` off) decrypts the offer as an
+  ordinary control message: nothing is shown, the ratchet moves, it answers
+  with an empty control message at its next message, and the call is plain.
+  A contact with published keys who now runs a client without the add-on
+  sees the offer as the usual "Encrypted message - install the add-on" line,
+  as for any control message.
+- Keys: HKDF-SHA256 over the X25519 secret of the two ephemeral keys; salt =
+  a label, SHA-256(Call-ID), then caller and callee each as UIN, device id
+  and Curve25519 device key; info = a label, both ephemeral keys and the
+  purpose. Separate key + salt for caller-to-callee and callee-to-caller, each
+  for RTP and RTCP, and a confirmation key. The Olm session authenticates the
+  ephemeral keys, so the call keys are as trusted as the chat (the safety
+  number). Forward secrecy per call; dropped 10 s after BYE, CANCEL or a
+  final error, or when a set-up is given up.
+- The SDP hashes are compared, not bound into the keys: a 200 OK whose SDP
+  is not the one the callee's add-on saw is logged as a warning and the call
+  stays encrypted (the keys do not depend on the addresses).
+- The callee encrypts from its 200 OK on, but holds the call as *answered*
+  until the caller proves it has the keys: the Confirm, or simply its first
+  packet that decrypts. With neither in 8 s (the answer was lost, so the
+  caller went plain) the callee goes plain too, with a note - never a call
+  where one side encrypts and the other does not.
+
+### 9.2 Media (C2)
+
+As section 5a recommends, in the add-on's `sendto`/`recvfrom` (and
+`send`/`recv` on connected UDP sockets) of the call modules:
+
+- RTP: AES-128-GCM in RFC 7714's layout (header clear as associated data,
+  payload encrypted, 16-byte tag), with the rollover counter sent explicitly
+  in 4 bytes after the tag (authenticated). The sender never repeats an
+  index: a sequence number that goes back takes the next rollover counter.
+  RTCP: first 8 bytes clear, the rest encrypted, tag, `E | 31-bit index`.
+  Overhead 20 bytes per packet.
+- Replay: 128 packets per SSRC and direction, for RTP and RTCP.
+- Framing: bare (direct path, and the relayed path after Set Active
+  Destination), inside the DATA of a TURN Send / Data Indication (ICQ 6.5's
+  unpadded dialect and RFC 5766's padded one, lengths fixed), or ChannelData.
+  STUN and TURN control are never touched.
+- Which datagrams: only while a call has keys, only on a datagram socket of
+  that call - a local port of our SDP (`m=` port and the next, `a=rtcp`, host
+  candidates, `rport`), or any port while it is the only call with keys (one
+  call at a time; until C0 shows how sipX binds behind ICE).
+- Fail closed, for an agreed call only: no authentication, a replay, plain
+  RTP in an encrypted call: dropped. A packet that cannot be encrypted (an
+  integrity attribute after DATA, too many SSRCs): dropped, never sent plain.
+  A panic in a hook: dropped if the socket belongs to an agreed call, passed
+  untouched otherwise. `WSASendTo` (imported by no module) with an agreed
+  call's media: dropped.
+- A dropped incoming datagram: the next one is read if one is waiting or
+  comes within 20 ms, else the client gets a zero-length datagram. How sipX
+  takes that is for the live test to show (the RTP code is expected to
+  discard it as too short).
+- MTU: an encrypted datagram over 1472 bytes of UDP payload is logged once
+  per call and counted; the add-on does not fragment. C0 data will tell
+  whether video gets there.
+- Media before the answer (none is expected) and media of a call that is
+  not agreed pass untouched.
+
+### 9.3 Policy and notes (C3)
+
+Never blocked. One note per call, in the chat with the contact:
+
+- `[ICQ E2E] This call with 100002 is end-to-end encrypted: the voice and
+  video are encrypted with keys agreed through your encrypted chat.` plus
+  "100002 is verified." or the hint to compare the safety number.
+- `[ICQ E2E] This call with 100002 is not end-to-end encrypted: <reason>.`
+  Reasons: the contact did not offer to encrypt it / did not answer the key
+  exchange (no add-on there, an older one, or call encryption off); declined
+  (encryption off for this chat on their side); has no encryption keys; the
+  key directory could not be reached; our keys not published yet; `/e2e off`
+  here; a changed safety number not verified again; never confirmed the call
+  keys; the key exchange could not be sent.
+- For a contact under `/e2e on` or verified, the plain note adds: "Encryption
+  is on for 100002 in this chat, but calls are never blocked: the server and
+  the network can listen to this one. Hang up if it must stay private."
+- With `calls_encrypt` off there are no call notes at all.
+
+Tests (`cargo test --release`): the KDF (every input bound, directions
+apart), RTP/RTCP round trips with CSRC/extension/padding, tampering, the
+replay window with reordering and loss, rollover past 65536 packets and a
+sender that restarts its sequence numbers, plain RTP dropped, TURN Send /
+Data Indication / RFC 5766 Send Indication / ChannelData rewrapping, STUN
+and TURN control untouched, the MTU count; the payloads; the state machine
+(both on -> encrypted; callee without / off / old -> plain; caller without /
+off -> plain; decline; mismatched Call-ID, peer or device; implicit
+confirmation; confirmation timeout; wrong tag; BYE grace; set-up expiry);
+the same through two engines and their Olm sessions; the stream putting the
+control message before the SIP frame only when on; and two endpoints over
+real loopback UDP sockets through the hooks (encrypted on the wire, decrypted
+through the other hook, plain dropped, `WSAEMSGSIZE`, STUN and an unagreed
+call byte for byte).
+
+### 9.4 Live test (owner)
+
+> Run it yourself; nothing here starts a client.
+
+The ICQ 6.5 VM and ICQ 7.2 on this PC, two test accounts (e.g. 100001 and
+100002). The server is not changed and relays the media as bytes, so the
+same server as for C0 serves. Whether 7.2 places calls at all is itself
+open (section 1.1); if it does not, use two 6.5 installs.
+
+Set-up on both: apply the patches rebuilt by
+`tools\common\Build-Patches.ps1` with the encryption rows
+(`-Include e2e,e2e-tls`), set `ICQE2E_LOG` as in section 8.1, and edit
+`icq-e2e.ini` next to `ICQ.exe` with ICQ closed (the patch keeps the lines).
+Make sure a message between the two accounts is encrypted first (the chat
+says so): an offer needs the E2E session.
+
+1. **C0, `calls_encrypt` off** (only `calls_log = on` on both): the calls of
+   section 8.1. Every call line of section 8.2, and no line starting with
+   `call ... with` (the C1 lines), no call note in the chats. This is also
+   the C0 data: which module sends RTP on 7.2, the packet sizes, direct or
+   TURN.
+2. **Both on** (`calls_log = on` and `calls_encrypt = on` on both): a voice
+   call each way, a video call, and if possible a forced relay (section 8.1
+   step 4). Expected:
+   - start-up: `calls_encrypt=on: a call is encrypted end to end when both
+     add-ons agree ...`, and `call hooks installed in ...: media of a call
+     both add-ons agreed on is encrypted, all else untouched` when the call
+     starts;
+   - caller: `INVITE out, key offer sent first`, `key answer in; media keys
+     agreed`, `200 OK in, the call is end-to-end encrypted`; callee: `INVITE
+     in, with a key offer`, `answered; key answer sent first`, then `the
+     caller confirmed the keys` (or `the caller's media decrypts`);
+   - both: `first media packet encrypted (local port P, N B -> N+20 B)`,
+     `first media packet decrypted`; the C0 flow lines show RTP 20 bytes
+     larger than in run 1; at the end `forgotten (ended); media: ...` with
+     **0 failed authentication** and voice and video clear on both sides;
+   - both chats: "This call with ... is end-to-end encrypted";
+   - optional capture: RTP headers readable, payload noise (a G.711 stream
+     no longer plays);
+   - any `over 1472 B of UDP payload` line (video) is worth sending.
+3. **One side off** (`calls_encrypt = off` on the 6.5 VM, on here), a call
+   each way: the call works as in run 1, the on side says in the chat "This
+   call with ... is not end-to-end encrypted: ... did not answer the key
+   exchange" (it calls) or "... did not offer to encrypt it" (it is called),
+   its log shows the same with `not encrypted`, and no `first media packet`
+   line: the media sizes match run 1. On the off side: nothing new at all.
+
+What to collect: both logs with the time of each call, and anything the
+calls did differently from run 1 (silence, noise, a dropped call).

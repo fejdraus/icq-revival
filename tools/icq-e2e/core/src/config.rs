@@ -34,6 +34,12 @@
 //!   they load and logs what kind each media datagram is and what the SIP of
 //!   a call says about its media, never content (stage C0 of
 //!   `docs/e2e/CALLS-RESEARCH.md`, observation only). Off by default.
+//! - `ICQE2E_CALLS_ENCRYPT` - overrides the `calls_encrypt=` line of
+//!   `icq-e2e.ini`. `on` encrypts the media of a voice or video call end to
+//!   end when both sides' add-ons agree on keys for it through the E2E
+//!   session (stages C1-C3 of `docs/e2e/CALLS-RESEARCH.md`); any other call
+//!   stays exactly as it is. Off by default; only in encrypt mode, and only
+//!   where frames may be added.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -77,6 +83,9 @@ pub struct Policy {
     pub tls: TlsPolicy,
     /// `calls_log=on`: observe the call media and signalling (stage C0).
     pub calls_log: bool,
+    /// `calls_encrypt=on`: offer, answer and encrypt calls (stages C1-C3).
+    /// What the ini says; [`Policy::encrypts_calls`] is whether it applies.
+    pub calls_encrypt: bool,
 }
 
 /// What `server=`, `tls=` and `tls_pin=` say (STAGE-TLS 3.5).
@@ -249,6 +258,7 @@ impl Policy {
             inject: false,
             tls: TlsPolicy::NoServer,
             calls_log: false,
+            calls_encrypt: false,
         }
     }
 
@@ -262,6 +272,7 @@ impl Policy {
             inject: false,
             tls: TlsPolicy::NoServer,
             calls_log: false,
+            calls_encrypt: false,
         }
     }
 
@@ -321,6 +332,7 @@ impl Policy {
             tls: pick(s.tls, env("ICQE2E_TLS")),
             tls_pin: pick(s.tls_pin, env("ICQE2E_TLS_PIN")),
             calls_log: env("ICQE2E_CALLS_LOG"),
+            calls_encrypt: env("ICQE2E_CALLS_ENCRYPT"),
         })
     }
 
@@ -353,6 +365,7 @@ impl Policy {
         let tls = raw.tls.clone().or_else(|| ini("tls"));
         let tls_pin = raw.tls_pin.clone().or_else(|| ini("tls_pin"));
         let calls_log = raw.calls_log.clone().or_else(|| ini("calls_log"));
+        let calls_encrypt = raw.calls_encrypt.clone().or_else(|| ini("calls_encrypt"));
         Policy {
             mode,
             peers: (!peers.is_empty()).then_some(peers),
@@ -364,7 +377,20 @@ impl Policy {
             ),
             tls: TlsPolicy::parse(server.as_deref(), tls.as_deref(), tls_pin.as_deref()),
             calls_log: switched_on(calls_log.as_deref()),
+            calls_encrypt: switched_on(calls_encrypt.as_deref()),
         }
+    }
+
+    /// Whether calls are encrypted: `calls_encrypt=on`, in encrypt mode (the
+    /// key exchange rides the E2E session), with frames allowed to be added
+    /// (the exchange is frames of the add-on's own).
+    pub fn encrypts_calls(&self) -> bool {
+        self.calls_encrypt && self.mode == Mode::Encrypt && self.may_inject()
+    }
+
+    /// Whether the call modules are hooked at all: to observe, or to encrypt.
+    pub fn hooks_calls(&self) -> bool {
+        self.calls_log || self.encrypts_calls()
     }
 
     /// Whether a message to `peer` is encrypted or rewritten.
@@ -399,7 +425,7 @@ impl Policy {
             Some(p) => format!(", peers={}", p.join(",")),
         };
         format!(
-            "{what}{peers}, directory={}, frames={}, {}, home={}{}",
+            "{what}{peers}, directory={}, frames={}, {}, home={}{}{}",
             self.directory.as_deref().unwrap_or("unset"),
             if self.inject {
                 "may be added"
@@ -409,9 +435,18 @@ impl Policy {
             self.tls.describe(),
             self.home.display(),
             if self.calls_log {
-                ", calls_log=on (call media observed, nothing changed)"
+                ", calls_log=on (call media observed)"
             } else {
                 ""
+            },
+            match (self.calls_encrypt, self.encrypts_calls()) {
+                (true, true) => {
+                    ", calls_encrypt=on (call media encrypted when both add-ons agree; any other call untouched)"
+                }
+                (true, false) => {
+                    ", calls_encrypt=on but inactive (needs encrypt mode with frames allowed)"
+                }
+                _ => "",
             }
         )
     }
@@ -440,6 +475,7 @@ struct Raw {
     tls: Option<String>,
     tls_pin: Option<String>,
     calls_log: Option<String>,
+    calls_encrypt: Option<String>,
 }
 
 /// Whether a switch that is off unless asked for (`calls_log=`) is on: only a
@@ -510,6 +546,7 @@ mod tests {
             tls: own(s.tls),
             tls_pin: own(s.tls_pin),
             calls_log: None,
+            calls_encrypt: None,
         })
     }
 
@@ -759,6 +796,53 @@ mod tests {
         }
         assert_eq!(read("calls_log = on\n").mode, Mode::Encrypt);
         assert!(!Policy::observe().calls_log);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `calls_encrypt=` is off unless it says on, and applies only in
+    /// encrypt mode with frames allowed: the key exchange is frames of the
+    /// add-on's own on the E2E session.
+    #[test]
+    fn calls_encrypt_is_off_by_default_and_needs_encrypt_mode() {
+        let dir = std::env::temp_dir().join("icqe2e-ini-calls-encrypt-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ini = dir.join("icq-e2e.ini");
+        let path = ini.to_str().unwrap();
+        let read = |text: &str, no_inject: Option<&str>| {
+            std::fs::write(&ini, text).unwrap();
+            policy(Settings {
+                ini_path: Some(path),
+                no_inject,
+                ..Default::default()
+            })
+        };
+        for (text, on) in [
+            ("", false),
+            ("calls_log = on\n", false),
+            ("calls_encrypt = off\n", false),
+            ("calls_encrypt = maybe\n", false),
+            ("calls_encrypt = on\n", true),
+            ("CALLS_ENCRYPT=yes\n", true),
+        ] {
+            let p = read(text, None);
+            assert_eq!(p.encrypts_calls(), on, "{text:?}");
+            assert_eq!(p.hooks_calls(), on || p.calls_log, "{text:?}");
+            assert_eq!(
+                p.describe()
+                    .contains("calls_encrypt=on (call media encrypted"),
+                on,
+                "{text:?}"
+            );
+        }
+        // Set, but nothing to ride on: said, and not in effect.
+        for p in [
+            read("calls_encrypt = on\ne2e = off\n", None),
+            read("calls_encrypt = on\n", Some("1")),
+        ] {
+            assert!(p.calls_encrypt && !p.encrypts_calls());
+            assert!(p.describe().contains("calls_encrypt=on but inactive"));
+        }
+        assert!(!Policy::observe().encrypts_calls() && !Policy::harness().hooks_calls());
         std::fs::remove_dir_all(&dir).ok();
     }
 

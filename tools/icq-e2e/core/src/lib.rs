@@ -28,6 +28,8 @@
 // The same name inside the crate and from outside it, so code shared between
 // the library's unit tests and the integration tests can name it either way.
 extern crate self as icqe2e_core;
+pub mod callmedia;
+pub mod callneg;
 pub mod calls;
 pub mod caps;
 pub mod config;

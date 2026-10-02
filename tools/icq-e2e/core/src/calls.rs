@@ -604,6 +604,39 @@ pub fn tracker() -> &'static Mutex<Tracker> {
 
 // --- signalling -------------------------------------------------------------------
 
+/// The peer and the raw SIP of a SNAC payload that is an ICBM on channel 6
+/// travelling in `dir` (to the host outbound, to the client inbound), for
+/// the key exchange of `callneg.rs`; `None` for anything else.
+pub fn sip_message(dir: Direction, payload: &[u8]) -> Option<(String, &[u8])> {
+    let s = snac::parse(payload)?;
+    if s.food_group != snac::FOOD_ICBM {
+        return None;
+    }
+    let inbound = match (dir, s.sub_group) {
+        (Direction::Outbound, snac::ICBM_MSG_TO_HOST) => false,
+        (Direction::Inbound, snac::ICBM_MSG_TO_CLIENT) => true,
+        _ => return None,
+    };
+    let mut r = Reader::new(s.body);
+    r.skip(8)?;
+    if r.u16()? != CHANNEL_SIP {
+        return None;
+    }
+    let peer = String::from_utf8_lossy(r.len8()?).into_owned();
+    if inbound {
+        r.u16()?;
+        let n = r.u16()?;
+        for _ in 0..n {
+            r.u16()?;
+            let len = r.u16()? as usize;
+            r.skip(len)?;
+        }
+    }
+    let tlvs = snac::read_tlvs(&s.body[s.body.len() - r.remaining()..]);
+    let sip = snac::find_tlv(&tlvs, TLV_SIP)?;
+    (!peer.is_empty()).then_some((peer, sip))
+}
+
 /// The log line for a SNAC payload that is an ICBM on channel 6, or `None`
 /// for anything else. Only the fields named in the module docs are read out.
 pub fn sip_line(dir: Direction, payload: &[u8], servers: &[Ipv4Addr]) -> Option<String> {

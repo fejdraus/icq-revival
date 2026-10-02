@@ -235,8 +235,10 @@ pub enum Inbound {
         /// Set when the sender could not be checked against the directory.
         unverified: bool,
     },
-    /// A control message: nothing to show, the ratchet has advanced.
-    Control,
+    /// A control message: nothing to show, the ratchet has advanced. It may
+    /// carry a payload for the add-on itself (a call key exchange,
+    /// `callneg.rs`); an empty one only moves the ratchet.
+    Control(Vec<u8>),
     /// It could not be read; show `note` and never start a session because of
     /// it (CHECKLIST 2.5).
     Unreadable(String),
@@ -554,6 +556,32 @@ impl OwnKeys {
         out: &Outgoing,
         contact: &Contact,
     ) -> DirResult<Outbound> {
+        let control = out.text.is_empty();
+        self.encrypt_as(dir, bearer, out, contact, control)
+    }
+
+    /// A control message carrying `out.text` as a payload for the other
+    /// add-on (a call key exchange): flagged and enveloped as a control
+    /// message, so an add-on that does not know the payload takes it as an
+    /// ordinary one and shows nothing.
+    pub fn encrypt_control(
+        &mut self,
+        dir: &dyn DirectoryApi,
+        bearer: &str,
+        out: &Outgoing,
+        contact: &Contact,
+    ) -> DirResult<Outbound> {
+        self.encrypt_as(dir, bearer, out, contact, true)
+    }
+
+    fn encrypt_as(
+        &mut self,
+        dir: &dyn DirectoryApi,
+        bearer: &str,
+        out: &Outgoing,
+        contact: &Contact,
+        control: bool,
+    ) -> DirResult<Outbound> {
         let peer = sign::ident(&out.peer);
         if !contact.usable() {
             let note = format!(
@@ -586,13 +614,13 @@ impl OwnKeys {
             }
         }
         let mut c = Container {
-            flags: if out.text.is_empty() { FLAG_CONTROL } else { 0 },
+            flags: if control { FLAG_CONTROL } else { 0 },
             sender_device: self.device_id,
             wraps,
             ciphertext: Vec::new(),
         };
         let envelope = Envelope {
-            kind: if out.text.is_empty() {
+            kind: if control {
                 Kind::Control
             } else {
                 Kind::Message
@@ -721,7 +749,7 @@ impl OwnKeys {
             .or_default()
             .insert(device, pickle_json(&advanced));
         match envelope.kind {
-            Kind::Control => Inbound::Control,
+            Kind::Control => Inbound::Control(envelope.text),
             Kind::Message => Inbound::Text {
                 text: envelope.text,
                 form: envelope.form,

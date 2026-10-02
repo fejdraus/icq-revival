@@ -275,6 +275,30 @@ pub fn safety_note(peer: &str, grouped: &str, verified: bool) -> String {
 {state} Compare it with the number {peer} sees in their chat with you (/e2e safety there), in person or by phone - not through this chat, which the server carries. If it matches, type /e2e verify; /e2e unverify takes it back.")
 }
 
+/// The note for a voice or video call whose media both add-ons encrypt
+/// (`calls_encrypt=on`, docs/e2e/CALLS-RESEARCH.md stage C3).
+pub fn call_encrypted_note(peer: &str, verified: bool) -> String {
+    let trust = if verified {
+        format!("{peer} is verified.")
+    } else {
+        "Type /e2e safety to compare the safety number.".to_string()
+    };
+    format!("{PREFIX}This call with {peer} is end-to-end encrypted: the voice and video are encrypted with keys agreed through your encrypted chat. {trust}")
+}
+
+/// The note for a call that goes unencrypted, with the reason. A call is
+/// never blocked (the owner's rule: calls must work as they always did with a
+/// contact without the add-on); for a contact under `/e2e on` or verified the
+/// note says so in stronger words.
+pub fn call_plain_note(peer: &str, why: &str, strict: bool) -> String {
+    let why = why.trim_end_matches('.');
+    let mut s = format!("{PREFIX}This call with {peer} is not end-to-end encrypted: {why}.");
+    if strict {
+        s.push_str(&format!(" Encryption is on for {peer} in this chat, but calls are never blocked: the server and the network can listen to this one. Hang up if it must stay private."));
+    }
+    s
+}
+
 /// Whether `/e2e plain` may open a message held for this reason. A contact
 /// switched on by hand never gets clear text (10.8).
 pub fn plain_allowed(setting: Setting) -> bool {

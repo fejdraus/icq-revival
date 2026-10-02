@@ -376,7 +376,8 @@ fn account_session() -> Option<Arc<Mutex<Session>>> {
         return Some(s.clone());
     }
     match Session::open(dir, &policy().home, &uin) {
-        Ok(sess) => {
+        Ok(mut sess) => {
+            sess.engine().set_calls_encrypt(policy().encrypts_calls());
             log::line(&format!(
                 "[ICQ E2E] device keys ready for {uin} (encrypt mode)"
             ));
@@ -1282,6 +1283,9 @@ fn poll_worker() {
             .filter(|(_, s)| s.messages.load(Ordering::Acquire))
             .map(|(k, s)| (*k, s.clone()))
             .collect();
+        // The calls' timers (the callee's wait for confirmation, the keys
+        // kept after a BYE), whose notes the delivery below carries.
+        calls_io::tick();
         for (s, sock) in chats {
             deliver_notes(&sock, s);
         }
@@ -1378,9 +1382,9 @@ type LdrRegisterDllNotificationFn = unsafe extern "system" fn(
 /// on. `LdrRegisterDllNotification` is not in any import library, so it is
 /// looked up in ntdll by name.
 fn register_dll_notification() {
-    // With `calls_log=on` the call modules, loaded only when a call starts,
-    // are patched from the notification too.
-    if INSTALLED.load(Ordering::Acquire) && !policy().calls_log {
+    // With `calls_log=on` or `calls_encrypt=on` the call modules, loaded only
+    // when a call starts, are patched from the notification too.
+    if INSTALLED.load(Ordering::Acquire) && !policy().hooks_calls() {
         return;
     }
     let ntdll: Vec<u16> = "ntdll.dll"
@@ -1415,7 +1419,8 @@ fn register_dll_notification() {
 }
 
 /// Runs inside the loader (under its lock) for each DLL that gets loaded. Does
-/// nothing but patch a networking module (or, with `calls_log=on`, a call
+/// nothing but patch a networking module (or, with `calls_log=on` or
+/// `calls_encrypt=on`, a call
 /// module), and never waits for the install lock: whoever holds it is
 /// installing already.
 unsafe extern "system" fn dll_notification(

@@ -1,6 +1,8 @@
-//! The call media sockets, observed (stage C0 of `docs/e2e/CALLS-RESEARCH.md`).
+//! The call media sockets: observed (stage C0 of
+//! `docs/e2e/CALLS-RESEARCH.md`, `calls_log=on`) and, for a call both add-ons
+//! agreed to encrypt, encrypted (stage C2, `calls_encrypt=on`).
 //!
-//! With `calls_log=on` the loader notification that patches the networking
+//! With either switch on the loader notification that patches the networking
 //! module also patches the two modules a call runs in, the moment either is
 //! mapped: `sipXtapi.dll` (6.5 and 7.2: SIP, STUN/TURN, ICE, and on 6.5 the
 //! GIPS engine itself) and `sipXmediaLib.dll` (7.2: the GIPS engine). Both are
@@ -10,11 +12,34 @@
 //!
 //! Hooked: `sendto`, `recvfrom`, and `send`/`recv` for a connected UDP socket,
 //! `WSASendTo`/`WSARecvFrom` where a module has them (the research found
-//! none), `bind` and `closesocket` for bookkeeping. Every hook calls the
-//! original first, with the client's own arguments, and returns its result and
-//! last error untouched; only then are the bytes that went through handed to
-//! [`crate::calls`] to be classified. Nothing is ever changed, held or
-//! dropped. A panic while looking falls back to having looked at nothing.
+//! none), `bind` and `closesocket` for bookkeeping.
+//!
+//! Observation: every hook calls the original first, with the client's own
+//! arguments, and returns its result and last error untouched; only then are
+//! the bytes that went through handed to [`crate::calls`] to be classified. A
+//! panic while looking falls back to having looked at nothing.
+//!
+//! Encryption ([`crate::callneg`], [`crate::callmedia`]): only while some call
+//! has agreed keys, and only for a datagram socket of that call (a port of its
+//! SDP, or any while it is the only one). Everything else - any datagram while
+//! no call is agreed, any socket of another flow, STUN and TURN control -
+//! takes exactly the observation path above, byte for byte.
+//!
+//! - `sendto`/`send`: RTP and RTCP (bare or in TURN framing) go out encrypted
+//!   and the client is told its own length was sent; a packet that cannot be
+//!   encrypted is dropped and reported as sent. Never plain.
+//! - `recvfrom`/`recv`: the datagram is read into a buffer of the add-on's own
+//!   and the client gets the decrypted one (or the datagram as it was, for
+//!   anything that is not media), with Winsock's own `WSAEMSGSIZE` if its
+//!   buffer is too small. A packet that does not decrypt (plain media in an
+//!   encrypted call, a forgery, a replay) is dropped: the next datagram is
+//!   read if one is waiting (or comes within 20 ms), else the client gets a
+//!   zero-length datagram, which RTP code discards as too short.
+//! - A panic while deciding drops the packet if the socket belongs to an
+//!   agreed call, and passes it untouched otherwise.
+//! - `WSASendTo` with media of an agreed call is dropped (reported as sent):
+//!   it cannot be encrypted in place, and must not go plain. The research
+//!   found no module that imports it.
 //!
 //! Each module has its own slots for the originals, so a hook always calls
 //! the function its own module imported (`wsock32`'s `recvfrom` is not
@@ -27,6 +52,8 @@ use std::net::Ipv4Addr;
 use windows_sys::Win32::Networking::WinSock;
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
 
+use crate::callmedia::Verdict;
+use crate::callneg::{self, CallTable};
 use crate::calls::{self, FlowKey};
 
 /// The modules a call runs in, by file name.
@@ -49,6 +76,13 @@ static ORIG: [[AtomicUsize; FUNCS]; 2] = [const { [const { AtomicUsize::new(0) }
 static PATCH_LOCK: Mutex<()> = Mutex::new(());
 
 const WSA_IO_PENDING: u32 = 997;
+const WSAEMSGSIZE: u32 = 10040;
+/// How many dropped datagrams one `recvfrom` reads past at most.
+const DROP_RETRIES: usize = 32;
+/// How long a `recvfrom` whose datagram was dropped waits for the next one.
+const DROP_WAIT_MS: i32 = 20;
+/// The add-on's own receive buffer: the largest UDP datagram.
+const OWN_BUF: usize = 65_536;
 const SOL_SOCKET: i32 = 0xFFFF;
 const SO_TYPE: i32 = 0x1008;
 const SOCK_DGRAM: i32 = 2;
@@ -179,6 +213,247 @@ fn peer_v4(s: Socket) -> Option<(Ipv4Addr, u16)> {
     }
 }
 
+// --- encryption ------------------------------------------------------------------
+
+#[cfg(test)]
+thread_local! {
+    /// A call table for this thread only: the tests play two endpoints in one
+    /// process, each with its own table.
+    static TEST_TABLE: std::cell::RefCell<Option<Arc<Mutex<CallTable>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The call table the hooks use.
+fn table() -> Arc<Mutex<CallTable>> {
+    #[cfg(test)]
+    if let Some(t) = TEST_TABLE.with(|c| c.borrow().clone()) {
+        return t;
+    }
+    callneg::shared()
+}
+
+/// Whether calls are encrypted (`calls_encrypt=on` in effect).
+fn encrypting() -> bool {
+    // In the unit tests only a thread with a table of its own encrypts; the
+    // policy is not asked, so these tests never set the process's policy
+    // under the feet of the socket tests in `hook.rs`.
+    #[cfg(test)]
+    return TEST_TABLE.with(|c| c.borrow().is_some());
+    #[cfg(not(test))]
+    policy().encrypts_calls()
+}
+
+/// Whether datagrams are classified for the log (`calls_log=on`; always in
+/// the unit tests, which count them).
+fn observing() -> bool {
+    cfg!(test) || policy().calls_log
+}
+
+/// Unix time in milliseconds, the clock of the call table.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn log_table(t: &mut CallTable) {
+    for l in t.take_log() {
+        log::line(&l);
+    }
+}
+
+/// The local port of a datagram socket an agreed call uses, if `s` is one.
+/// Never panics out: a panic here means "not known", and the datagram is
+/// passed as it is.
+fn keyed_socket(s: Socket) -> Option<u16> {
+    panic::catch_unwind(AssertUnwindSafe(|| {
+        let i = info(s);
+        if !i.udp {
+            return None;
+        }
+        let t = table();
+        let g = lock(&t);
+        g.covers(i.local_port).then_some(i.local_port)
+    }))
+    .ok()
+    .flatten()
+}
+
+/// After a panic: whether the socket belongs to an agreed call, asked as
+/// simply as possible. Unknown counts as yes (the packet is then dropped,
+/// never sent plain).
+fn keyed_after_panic(s: Socket) -> bool {
+    panic::catch_unwind(AssertUnwindSafe(|| {
+        let t = table();
+        let g = lock(&t);
+        g.keyed() && g.covers(local_port(s))
+    }))
+    .unwrap_or(true)
+}
+
+/// The send side with `calls_encrypt=on`. `None` when the datagram is not
+/// media of an agreed call: the caller then goes on exactly as without
+/// encryption. Otherwise Winsock's answer for what was sent instead.
+unsafe fn media_send(
+    m: usize,
+    s: Socket,
+    data: &[u8],
+    remote: Option<(Ipv4Addr, u16)>,
+    connected: bool,
+    send: &dyn Fn(&[u8]) -> i32,
+) -> Option<i32> {
+    let err = GetLastError();
+    let decided = panic::catch_unwind(AssertUnwindSafe(|| {
+        let i = info(s);
+        if !i.udp {
+            return None;
+        }
+        let t = table();
+        let mut g = lock(&t);
+        if !g.keyed() {
+            return None;
+        }
+        let v = g.media_out(i.local_port, data, now_ms());
+        log_table(&mut g);
+        Some(v)
+    }));
+    let verdict = match decided {
+        Ok(None) | Ok(Some(Verdict::Pass)) => {
+            SetLastError(err);
+            return None;
+        }
+        Ok(Some(v)) => v,
+        Err(_) if keyed_after_panic(s) => Verdict::Drop("panic in the hook"),
+        Err(_) => {
+            SetLastError(err);
+            return None;
+        }
+    };
+    match verdict {
+        Verdict::Replace(wire) => {
+            SetLastError(err);
+            let r = send(&wire);
+            if r > 0 {
+                if observing() {
+                    watch(m, s, &wire, true, remote, connected);
+                }
+                // The client's own datagram is what it asked to send.
+                Some(data.len() as i32)
+            } else {
+                Some(r)
+            }
+        }
+        _ => {
+            SetLastError(err);
+            Some(data.len() as i32)
+        }
+    }
+}
+
+/// The receive side with `calls_encrypt=on`, for a socket of an agreed call:
+/// reads into a buffer of its own and hands the client what it may see.
+#[allow(clippy::too_many_arguments)]
+unsafe fn media_recv(
+    m: usize,
+    s: Socket,
+    buf: *mut u8,
+    len: i32,
+    from: *mut u8,
+    fromlen: *mut i32,
+    connected: bool,
+    recv: &dyn Fn(*mut u8, i32) -> i32,
+) -> i32 {
+    let mut own = vec![0u8; OWN_BUF];
+    for _ in 0..DROP_RETRIES {
+        let r = recv(own.as_mut_ptr(), own.len() as i32);
+        if r < 0 {
+            // Winsock's error, with its last error.
+            return r;
+        }
+        let err = GetLastError();
+        let wire = &own[..r as usize];
+        if observing() {
+            let remote = if fromlen.is_null() {
+                None
+            } else {
+                sockaddr_v4(from, *fromlen)
+            };
+            watch(m, s, wire, false, remote, connected);
+        }
+        let verdict = panic::catch_unwind(AssertUnwindSafe(|| {
+            let i = info(s);
+            let t = table();
+            let mut g = lock(&t);
+            let v = g.media_in(i.local_port, wire, now_ms());
+            log_table(&mut g);
+            v
+        }))
+        .unwrap_or(Verdict::Drop("panic in the hook"));
+        match verdict {
+            Verdict::Pass => return deliver(buf, len, wire, err),
+            Verdict::Replace(p) => return deliver(buf, len, &p, err),
+            Verdict::Drop(_) => {
+                if more_waiting(s) {
+                    continue;
+                }
+                SetLastError(err);
+                return 0;
+            }
+        }
+    }
+    0
+}
+
+/// Copies a datagram into the client's buffer as Winsock would: truncated
+/// with `WSAEMSGSIZE` when it does not fit.
+unsafe fn deliver(buf: *mut u8, len: i32, bytes: &[u8], err: u32) -> i32 {
+    let room = len.max(0) as usize;
+    let k = bytes.len().min(room);
+    ptr::copy_nonoverlapping(bytes.as_ptr(), buf, k);
+    if bytes.len() > room {
+        SetLastError(WSAEMSGSIZE);
+        SOCKET_ERROR
+    } else {
+        SetLastError(err);
+        bytes.len() as i32
+    }
+}
+
+/// Whether another datagram is waiting on `s`, or arrives within
+/// [`DROP_WAIT_MS`].
+fn more_waiting(s: Socket) -> bool {
+    // SAFETY: ioctlsocket and select on the client's socket, with stack
+    // arguments of the sizes passed.
+    unsafe {
+        let mut n: u32 = 0;
+        if WinSock::ioctlsocket(s, FIONREAD as i32, &mut n) == 0 && n > 0 {
+            return true;
+        }
+        let mut set: FD_SET = std::mem::zeroed();
+        set.fd_count = 1;
+        set.fd_array[0] = s;
+        let tv = TIMEVAL {
+            tv_sec: 0,
+            tv_usec: DROP_WAIT_MS * 1000,
+        };
+        select(0, &mut set, ptr::null_mut(), ptr::null_mut(), &tv) > 0
+    }
+}
+
+/// The calls' timers, from the worker every two seconds.
+pub(super) fn tick() {
+    if !policy().encrypts_calls() {
+        return;
+    }
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        let t = table();
+        let mut g = lock(&t);
+        g.tick(now_ms());
+        log_table(&mut g);
+    }));
+}
+
 /// Looks at one datagram that went through: classifies it and logs what the
 /// tracker says. Keeps the thread's last error; never panics out.
 fn watch(
@@ -247,8 +522,17 @@ unsafe extern "system" fn hook_sendto<const M: usize>(
     to: *const u8,
     tolen: i32,
 ) -> i32 {
+    if !buf.is_null() && len > 0 && encrypting() {
+        let data = std::slice::from_raw_parts(buf, len as usize);
+        let send = |w: &[u8]| {
+            orig::<SendToFn>(M, F_SENDTO)(s, w.as_ptr(), w.len() as i32, flags, to, tolen)
+        };
+        if let Some(r) = media_send(M, s, data, sockaddr_v4(to, tolen), to.is_null(), &send) {
+            return r;
+        }
+    }
     let r = orig::<SendToFn>(M, F_SENDTO)(s, buf, len, flags, to, tolen);
-    if r > 0 && !buf.is_null() {
+    if r > 0 && !buf.is_null() && observing() {
         let remote = sockaddr_v4(to, tolen);
         watch(
             M,
@@ -270,8 +554,18 @@ unsafe extern "system" fn hook_recvfrom<const M: usize>(
     from: *mut u8,
     fromlen: *mut i32,
 ) -> i32 {
+    if !buf.is_null()
+        && len > 0
+        && flags & MSG_PEEK == 0
+        && encrypting()
+        && keyed_socket(s).is_some()
+    {
+        let recv =
+            |p: *mut u8, n: i32| orig::<RecvFromFn>(M, F_RECVFROM)(s, p, n, flags, from, fromlen);
+        return media_recv(M, s, buf, len, from, fromlen, from.is_null(), &recv);
+    }
     let r = orig::<RecvFromFn>(M, F_RECVFROM)(s, buf, len, flags, from, fromlen);
-    if r > 0 && !buf.is_null() && flags & MSG_PEEK == 0 {
+    if r > 0 && !buf.is_null() && flags & MSG_PEEK == 0 && observing() {
         let remote = if fromlen.is_null() {
             None
         } else {
@@ -295,8 +589,15 @@ unsafe extern "system" fn hook_send<const M: usize>(
     len: i32,
     flags: i32,
 ) -> i32 {
+    if !buf.is_null() && len > 0 && encrypting() {
+        let data = std::slice::from_raw_parts(buf, len as usize);
+        let send = |w: &[u8]| orig::<SendFn>(M, F_SEND)(s, w.as_ptr(), w.len() as i32, flags);
+        if let Some(r) = media_send(M, s, data, None, true, &send) {
+            return r;
+        }
+    }
     let r = orig::<SendFn>(M, F_SEND)(s, buf, len, flags);
-    if r > 0 && !buf.is_null() {
+    if r > 0 && !buf.is_null() && observing() {
         watch(
             M,
             s,
@@ -315,8 +616,26 @@ unsafe extern "system" fn hook_recv<const M: usize>(
     len: i32,
     flags: i32,
 ) -> i32 {
+    if !buf.is_null()
+        && len > 0
+        && flags & MSG_PEEK == 0
+        && encrypting()
+        && keyed_socket(s).is_some()
+    {
+        let recv = |p: *mut u8, n: i32| orig::<RecvFn>(M, F_RECV)(s, p, n, flags);
+        return media_recv(
+            M,
+            s,
+            buf,
+            len,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            true,
+            &recv,
+        );
+    }
     let r = orig::<RecvFn>(M, F_RECV)(s, buf, len, flags);
-    if r > 0 && !buf.is_null() && flags & MSG_PEEK == 0 {
+    if r > 0 && !buf.is_null() && flags & MSG_PEEK == 0 && observing() {
         watch(
             M,
             s,
@@ -359,11 +678,33 @@ unsafe extern "system" fn hook_wsasendto<const M: usize>(
     overlapped: *mut core::ffi::c_void,
     completion: *const core::ffi::c_void,
 ) -> i32 {
+    // Media of an agreed call cannot be encrypted in place here and must not
+    // go plain: it is dropped and reported as sent.
+    if encrypting() && keyed_socket(s).is_some() {
+        let err = GetLastError();
+        let total = panic::catch_unwind(AssertUnwindSafe(|| {
+            let data = gather(bufs, count, usize::MAX);
+            crate::callmedia::split(&data).map(|_| data.len())
+        }))
+        .unwrap_or(Some(0));
+        if let Some(n) = total {
+            if !sent.is_null() {
+                *sent = n as u32;
+            }
+            log::line(&format!(
+                "call media: {} WSASendTo of an agreed call's media dropped ({n} B): not encrypted on this path",
+                CALL_MODULES[M]
+            ));
+            SetLastError(err);
+            return 0;
+        }
+        SetLastError(err);
+    }
     let r = orig::<WsaSendToFn>(M, F_WSASENDTO)(
         s, bufs, count, sent, flags, to, tolen, overlapped, completion,
     );
     let err = GetLastError();
-    if r == 0 || err == WSA_IO_PENDING {
+    if (r == 0 || err == WSA_IO_PENDING) && observing() {
         let _ = panic::catch_unwind(AssertUnwindSafe(|| {
             let data = gather(bufs, count, usize::MAX);
             if !data.is_empty() {
@@ -391,6 +732,7 @@ unsafe extern "system" fn hook_wsarecvfrom<const M: usize>(
     );
     // Only a call that completed at once has its bytes in the buffers now.
     if r == 0
+        && observing()
         && overlapped.is_null()
         && !received.is_null()
         && *received > 0
@@ -420,7 +762,11 @@ unsafe extern "system" fn hook_bind<const M: usize>(
     if r == 0 {
         let err = GetLastError();
         let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+            // The port is asked again: it is what ties a socket to a call.
             lock(infos()).remove(&s);
+            if !observing() {
+                return;
+            }
             let i = info(s);
             log::line(&format!(
                 "call media: {} bind sock={s} -> L:{} ({})",
@@ -490,11 +836,11 @@ fn module_index(name: &str) -> Option<usize> {
 
 /// Patches a call module that was just mapped (`in_loader`: from the loader
 /// notification, under the loader lock), or found loaded. Does nothing for
-/// another module or with `calls_log` off. Patching is idempotent, so a module
-/// that is unloaded after a call and loaded again for the next is patched
-/// again. Returns whether the module is patched.
+/// another module or with both `calls_log` and `calls_encrypt` off. Patching
+/// is idempotent, so a module that is unloaded after a call and loaded again
+/// for the next is patched again. Returns whether the module is patched.
 pub(super) fn on_load(name: &str, base: usize, via: &str, in_loader: bool) -> bool {
-    if !policy().calls_log {
+    if !policy().hooks_calls() {
         return false;
     }
     let Some(m) = module_index(name) else {
@@ -519,8 +865,12 @@ pub(super) fn on_load(name: &str, base: usize, via: &str, in_loader: bool) -> bo
     match patch_iat(base, &hooks, &resolve_ordinal) {
         Ok(report) => {
             log::line(&format!(
-                "call hooks installed in {name} at {base:#010x} ({via}): {report}; \
-                 observation only, nothing is changed"
+                "call hooks installed in {name} at {base:#010x} ({via}): {report}; {}",
+                if policy().encrypts_calls() {
+                    "media of a call both add-ons agreed on is encrypted, all else untouched"
+                } else {
+                    "observation only, nothing is changed"
+                }
             ));
             true
         }
@@ -573,13 +923,21 @@ fn retry_later(m: usize) {
 /// the server's addresses (so they show as `server` in the log) on a thread of
 /// its own, away from the loader lock.
 pub(super) fn start() {
-    if !policy().calls_log {
+    if !policy().hooks_calls() {
         return;
     }
-    log::line(
-        "calls_log=on: call media and signalling are observed (classes, sizes, \
-         ports; never content); nothing is changed",
-    );
+    if policy().calls_log {
+        log::line(
+            "calls_log=on: call media and signalling are observed (classes, sizes, \
+             ports; never content)",
+        );
+    }
+    if policy().encrypts_calls() {
+        log::line(
+            "calls_encrypt=on: a call is encrypted end to end when both add-ons agree on \
+             its keys through the E2E session; any other call is left exactly as it is",
+        );
+    }
     for name in CALL_MODULES {
         let w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         // SAFETY: a NUL-terminated name.
@@ -587,6 +945,9 @@ pub(super) fn start() {
         if base != 0 {
             on_load(name, base, "already loaded at start", false);
         }
+    }
+    if !policy().calls_log {
+        return;
     }
     unsafe extern "system" fn resolve(_: *mut core::ffi::c_void) -> u32 {
         use std::net::ToSocketAddrs;
@@ -711,5 +1072,205 @@ mod tests {
         assert_eq!(module_index("sipXmediaLib.dll"), Some(1));
         assert_eq!(module_index("sipxtapi"), None);
         assert_eq!(module_index("coolcore49.dll"), None);
+    }
+
+    // --- encryption over real sockets -------------------------------------------
+
+    use crate::callneg::{Me, Msg, PeerInfo, Sip};
+
+    fn set_table(t: Option<Arc<Mutex<CallTable>>>) {
+        TEST_TABLE.with(|c| *c.borrow_mut() = t);
+    }
+
+    fn sip(text: String) -> Sip {
+        Sip::parse(text.as_bytes()).unwrap()
+    }
+
+    fn sdp_msg(first: &str, call: &str, port: u16) -> Sip {
+        sip(format!(
+            "{first}\r\nCall-ID: {call}\r\nCSeq: 1 INVITE\r\nContent-Type: application/sdp\r\n\r\n\
+             v=0\r\nm=audio {port} RTP/AVP 103\r\n"
+        ))
+    }
+
+    /// A and B agree on `call` through their tables (the control payloads
+    /// handed over as the Olm session would), A's media on `pa`, B's on `pb`.
+    fn agree(a: &Arc<Mutex<CallTable>>, b: &Arc<Mutex<CallTable>>, call: &str, pa: u16, pb: u16) {
+        let info = PeerInfo::default();
+        let me_a = Me {
+            uin: "100001".into(),
+            device: 1,
+            key: [1; 32],
+        };
+        let me_b = Me {
+            uin: "100002".into(),
+            device: 2,
+            key: [2; 32],
+        };
+        let mut ga = || Ok(me_a.clone());
+        let mut gb = || Ok(me_b.clone());
+        let inv = sdp_msg("INVITE sip:100002@h SIP/2.0", call, pa);
+        let ok = sdp_msg("SIP/2.0 200 OK", call, pb);
+        let (mut a, mut b) = (lock(a), lock(b));
+        for p in a.sip(Direction::Outbound, "100002", &inv, info, &mut ga, 0) {
+            b.control("100001", 1, Msg::decode(&p).unwrap(), 0);
+        }
+        b.sip(Direction::Inbound, "100001", &inv, info, &mut gb, 0);
+        for p in b.sip(Direction::Outbound, "100001", &ok, info, &mut gb, 0) {
+            a.control("100002", 2, Msg::decode(&p).unwrap(), 0);
+        }
+        a.sip(Direction::Inbound, "100002", &ok, info, &mut ga, 0);
+        let ack = sip(format!(
+            "ACK sip:x SIP/2.0\r\nCall-ID: {call}\r\nCSeq: 1 ACK\r\n\r\n"
+        ));
+        for p in a.sip(Direction::Outbound, "100002", &ack, info, &mut ga, 0) {
+            b.control("100001", 1, Msg::decode(&p).unwrap(), 0);
+        }
+        assert_eq!(a.state_of(call), Some("agreed"));
+        assert_eq!(b.state_of(call), Some("agreed"));
+    }
+
+    fn sockaddr(s: &UdpSocket) -> [u8; 16] {
+        let to = match s.local_addr().unwrap() {
+            std::net::SocketAddr::V4(v4) => v4,
+            _ => unreachable!(),
+        };
+        let mut sa = [0u8; 16];
+        sa[0..2].copy_from_slice(&2u16.to_le_bytes());
+        sa[2..4].copy_from_slice(&to.port().to_be_bytes());
+        sa[4..8].copy_from_slice(&to.ip().octets());
+        sa
+    }
+
+    fn port(s: &UdpSocket) -> u16 {
+        s.local_addr().unwrap().port()
+    }
+
+    unsafe fn send_via_hook(from: &UdpSocket, to: &UdpSocket, p: &[u8]) -> i32 {
+        let sa = sockaddr(to);
+        hook_sendto::<0>(
+            from.as_raw_socket() as usize,
+            p.as_ptr(),
+            p.len() as i32,
+            0,
+            sa.as_ptr(),
+            16,
+        )
+    }
+
+    unsafe fn recv_via_hook(on: &UdpSocket, buf: &mut [u8]) -> i32 {
+        let mut from = [0u8; 16];
+        let mut fromlen = 16i32;
+        hook_recvfrom::<0>(
+            on.as_raw_socket() as usize,
+            buf.as_mut_ptr(),
+            buf.len() as i32,
+            0,
+            from.as_mut_ptr(),
+            &mut fromlen,
+        )
+    }
+
+    fn rtp(seq: u16) -> Vec<u8> {
+        let mut p = vec![0x80, 103];
+        p.extend_from_slice(&seq.to_be_bytes());
+        p.extend_from_slice(&[0, 0, 0, 0, 0x0B, 0xAD, 0xF0, 0x0D]);
+        p.extend_from_slice(b"spoken words, in clear only at the two ends");
+        p
+    }
+
+    /// Two endpoints in one process, each with its own call table, over real
+    /// loopback UDP sockets through the hooks: an agreed call is encrypted on
+    /// the wire and comes out of the other hook as it was sent; a plain packet
+    /// in that call is dropped; a call that is not agreed passes byte for byte.
+    #[test]
+    fn two_endpoints_encrypt_an_agreed_call_and_leave_the_rest_alone() {
+        point_at_winsock(0);
+        let a = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").unwrap();
+        for s in [&a, &b] {
+            s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+        }
+        let ta: Arc<Mutex<CallTable>> = Default::default();
+        let tb: Arc<Mutex<CallTable>> = Default::default();
+
+        // Not agreed (no call at all): the datagram on the wire is the
+        // client's own, and so is what the receiving hook hands up.
+        set_table(Some(ta.clone()));
+        let p = rtp(1);
+        // SAFETY: real sockets, live buffers.
+        assert_eq!(unsafe { send_via_hook(&a, &b, &p) }, p.len() as i32);
+        let mut wire = [0u8; 1500];
+        let (n, _) = b.recv_from(&mut wire).unwrap();
+        assert_eq!(&wire[..n], &p[..], "byte for byte while nothing is agreed");
+
+        agree(&ta, &tb, "loop@h", port(&a), port(&b));
+
+        // Agreed: on the wire the header is clear and the payload is not.
+        // SAFETY: as above.
+        assert_eq!(
+            unsafe { send_via_hook(&a, &b, &rtp(2)) },
+            rtp(2).len() as i32
+        );
+        let (n, _) = b.recv_from(&mut wire).unwrap();
+        assert_eq!(n, rtp(2).len() + crate::callmedia::OVERHEAD);
+        assert_eq!(&wire[..12], &rtp(2)[..12]);
+        assert!(!wire[..n].windows(12).any(|w| w == b"spoken words"));
+
+        // Through B's hook the packet comes out as A's client sent it.
+        // SAFETY: as above.
+        unsafe { send_via_hook(&a, &b, &rtp(3)) };
+        set_table(Some(tb.clone()));
+        let mut buf = [0u8; 1500];
+        // SAFETY: as above.
+        let n = unsafe { recv_via_hook(&b, &mut buf) };
+        assert_eq!(&buf[..n as usize], &rtp(3)[..]);
+
+        // A plain packet in the agreed call (sent around the hook, as a
+        // downgrade would be) is dropped; the encrypted one behind it is
+        // what the client gets.
+        a.send_to(&rtp(4), b.local_addr().unwrap()).unwrap();
+        set_table(Some(ta.clone()));
+        // SAFETY: as above.
+        unsafe { send_via_hook(&a, &b, &rtp(5)) };
+        set_table(Some(tb.clone()));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // SAFETY: as above.
+        let n = unsafe { recv_via_hook(&b, &mut buf) };
+        assert_eq!(&buf[..n as usize], &rtp(5)[..], "the plain one was skipped");
+        // A lone plain packet: dropped, the client gets a zero-length datagram.
+        a.send_to(&rtp(6), b.local_addr().unwrap()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // SAFETY: as above.
+        assert_eq!(unsafe { recv_via_hook(&b, &mut buf) }, 0);
+        // A buffer too small for the plain packet: truncated, WSAEMSGSIZE,
+        // as Winsock itself does.
+        set_table(Some(ta.clone()));
+        // SAFETY: as above.
+        unsafe { send_via_hook(&a, &b, &rtp(7)) };
+        set_table(Some(tb.clone()));
+        let mut small = [0u8; 20];
+        // SAFETY: as above.
+        assert_eq!(unsafe { recv_via_hook(&b, &mut small) }, SOCKET_ERROR);
+        assert_eq!(unsafe { GetLastError() }, WSAEMSGSIZE);
+        assert_eq!(&small[..], &rtp(7)[..20]);
+        let st = lock(&tb).stats_of("loop@h").unwrap();
+        assert_eq!(
+            (st.rtp_in, st.plain_dropped + st.auth_failed),
+            (3, 2),
+            "{st:?}"
+        );
+
+        // STUN on the call's socket passes byte for byte even now.
+        let stun = [
+            0u8, 1, 0, 0, 0x21, 0x12, 0xA4, 0x42, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+        ];
+        set_table(Some(ta.clone()));
+        // SAFETY: as above.
+        unsafe { send_via_hook(&a, &b, &stun) };
+        let (n, _) = b.recv_from(&mut wire).unwrap();
+        assert_eq!(&wire[..n], &stun[..]);
+        set_table(None);
     }
 }

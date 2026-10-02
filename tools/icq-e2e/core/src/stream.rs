@@ -457,6 +457,22 @@ impl StreamRewriter {
                 lines.push(l);
             }
         }
+        // The key exchange of a call (`calls_encrypt=on`, callneg.rs): the
+        // control messages for the peer go on the wire *before* the SIP
+        // message they belong to, which goes on below exactly as it came.
+        if policy.encrypts_calls() && may_add {
+            if let (Some((peer, sip)), Some(c)) = (
+                crate::calls::sip_message(self.dir, payload),
+                ctx.as_deref_mut(),
+            ) {
+                let containers = c.crypto.call_sip(self.dir, &peer, sip, c.now, lines);
+                if self.dir == Direction::Outbound {
+                    for container in containers {
+                        self.put_control(&peer, &container, out, lines);
+                    }
+                }
+            }
+        }
         // The contact a message is about, so a note or a control message goes
         // into the conversation it belongs to.
         // Only on the crypto path, the one that puts notes in.
@@ -676,6 +692,18 @@ impl StreamRewriter {
         let Some(container) = crypto.take_control(peer) else {
             return false;
         };
+        self.put_control(peer, &container, out, lines)
+    }
+
+    /// Puts one control container to `peer` on the wire as a frame of the
+    /// add-on's own, with no ack request and no offline copy.
+    fn put_control(
+        &mut self,
+        peer: &str,
+        container: &[u8],
+        out: &mut Vec<u8>,
+        lines: &mut Vec<String>,
+    ) -> bool {
         // A frame with no FLAP frame before it has no number of its own to
         // take, so there is nowhere to put it.
         if self.last_seq.is_none() {
@@ -685,7 +713,7 @@ impl StreamRewriter {
             return false;
         }
         let id = self.next_injected_id();
-        let body = to_host_body(peer, &container::armor(&container));
+        let body = to_host_body(peer, &container::armor(container));
         // The server's answer to a frame of ours names a request id the client
         // never used, so it is hidden rather than shown.
         self.hide(id, lines);
@@ -1096,6 +1124,9 @@ mod tests {
         /// The peers whose messages were asked about, so a test can prove a
         /// message really was taken to the engine.
         seen: Vec<String>,
+        /// What `call_sip` answers, and the SIP it was shown.
+        call: Vec<Vec<u8>>,
+        sip_seen: Vec<(Direction, String)>,
     }
 
     impl Fake {
@@ -1106,6 +1137,8 @@ mod tests {
                 notes: Vec::new(),
                 control: None,
                 seen: Vec::new(),
+                call: Vec::new(),
+                sip_seen: Vec::new(),
             }
         }
 
@@ -1185,6 +1218,18 @@ mod tests {
 
         fn since_control(&self, _peer: &str) -> u32 {
             0
+        }
+
+        fn call_sip(
+            &mut self,
+            dir: Direction,
+            peer: &str,
+            _sip: &[u8],
+            _now: u64,
+            _lines: &mut Vec<String>,
+        ) -> Vec<Vec<u8>> {
+            self.sip_seen.push((dir, peer.to_string()));
+            std::mem::take(&mut self.call)
         }
     }
 
@@ -1309,7 +1354,7 @@ mod tests {
     #[test]
     fn a_message_the_add_on_removes_never_reaches_the_client() {
         let (mut r, mut out) = opened(Direction::Inbound);
-        let mut c = Fake::new().receiving(Inbound::Control);
+        let mut c = Fake::new().receiving(Inbound::Control(Vec::new()));
         // One message before it, so the direction has a numbering to keep.
         r.push_crypto(
             &in_message(2, "peer", "hello", None),
@@ -1353,8 +1398,8 @@ mod tests {
     fn the_sequence_the_client_sees_stays_increasing_and_without_a_gap() {
         let (mut r, mut out) = opened(Direction::Inbound);
         let mut c = Fake::new()
-            .receiving(Inbound::Control)
-            .receiving(Inbound::Control);
+            .receiving(Inbound::Control(Vec::new()))
+            .receiving(Inbound::Control(Vec::new()));
         // Five messages, every second one a container the add-on takes out.
         r.push_crypto(
             &in_message(2, "peer", "one", None),
@@ -1435,8 +1480,8 @@ mod tests {
     fn a_note_arrives_as_a_message_from_the_contact() {
         let (mut r, mut out) = opened(Direction::Inbound);
         let mut c = Fake::new()
-            .receiving(Inbound::Control)
-            .receiving(Inbound::Control)
+            .receiving(Inbound::Control(Vec::new()))
+            .receiving(Inbound::Control(Vec::new()))
             .with_notes(&["[ICQ E2E] The key of peer has changed."]);
         r.push_crypto(
             &in_message(2, "peer", "one", None),
@@ -1530,7 +1575,7 @@ mod tests {
     #[test]
     fn the_servers_answer_to_a_removed_message_never_reaches_the_client() {
         let (mut r, mut out) = opened(Direction::Inbound);
-        let mut c = Fake::new().receiving(Inbound::Control);
+        let mut c = Fake::new().receiving(Inbound::Control(Vec::new()));
         // A message asking for an ack, which the add-on takes out.
         let lines = r.push_crypto(
             &in_message(2, "peer", &container::armor(&any_container()), Some(0x1234)),
@@ -1609,7 +1654,7 @@ mod tests {
         assert!(!policy.may_inject());
         let (mut r, mut out) = opened(Direction::Inbound);
         let mut c = Fake::new()
-            .receiving(Inbound::Control)
+            .receiving(Inbound::Control(Vec::new()))
             .with_notes(&["[ICQ E2E] The key of peer has changed."]);
         let wire = in_message(2, "peer", &container::armor(&any_container()), None);
         let lines = r.push_crypto(&wire, &mut c, 1, &policy, &mut out);
@@ -1775,6 +1820,54 @@ next"]);
                 on,
                 "{lines:?}"
             );
+        }
+    }
+
+    /// With `calls_encrypt=on` the engine sees the SIP of a call, and the
+    /// control messages it gives go on the wire before the SIP frame, which
+    /// goes on byte for byte. Off, the engine is never asked and the stream
+    /// is the client's own.
+    #[test]
+    fn call_key_exchange_goes_before_the_sip_frame_only_when_on() {
+        let sip = b"INVITE sip:100002@h SIP/2.0\r\nCall-ID: x\r\nCSeq: 1 INVITE\r\n\r\n";
+        let mut body = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        body.extend_from_slice(&crate::calls::CHANNEL_SIP.to_be_bytes());
+        body.push(6);
+        body.extend_from_slice(b"100002");
+        snac::put_tlv(&mut body, crate::calls::TLV_SIP, sip);
+        let payload = snac_frame(snac::FOOD_ICBM, snac::ICBM_MSG_TO_HOST, 9, &body);
+        let f = frame(2, 101, &payload);
+        for on in [false, true] {
+            let mut policy = encrypt();
+            policy.calls_encrypt = on;
+            let (mut r, _) = opened(Direction::Outbound);
+            let mut c = Fake::new();
+            c.call = vec![any_container()];
+            let mut out = Vec::new();
+            let lines = r.push_crypto(&f, &mut c, 1, &policy, &mut out);
+            let got = frames_of(&out);
+            if !on {
+                assert_eq!(out, f, "off: the client's own frame, nothing else");
+                assert!(c.sip_seen.is_empty());
+                continue;
+            }
+            assert_eq!(
+                c.sip_seen,
+                vec![(Direction::Outbound, "100002".to_string())]
+            );
+            assert_eq!(got.len(), 2, "{lines:?}");
+            // First the control message to the peer, as a channel-1 message.
+            let s0 = snac::parse(&got[0].1).unwrap();
+            let m = icbm::parse_to_host(s0.body).unwrap();
+            assert_eq!(m.peer, "100002");
+            assert_eq!(
+                container::find_armor(&m.text).unwrap(),
+                any_container(),
+                "the engine's container"
+            );
+            // Then the SIP frame, its payload untouched.
+            assert_eq!(got[1].1, payload);
+            assert!(got[0].0 < got[1].0, "numbered in order");
         }
     }
 }

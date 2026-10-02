@@ -439,7 +439,7 @@ pub fn process_crypto(
                     }
                 }
                 // A control message advances the ratchet and shows nothing.
-                Inbound::Control => {
+                Inbound::Control(_) => {
                     p.drop = true;
                     p.lines
                         .push(format!("{} control message (removed)", msg.log_line()));
