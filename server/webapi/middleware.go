@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/mk6i/open-oscar-server/state"
@@ -208,14 +210,60 @@ func (l *RateLimitMiddleware) sendRateLimited(w http.ResponseWriter, r *http.Req
 	SendResponse(w, r, resp, l.logger)
 }
 
-// RequestLogger logs each request with method, path, and raw query string.
+// RequestLogger logs each request with method, path, and query string, with
+// the values of secret parameters replaced (see redactQuery).
 func RequestLogger(logger *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		logger.Info("request",
 			"method", r.Method,
 			"path", r.URL.Path,
-			"query", r.URL.RawQuery,
+			"query", redactQuery(r.URL.RawQuery),
 		)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// secretQueryParams are the query parameters whose values let whoever reads
+// them sign in or act as the user: the sign-in token, the session ID, and the
+// password or its digest. Compared case-insensitively.
+var secretQueryParams = map[string]bool{
+	"a":            true,
+	"aimsid":       true,
+	"authtoken":    true,
+	"digest":       true,
+	"password":     true,
+	"pwd":          true,
+	"session_key":  true,
+	"sessionkey":   true,
+	"sig_sha256":   true,
+	"token":        true,
+	"tokenvalue":   true,
+	"pass":         true,
+	"passwd":       true,
+	"secret":       true,
+	"sessionkey64": true,
+}
+
+// redactQuery returns rawQuery with the value of every secret parameter
+// replaced by "<redacted>", keeping the order and the other parameters as
+// they were sent.
+func redactQuery(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
+	}
+	parts := strings.Split(rawQuery, "&")
+	for i, part := range parts {
+		name, _, hasValue := strings.Cut(part, "=")
+		if !hasValue {
+			continue
+		}
+		key, err := url.QueryUnescape(name)
+		if err != nil {
+			key = name
+		}
+		if secretQueryParams[strings.ToLower(key)] {
+			parts[i] = name + "=<redacted>"
+		}
+	}
+	return strings.Join(parts, "&")
 }

@@ -688,3 +688,41 @@ func TestRateLimitStatusName(t *testing.T) {
 		})
 	}
 }
+
+func TestRedactQuery(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "nothing secret", in: "f=json&sn=100001&r=7", want: "f=json&sn=100001&r=7"},
+		{
+			name: "sign-in token and session",
+			in:   "a=AChsnjKr&buildNumber=3525&aimsid=1234.5678&f=json",
+			want: "a=<redacted>&buildNumber=3525&aimsid=<redacted>&f=json",
+		},
+		{name: "password and digest", in: "s=100001&pwd=hunter2&digest=abc", want: "s=100001&pwd=<redacted>&digest=<redacted>"},
+		{name: "names are case-insensitive", in: "A=x&AimSid=y", want: "A=<redacted>&AimSid=<redacted>"},
+		{name: "escaped name", in: "%61=x", want: "%61=<redacted>"},
+		{name: "parameter without value kept", in: "a&f=json", want: "a&f=json"},
+		{name: "empty secret value", in: "a=", want: "a=<redacted>"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, redactQuery(tt.in))
+		})
+	}
+}
+
+func TestRequestLogger_redactsSecrets(t *testing.T) {
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	h := RequestLogger(logger, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	req := httptest.NewRequest(http.MethodGet, "/aim/startOSCARSession?a=SECRETTOKEN&f=json", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	assert.NotContains(t, buf.String(), "SECRETTOKEN")
+	assert.Contains(t, buf.String(), "a=<redacted>&f=json")
+}
