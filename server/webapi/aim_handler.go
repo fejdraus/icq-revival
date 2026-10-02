@@ -791,21 +791,22 @@ func (h *AimHandler) StartOSCARSession(w http.ResponseWriter, r *http.Request) {
 	// The sign-on cookie then crosses the wire in the clear, so the downgrade is
 	// logged rather than left to be inferred from the absent tlsCertName.
 	//
-	// A request that arrived over the server's own TLS 1.3 listener is sent to
-	// the TLS host, the one that listener's certificate names.
+	// A request that arrived over the server's own TLS 1.3 listener is always
+	// sent to the TLS host, so the BOS port the client reports is the one it
+	// is really on. Only with useTLS is the certificate name added, which
+	// tells the client to negotiate TLS itself: without it the client keeps
+	// speaking plain FLAP, which the E2E add-on wraps in TLS.
 	useTLS := parseBoolParam(params.Get("useTLS"))
 	endpoint := h.BOSListener.PlainEndpoint()
-	if useTLS {
-		ssl, ok := h.BOSListener.SSLEndpoint()
-		if tlsEndpoint, hasTLS := h.BOSListener.TLSEndpoint(); hasTLS && r.TLS != nil {
-			ssl, ok = tlsEndpoint, true
-		}
-		if !ok {
+	if tlsEndpoint, hasTLS := h.BOSListener.TLSEndpoint(); hasTLS && r.TLS != nil {
+		endpoint = tlsEndpoint
+	} else if useTLS {
+		if ssl, ok := h.BOSListener.SSLEndpoint(); ok {
+			endpoint = ssl
+		} else {
 			h.Logger.WarnContext(ctx, "TLS requested but no SSL listener is configured, advertising a plaintext BOS host",
 				"screen_name", cookie.ScreenName)
 			useTLS = false
-		} else {
-			endpoint = ssl
 		}
 	}
 

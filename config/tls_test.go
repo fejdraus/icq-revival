@@ -183,6 +183,8 @@ func TestEndpoint_Redirects(t *testing.T) {
 
 	noSSLGroup := group
 	noSSLGroup.BOSListenAddressSSL, noSSLGroup.BOSAdvertisedHostSSL = "", ""
+	noSSLTLS, ok := noSSLGroup.TLSEndpoint()
+	assert.True(t, ok)
 
 	cases := []struct {
 		name          string
@@ -215,10 +217,25 @@ func TestEndpoint_Redirects(t *testing.T) {
 			wantService:  "icq.example.org:5190",
 		},
 		{
-			name:        "TLS endpoint, no SSL asked: the plain host, for the add-on to map",
+			name:        "TLS endpoint, no SSL asked: the TLS host, client not told to negotiate SSL",
 			endpoint:    tlsEP,
-			wantLogin:   "icq.example.org:5190",
-			wantService: "icq.example.org:5190",
+			wantLogin:   "icq.example.org:5194",
+			wantService: "icq.example.org:5194",
+		},
+		{
+			name:        "TLS endpoint in a group without SSL, no SSL asked: still the TLS host",
+			endpoint:    noSSLTLS,
+			wantLogin:   "icq.example.org:5194",
+			wantService: "icq.example.org:5194",
+		},
+		{
+			name:          "TLS endpoint in a group without SSL, SSL asked: the TLS host",
+			endpoint:      noSSLTLS,
+			wantsSSL:      true,
+			wantLogin:     "icq.example.org:5194",
+			wantLoginSSL:  true,
+			wantService:   "icq.example.org:5194",
+			wantServiceOK: true,
 		},
 		{
 			name:          "TLS endpoint, SSL asked: the TLS host",

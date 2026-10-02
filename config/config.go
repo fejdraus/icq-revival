@@ -99,8 +99,8 @@ type ListenerGroup struct {
 	// BOSListenAddressTLS is the socket on which this server terminates TLS
 	// 1.3 itself. Empty when the group has no such endpoint.
 	BOSListenAddressTLS string
-	// BOSAdvertisedHostTLS is the host a natively TLS-capable client is sent
-	// to when it connected over TLS 1.3 and asked for SSL.
+	// BOSAdvertisedHostTLS is the host every client that connected over TLS
+	// 1.3 is sent to.
 	BOSAdvertisedHostTLS string
 }
 
@@ -196,20 +196,19 @@ func (e Endpoint) AdvertisedHost() string {
 }
 
 // LoginRedirect returns the BOS host a client that signed in on this endpoint
-// is sent to, and whether that host is an encrypted one. wantsSSL is whether
-// the client asked for SSL.
+// is sent to, and whether the client must negotiate SSL with that host itself.
+// wantsSSL is whether the client asked for SSL.
 //
 // The SSL terminator's endpoint keeps its clients on the SSL host whatever
-// they asked. The TLS 1.3 endpoint sends only a client that asked for SSL to
-// the TLS host: a client whose TLS is added from outside (the E2E add-on)
-// asks for nothing, gets the plain host, and the add-on maps it back to TLS.
-func (e Endpoint) LoginRedirect(wantsSSL bool) (host string, secure bool) {
+// they asked. The TLS 1.3 endpoint always sends its clients to the TLS host,
+// so the BOS port the client reports is the one it is really on. Only a
+// client that asked for SSL is told to negotiate it: a client whose TLS is
+// added from outside (the E2E add-on) asks for nothing and must keep speaking
+// plain FLAP, which the add-on wraps.
+func (e Endpoint) LoginRedirect(wantsSSL bool) (host string, clientSSL bool) {
 	switch {
 	case e.Transport == TransportTLS13:
-		if wantsSSL {
-			return e.Group.BOSAdvertisedHostTLS, true
-		}
-		return e.Group.BOSAdvertisedHostPlain, false
+		return e.Group.BOSAdvertisedHostTLS, wantsSSL
 	case e.IsSSL:
 		return e.Group.BOSAdvertisedHostSSL, true
 	default:
@@ -218,19 +217,20 @@ func (e Endpoint) LoginRedirect(wantsSSL bool) (host string, secure bool) {
 }
 
 // ServiceRedirect returns the host a client on this endpoint is sent to for
-// another service, and whether that host is an encrypted one. wantsSSL is
-// whether the client asked for SSL in its service request.
+// another service, and whether the client must negotiate SSL with that host
+// itself. wantsSSL is whether the client asked for SSL in its service request.
 //
-// A client that did not ask gets the plain host. One that asked over the TLS
-// 1.3 endpoint gets the TLS host. One that asked elsewhere gets the SSL host,
-// or the plain host when the group has no SSL, for the client to decide
-// whether to go on without it.
-func (e Endpoint) ServiceRedirect(wantsSSL bool) (host string, secure bool) {
+// A client on the TLS 1.3 endpoint gets the TLS host, told to negotiate SSL
+// only when it asked (see LoginRedirect). Elsewhere, a client that did not ask
+// gets the plain host, and one that asked gets the SSL host, or the plain host
+// when the group has no SSL, for the client to decide whether to go on
+// without it.
+func (e Endpoint) ServiceRedirect(wantsSSL bool) (host string, clientSSL bool) {
 	switch {
+	case e.Transport == TransportTLS13:
+		return e.Group.BOSAdvertisedHostTLS, wantsSSL
 	case !wantsSSL:
 		return e.Group.BOSAdvertisedHostPlain, false
-	case e.Transport == TransportTLS13:
-		return e.Group.BOSAdvertisedHostTLS, true
 	case e.Group.HasSSL():
 		return e.Group.BOSAdvertisedHostSSL, true
 	default:
@@ -246,7 +246,7 @@ type Config struct {
 	BOSListenersSSL         []string `envconfig:"OSCAR_LISTENERS_SSL" required:"false" basic:"" ssl:"LOCAL://0.0.0.0:5191" description:"Network listeners for core OSCAR services that receive decrypted traffic from an SSL terminator such as nginx. Clients that connect through these listeners are redirected to the hostnames in OSCAR_ADVERTISED_LISTENERS_SSL, keeping them on the SSL path for the rest of the session.\n\nFormat:\n\t- Comma-separated list of [NAME]://[HOSTNAME]:[PORT]\n\t- Listener names and ports must be unique\n\t- Each listener needs a listener in OSCAR_LISTENERS and OSCAR_ADVERTISED_LISTENERS_SSL\n\t- A listener without a matching OSCAR_ADVERTISED_LISTENERS_SSL entry is not started\n\nExamples:\n\t// Listen on all interfaces\n\tLAN://0.0.0.0:5191\n\t// Separate Internet and LAN config\n\tWAN://142.250.176.206:5191,LAN://192.168.1.10:5192"`
 	BOSAdvertisedHostsSSL   []string `envconfig:"OSCAR_ADVERTISED_LISTENERS_SSL" required:"false" basic:"" ssl:"LOCAL://ras.dev:5193" description:"Same as OSCAR_ADVERTISED_LISTENERS_PLAIN, except the hostname is for the server that terminates SSL. Each listener defined here must have a matching listener in OSCAR_LISTENERS_SSL for the terminator to forward decrypted traffic to."`
 	BOSListenersTLS         []string `envconfig:"OSCAR_LISTENERS_TLS" required:"false" basic:"" ssl:"LOCAL://0.0.0.0:5194" description:"Network listeners on which this server terminates TLS 1.3 itself, with the certificate in TLS_CERT_FILE and TLS_KEY_FILE. TLS 1.2 and older are refused. ALPN picks the protocol on the one port: 'oscar' or none is OSCAR, 'http/1.1' is the WebAPI (only when ENABLE_WEBAPI=1). The E2E add-on for ICQ 6.5 and 7.2 wraps the client's server connections in TLS to this port.\n\nFormat:\n\t- Comma-separated list of [NAME]://[HOSTNAME]:[PORT]\n\t- Listener names and ports must be unique\n\t- Each listener needs a listener in OSCAR_LISTENERS and OSCAR_ADVERTISED_LISTENERS_TLS\n\nExamples:\n\t// Listen on all interfaces\n\tLAN://0.0.0.0:5194"`
-	BOSAdvertisedHostsTLS   []string `envconfig:"OSCAR_ADVERTISED_LISTENERS_TLS" required:"false" basic:"" ssl:"LOCAL://ras.dev:5194" description:"Same as OSCAR_ADVERTISED_LISTENERS_PLAIN, for the listeners in OSCAR_LISTENERS_TLS. Only a client that connected over TLS 1.3 and asked for SSL is sent here; any other client on the TLS listener is sent to the plain host. The host name must be one the certificate is issued to.\n\nExamples:\n\tLAN://icq.example.com:5194"`
+	BOSAdvertisedHostsTLS   []string `envconfig:"OSCAR_ADVERTISED_LISTENERS_TLS" required:"false" basic:"" ssl:"LOCAL://ras.dev:5194" description:"Same as OSCAR_ADVERTISED_LISTENERS_PLAIN, for the listeners in OSCAR_LISTENERS_TLS. Every client that connected over TLS 1.3 is sent here, in the sign-in reply and in every service redirect; only one that asked for SSL is told to negotiate SSL itself (the E2E add-on wraps the client's plain FLAP in TLS). The host name must be one the certificate is issued to.\n\nExamples:\n\tLAN://icq.example.com:5194"`
 	TLSCertFile             string   `envconfig:"TLS_CERT_FILE" required:"false" basic:"" ssl:"certs/server.pem" description:"PEM certificate chain served on OSCAR_LISTENERS_TLS, such as a Let's Encrypt fullchain.pem. The file is read again when it changes, so a renewed certificate is served without a restart. Required when OSCAR_LISTENERS_TLS is set.\n\nExamples:\n\t/certs/ts-cert.pem"`
 	TLSKeyFile              string   `envconfig:"TLS_KEY_FILE" required:"false" basic:"" ssl:"certs/server.pem" description:"PEM private key of TLS_CERT_FILE. Read again when it changes. Required when OSCAR_LISTENERS_TLS is set.\n\nExamples:\n\t/certs/ts-key.pem"`
 	KerberosListeners       []string `envconfig:"KERBEROS_LISTENERS" required:"false" basic:"" ssl:"LOCAL://0.0.0.0:1088" description:"Network listeners for Kerberos authentication. See OSCAR_LISTENERS doc for more details.\n\nExamples:\n\t// Listen on all interfaces\n\tLAN://0.0.0.0:1088\n\t// Separate Internet and LAN config\n\tWAN://142.250.176.206:1088,LAN://192.168.1.10:1087"`

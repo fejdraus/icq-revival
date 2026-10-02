@@ -782,9 +782,11 @@ func (s OServiceService) ServiceRequest(ctx context.Context, service uint16, ins
 	}
 
 	wantsSSL := inBody.HasTag(wire.OserviceTLVTagsSSLUseSSL)
-	host, secure := endpoint.ServiceRedirect(wantsSSL)
+	// Over the TLS 1.3 listener the host is the TLS one even when the client
+	// did not ask for SSL; state NotUsed then keeps the client on plain FLAP.
+	host, clientSSL := endpoint.ServiceRedirect(wantsSSL)
 	stateCode := wire.OServiceServiceResponseSSLStateNotUsed
-	if secure {
+	if clientSSL {
 		stateCode = wire.OServiceServiceResponseSSLStateResume
 	} else if wantsSSL {
 		// redirect to the plaintext host and let the client decide whether

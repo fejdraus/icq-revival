@@ -1363,7 +1363,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			},
 		},
 		{
-			name: "login over the TLS 1.3 listener without asking for SSL, sent to the plain host",
+			name: "login over the TLS 1.3 listener without asking for SSL, sent to the TLS host in plain state",
 			endpointCfg: config.Endpoint{
 				Group: config.ListenerGroup{
 					BOSAdvertisedHostPlain: "icq.example.org:5190",
@@ -1411,7 +1411,7 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			expectOutput: wire.TLVRestBlock{
 				TLVList: wire.TLVList{
 					wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
-					wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, "icq.example.org:5190"),
+					wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, "icq.example.org:5194"),
 					wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, []byte("the-cookie")),
 					wire.NewTLVBE(wire.OServiceTLVTagsSSLState, wire.OServiceServiceResponseSSLStateNotUsed),
 				},
@@ -3112,6 +3112,121 @@ func TestAuthService_addLinkedAccountsTLV(t *testing.T) {
 			if tc.wantTLVCount > 0 {
 				assert.Equal(t, wire.OServiceTLVTagsLinkedAccounts, tlvs[0].Tag)
 			}
+		})
+	}
+}
+
+// TestAuthService_BUCPLogin_RedirectByListener checks the BOS host and SSL
+// state the BUCP login reply hands out, per listener the client signed in on
+// and whether it asked for SSL (TLV 0x8C). The TLS 1.3 listener always names
+// its own host, and tells the client to negotiate SSL only when it asked.
+func TestAuthService_BUCPLogin_RedirectByListener(t *testing.T) {
+	user := state.User{
+		IdentScreenName:   state.NewIdentScreenName("screenName"),
+		DisplayScreenName: "screenName",
+		AuthKey:           "auth_key",
+	}
+	assert.NoError(t, user.HashPassword("the_password"))
+
+	group := config.ListenerGroup{
+		BOSListenAddress:       "0.0.0.0:5190",
+		BOSAdvertisedHostPlain: "icq.example.org:5190",
+		BOSListenAddressSSL:    "127.0.0.1:5191",
+		BOSAdvertisedHostSSL:   "icq.example.org:3143",
+		BOSListenAddressTLS:    "0.0.0.0:5194",
+		BOSAdvertisedHostTLS:   "icq.example.org:5194",
+	}
+	plain := group.PlainEndpoint()
+	ssl, _ := group.SSLEndpoint()
+	tlsEP, _ := group.TLSEndpoint()
+
+	cases := []struct {
+		name         string
+		endpointCfg  config.Endpoint
+		wantsSSL     bool
+		wantHost     string
+		wantSSLState uint8
+	}{
+		{
+			name:         "plain listener, no SSL asked: plain host",
+			endpointCfg:  plain,
+			wantHost:     "icq.example.org:5190",
+			wantSSLState: wire.OServiceServiceResponseSSLStateNotUsed,
+		},
+		{
+			name:         "plain listener, SSL asked: plain host as before",
+			endpointCfg:  plain,
+			wantsSSL:     true,
+			wantHost:     "icq.example.org:5190",
+			wantSSLState: wire.OServiceServiceResponseSSLStateNotUsed,
+		},
+		{
+			name:         "SSL terminator listener: SSL host",
+			endpointCfg:  ssl,
+			wantHost:     "icq.example.org:3143",
+			wantSSLState: wire.OServiceServiceResponseSSLStateResume,
+		},
+		{
+			name:         "TLS listener, no SSL asked (E2E add-on): TLS host, client stays on plain FLAP",
+			endpointCfg:  tlsEP,
+			wantHost:     "icq.example.org:5194",
+			wantSSLState: wire.OServiceServiceResponseSSLStateNotUsed,
+		},
+		{
+			name:         "TLS listener, SSL asked (native TLS client): TLS host, client negotiates SSL",
+			endpointCfg:  tlsEP,
+			wantsSSL:     true,
+			wantHost:     "icq.example.org:5194",
+			wantSSLState: wire.OServiceServiceResponseSSLStateResume,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tlvs := wire.TLVList{
+				wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+				wire.NewTLVBE(wire.LoginTLVTagsPasswordHash, user.StrongMD5Pass),
+			}
+			if tc.wantsSSL {
+				tlvs = append(tlvs, wire.NewTLVBE(wire.LoginTLVTagsUseSSL, []byte{}))
+			}
+
+			userManager := newMockUserManager(t)
+			userManager.EXPECT().
+				User(matchContext(), user.IdentScreenName).
+				Return(&user, nil)
+			cookieBaker := newMockCookieBaker(t)
+			cookieBaker.EXPECT().
+				Issue(mock.Anything, mock.Anything).
+				Return([]byte("the-cookie"), nil)
+			sessionRetriever := newMockSessionRetriever(t)
+			sessionRetriever.EXPECT().RetrieveSession(mock.Anything).Return(nil).Maybe()
+			feedbagManager := newMockFeedbagManager(t)
+			feedbagManager.EXPECT().Feedbag(matchContext(), mock.Anything).Return(nil, nil).Maybe()
+
+			svc := AuthService{
+				cookieBaker:                cookieBaker,
+				userManager:                userManager,
+				sessionRetriever:           sessionRetriever,
+				feedbagManager:             feedbagManager,
+				maxConcurrentLoginsPerUser: 2,
+				logger:                     slog.Default(),
+			}
+			out, err := svc.BUCPLogin(context.Background(), wire.SNAC_0x17_0x02_BUCPLoginRequest{
+				TLVRestBlock: wire.TLVRestBlock{TLVList: tlvs},
+			}, tc.endpointCfg)
+			assert.NoError(t, err)
+
+			body, ok := out.Body.(wire.SNAC_0x17_0x03_BUCPLoginResponse)
+			if !assert.True(t, ok) {
+				return
+			}
+			host, ok := body.String(wire.LoginTLVTagsReconnectHere)
+			assert.True(t, ok)
+			assert.Equal(t, tc.wantHost, host)
+			sslState, ok := body.Uint8(wire.OServiceTLVTagsSSLState)
+			assert.True(t, ok)
+			assert.Equal(t, tc.wantSSLState, sslState)
 		})
 	}
 }

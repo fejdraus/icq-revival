@@ -384,12 +384,43 @@ func TestAimHandler_StartOSCARSession(t *testing.T) {
 		},
 		{
 			// The E2E add-on adds TLS from outside: the client asks for no TLS
-			// and is sent to the plain host, which the add-on maps back.
-			name:         "Success_NoTLSRequested_OverOwnTLSListener_SentToPlainHost",
+			// and is sent to the TLS host, so it reports the port it is really
+			// on. No certificate name: the client keeps speaking plain FLAP,
+			// which the add-on wraps.
+			name:         "Success_NoTLSRequested_OverOwnTLSListener_SentToTLSHostInClear",
 			query:        "a=" + validToken,
 			sslAvailable: true,
 			tlsListener:  true,
 			overTLS:      true,
+			expectedCode: http.StatusOK,
+			checkBody: func(t *testing.T, body string) {
+				got := decodeBridgeData(t, body)
+				assert.Equal(t, "tls.example.com", got.Response.Data.Host)
+				assert.Equal(t, 5194, got.Response.Data.Port)
+				assert.Empty(t, got.Response.Data.TLSCertName)
+			},
+		},
+		{
+			// The TLS listener does not need the external SSL group.
+			name:         "Success_TLS_OverOwnTLSListener_NoSSLGroup_SentToTLSHost",
+			query:        "a=" + validToken + "&useTLS=1",
+			tlsListener:  true,
+			overTLS:      true,
+			expectedCode: http.StatusOK,
+			checkBody: func(t *testing.T, body string) {
+				got := decodeBridgeData(t, body)
+				assert.Equal(t, "tls.example.com", got.Response.Data.Host)
+				assert.Equal(t, 5194, got.Response.Data.Port)
+				assert.Equal(t, "tls.example.com", got.Response.Data.TLSCertName)
+			},
+		},
+		{
+			// A plain request to a server that also has a TLS listener is
+			// answered as before.
+			name:         "Success_NoTLSRequested_NotOverOwnTLSListener_SentToPlainHost",
+			query:        "a=" + validToken,
+			sslAvailable: true,
+			tlsListener:  true,
 			expectedCode: http.StatusOK,
 			checkBody: func(t *testing.T, body string) {
 				got := decodeBridgeData(t, body)

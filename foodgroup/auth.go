@@ -830,9 +830,11 @@ func (s AuthService) loginSuccessResponse(ctx context.Context, props loginProper
 		return wire.TLVRestBlock{}, fmt.Errorf("failed to issue auth cookie: %w", err)
 	}
 
-	reconnectHost, secure := endpointCfg.LoginRedirect(props.wantsSSL)
+	// Over the TLS 1.3 listener the host is the TLS one even when the client
+	// did not ask for SSL; state NotUsed then keeps the client on plain FLAP.
+	reconnectHost, clientSSL := endpointCfg.LoginRedirect(props.wantsSSL)
 	sslState := wire.OServiceServiceResponseSSLStateNotUsed
-	if secure {
+	if clientSSL {
 		sslState = wire.OServiceServiceResponseSSLStateResume
 	}
 

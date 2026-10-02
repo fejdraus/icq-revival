@@ -780,7 +780,7 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			},
 		},
 		{
-			name:    "no SSL request over the TLS 1.3 endpoint, return the plain host",
+			name:    "no SSL request over the TLS 1.3 endpoint, return the TLS host in plain state",
 			service: wire.BOS,
 			listenerGroup: config.ListenerGroup{
 				BOSAdvertisedHostPlain: "127.0.0.1:1234",
@@ -807,7 +807,7 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 					TLVRestBlock: wire.TLVRestBlock{
 						TLVList: wire.TLVList{
 							wire.NewTLVBE(wire.OServiceTLVTagsGroupID, wire.Admin),
-							wire.NewTLVBE(wire.OServiceTLVTagsReconnectHere, "127.0.0.1:1234"),
+							wire.NewTLVBE(wire.OServiceTLVTagsReconnectHere, "tls.example.com:1236"),
 							wire.NewTLVBE(wire.OServiceTLVTagsLoginCookie, []byte("the-cookie")),
 							wire.NewTLVBE(wire.OServiceTLVTagsSSLState, uint8(0x00)),
 						},
@@ -1216,6 +1216,130 @@ func TestOServiceService_ServiceRequest(t *testing.T) {
 			//
 			assert.Equal(t, tc.expectOutput, outputSNAC)
 		})
+	}
+}
+
+// TestOServiceService_ServiceRequest_RedirectByListener checks the host and
+// SSL state of every service redirect, per listener the request came in on and
+// whether the client asked for SSL (TLV 0x8C). The TLS 1.3 listener always
+// names its own host, and tells the client to negotiate SSL only when it
+// asked; the plain and SSL terminator listeners answer as before.
+func TestOServiceService_ServiceRequest_RedirectByListener(t *testing.T) {
+	chatRoom := state.NewChatRoom("the-chat-room", state.NewIdentScreenName(""), state.PrivateExchange)
+
+	group := config.ListenerGroup{
+		BOSListenAddress:       "0.0.0.0:5190",
+		BOSAdvertisedHostPlain: "icq.example.org:5190",
+		BOSListenAddressSSL:    "127.0.0.1:5191",
+		BOSAdvertisedHostSSL:   "icq.example.org:3143",
+		BOSListenAddressTLS:    "0.0.0.0:5194",
+		BOSAdvertisedHostTLS:   "icq.example.org:5194",
+	}
+	plain := group.PlainEndpoint()
+	ssl, _ := group.SSLEndpoint()
+	tlsEP, _ := group.TLSEndpoint()
+
+	listeners := []struct {
+		name         string
+		endpoint     config.Endpoint
+		wantsSSL     bool
+		wantHost     string
+		wantSSLState uint8
+	}{
+		{
+			name:         "plain listener, no SSL asked",
+			endpoint:     plain,
+			wantHost:     "icq.example.org:5190",
+			wantSSLState: wire.OServiceServiceResponseSSLStateNotUsed,
+		},
+		{
+			name:         "plain listener, SSL asked",
+			endpoint:     plain,
+			wantsSSL:     true,
+			wantHost:     "icq.example.org:3143",
+			wantSSLState: wire.OServiceServiceResponseSSLStateResume,
+		},
+		{
+			name:         "SSL terminator listener, no SSL asked",
+			endpoint:     ssl,
+			wantHost:     "icq.example.org:5190",
+			wantSSLState: wire.OServiceServiceResponseSSLStateNotUsed,
+		},
+		{
+			name:         "SSL terminator listener, SSL asked",
+			endpoint:     ssl,
+			wantsSSL:     true,
+			wantHost:     "icq.example.org:3143",
+			wantSSLState: wire.OServiceServiceResponseSSLStateResume,
+		},
+		{
+			name:         "TLS listener, no SSL asked (E2E add-on)",
+			endpoint:     tlsEP,
+			wantHost:     "icq.example.org:5194",
+			wantSSLState: wire.OServiceServiceResponseSSLStateNotUsed,
+		},
+		{
+			name:         "TLS listener, SSL asked (native TLS client)",
+			endpoint:     tlsEP,
+			wantsSSL:     true,
+			wantHost:     "icq.example.org:5194",
+			wantSSLState: wire.OServiceServiceResponseSSLStateResume,
+		},
+	}
+	services := []uint16{wire.Admin, wire.Alert, wire.BART, wire.ChatNav, wire.ODir, wire.MDir, wire.Chat}
+
+	for _, l := range listeners {
+		for _, foodGroup := range services {
+			t.Run(l.name+"/"+wire.FoodGroupName(foodGroup), func(t *testing.T) {
+				tlvs := wire.TLVList{}
+				if foodGroup == wire.Chat {
+					tlvs = append(tlvs, wire.NewTLVBE(0x01, wire.SNAC_0x01_0x04_TLVRoomInfo{
+						Exchange: chatRoom.Exchange(),
+						Cookie:   chatRoom.Cookie(),
+					}))
+				}
+				if l.wantsSSL {
+					tlvs = append(tlvs, wire.NewTLVBE(wire.OserviceTLVTagsSSLUseSSL, []byte{}))
+				}
+
+				chatRoomManager := newMockChatRoomRegistry(t)
+				if foodGroup == wire.Chat {
+					chatRoomManager.EXPECT().
+						ChatRoomByCookie(context.Background(), chatRoom.Cookie()).
+						Return(chatRoom, nil)
+				}
+				cookieIssuer := newMockCookieBaker(t)
+				cookieIssuer.EXPECT().
+					Issue(mock.Anything, state.DefaultCookieTTL).
+					Return([]byte("the-cookie"), nil)
+
+				svc := NewOServiceService(config.Config{}, nil, slog.Default(), cookieIssuer, chatRoomManager, nil, nil, nil, wire.DefaultSNACRateLimits(), newMockChatMessageRelayer(t), nil, nil, nil)
+				out, err := svc.ServiceRequest(context.Background(), wire.BOS, newTestInstance("me"), wire.SNACFrame{RequestID: 1234},
+					wire.SNAC_0x01_0x04_OServiceServiceRequest{
+						FoodGroup:    foodGroup,
+						TLVRestBlock: wire.TLVRestBlock{TLVList: tlvs},
+					}, l.endpoint)
+				assert.NoError(t, err)
+
+				assert.Equal(t, wire.SNACMessage{
+					Frame: wire.SNACFrame{
+						FoodGroup: wire.OService,
+						SubGroup:  wire.OServiceServiceResponse,
+						RequestID: 1234,
+					},
+					Body: wire.SNAC_0x01_0x05_OServiceServiceResponse{
+						TLVRestBlock: wire.TLVRestBlock{
+							TLVList: wire.TLVList{
+								wire.NewTLVBE(wire.OServiceTLVTagsGroupID, foodGroup),
+								wire.NewTLVBE(wire.OServiceTLVTagsReconnectHere, l.wantHost),
+								wire.NewTLVBE(wire.OServiceTLVTagsLoginCookie, []byte("the-cookie")),
+								wire.NewTLVBE(wire.OServiceTLVTagsSSLState, l.wantSSLState),
+							},
+						},
+					},
+				}, out)
+			})
+		}
 	}
 }
 
