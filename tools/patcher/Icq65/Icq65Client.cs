@@ -23,7 +23,9 @@
 //      under Options -> Connection -> manual stays the user's choice. It also
 //      replaces turn.oscar.aol.com as the STUN server a voice or video call
 //      asks for the caller's public address - without an answer from it a
-//      call fails as soon as it is picked up. With the TLS row of the E2E
+//      call fails as soon as it is picked up. The two relays the client
+//      falls back to, the file transfer proxy and the HTTP tunnel, which the
+//      server does not run, go nowhere. With the TLS row of the E2E
 //      add-on as well, the sign-in port becomes the server's TLS port, which
 //      only the add-on reaches, so the client cannot sign in without it
 //      (fail closed).
@@ -1226,6 +1228,22 @@ namespace IcqRevival.Patch
         // domain:5190, which the add-on maps to TLS as well; a client without
         // it never gets that far. The other 5190 of MCore.dll is the port of
         // ars.oscar.aol.com, not the sign-in, and stays.
+        //
+        // Two relays the client falls back to are named in MCore.dll too:
+        //   ars.oscar.aol.com   the rendezvous proxy of a file transfer the
+        //                       two clients cannot make directly: it would be
+        //                       told the UIN, the transfer cookie and that
+        //                       there is a transfer, in plain text. The name
+        //                       no longer resolves, but whoever registers it
+        //                       again would be handed all that.
+        //   http.proxy.icq.com  the default of HttpTunnelingHostName, the HTTP
+        //                       tunnel of a connection that cannot reach the
+        //                       server: it would carry the session itself. It
+        //                       resolves - to the current ICQ operator.
+        // The server runs neither, so with the sign-in each becomes
+        // "127.0.0.1", written over the string in place (one push takes each
+        // one): the connection goes to the client's own machine and fails
+        // there as it does today, only nothing leaves it.
 
         static class SignIn
         {
@@ -1244,6 +1262,29 @@ namespace IcqRevival.Patch
             public const uint StunTarget = 0x320BB7C8;  // where they point out of the box
             public const int PortImm = 0x464E;          // mov dword [esp+44h], 5190 - the ServerPort default, its operand
             public const uint PortOriginal = 5190;
+            // The relays' hosts: file offset of the UTF-16 string, and the string.
+            public static readonly KeyValuePair<int, string>[] Relays =
+            {
+                new KeyValuePair<int, string>(0x1B6F50, "ars.oscar.aol.com"),
+                new KeyValuePair<int, string>(0x1B1218, "http.proxy.icq.com"),
+            };
+            public const string RelayTo = "127.0.0.1";
+        }
+
+        static bool NoRelaysAt(byte[] bytes)
+        {
+            return SignIn.Relays.All(r => ReadSlot(bytes, r.Key, r.Key + (r.Value.Length + 1) * 2) == SignIn.RelayTo);
+        }
+
+        // Writes 127.0.0.1 over each relay host, the rest of it zeros.
+        static void SetNoRelays(byte[] bytes)
+        {
+            byte[] to = Encoding.Unicode.GetBytes(SignIn.RelayTo);
+            foreach (var r in SignIn.Relays)
+            {
+                for (int i = 0; i < (r.Value.Length + 1) * 2; i++) bytes[r.Key + i] = 0;
+                Array.Copy(to, 0, bytes, r.Key, to.Length);
+            }
         }
 
         static uint PortAt(byte[] bytes)
@@ -1300,8 +1341,10 @@ namespace IcqRevival.Patch
             }
             if (target == SignIn.NewTarget)
             {
-                // Patched before calls were: the STUN server is still AOL's.
-                return Ps.Eq(ReadSlotDomain(bytes), domain) && StunPushesAt(bytes, SignIn.NewTarget) ? "patched" : "another server";
+                // Patched before calls were: the STUN server is still AOL's;
+                // or before the relays were: they are still the old hosts.
+                bool all = StunPushesAt(bytes, SignIn.NewTarget) && NoRelaysAt(bytes);
+                return Ps.Eq(ReadSlotDomain(bytes), domain) && all ? "patched" : "another server";
             }
             return "other version";
         }
@@ -1350,6 +1393,7 @@ namespace IcqRevival.Patch
                 {
                     Array.Copy(BitConverter.GetBytes(SignIn.NewTarget), 0, bytes, at, 4);
                 }
+                SetNoRelays(bytes);
             }
             if (bytes.SequenceEqual(current)) return null;
             PatchFiles.BackupOnce(path, Suffix);

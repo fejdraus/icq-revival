@@ -28,7 +28,9 @@
 //      names someone else may answer.
 //   3. Sign-in. The default ACC connection settings (AppConfig.xml) are
 //      pointed at our server's web API: the web login, the BOS redirect and
-//      the STUN server of calls. With the TLS row of the E2E add-on as well,
+//      the STUN server of calls; the two relays it falls back to, the file
+//      transfer proxy and the HTTP tunnel, which the server does not run,
+//      go nowhere. With the TLS row of the E2E add-on as well,
 //      the web login and the BOS redirect go to a port only the add-on
 //      reaches, so the client cannot sign in without it (fail closed).
 //   4. Fixes. The AOL Diagnostics module, tbdiag.dll, which ICQ.exe loads
@@ -686,7 +688,38 @@ namespace IcqRevival.Patch
             text = SetSignInPort(text, SignInPorts[0]);
             text = SetAcc(text, "aimcc.connect.bossRedirect.address", domain);
             text = SetSignInPort(text, SignInPorts[1]);
-            return SetAcc(text, "aimcc.connect.stun.address", domain);
+            text = SetAcc(text, "aimcc.connect.stun.address", domain);
+            foreach (string name in NoRelays) text = AddAcc(text, name, NoRelay, "aimcc.connect.stun.port");
+            return text;
+        }
+
+        // Two relays the client falls back to have their hosts in acccore.dll
+        // only, and both names still resolve - to the current ICQ operator:
+        //   aimcc.connect.ars.address     the rendezvous proxy (ars.icq.com,
+        //                                 on the port 443 of AppConfig.xml),
+        //                                 for a file transfer that cannot go
+        //                                 direct: it would be told the UIN,
+        //                                 the transfer cookie and that there
+        //                                 is a transfer, in plain text
+        //   aimcc.connect.tunnel.address  the HTTP tunnel (http.proxy.icq.com)
+        //                                 for a connection that cannot reach
+        //                                 the server: it would carry the
+        //                                 session itself
+        // The server runs neither, so with the sign-in both go to the
+        // client's own machine, where the connection fails as it does today -
+        // only nothing leaves it. Their ports stay as they are.
+        const string NoRelay = "127.0.0.1";
+        static readonly string[] NoRelays = { "aimcc.connect.ars.address", "aimcc.connect.tunnel.address" };
+
+        // A preference set, or added after another one when the file has no
+        // line for it, in the same indentation.
+        static string AddAcc(string text, string name, string value, string after)
+        {
+            if (Regex.IsMatch(text, "<p\\s+name=\"" + Regex.Escape(name) + "\"\\s+value=\"")) return SetAcc(text, name, value);
+            Match line = Regex.Match(text, "([ \\t]*)<p\\s+name=\"" + Regex.Escape(after) + "\"[^>]*/>(\\r?\\n)");
+            if (!line.Success) return text;
+            string added = line.Groups[1].Value + "<p name=\"" + name + "\" value=\"" + value + "\" />" + line.Groups[2].Value;
+            return text.Insert(line.Index + line.Length, added);
         }
 
         // The ports alone are not enough on a client that has signed in
