@@ -58,9 +58,39 @@ pub fn movie_url(url: &str) -> String {
     }
 }
 
+/// The plain HTTP port the server's pages and movies are served on, and the
+/// port nginx serves the same paths on over HTTPS.
+const PAGES_PORT: &str = "8101";
+const PAGES_PORT_TLS: &str = "8102";
+
+/// The HTTPS address of the same file, for an `http://<host>:8101/...`
+/// address on the server's pages port; `None` for any other address.
+///
+/// The animated avatars' addresses stay plain HTTP in the BART item every
+/// contact downloads: the clients that set them, and other players, may not
+/// speak HTTPS. This player does, so it reads them over TLS on 8102.
+pub(crate) fn secure_twin(url: &str) -> Option<String> {
+    let scheme = url.get(..7)?;
+    if !scheme.eq_ignore_ascii_case("http://") {
+        return None;
+    }
+    let rest = &url[7..];
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, path) = rest.split_at(end);
+    let host = authority.strip_suffix(PAGES_PORT)?.strip_suffix(':')?;
+    if host.is_empty() || (host.contains(['@', ':']) && !host.starts_with('[')) {
+        return None;
+    }
+    Some(format!("https://{host}:{PAGES_PORT_TLS}{path}"))
+}
+
 pub fn fetch(url: &str) -> Result<Vec<u8>, String> {
     if is_http(url) {
-        http(url)
+        // A movie on the server's pages port is read over HTTPS only, never
+        // over the plain address as well: falling back would let anyone on
+        // the path block 8102 and hand the player a movie of their own.
+        let target = secure_twin(url).unwrap_or_else(|| url.to_owned());
+        http(&target).map_err(HttpError::into_message)
     } else {
         std::fs::read(local_path(url)).map_err(|e| e.to_string())
     }
@@ -123,7 +153,22 @@ pub(crate) fn extras_url(data: &[u8]) -> Option<String> {
     (!url.is_empty()).then_some(url)
 }
 
-fn http(url: &str) -> Result<Vec<u8>, String> {
+/// Why a download failed: the server could not be reached (no connection, no
+/// TLS), or it answered and the answer was not the file.
+enum HttpError {
+    Unreachable(String),
+    Status(String),
+}
+
+impl HttpError {
+    fn into_message(self) -> String {
+        match self {
+            HttpError::Unreachable(e) | HttpError::Status(e) => e,
+        }
+    }
+}
+
+fn http(url: &str) -> Result<Vec<u8>, HttpError> {
     struct Handle(*mut c_void);
     impl Drop for Handle {
         fn drop(&mut self) {
@@ -143,7 +188,7 @@ fn http(url: &str) -> Result<Vec<u8>, String> {
         )
     });
     if session.0.is_null() {
-        return Err("InternetOpen failed".into());
+        return Err(HttpError::Unreachable("InternetOpen failed".into()));
     }
     let w = wide(url);
     let req = Handle(unsafe {
@@ -157,10 +202,10 @@ fn http(url: &str) -> Result<Vec<u8>, String> {
         )
     });
     if req.0.is_null() {
-        return Err(format!(
+        return Err(HttpError::Unreachable(format!(
             "InternetOpenUrl failed ({})",
             std::io::Error::last_os_error()
-        ));
+        )));
     }
     let mut status: u32 = 0;
     let mut len = size_of::<u32>() as u32;
@@ -174,7 +219,7 @@ fn http(url: &str) -> Result<Vec<u8>, String> {
         )
     };
     if ok != 0 && !(200..300).contains(&status) {
-        return Err(format!("HTTP {status}"));
+        return Err(HttpError::Status(format!("HTTP {status}")));
     }
     let mut data = Vec::new();
     let mut buf = vec![0u8; 64 * 1024];
@@ -184,14 +229,17 @@ fn http(url: &str) -> Result<Vec<u8>, String> {
             InternetReadFile(req.0, buf.as_mut_ptr().cast(), buf.len() as u32, &mut read)
         };
         if ok == 0 {
-            return Err(format!("read failed ({})", std::io::Error::last_os_error()));
+            return Err(HttpError::Status(format!(
+                "read failed ({})",
+                std::io::Error::last_os_error()
+            )));
         }
         if read == 0 {
             break;
         }
         data.extend_from_slice(&buf[..read as usize]);
         if data.len() > MAX_MOVIE {
-            return Err("movie too large".into());
+            return Err(HttpError::Status("movie too large".into()));
         }
     }
     Ok(data)
@@ -200,6 +248,31 @@ fn http(url: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pages_port_is_read_over_tls() {
+        assert_eq!(
+            secure_twin("http://icq.example.org:8101/icq/avatars/pirate.swf?emotion=stam")
+                .as_deref(),
+            Some("https://icq.example.org:8102/icq/avatars/pirate.swf?emotion=stam")
+        );
+        assert_eq!(
+            secure_twin("HTTP://h:8101").as_deref(),
+            Some("https://h:8102")
+        );
+        assert_eq!(
+            secure_twin("http://[::1]:8101/x.swf").as_deref(),
+            Some("https://[::1]:8102/x.swf")
+        );
+        assert_eq!(secure_twin("https://h:8101/x.swf"), None);
+        assert_eq!(secure_twin("http://h/x.swf"), None);
+        assert_eq!(secure_twin("http://h:81010/x.swf"), None);
+        assert_eq!(secure_twin("http://h:18101/x.swf"), None);
+        assert_eq!(secure_twin("http://u@h:8101/x.swf"), None);
+        assert_eq!(secure_twin("http://:8101/x.swf"), None);
+        assert_eq!(secure_twin("http://example.com/devil.swf"), None);
+        assert_eq!(secure_twin(r"C:\movies\x.swf"), None);
+    }
 
     #[test]
     fn extras_document_names_its_movie() {

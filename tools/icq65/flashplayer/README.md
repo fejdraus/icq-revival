@@ -288,7 +288,10 @@ then the thread may exit. Its COM apartment is unknown. So:
   factory.
 - `src/registry.rs` registers the control class and ProgIDs for the user.
 - `src/fetch.rs` reads local paths, `file:` URLs and `http(s)` URLs (WinINet)
-  on a background thread.
+  on a background thread. An `http://<host>:8101/...` address (the server's
+  plain pages port, which animated avatars' BART items name so that every
+  client can reach them) is read as `https://<host>:8102/...` instead, and
+  only that way: when HTTPS fails the movie does not play.
 
 Ruffle is pinned to tag `nightly-2026-09-26`, commit
 `5455c72da5472a24cc293a7b13643709e9469587`.
