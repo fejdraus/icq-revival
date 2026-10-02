@@ -8,9 +8,11 @@
 // interface under imApp (content, theme, resources), the configuration under
 // packages\ICQ\ConfigFiles, add-ons and translations under packages. Unlike
 // 6.5 it keeps its sign-in server and nearly all of its page addresses in
-// plain configuration files, so this patch changes text only - markup,
+// plain configuration files, so this patch changes text - markup,
 // configuration, DTDs - and renames one DLL; only when asked for does it put
-// a DLL of ours in place of the client's Flash wrapper. No code is patched.
+// a DLL of ours in place of the client's Flash wrapper. The one binary it
+// edits is MCore.dll, and there only four old ICQ addresses and hosts the
+// client has built in, written over in place (see "the old ICQ hosts in the code").
 //
 //   1. Interface. SMS, the games and Zones buttons, Xtraz, the tab strip of
 //      the main window with its Lifestream and "My box" tabs, and the
@@ -30,7 +32,8 @@
 //      pointed at our server's web API: the web login, the BOS redirect and
 //      the STUN server of calls; the two relays it falls back to, the file
 //      transfer proxy and the HTTP tunnel, which the server does not run,
-//      go nowhere. With the TLS row of the E2E add-on as well,
+//      go nowhere, as do the old ICQ hosts MCore.dll has built in. With the
+//      TLS row of the E2E add-on as well,
 //      the web login and the BOS redirect go to a port only the add-on
 //      reaches, so the client cannot sign in without it (fail closed).
 //   4. Fixes. The AOL Diagnostics module, tbdiag.dll, which ICQ.exe loads
@@ -174,6 +177,11 @@ namespace IcqRevival.Patch
                 "E516C9A97F980A617C665907A72E4B573B20A2EB2E98D4D333FFE0C2E05EDD9B",
                 "A776AFA6E1558DF57B0538EF72127CF72459463D8CC587A2F9C499DE6EC5BD30" } },
             { @"imApp\resources\en-US\common.dtd", new[] { "94D6F7034666D77D467891BA63086698E008D7DF4FCF3D3DF96627B1829588D5" } },
+            // Binary, edited apart from the text files (see "the old ICQ hosts
+            // in the code"): build 3143, build 3525.
+            { CodeFile, new[] {
+                "C13C75E223A985620904F04D86B1C12FD0A6F5735DFCC6C5E9FDA3F8C4708815",
+                "CA87B4009706449D4517C351E1503C5011BDB4DF6A146D499B3FC2BB31BB0BE5" } },
         };
 
         // --- changes -----------------------------------------------------------------
@@ -765,6 +773,135 @@ namespace IcqRevival.Patch
             if (!Ps.Eq(ReadAcc(text, "aimcc.connect.host.address"), domain)) return "missing";
             bool ports = SignInPorts.All(n => ReadAcc(text, n) == E2eIni.TlsOnlyWebPort.ToString());
             return ports && ReadAcc(text, SkipSources) == SkipCachedAndPort80.ToString() ? "patched" : "original";
+        }
+
+        // --- the old ICQ hosts in the code -----------------------------------------------
+        //
+        // A few addresses have their default in MCore.dll, and no file the
+        // client reads overrides them - or one does, but not every place the
+        // client takes it from. Seen in use: the "server-side report" the
+        // client sends to srp.ovip.icq.com - cb.icq.com, a third party today -
+        // over plain HTTP on port 80 while StatsUrl of System.xml already goes
+        // nowhere. With the sign-in each is written over in place, in its own
+        // encoding, no longer than it was, the rest of it zeros:
+        //   cb.icq.com/cb/icqsrp/...      the server-side report (ASCII); the
+        //                                 address goes nowhere like the rest
+        //                                 (one character shorter in its path,
+        //                                 as the host is one longer)
+        //   http.proxy.icq.com            the HTTP tunnel's host (UTF-16), the
+        //                                 default HttpTunnelingHostName; ACC's
+        //                                 aimcc.connect.tunnel.address above
+        //                                 is another setting
+        //   update.icq.com/.../updates.xml  the configuration update (UTF-16);
+        //                                 AppConfig.xml gives it a default
+        //                                 too (CodeDefaults)
+        //   www.icq.com/register/...      the e-mail activation (UTF-16);
+        //                                 System.xml points it at the server,
+        //                                 and in place there is no room for a
+        //                                 domain of any length
+        // Each string is found by its content - the offsets differ between
+        // builds 3143 and 3525 - and has to be there once; each has one
+        // instruction that pushes it. The DLL has no checksum and no
+        // signature to keep valid, and it is recognised by the checksum of
+        // its original (Originals) before a byte is written. It is always
+        // built again from that original.
+        const string CodeFile = "MCore.dll";
+
+        sealed class CodeString
+        {
+            public bool Wide;      // UTF-16, or ASCII
+            public string From;
+            public string To;      // no longer than From
+        }
+
+        static readonly CodeString[] CodeStrings =
+        {
+            new CodeString { Wide = false, From = "http://cb.icq.com/cb/icqsrp/%ClientId%/srp.cb", To = Nowhere + "/icqsrp/%ClientId%/srp.cb" },
+            new CodeString { Wide = true, From = "http.proxy.icq.com", To = NoRelay },
+            new CodeString { Wide = true, From = "http://update.icq.com/cb/icq6/%DistId%/ConfigFiles/updates.xml", To = Nowhere + "/cb/icq6/%DistId%/ConfigFiles/updates.xml" },
+            new CodeString { Wide = true, From = "http://www.icq.com/register/email_activation/sendEmailActivation.php", To = Nowhere + "/register/email_activation/sendEmailActivation.php" },
+        };
+
+        // The bytes of the string as it is in the DLL: the text, then zeros
+        // to the length of the original with its terminator.
+        static byte[] CodeBlock(CodeString s, string text)
+        {
+            Encoding e = s.Wide ? Encoding.Unicode : Encoding.ASCII;
+            byte[] block = new byte[e.GetByteCount(s.From) + (s.Wide ? 2 : 1)];
+            byte[] t = e.GetBytes(text);
+            Array.Copy(t, block, t.Length);
+            return block;
+        }
+
+        // Where the block is, at an offset of its alignment.
+        static List<int> FindBlock(byte[] bytes, byte[] block, int align)
+        {
+            var found = new List<int>();
+            for (int i = 0; i + block.Length <= bytes.Length; i += align)
+            {
+                if (bytes[i] != block[0]) continue;
+                int k = 1;
+                while (k < block.Length && bytes[i + k] == block[k]) k++;
+                if (k == block.Length) found.Add(i);
+            }
+            return found;
+        }
+
+        // The original of MCore.dll: the file itself when it is one - also
+        // when the client has put it back over a patched one - and its
+        // backup otherwise.
+        string CodeSource()
+        {
+            string path = At(CodeFile);
+            if (Ps.Contains(Originals[CodeFile], PatchFiles.Sha256(path))) return path;
+            return PatchFiles.Exists(path + Suffix) ? path + Suffix : path;
+        }
+
+        // original / patched / other version / missing. Part of the sign-in
+        // row: a client patched before shows that row partly applied.
+        string CodeState()
+        {
+            string path = At(CodeFile);
+            if (!PatchFiles.Exists(path)) return "missing";
+            if (!Ps.Contains(Originals[CodeFile], PatchFiles.Sha256(CodeSource()))) return "other version";
+            byte[] bytes = File.ReadAllBytes(path);
+            bool all = true;
+            foreach (CodeString s in CodeStrings)
+            {
+                int align = s.Wide ? 2 : 1;
+                int from = FindBlock(bytes, CodeBlock(s, s.From), align).Count;
+                int to = FindBlock(bytes, CodeBlock(s, s.To), align).Count;
+                if (from + to != 1) return "other version";
+                if (from == 1) all = false;
+            }
+            return all ? "patched" : "original";
+        }
+
+        // Makes MCore.dll match the selection, built again from its original.
+        // A line for the report when it could not be done, or null.
+        string SetCode(bool wanted)
+        {
+            string path = At(CodeFile);
+            if (!PatchFiles.Exists(path)) return null;
+            string source = CodeSource();
+            if (!Ps.Contains(Originals[CodeFile], PatchFiles.Sha256(source))) return CodeFile + " is not the one from build 3143 or 3525 - left as it is";
+            // An original the client has put back is the backup from now on.
+            if (source == path && PatchFiles.Exists(path + Suffix)) PatchFiles.Copy(path, path + Suffix, true);
+            byte[] bytes = File.ReadAllBytes(source);
+            if (wanted)
+            {
+                foreach (CodeString s in CodeStrings)
+                {
+                    List<int> at = FindBlock(bytes, CodeBlock(s, s.From), s.Wide ? 2 : 1);
+                    if (at.Count != 1) return CodeFile + ": \"" + s.From + "\" is not there once - left as it is";
+                    byte[] to = CodeBlock(s, s.To);
+                    Array.Copy(to, 0, bytes, at[0], to.Length);
+                }
+            }
+            if (bytes.SequenceEqual(File.ReadAllBytes(path))) return null;
+            PatchFiles.BackupOnce(path, Suffix);
+            File.WriteAllBytes(path, bytes);
+            return null;
         }
 
         // --- tZers without Flash ---------------------------------------------------------
@@ -1516,6 +1653,7 @@ namespace IcqRevival.Patch
                     add(c.Part, where, state);
                 }
             }
+            add("sign-in", CodeFile, CodeState());
             foreach (Removal r in Removals) add(r.What, r.Path, RemovalState(r));
             string player = PlayerState();
             add("the tZers player", PlayerFile, player);
@@ -1598,8 +1736,12 @@ namespace IcqRevival.Patch
                     throw new InvalidOperationException(f.Key + " is not the one from ICQ 7.2 build 3143 or 3525; nothing was changed.");
                 }
             }
+            if (CodeState() == "other version")
+            {
+                throw new InvalidOperationException(CodeFile + " is not the one from ICQ 7.2 build 3143 or 3525; nothing was changed.");
+            }
 
-            PatchSteps.Start(5 + files.Count + Removals.Length);
+            PatchSteps.Start(6 + files.Count + Removals.Length);
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -1624,6 +1766,10 @@ namespace IcqRevival.Patch
                     PatchFiles.WriteText(path, file);
                 }
             }
+
+            PatchSteps.Step("Building " + CodeFile + "...");
+            string codeNote = SetCode(wanted("sign-in"));
+            if (codeNote != null) notes.Add(codeNote);
 
             foreach (Removal r in Removals)
             {
