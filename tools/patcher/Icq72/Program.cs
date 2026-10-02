@@ -9,9 +9,9 @@
 //   ICQ-7.2-Patch.exe -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>] [-Include tzers-player] [-Player <dll>]
 //   ICQ-7.2-Patch.exe -Restore [-Root <folder>]
 // -Skip takes job keys (sms, games, xtraz, zlango, tabs, ads, fix,
-// links, sign-in, tzers-player, e2e, e2e-tls), separated by commas; they are left
+// links, sign-in, tzers-player, e2e, e2e-tls, e2e-calls), separated by commas; they are left
 // out, or taken out if in place. -Include takes the jobs that are off unless
-// asked for: tzers-player, e2e, e2e-tls. -Player is our FlashPlayerControl-Ruffle.dll for it,
+// asked for: tzers-player, e2e, e2e-tls, e2e-calls (which needs e2e). -Player is our FlashPlayerControl-Ruffle.dll for it,
 // when not next to this exe. The run reports on the standard output ("applied: ...", "changes
 // made: N", "files restored: N") and exits with 0, or with 1 and the reason
 // on the standard error.
@@ -215,7 +215,7 @@ namespace IcqRevival.Patch
             if (done.Count > 12) msg += "\n  ...";
             if (ui.IsSelected("sign-in")) msg += "\n\nWith automatic connection settings ICQ signs in to " + server + ".";
             if (ui.IsSelected("tzers-player")) msg += "\n\ntZers and Flash avatars play for the Windows user " + Environment.UserName + ", who has to be the one starting ICQ.";
-            string e2e = E2eIni.Summary(server, ui.IsSelected(E2eIni.E2eJob), ui.IsSelected(E2eIni.TlsJob),
+            string e2e = E2eIni.Summary(server, ui.IsSelected(E2eIni.E2eJob), ui.IsSelected(E2eIni.TlsJob), ui.IsSelected(E2eIni.CallsJob),
                 ui.IsSelected("sign-in") ? server + ":" + E2eIni.TlsOnlyWebPort + " (the web sign-in and startOSCARSession)" : null, Icq72Client.E2eProbeFile);
             if (e2e.Length > 0) msg += "\n\n" + e2e;
             msg += "\n\nYou can start ICQ now.";
