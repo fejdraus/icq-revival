@@ -423,6 +423,16 @@ copy it cached earlier and goes on drawing the buttons that copy describes.
 `--keep-xtraz` leaves them in place, and the notes below describe what that
 takes.
 
+**`adConfig.xml` is not the only ad list.** `ConfigRedirect.xml` has the client
+read another file in its place by the user's country: `adConfigRus.xml`,
+`adConfigUkr.xml`, `adConfigUs.xml` and so on, with `ad.mail.ru` as their ad
+server. ICQ 7.2 ships all of them (21 in `packages\ICQ\ConfigFiles`), and its
+patch empties the `<spot>` entries of every one. ICQ 6.5 build 2024 ships none,
+so its patch drops the `adConfig.xml` lines from `ConfigRedirect.xml` instead,
+and every country reads the emptied `adConfig.xml`. In both, the `<server>`
+addresses of the ad lists (`ar.atwola.com`, `im.adtech.de`, `ad.mail.ru`) go to
+`http://127.0.0.1:9`, like the old ICQ hosts.
+
 **The Xtraz gallery is fed by a list, not by a page.** `XtrazListUrl` points at
 `xtrazlist.xml`, and the client fills its own window from it, so a stub page
 cannot stand in. The service now serves a minimal list in the original schema

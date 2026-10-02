@@ -135,6 +135,28 @@ namespace IcqRevival.Patch
             { @"packages\ICQ\ConfigFiles\adConfig.xml", new[] {
                 "33EA75F797723F893FAA5FF04C0E8605716B41098A3DE366CCDE95BCB8421B10",
                 "6D879322E28560AC663A7D9F9A0370AB7526683932AE219103B9D41A65CB1F50" } },
+            // The advertising of each country (see "advertising"): one version
+            // of each, the one the update manifest of build 3525 lists.
+            { @"packages\ICQ\ConfigFiles\adConfigAus.xml", new[] { "C2FC10DECFBBB8AAF3AB164414DE51660F18484E8465DDFC80C1E46103EC5694" } },
+            { @"packages\ICQ\ConfigFiles\adConfigBl.xml", new[] { "6CC146FD906605131F96C2C30821AF3E9EF5B2E4109B7204060F918BE17BAAEE" } },
+            { @"packages\ICQ\ConfigFiles\adConfigBul.xml", new[] { "5CF0223EE00B99202A150A80643F1902F06E37E85C9E09ADF20A360A1D7FA94D" } },
+            { @"packages\ICQ\ConfigFiles\adConfigBy.xml", new[] { "CDAA4B9313A97BD3CB04C6A83AD3D82DC772B15F04369988128392589D6F9A49" } },
+            { @"packages\ICQ\ConfigFiles\adConfigCh.xml", new[] { "50E0B044642ADF474ECB093D3FFEC24736C3583988091DE53C481707EC4055F5" } },
+            { @"packages\ICQ\ConfigFiles\adConfigCz.xml", new[] { "D94943B2DCEAA2C3583DBDC9C48269C1AAF5E69722437DDDFFBA914CC1A7083B" } },
+            { @"packages\ICQ\ConfigFiles\adConfigDen.xml", new[] { "50E0B044642ADF474ECB093D3FFEC24736C3583988091DE53C481707EC4055F5" } },
+            { @"packages\ICQ\ConfigFiles\adConfigDeu.xml", new[] { "4205A05EF83080C49BFF3F5476C4958C1A79991150941396AED982B9873E00AB" } },
+            { @"packages\ICQ\ConfigFiles\adConfigHk.xml", new[] { "50E0B044642ADF474ECB093D3FFEC24736C3583988091DE53C481707EC4055F5" } },
+            { @"packages\ICQ\ConfigFiles\adConfigIn.xml", new[] { "50E0B044642ADF474ECB093D3FFEC24736C3583988091DE53C481707EC4055F5" } },
+            { @"packages\ICQ\ConfigFiles\adConfigIsr.xml", new[] { "708684699EC641900C97BAA55A05D78C658DCC0358949E134E6BA37F3D8C3039" } },
+            { @"packages\ICQ\ConfigFiles\adConfigIt.xml", new[] { "CDAA4B9313A97BD3CB04C6A83AD3D82DC772B15F04369988128392589D6F9A49" } },
+            { @"packages\ICQ\ConfigFiles\adConfigNor.xml", new[] { "50E0B044642ADF474ECB093D3FFEC24736C3583988091DE53C481707EC4055F5" } },
+            { @"packages\ICQ\ConfigFiles\adConfigRus.xml", new[] { "28FF7B3946F6BFE7C2FB22752894884451E061BF0E99107E4D23BAE0AE70CF0E" } },
+            { @"packages\ICQ\ConfigFiles\adConfigSlv.xml", new[] { "BD060B2175F051B59C2BE6916DDA954442CCD50D6CC4E30D733A1012A0CDEDD4" } },
+            { @"packages\ICQ\ConfigFiles\adConfigSz.xml", new[] { "BF1ED5A76FE9E04A282D976F5FDE669835AC14AC0400C2FBC0345C9712B42F47" } },
+            { @"packages\ICQ\ConfigFiles\adConfigTurk.xml", new[] { "5134FC9431E239E68FD0DA1EB0E14D7D76A98914072CE2C1EA330914DECA662C" } },
+            { @"packages\ICQ\ConfigFiles\adConfigUk.xml", new[] { "50E0B044642ADF474ECB093D3FFEC24736C3583988091DE53C481707EC4055F5" } },
+            { @"packages\ICQ\ConfigFiles\adConfigUkr.xml", new[] { "1943CDE25AEBDE5FE05DAEFE48E1449B35B44BC335F2614B222C3FD101792DDC" } },
+            { @"packages\ICQ\ConfigFiles\adConfigUs.xml", new[] { "6F47656E6CDA47168D271B20C6B1CC1976147F15B8D9D6542EA87199112001B2" } },
             { @"packages\ICQ\ConfigFiles\UIOwnerPanelConfig.xml", new[] { "01F398318EBE909419B66A4F36E7BF834F9168A734E54FE0C682C041E2C763BE" } },
             { @"packages\ICQ\ConfigFiles\Packages.xml", new[] { "6052B39E314631A1DEDF9CEFDE2833644727AF43E96F5F3FFF7419AECB56D093" } },
             { @"packages\ICQ\ConfigFiles\Master.xml", new[] { "4CBE00CAACEE58DF0945517E1EC8F6CBEA65FCEB63CCFF6E37C3F2CCE398E3C7" } },
@@ -330,7 +352,7 @@ namespace IcqRevival.Patch
                 .Replace("<part name=\"idAdBox\"                    width=\"468\" height=\"60\" />", "<part name=\"idAdBox\"                    width=\"0\" height=\"0\" />")),
             On(MsgStyle, "the empty band under the message window",
                 Replace("<part name=\"idBottomBox\" height=\"68\" paddingTop=\"6\"/>", "<part name=\"idBottomBox\" paddingTop=\"6\"/>")),
-            On(Config + @"\adConfig.xml", "advertising slots", Drop("[ \\t]*<spot\\b[^>]*/>[ \\t]*\\r?\\n?")),
+            // The ad slots and ad servers of every country: AdChanges, below.
 
             // Your server.
             Linked(AppConfig, "sign-in", SetSignIn),
@@ -361,6 +383,42 @@ namespace IcqRevival.Patch
             Linked(DataDtd, "page links", (t, d) => InEntity(t, "MsgSessionPanel.BirthdayMessageHTML", "http://greetings\\.icq\\.com", LinkTo(d, "/icq/greetings"))),
             Linked(DataDtd, "page links", (t, d) => InEntity(t, "ContentPanelSms.LearnMoreUrl", null, LinkTo(d, "/icq/stub/sms.html"))),
         };
+
+        // --- advertising -----------------------------------------------------------------
+        //
+        // The ad slots come from the <spot> entries of adConfig.xml: without
+        // them the client asks for no ad and draws none. adConfig.xml is not
+        // the only list, though: ConfigRedirect.xml has the client read
+        // another one in its place by the user's country - adConfigRus.xml
+        // for Russia, adConfigUkr.xml for Ukraine, adConfigUs.xml for the US
+        // and so on, all with ad.mail.ru as their ad server. So every one of
+        // them loses its slots the same way, and the redirection is left as
+        // it is. Their ad servers (ar.atwola.com, im.adtech.de, ad.mail.ru)
+        // go nowhere too, like the old ICQ hosts: with no slot they are never
+        // asked, and then nothing in the files names them either.
+
+        static readonly string[] AdConfigs =
+        {
+            "adConfig.xml", "adConfigAus.xml", "adConfigBl.xml", "adConfigBul.xml", "adConfigBy.xml",
+            "adConfigCh.xml", "adConfigCz.xml", "adConfigDen.xml", "adConfigDeu.xml", "adConfigHk.xml",
+            "adConfigIn.xml", "adConfigIsr.xml", "adConfigIt.xml", "adConfigNor.xml", "adConfigRus.xml",
+            "adConfigSlv.xml", "adConfigSz.xml", "adConfigTurk.xml", "adConfigUk.xml", "adConfigUkr.xml",
+            "adConfigUs.xml",
+        };
+
+        static string NoAdServers(string text)
+        {
+            return Regex.Replace(text, "(<server\\b[^>]*?\\surl=\")[^\"]*", m => m.Groups[1].Value + Nowhere);
+        }
+
+        static IEnumerable<Change> AdChanges()
+        {
+            foreach (string name in AdConfigs)
+            {
+                yield return On(Config + @"\" + name, "advertising slots", Drop("[ \\t]*<spot\\b[^>]*/>[ \\t]*\\r?\\n?"));
+                yield return On(Config + @"\" + name, "ad servers", NoAdServers);
+            }
+        }
 
         // --- links ---------------------------------------------------------------------
         //
@@ -554,7 +612,7 @@ namespace IcqRevival.Patch
             }
         }
 
-        static IEnumerable<Change> AllChanges() { return Changes.Concat(SentenceChanges()); }
+        static IEnumerable<Change> AllChanges() { return Changes.Concat(AdChanges()).Concat(SentenceChanges()); }
 
         // Whether a host is already on a whitelist.
         static bool IsWhitelisted(string name, string text, string host)
@@ -1206,7 +1264,7 @@ namespace IcqRevival.Patch
             j.Add("xtraz", "Services that are gone", "Xtraz: the Zones (\"Z\") button, menus, options and filter");
             j.Add("zlango", "Services that are gone", "Zlango: writing with its picture words - the message window buttons and the option");
             j.Add("tabs", "Services that are gone", "the tab strip of the main window, with the Lifestream and \"My box\" mail tabs: only the contact list stays");
-            j.Add("ads", "Advertising", "advertising: the ad slots, boxes and the empty bands they leave");
+            j.Add("ads", "Advertising", "advertising: the ad slots of every country, their ad servers, the boxes and the empty bands they leave");
             j.Add("fix", "Fixes", "the AOL Diagnostics module that crashes ICQ 7 (tbdiag.dll)");
             j.Add("links", "Your server", "the pages the client opens point at your server, over HTTPS; nothing goes to the old ICQ hosts");
             j.Add("sign-in", "Your server", "automatic connection and voice calls use your server");
@@ -1249,6 +1307,7 @@ namespace IcqRevival.Patch
             j.Assign("the ad box of the message window", "ads");
             j.Assign("the empty band under the message window", "ads");
             j.Assign("advertising slots", "ads");
+            j.Assign("ad servers", "ads");
             j.Assign("the AOL Diagnostics module (tbdiag.dll)", "fix");
             // The client refuses content from a host not on its whitelists, so
             // the links are no use without them.

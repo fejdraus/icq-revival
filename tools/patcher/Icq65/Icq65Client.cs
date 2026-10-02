@@ -613,16 +613,37 @@ namespace IcqRevival.Patch
 
         // The client draws the ad slots and the teaser strip only while these
         // list something, and without SMS carriers it has nowhere to send a text.
+        // What the pattern finds is taken out, or replaced with With.
         sealed class Strip
         {
             public string File;
             public string Pattern;
+            public string With = "";
             public string What;
         }
+
+        // adConfig.xml is not the only ad list the client reads: by the user's
+        // country ConfigRedirect.xml has it read adConfigRus.xml,
+        // adConfigUkr.xml, adConfigUs.xml and so on in its place. Build 2024
+        // comes without them, but they are what the client would ask for, and
+        // they would list their own slots, with ad.mail.ru as their ad server.
+        // So the redirection of adConfig.xml goes, and every country reads the
+        // emptied adConfig.xml: a <redir> left with nothing else goes whole -
+        // a country not listed, like most - and from the one that also
+        // redirects another file only that line goes. The ad servers
+        // (ar.atwola.com, im.adtech.de) go nowhere as well, like the old ICQ
+        // hosts: with no slot they are never asked, and then nothing in the
+        // files names them either.
+        const string AdRedirect = "<file\\s+name=\"adConfig\\.xml\"[^>]*/>";
 
         static readonly Strip[] Strips =
         {
             new Strip { File = @"ConfigFiles\adConfig.xml", Pattern = "[ \\t]*<spot\\b[^>]*/>[ \\t]*\\r?\\n?", What = "advertising slots" },
+            new Strip { File = @"ConfigFiles\adConfig.xml", Pattern = "(?<=<server\\b[^>]*\\surl=\")(?!" + Regex.Escape(Nowhere) + "\")[^\"]+", With = Nowhere, What = "ad servers" },
+            new Strip {
+                File = @"ConfigFiles\ConfigRedirect.xml",
+                Pattern = "[ \\t]*<redir>\\s*<country\\b[^>]*/>\\s*" + AdRedirect + "\\s*</redir>[ \\t]*\\r?\\n?|[ \\t]*" + AdRedirect + "[ \\t]*\\r?\\n?",
+                What = "the advertising of each country" },
             new Strip { File = @"ConfigFiles\tzer.xml", Pattern = "[ \\t]*<tz\\b[^>]*/>[ \\t]*\\r?\\n?", What = "the teaser strip" },
             new Strip { File = @"ConfigFiles\SMSConfig.xml", Pattern = "[ \\t]*<i n=\"operator\"[^>]*/>[ \\t]*\\r?\\n?", What = "SMS carriers" },
         };
@@ -1473,7 +1494,7 @@ namespace IcqRevival.Patch
             j.Add("tzers", "Services that are gone", "tZers: the button, the teasers, the option and the sound");
             j.Add("sms", "Services that are gone", "SMS and phone: buttons, icons, menus, options, sounds, filter");
             j.Add("zlango", "Services that are gone", "the Zlango add-on and its message window buttons");
-            j.Add("ads", "Advertising", "advertising: the ad slots and boxes, the banner and its frame");
+            j.Add("ads", "Advertising", "advertising: the ad slots of every country, their ad servers, the boxes, the banner and its frame");
             j.Add("fix", "Fixes", "the cut-off \"Advanced\" preferences group; \"Change my picture\" lost after the Xtraz list reloads");
             j.Add("links", "Your server", "the pages the client opens point at your server, over HTTPS; nothing goes to the old ICQ hosts");
             j.Add("sign-in", "Your server", "automatic connection and voice calls use your server");
@@ -1522,6 +1543,8 @@ namespace IcqRevival.Patch
             j.Assign("the white frame at the foot of the message window", "ads");
             j.Assign("the ad box of the contact list", "ads");
             j.Assign("advertising slots", "ads");
+            j.Assign("ad servers", "ads");
+            j.Assign("the advertising of each country", "ads");
             j.Assign("the cut-off bottom of the \"Advanced\" group", "fix");
             j.Assign("Xtraz items lost when the list is read again", "fix");
             // The client refuses content from a host not on its whitelists, so
@@ -1752,7 +1775,7 @@ namespace IcqRevival.Patch
                 {
                     if (Ps.Eq(PatchFiles.Leaf(s.File), name) && Jobs.IsWanted(skip, s.What))
                     {
-                        text = Regex.Replace(text, s.Pattern, "");
+                        text = Regex.Replace(text, s.Pattern, s.With);
                     }
                 }
                 if (!Ps.Ceq(text, file.Text))
