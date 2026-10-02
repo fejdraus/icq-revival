@@ -12,7 +12,8 @@
 //	e2e-kt-auditor -key auditor.key -name auditor.example.org/icq -print-key
 //
 // The key file is made on first use. -print-key prints the verifier key the
-// server's operator puts into E2E_KT_AUDITORS.
+// server's operator puts into E2E_KT_AUDITORS. A violation of the log exits with
+// status 3, for good: the state file records it.
 package main
 
 import (
@@ -83,7 +84,10 @@ func main() {
 		switch {
 		case errors.Is(err, e2e.ErrViolation):
 			// Loud and for good: the auditor never cosigns this log again.
+			// Exit status 3 leaves a systemd unit failed (with
+			// RestartPreventExitStatus=3), which monitoring reports.
 			logger.Error("KEY LOG VIOLATION - no longer cosigning", "why", st.Violation)
+			os.Exit(3)
 		case err != nil:
 			logger.Warn("not cosigned this time", "err", err)
 		default:

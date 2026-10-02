@@ -77,6 +77,9 @@ services:
       # Name of the E2E key transparency log; clients pin its key under it,
       # so it must never change (docs/e2e/KEY-TRANSPARENCY.md).
       E2E_KT_ORIGIN: ${PUBLIC_HOST}/e2e-kt
+      # Auditors of the key log, as e2e-kt-auditor -print-key prints them,
+      # comma-separated; set in .env (docs/e2e/KEY-TRANSPARENCY.md).
+      E2E_KT_AUDITORS: ${E2E_KT_AUDITORS:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # ICQ 6.5 calls that cannot go directly are relayed here: STUN on UDP
       # 3478, relayed ports on UDP 49160-49199, both open in the firewall.
