@@ -165,13 +165,14 @@ func (f SQLiteUserStore) E2EPublishAccountKey(ctx context.Context, screenName Id
 // E2ERotateAccountKey replaces the account key oldKey, whose proof the caller
 // has checked, with newKey. The active devices in resigned stay, with the
 // signatures by newKey they carry; every other active device is revoked,
-// since only the old key vouches for it.
-func (f SQLiteUserStore) E2ERotateAccountKey(ctx context.Context, screenName IdentScreenName, oldKey, newKey []byte, resigned []E2EDeviceSignature, now time.Time) error {
+// since only the old key vouches for it. The proof goes into the key log, so
+// an auditor can check the rotation too.
+func (f SQLiteUserStore) E2ERotateAccountKey(ctx context.Context, screenName IdentScreenName, oldKey, newKey, proof []byte, resigned []E2EDeviceSignature, now time.Time) error {
 	return f.e2eTx(ctx, func(tx *sql.Tx) error {
 		if err := e2eReplaceAccountKey(ctx, tx, screenName, oldKey, newKey, now); err != nil {
 			return err
 		}
-		if err := e2eKTAppendLeaf(ctx, tx, e2eKTAccountLeaf(screenName, E2EKeyRotated, newKey, now), now); err != nil {
+		if err := e2eKTAppendLeaf(ctx, tx, E2EKTLeaf(E2EKTAccount, screenName, now, []byte(E2EKeyRotated), newKey, proof), now); err != nil {
 			return err
 		}
 		keep := make(map[uint32]bool, len(resigned))

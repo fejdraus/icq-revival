@@ -266,6 +266,12 @@ pub fn log_broken_note(why: &str) -> String {
     format!("{PREFIX}WARNING: {why}. The key log lets this add-on check that everyone gets the same keys; a log that changes its past is what an attack on the server looks like. Until it is sorted out, keys are trusted on first use, as without a log. If the server's operator says the log was restored from a backup or started afresh, type /e2e resetlog.")
 }
 
+/// The note when the key log's auditor has not vouched for it lately, once
+/// per sign-on.
+pub fn audit_stale_note(why: &str) -> String {
+    format!("{PREFIX}Warning: {why}. The auditor is the independent party that checks the server shows everyone the same key log; without its recent word, a server showing you a log of its own would not be noticed. Messages are still encrypted, and checked against the log.")
+}
+
 /// The note when the key log shows our account with an account key that is
 /// not ours.
 pub fn log_own_key_note() -> String {

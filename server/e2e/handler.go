@@ -95,6 +95,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /e2e/v1/log/checkpoint", h.getLogCheckpoint)
 	mux.HandleFunc("GET /e2e/v1/log/key", h.getLogKey)
 	mux.HandleFunc("GET /e2e/v1/log/entries", h.getLogEntries)
+	mux.HandleFunc("GET /e2e/v1/log/auditors", h.getLogAuditors)
+	mux.HandleFunc("GET /e2e/v1/log/cosigned", h.getLogCosigned)
+	mux.HandleFunc("POST /e2e/v1/log/cosignature", h.postLogCosignature)
 
 	mux.Handle("POST /e2e/v1/link", h.authed(h.createLink))
 	mux.Handle("GET /e2e/v1/link", h.authed(h.listLinks))
@@ -219,7 +222,7 @@ func (h *Handler) putAccount(w http.ResponseWriter, r *http.Request, c caller) {
 		if !ok {
 			return
 		}
-		err = h.store.E2ERotateAccountKey(ctx, c.screenName, cur.Key, req.AccountKey, resigned, now)
+		err = h.store.E2ERotateAccountKey(ctx, c.screenName, cur.Key, req.AccountKey, req.Proof, resigned, now)
 	default:
 		if req.Devices != nil {
 			writeError(w, http.StatusBadRequest, "bad_request", "devices need a proof")

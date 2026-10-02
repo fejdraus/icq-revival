@@ -589,6 +589,8 @@ pub struct Engine {
     /// that went.
     log_synced_at: Option<u64>,
     log_status: LogStatus,
+    /// What the log's auditor said about our copy, last time we looked.
+    audit_status: AuditStatus,
 }
 
 impl Engine {
@@ -616,6 +618,7 @@ impl Engine {
             calls: crate::callneg::shared(),
             log_synced_at: None,
             log_status: LogStatus::Unknown,
+            audit_status: AuditStatus::Unknown,
         }
     }
 
@@ -844,6 +847,7 @@ impl Engine {
                 self.log_status = LogStatus::Ok;
                 self.keys.log_trusted = true;
                 self.check_own_log();
+                self.audit_log(now, true);
             }
             Err(kt::SyncError::NoLog) => self.log_status = LogStatus::NoLog,
             Err(kt::SyncError::Net(e)) => self.log_status = LogStatus::Failed(e),
@@ -854,6 +858,60 @@ impl Engine {
             }
         }
         true
+    }
+
+    /// Looks for a recent cosignature by the log's auditor that agrees with
+    /// our copy (stage 2). A checkpoint the auditor saw that is not in our
+    /// copy means the server shows us another log than it showed the auditor:
+    /// the log is not trusted from then on, as for a rewritten one. A missing
+    /// or old cosignature is a warning, once per sign-on.
+    fn audit_log(&mut self, now: u64, may_resync: bool) {
+        let (next, r) = kt::audit(&*self.dir, &self.keys.log, now);
+        if next != self.keys.log {
+            self.keys.log = next;
+            self.changed = true;
+        }
+        self.audit_status = match r {
+            Ok(a) => AuditStatus::Ok(a),
+            Err(kt::AuditError::Behind) if may_resync => {
+                // The auditor is ahead of the checkpoint we read a moment ago.
+                if let Ok(next) = kt::sync(&*self.dir, &self.keys.log) {
+                    self.keys.log = next;
+                    self.changed = true;
+                }
+                return self.audit_log(now, false);
+            }
+            Err(kt::AuditError::Behind) => {
+                AuditStatus::Failed("the auditor is ahead of the log".into())
+            }
+            Err(kt::AuditError::NoAuditor) => AuditStatus::None,
+            Err(kt::AuditError::Net(e)) => AuditStatus::Failed(e),
+            Err(kt::AuditError::Stale(why)) => {
+                self.note_once(None, "kt:stale".into(), policy::audit_stale_note(&why));
+                AuditStatus::Stale(why)
+            }
+            Err(kt::AuditError::SplitView(why)) => {
+                self.note_once(None, "kt:broken".into(), policy::log_broken_note(&why));
+                self.log_status = LogStatus::Broken(why.clone());
+                self.keys.log_trusted = false;
+                AuditStatus::Stale(why)
+            }
+        };
+    }
+
+    /// The auditor's part of `/e2e status`.
+    fn describe_audit(&self, now: u64) -> String {
+        match &self.audit_status {
+            AuditStatus::Unknown => String::new(),
+            AuditStatus::None => "; no auditor".into(),
+            AuditStatus::Ok(a) => format!(
+                ", audited by {} ({} min ago)",
+                a.auditor,
+                now.saturating_sub(a.time) / 60
+            ),
+            AuditStatus::Failed(e) => format!("; the auditor's word could not be read ({e})"),
+            AuditStatus::Stale(why) => format!("; NOT AUDITED: {why}"),
+        }
     }
 
     /// Our account in the key log must hold our account key and only devices
@@ -952,17 +1010,18 @@ impl Engine {
                     .accounts
                     .get(&sign::ident(peer))
                     .map(|a| a.key.clone());
+                let audit = self.describe_audit(now);
                 match (logged, self.keys.pinned(peer)) {
-                    (Some(l), Some(p)) if l == p.key => {
-                        format!("; key log: {peer}'s keys are in it, checked ({size} entries)")
-                    }
-                    (Some(_), Some(_)) => {
-                        format!("; key log: {peer}'s key is NOT the one it shows ({size} entries)")
-                    }
+                    (Some(l), Some(p)) if l == p.key => format!(
+                        "; key log: {peer}'s keys are in it, checked ({size} entries){audit}"
+                    ),
+                    (Some(_), Some(_)) => format!(
+                        "; key log: {peer}'s key is NOT the one it shows ({size} entries){audit}"
+                    ),
                     (None, Some(_)) => {
-                        format!("; key log: {peer}'s keys are NOT in it ({size} entries)")
+                        format!("; key log: {peer}'s keys are NOT in it ({size} entries){audit}")
                     }
-                    (_, None) => format!("; key log: checked ({size} entries)"),
+                    (_, None) => format!("; key log: checked ({size} entries){audit}"),
                 }
             }
         }
@@ -1439,6 +1498,7 @@ impl Crypto for Engine {
                 self.keys.log_trusted = false;
                 self.log_synced_at = None;
                 self.log_status = LogStatus::Unknown;
+                self.audit_status = AuditStatus::Unknown;
                 self.said.remove("kt:broken");
                 self.changed = true;
                 format!(
@@ -1722,6 +1782,21 @@ enum Lookup {
     /// The directory gives the contact an account key the key log does not
     /// show for them.
     NotInLog(String),
+}
+
+/// What the key log's auditor said, last time we looked (stage 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AuditStatus {
+    /// Not looked at yet this sign-on.
+    Unknown,
+    /// The server names no auditor.
+    None,
+    /// A recent cosignature agrees with our copy.
+    Ok(kt::Audited),
+    /// The auditor's cosignatures could not be read just now.
+    Failed(String),
+    /// No recent cosignature, or one that does not agree with our copy.
+    Stale(String),
 }
 
 /// How the last look at the key log went.
@@ -3486,5 +3561,103 @@ mod tests {
         ));
         assert!(status_of(&mut e, "100002", NOW).contains("key log: the server keeps none"));
         assert_eq!(e.keys().log, kt::LogState::default());
+    }
+
+    // --- the auditor (stage 2) ------------------------------------------------
+
+    #[test]
+    fn an_audited_log_says_so() {
+        let (dir, a, _) = two_published();
+        dir.set_auditor(true);
+        dir.audit_log(NOW - 120);
+        let mut e = running(&dir, a);
+        let s = status_of(&mut e, "100002", NOW);
+        assert!(
+            s.contains("checked (4 entries), audited by auditor.test/icq (2 min ago)"),
+            "{s}"
+        );
+        assert!(notes(&mut e).is_empty());
+        assert_eq!(e.keys().log.auditors.len(), 1);
+        assert_eq!(e.keys().log.audited.as_ref().unwrap().size, 4);
+
+        // The auditor checked fewer entries than there are now: still fine.
+        let mut c = OwnKeys::create("100003");
+        publish_keys(&dir, &mut c);
+        let s = status_of(&mut e, "100003", NOW + LOG_SYNC_EVERY);
+        assert!(
+            s.contains("100003's keys are in it, checked (6 entries), audited by"),
+            "{s}"
+        );
+    }
+
+    #[test]
+    fn a_log_the_auditor_never_saw_is_not_trusted() {
+        let (dir, a, _) = two_published();
+        dir.set_auditor(true);
+        // The server showed the auditor another log of the same size.
+        dir.audit_root(4, [7; 32], NOW);
+        let mut e = running(&dir, a);
+        let n = notes(&mut e);
+        assert!(
+            n.iter().any(|n| n.text.contains("WARNING")
+                && n.text.contains("saw a different log (4 entries)")),
+            "{n:?}"
+        );
+        let s = status_of(&mut e, "100002", NOW);
+        assert!(s.contains("key log: NOT TRUSTED"), "{s}");
+        // Messages still go, trusted on first use as without a log.
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+    }
+
+    #[test]
+    fn an_old_or_missing_cosignature_is_a_warning() {
+        for when in [Some(NOW - 2 * kt::AUDIT_MAX_AGE), None] {
+            let (dir, a, _) = two_published();
+            dir.set_auditor(true);
+            if let Some(t) = when {
+                dir.audit_log(t);
+            }
+            let mut e = running(&dir, a);
+            let n = notes(&mut e);
+            let warned: Vec<_> = n.iter().filter(|n| n.text.contains("Warning:")).collect();
+            assert_eq!(warned.len(), 1, "{n:?}");
+            let want = if when.is_some() {
+                "last vouched for it 120 minutes ago"
+            } else {
+                "no auditor has cosigned"
+            };
+            assert!(warned[0].text.contains(want), "{n:?}");
+            let s = status_of(&mut e, "100002", NOW + LOG_SYNC_EVERY);
+            assert!(
+                s.contains("NOT AUDITED") && s.contains("checked (4 entries)"),
+                "{s}"
+            );
+            assert!(notes(&mut e).is_empty(), "once per sign-on");
+            // Messages still go, checked against the log.
+            assert!(matches!(
+                e.outbound("100002", form(), b"hi", NOW),
+                Outbound::Encrypted(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn the_auditor_is_pinned_and_another_one_is_not_taken() {
+        let (dir, a, _) = two_published();
+        dir.set_auditor(true);
+        dir.audit_log(NOW);
+        let mut e = running(&dir, a);
+        let pinned = e.keys().log.auditors.clone();
+        // The server stops naming it: the pin stays, and its cosignature is
+        // still asked for.
+        dir.set_auditor(false);
+        let s = status_of(&mut e, "100002", NOW + LOG_SYNC_EVERY);
+        assert!(s.contains("audited by auditor.test/icq"), "{s}");
+        assert_eq!(e.keys().log.auditors, pinned);
+        let again = restarted(&dir, &e);
+        assert_eq!(again.keys().log.auditors, pinned);
     }
 }

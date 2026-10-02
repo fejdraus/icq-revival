@@ -87,7 +87,7 @@ func TestSQLiteUserStore_E2EKT_RecordsEveryChange(t *testing.T) {
 	_, err = f.E2EPutDevice(ctx, e2eAlice, bytes32(9), e2eTestDevice(3, 30), 10, e2eT0)
 	assert.ErrorIs(t, err, ErrE2EAccountKeyChanged)
 
-	require.NoError(t, f.E2ERotateAccountKey(ctx, e2eAlice, bytes32(1), bytes32(2),
+	require.NoError(t, f.E2ERotateAccountKey(ctx, e2eAlice, bytes32(1), bytes32(2), bytes32(8),
 		[]E2EDeviceSignature{{DeviceID: 1, AccountSignature: []byte{7, 7}}}, e2eT0.Add(time.Hour)))
 	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, e2eT0.Add(2*time.Hour)))
 	// Revoking a revoked device is a no-op.
@@ -104,7 +104,7 @@ func TestSQLiteUserStore_E2EKT_RecordsEveryChange(t *testing.T) {
 
 	leaves, err := f.E2EKTEntries(ctx, 0, E2EKTMaxEntries)
 	require.NoError(t, err)
-	assert.Equal(t, [][]byte{[]byte("rotate"), bytes32(2)}, ktFields(t, leaves[3])[3:])
+	assert.Equal(t, [][]byte{[]byte("rotate"), bytes32(2), bytes32(8)}, ktFields(t, leaves[3])[3:])
 	assert.Equal(t, [][]byte{{0, 0, 0, 1}, {7, 7}}, ktFields(t, leaves[4])[3:])
 	assert.Equal(t, [][]byte{{0, 0, 0, 2}}, ktFields(t, leaves[5])[3:])
 	dev := e2eTestDevice(2, 20)

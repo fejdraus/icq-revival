@@ -973,20 +973,28 @@ func (f SQLiteUserStore) InsertUser(ctx context.Context, u User) error {
 }
 
 func (f SQLiteUserStore) DeleteUser(ctx context.Context, screenName IdentScreenName) error {
-	q := `
-		DELETE FROM users WHERE identScreenName = ?
-	`
-	result, err := f.db.ExecContext(ctx, q, screenName.String())
+	// The account's E2E keys go with it (ON DELETE CASCADE); the key log
+	// records that in the same transaction, so a later account on the same
+	// number is a new account there too and not a key quietly replaced.
+	err := f.e2eTx(ctx, func(tx *sql.Tx) error {
+		if err := e2eKTDeleteAccount(ctx, tx, screenName, time.Now()); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `DELETE FROM users WHERE identScreenName = ?`, screenName.String())
+		if err != nil {
+			return err
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rowsAffected == 0 {
+			return ErrNoUser
+		}
+		return nil
+	})
 	if err != nil {
 		return err
-	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rowsAffected == 0 {
-		return ErrNoUser
 	}
 
 	// Numbers get handed out again, so a confirmed address left behind would

@@ -2,8 +2,10 @@
 
 Stage 1: an append-only, signed log of every change in the key directory,
 which every client replays and checks, and in which each client watches its
-own account. Stage 2, not here yet: independent witnesses that cosign the
-log's checkpoints.
+own account. Stage 2: an auditor, as Signal has, that follows the log on its
+own, checks every entry against the directory's rules and cosigns the
+checkpoints; clients take the log only with a recent cosignature that agrees
+with their own copy.
 
 Why: the directory is untrusted (`KEY-DIRECTORY-API.md`, section 1). Clients
 pin a contact's account key on first use and compare safety numbers by hand.
@@ -11,13 +13,14 @@ Without a log, the server - or whoever took it over - can add a device to an
 account, or hand one client a different account key, and only a manual
 safety-number check would ever show it. With the log:
 
-| Attack | Without the log | With the log (stage 1) | With witnesses (stage 2) |
+| Attack | Without the log | With the log (stage 1) | With the auditor (stage 2) |
 |---|---|---|---|
 | a key that is not what the directory recorded | caught only by a safety-number check | refused: not in the log | same |
 | a device quietly added to your account | invisible | your own client sees it and says so | same |
 | history rewritten afterwards | possible | caught: the log no longer adds up | same |
-| one log shown to you, another to your contact (split view) | invisible | **not caught** | caught |
-| the operator adds a device openly | invisible | visible to everyone, not prevented | same |
+| one log shown to you, another to your contact (split view) | invisible | **not caught** | caught, as long as the auditor is not the operator's |
+| the operator adds a device openly | invisible | visible to everyone, not prevented | the auditor refuses a device the account key did not sign |
+| a key swapped in as a "reset" while devices are active, or as a "new account" | invisible | visible, not refused | the auditor refuses it |
 
 Signal does the same with prefix trees, a verifiable random function and
 third-party auditors (signal.org/blog/automatic-key-verification,
@@ -50,15 +53,18 @@ endian. The kinds and their fields:
 
 | kind | fields after time | meaning |
 |---|---|---|
-| `account` | change (`publish`, `rotate` or `reset`), new account key (32) | the account key is now this |
+| `account` | change (`publish`, `rotate` or `reset`), new account key (32); for `rotate` also the proof (64): the old key's signature over the rotate message | the account key is now this |
 | `device` | device id (4, BE), Curve25519 key (32), Ed25519 key (32), account signature (64) | a device was added |
 | `resign` | device id (4, BE), account signature (64) | a device got a new account signature (rotation) |
 | `revoke` | device id (4, BE) | a device was revoked |
+| `delete` | - | the account was deleted, its key and devices with it (`DeleteUser`) |
 
 Replaying the leaves in order gives, for each account, its account key and
 its active devices with their keys - what `GET /users/{uin}/devices` must
-return. A `publish` for an account that already has a key (the account was
-deleted and its UIN reused) is a key change like a `reset`.
+return. A `publish` or a `reset` starts the account's devices afresh; a
+`delete` removes the account. (Logs written before `delete` existed may hold
+a `publish` over an account that was deleted unlogged; the auditor refuses
+that from now on.)
 
 ### Genesis
 
@@ -96,6 +102,41 @@ Public, no token, like the other `GET /users/...` endpoints.
 | `GET /e2e/v1/log/checkpoint` | the signed checkpoint, `text/plain` |
 | `GET /e2e/v1/log/key` | the log's verifier key, `text/plain` (`<origin>+<key hash>+<base64 key>`) |
 | `GET /e2e/v1/log/entries?start=N&count=M` | `{"start": N, "entries": ["<base64 leaf>", ...]}`, at most 1000 per request; fewer at the end of the log |
+| `GET /e2e/v1/log/auditors` | the auditors' verifier keys (`E2E_KT_AUDITORS`), one per line |
+| `GET /e2e/v1/log/cosigned` | `{"checkpoints": ["<note>", ...]}`: per auditor, the latest checkpoint it cosigned, signed by the log and by the auditor |
+| `POST /e2e/v1/log/cosignature` | an auditor hands in `{"checkpoint": "<body>", "cosignature": "<line>"}`; kept only if it verifies under a configured auditor key, is within 10 minutes of the server's clock, and is over a checkpoint this log really had (204) |
+
+## The auditor (stage 2)
+
+As in Signal's key transparency, a party apart from the server checks the
+log and vouches for it. `cmd/e2e-kt-auditor` (`server/e2e/audit.go`):
+
+- Pins the log's key on first sight, then every minute fetches the
+  checkpoint and the new entries, and checks that the log only grew (the
+  entries add up to the signed root on top of what it had).
+- Replays every entry against the directory's rules: a `publish` only for an
+  account without a key; a `rotate` with the old key's proof; a `reset` only
+  once every device is revoked; a `device` with an id the account never used,
+  signed by the account key; a `resign` of an active device signed by the
+  current key; a `revoke` of an active device; a `delete` of an account that
+  has a key; nothing of a kind it does not know.
+- If all is well, cosigns the checkpoint (c2sp.org/tlog-cosignature, Ed25519,
+  with the time) and posts it to the server. If not, it records the violation,
+  logs it loudly and never cosigns that log again: clients then warn within
+  the hour.
+- Needs only outbound HTTPS. Its key is a 32-byte seed file made on first
+  run; `-print-key` prints the verifier key for the server's
+  `E2E_KT_AUDITORS`.
+
+Who runs it is the whole point: an auditor the server's operator runs alone
+catches a server taken over by someone else, but not the operator. Signal's
+are run by other organisations; ours should be run by someone else too, on a
+machine the operator cannot touch. More than one may be configured.
+
+```
+e2e-kt-auditor -log https://icq.example.org:8102/e2e/v1/ \
+  -name auditor.example.net/icq -key auditor.key -state auditor.json
+```
 
 ## The client
 
@@ -152,8 +193,32 @@ log's key, the size, the tree's right edge and every account replayed.
   has no devices for it. A new account on the same UIN starts with a
   `publish`, which replaces them.
 
-## Not done here (stage 2)
+## Stage 2 in the client
 
-Witnesses: other parties that check the log only grows and cosign its
-checkpoints, so the server cannot show two users two different logs. The
-checkpoint is already in the format they cosign (c2sp.org/tlog-witness).
+- **Auditors** are pinned on first sight from `GET /log/auditors`, like the
+  log's key; a server that later names other auditors or none changes
+  nothing, and `/e2e resetlog` forgets them with the rest.
+- After every sync, the newest cosignature by a pinned auditor over a
+  checkpoint signed by the log's key is looked for (`GET /log/cosigned`). The
+  copy keeps every leaf hash, so a checkpoint of any earlier size is checked
+  against the root our copy had at that size; an older copy without them
+  reads its entries again once.
+- A cosigned checkpoint that our copy does not have is a **split view**: the
+  log is not trusted, as for a rewritten one (WARNING once per sign-on, keys
+  trusted on first use).
+- No cosignature newer than an hour (`kt::AUDIT_MAX_AGE`; the auditor cosigns
+  every minute) is a warning once per sign-on, and `/e2e status` says
+  `NOT AUDITED`; messages go on, checked against the log. A server could
+  withhold newer cosignatures from one user, so an hour is the window in which
+  a split view goes unnoticed.
+- `/e2e status` ends the log's part with ", audited by <auditor> (N min
+  ago)".
+
+## Limits
+
+- An auditor run by the server's operator does not protect against the
+  operator.
+- A split view younger than an hour, or a key used before the auditor's next
+  look, is caught afterwards, not prevented - the same trade Signal makes.
+- Auditors are trusted on first use by the add-on; the patch could carry
+  their keys instead, as Signal's app does.

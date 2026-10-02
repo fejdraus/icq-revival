@@ -182,9 +182,15 @@ the add-on checks against it on its own, as Signal does
   keys are in it, checked (N entries)").
 - A server without a log (an older one) works as before.
 
-What it does not catch yet: a server that shows you one log and your contact
-another. That takes witnesses - others who cosign the log - which are a later
-stage.
+And as in Signal, an auditor - a program run apart from the server
+(`cmd/e2e-kt-auditor`) - follows the log, checks every entry against the
+directory's rules and cosigns it every minute. The add-on takes the log only
+with a recent cosignature that agrees with its own copy:
+
+- A cosigned log that differs from the one this add-on was shown is a
+  WARNING: the server is showing different users different logs.
+- No cosignature for over an hour is a warning, once per sign-on; messages go
+  on. `/e2e status` says "audited by <auditor> (N min ago)" when all is well.
 
 ## No lock in the window (CHECKLIST 10.4, 10.9)
 

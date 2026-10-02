@@ -324,6 +324,9 @@ UIN 123456.
 | GET    | `/e2e/v1/log/checkpoint`                            |   | the key log's signed checkpoint           |
 | GET    | `/e2e/v1/log/key`                                   |   | the key log's verifier key                |
 | GET    | `/e2e/v1/log/entries?start=N&count=M`               |   | key log entries (KEY-TRANSPARENCY.md)     |
+| GET    | `/e2e/v1/log/auditors`                              |   | the key log's auditors                    |
+| GET    | `/e2e/v1/log/cosigned`                              |   | checkpoints the auditors cosigned         |
+| POST   | `/e2e/v1/log/cosignature`                           |   | an auditor hands in a cosignature         |
 | POST   | `/e2e/v1/link`                                      | T | new device opens a link request           |
 | GET    | `/e2e/v1/link`                                      | T | existing devices list pending requests    |
 | GET    | `/e2e/v1/link/{id}`                                 | T | read one request (new device polls reply) |

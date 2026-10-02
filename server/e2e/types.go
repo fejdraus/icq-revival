@@ -14,7 +14,7 @@ import (
 type Store interface {
 	E2EAccount(ctx context.Context, screenName state.IdentScreenName) (*state.E2EAccount, error)
 	E2EPublishAccountKey(ctx context.Context, screenName state.IdentScreenName, key []byte, now time.Time) error
-	E2ERotateAccountKey(ctx context.Context, screenName state.IdentScreenName, oldKey, newKey []byte, resigned []state.E2EDeviceSignature, now time.Time) error
+	E2ERotateAccountKey(ctx context.Context, screenName state.IdentScreenName, oldKey, newKey, proof []byte, resigned []state.E2EDeviceSignature, now time.Time) error
 	E2EResetAccountKey(ctx context.Context, screenName state.IdentScreenName, oldKey, newKey []byte, now time.Time) error
 	E2EAccountKeyHistory(ctx context.Context, screenName state.IdentScreenName) ([]state.E2EAccountKeyChange, error)
 	E2EDevices(ctx context.Context, screenName state.IdentScreenName) ([]state.E2EDevice, error)
@@ -33,6 +33,9 @@ type Store interface {
 	E2EKTState(ctx context.Context) (int64, tlog.Hash, error)
 	E2EKTEntries(ctx context.Context, start, count int64) ([][]byte, error)
 	E2EKTSigningKey(ctx context.Context) (ed25519.PrivateKey, error)
+	E2EKTRoot(ctx context.Context, size int64) (tlog.Hash, error)
+	E2EKTSetCosignature(ctx context.Context, c state.E2EKTCosignature) error
+	E2EKTCosignatures(ctx context.Context) ([]state.E2EKTCosignature, error)
 }
 
 // CookieBaker issues and checks the signed tokens (state.HMACCookieBaker).

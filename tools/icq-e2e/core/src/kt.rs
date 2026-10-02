@@ -97,6 +97,8 @@ pub enum Change {
     Resign { id: u32, signature: String },
     /// A device was revoked.
     Revoke { id: u32 },
+    /// The account was deleted, with its key and devices.
+    Delete,
     /// A kind this build does not know. It is part of the tree like any
     /// other leaf, and changes nothing here.
     Unknown,
@@ -161,10 +163,15 @@ pub fn parse_leaf(leaf: &[u8]) -> Option<Leaf> {
     let screen_name = String::from_utf8(f[1].to_vec()).ok()?;
     let time = u64::from_be_bytes(f[2].try_into().ok()?);
     let change = match (f[0], &f[3..]) {
-        (b"account", [change, key]) => Change::Account {
-            change: String::from_utf8(change.to_vec()).ok()?,
-            key: b64_of(key, 32)?,
-        },
+        // A rotation carries the old key's proof, for the auditor.
+        (b"account", [change, key, proof @ ..])
+            if proof.iter().all(|p| p.len() == 64) && proof.len() <= 1 =>
+        {
+            Change::Account {
+                change: String::from_utf8(change.to_vec()).ok()?,
+                key: b64_of(key, 32)?,
+            }
+        }
         (b"device", [id, curve, ed, sig]) => Change::Device {
             id: device_id(id)?,
             device: LogDevice {
@@ -179,7 +186,8 @@ pub fn parse_leaf(leaf: &[u8]) -> Option<Leaf> {
             signature: b64_of(sig, 64)?,
         },
         (b"revoke", [id]) => Change::Revoke { id: device_id(id)? },
-        (b"account" | b"device" | b"resign" | b"revoke", _) => return None,
+        (b"delete", []) => Change::Delete,
+        (b"account" | b"device" | b"resign" | b"revoke" | b"delete", _) => return None,
         _ => Change::Unknown,
     };
     Some(Leaf {
@@ -229,6 +237,25 @@ pub struct LogState {
     /// Our account key in the log that is not ours, once the user was told.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub own_key_said: Option<String>,
+    /// Every leaf hash, concatenated, base64: what a checkpoint of any
+    /// earlier size is checked against.
+    #[serde(default)]
+    pub hashes: String,
+    /// The auditors' verifier keys, pinned on first sight.
+    #[serde(default)]
+    pub auditors: Vec<String>,
+    /// The latest cosignature that checked out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audited: Option<Audited>,
+}
+
+/// A checkpoint an auditor cosigned and that agrees with our copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Audited {
+    pub auditor: String,
+    pub size: u64,
+    /// The cosignature's time, Unix seconds.
+    pub time: u64,
 }
 
 fn hex(h: &Hash) -> String {
@@ -303,8 +330,35 @@ impl LogState {
                     a.devices.remove(id);
                 }
             }
+            Change::Delete => {
+                self.accounts.remove(&leaf.screen_name);
+            }
             Change::Unknown => {}
         }
+    }
+
+    /// Every leaf hash, in order, `None` if the state file holds something
+    /// that is not a list of them.
+    pub fn leaf_hashes(&self) -> Option<Vec<Hash>> {
+        let raw = STANDARD.decode(&self.hashes).ok()?;
+        (raw.len() % 32 == 0).then(|| {
+            raw.chunks(32)
+                .map(|c| c.try_into().expect("32 bytes"))
+                .collect()
+        })
+    }
+
+    /// The root of the log's first `size` leaves, as our copy has them.
+    pub fn root_at(&self, size: u64) -> Option<Hash> {
+        let hashes = self.leaf_hashes()?;
+        if size == 0 || size as usize > hashes.len() {
+            return None;
+        }
+        let mut e = Edge::default();
+        for h in &hashes[..size as usize] {
+            e.push(*h);
+        }
+        e.root()
     }
 }
 
@@ -477,6 +531,19 @@ pub fn sync(dir: &dyn DirectoryApi, state: &LogState) -> Result<LogState, SyncEr
     let mut edge = state
         .edge()
         .ok_or_else(|| SyncError::Rewritten("our copy of it is damaged".into()))?;
+    let mut hashes = state.leaf_hashes().unwrap_or_default();
+    if hashes.len() as u64 != edge.size {
+        // A copy from before the hashes were kept: read what it has again,
+        // which must come to the same tree.
+        hashes = refetch_hashes(dir, edge.size)?;
+        let mut again = Edge::default();
+        hashes.iter().for_each(|h| again.push(*h));
+        if again != edge {
+            return Err(SyncError::Rewritten(
+                "its first entries are not the ones we had".into(),
+            ));
+        }
+    }
     if cp.size < edge.size {
         return Err(SyncError::Rewritten(format!(
             "it has {} entries, after {} before",
@@ -497,6 +564,7 @@ pub fn sync(dir: &dyn DirectoryApi, state: &LogState) -> Result<LogState, SyncEr
                 SyncError::Rewritten(format!("entry {} is not a log entry", edge.size))
             })?;
             edge.push(leaf_hash(leaf));
+            hashes.push(leaf_hash(leaf));
             next.apply(&read);
         }
     }
@@ -506,7 +574,217 @@ pub fn sync(dir: &dyn DirectoryApi, state: &LogState) -> Result<LogState, SyncEr
         ));
     }
     next.set_edge(&edge);
+    next.hashes = STANDARD.encode(hashes.concat());
     Ok(next)
+}
+
+/// The hashes of the log's first `size` leaves, read again.
+fn refetch_hashes(dir: &dyn DirectoryApi, size: u64) -> Result<Vec<Hash>, SyncError> {
+    let mut out = Vec::new();
+    while (out.len() as u64) < size {
+        let want = (size - out.len() as u64).min(MAX_ENTRIES);
+        let leaves = dir.log_entries(out.len() as u64, want).map_err(net)?;
+        if leaves.is_empty() {
+            return Err(SyncError::Net("it ended early".into()));
+        }
+        out.extend(leaves.iter().take(want as usize).map(|l| leaf_hash(l)));
+    }
+    Ok(out)
+}
+
+// --- auditors (stage 2) ------------------------------------------------------------------
+
+/// A cosignature older than this, in seconds, no longer vouches for the log:
+/// the auditor cosigns every minute, so an hour means it has stopped, or the
+/// server is keeping its newer cosignatures from us.
+pub const AUDIT_MAX_AGE: u64 = 3600;
+
+/// An auditor's public key (c2sp.org/tlog-cosignature, Ed25519):
+/// `<name>+<key ID, 8 hex>+<base64(0x04 || key)>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cosigner {
+    pub name: String,
+    pub id: u32,
+    pub key: [u8; 32],
+}
+
+/// Reads an auditor's verifier key and checks that its key ID is its own.
+pub fn parse_cosigner(vkey: &str) -> Result<Cosigner, String> {
+    let mut parts = vkey.trim().splitn(3, '+');
+    let (Some(name), Some(id), Some(key)) = (parts.next(), parts.next(), parts.next()) else {
+        return Err("the auditor key is not name+id+key".into());
+    };
+    let id = u32::from_str_radix(id, 16).map_err(|_| "the auditor key id is not hex")?;
+    let raw = STANDARD
+        .decode(key)
+        .map_err(|_| "the auditor key is not base64")?;
+    if raw.len() != 33 || raw[0] != 4 {
+        return Err("the auditor key is not an Ed25519 cosignature key".into());
+    }
+    if name.is_empty() || key_hash(name, &raw) != id {
+        return Err("the auditor key's id does not match it".into());
+    }
+    Ok(Cosigner {
+        name: name.to_string(),
+        id,
+        key: raw[1..].try_into().expect("33 - 1 bytes"),
+    })
+}
+
+fn cosignature_message(body: &str, time: u64) -> String {
+    format!("cosignature/v1\ntime {time}\n{body}")
+}
+
+/// Checks a cosignature line over a checkpoint body (its text with the final
+/// newline) and returns its time.
+pub fn verify_cosignature(c: &Cosigner, body: &str, line: &str) -> Option<u64> {
+    let (name, sig) = line.trim().strip_prefix("\u{2014} ")?.split_once(' ')?;
+    let raw = STANDARD.decode(sig).ok()?;
+    if name != c.name || raw.len() != 76 || u32::from_be_bytes(raw[..4].try_into().ok()?) != c.id {
+        return None;
+    }
+    let time = u64::from_be_bytes(raw[4..12].try_into().ok()?);
+    ring::signature::UnparsedPublicKey::new(&ring::signature::ED25519, &c.key)
+        .verify(cosignature_message(body, time).as_bytes(), &raw[12..])
+        .ok()?;
+    Some(time)
+}
+
+/// Cosigns a checkpoint body, as an auditor does: the line, and the verifier
+/// key. For the in-memory directory and the tests.
+pub fn cosign(name: &str, seed: &[u8; 32], body: &str, time: u64) -> (String, String) {
+    use ring::signature::KeyPair;
+    let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(seed).expect("a 32-byte seed");
+    let mut alg_key = vec![4u8];
+    alg_key.extend_from_slice(pair.public_key().as_ref());
+    let id = key_hash(name, &alg_key);
+    let mut sig = id.to_be_bytes().to_vec();
+    sig.extend_from_slice(&time.to_be_bytes());
+    sig.extend_from_slice(
+        pair.sign(cosignature_message(body, time).as_bytes())
+            .as_ref(),
+    );
+    (
+        format!("\u{2014} {name} {}", STANDARD.encode(sig)),
+        format!("{name}+{id:08x}+{}", STANDARD.encode(&alg_key)),
+    )
+}
+
+/// Why the log is not vouched for by an auditor right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuditError {
+    /// The server names no auditor, and we never pinned one.
+    NoAuditor,
+    /// The server could not be reached; try again later.
+    Net(String),
+    /// The auditor has cosigned more of the log than our copy has: bring it
+    /// up to date and look again.
+    Behind,
+    /// No cosignature by an auditor we know is recent enough.
+    Stale(String),
+    /// An auditor cosigned a checkpoint that is not in our copy: the server
+    /// shows us a different log than it showed the auditor.
+    SplitView(String),
+}
+
+impl std::fmt::Display for AuditError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuditError::NoAuditor => write!(f, "the server names no auditor for its key log"),
+            AuditError::Net(e) => write!(f, "the auditor's cosignature could not be read: {e}"),
+            AuditError::Behind => write!(f, "our copy of the key log is behind the auditor"),
+            AuditError::Stale(e) => write!(f, "{e}"),
+            AuditError::SplitView(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// Looks for a recent cosignature by an auditor we know over a checkpoint of
+/// our copy of the log. The state that comes back may have the auditors
+/// pinned, whatever the result.
+pub fn audit(
+    dir: &dyn DirectoryApi,
+    state: &LogState,
+    now: u64,
+) -> (LogState, Result<Audited, AuditError>) {
+    let mut next = state.clone();
+    let r = audit_into(dir, &mut next, now);
+    (next, r)
+}
+
+fn audit_into(
+    dir: &dyn DirectoryApi,
+    next: &mut LogState,
+    now: u64,
+) -> Result<Audited, AuditError> {
+    let neterr = |e: DirError| AuditError::Net(e.to_string());
+    if next.auditors.is_empty() {
+        let listed = dir.log_auditors().map_err(neterr)?.unwrap_or_default();
+        next.auditors = listed
+            .lines()
+            .filter(|l| parse_cosigner(l).is_ok())
+            .map(|l| l.trim().to_string())
+            .collect();
+        if next.auditors.is_empty() {
+            return Err(AuditError::NoAuditor);
+        }
+    }
+    let cosigners: Vec<Cosigner> = next
+        .auditors
+        .iter()
+        .filter_map(|k| parse_cosigner(k).ok())
+        .collect();
+    let log_key = next.key.as_deref().ok_or(AuditError::Behind)?;
+    let verifier = parse_verifier(log_key).map_err(AuditError::SplitView)?;
+    let mut best: Option<(Audited, Hash)> = None;
+    for note in dir.log_cosigned().map_err(neterr)? {
+        let Ok(cp) = open_checkpoint(&note, &verifier) else {
+            continue;
+        };
+        let Some(split) = note.find("\n\n") else {
+            continue;
+        };
+        let body = &note[..split + 1];
+        for line in note[split + 2..].lines() {
+            for c in &cosigners {
+                if let Some(time) = verify_cosignature(c, body, line) {
+                    if best.as_ref().is_none_or(|(b, _)| time > b.time) {
+                        best = Some((
+                            Audited {
+                                auditor: c.name.clone(),
+                                size: cp.size,
+                                time,
+                            },
+                            cp.root,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    let Some((a, root)) = best else {
+        return Err(AuditError::Stale(
+            "no auditor has cosigned the key log".into(),
+        ));
+    };
+    if a.size > next.size {
+        return Err(AuditError::Behind);
+    }
+    if a.size > 0 && next.root_at(a.size) != Some(root) {
+        return Err(AuditError::SplitView(format!(
+            "the key log's auditor {} saw a different log ({} entries) than this add-on was shown",
+            a.auditor, a.size
+        )));
+    }
+    if now > a.time.saturating_add(AUDIT_MAX_AGE) {
+        return Err(AuditError::Stale(format!(
+            "the key log's auditor {} last vouched for it {} minutes ago",
+            a.auditor,
+            (now - a.time) / 60
+        )));
+    }
+    next.audited = Some(a.clone());
+    Ok(a)
 }
 
 #[cfg(test)]
@@ -678,6 +956,88 @@ mod tests {
             assert_eq!(open_checkpoint(&note, &v).unwrap().size, 1);
         }
         assert!(seen >= 3, "no key with a plus sign among the seeds");
+    }
+
+    /// What the Go auditor code (server/e2e/cosig.go) wrote under the seed
+    /// [9; 32] for a checkpoint body at 1790000000.
+    #[test]
+    fn the_go_auditors_cosignature_reads() {
+        let vkey = "auditor.test/icq+aecc7b07+BP0XJDhaoMdbZPt4zWAvodmR/ev3axPFjtcC6sg16fYY";
+        let line = "\u{2014} auditor.test/icq rsx7BwAAAABqsTuAo5AAnP4gxbumK6CduYvZENoG37UMBtr51kYLkCR27KL3zqnhX+JtqSk53NBGpcxli61J6IeN8QHOpJqHr+wEAA==";
+        let body = "icq.test/e2e-kt\n3\nQr9t1UlRbxQaBMxColcG5aJFHVEefgt8JB71/9d+QaE=\n";
+        let c = parse_cosigner(vkey).unwrap();
+        assert_eq!(verify_cosignature(&c, body, line), Some(1_790_000_000));
+        assert_eq!(
+            cosign("auditor.test/icq", &[9; 32], body, 1_790_000_000),
+            (line.to_string(), vkey.to_string())
+        );
+        assert_eq!(
+            verify_cosignature(&c, &body.replace("\n3\n", "\n4\n"), line),
+            None
+        );
+        // A log key is not an auditor key, nor the other way round.
+        assert!(parse_cosigner(&sign_checkpoint("x", &[1; 32], 0, &[0; 32]).1).is_err());
+        assert!(parse_verifier(vkey).is_err());
+    }
+
+    #[test]
+    fn deletes_and_rotation_proofs_read() {
+        let mut s = LogState::default();
+        for l in [
+            build_leaf("account", "100001", 1, &[b"publish", &[1; 32]]),
+            build_leaf("account", "100001", 2, &[b"rotate", &[2; 32], &[3; 64]]),
+        ] {
+            s.apply(&parse_leaf(&l).unwrap());
+        }
+        assert_eq!(
+            s.accounts["100001"].key,
+            vodozemac::base64_encode([2u8; 32])
+        );
+        s.apply(&parse_leaf(&build_leaf("delete", "100001", 3, &[])).unwrap());
+        assert!(s.accounts.is_empty());
+        assert_eq!(
+            parse_leaf(&build_leaf("delete", "100001", 3, &[b"x"])),
+            None
+        );
+        assert_eq!(
+            parse_leaf(&build_leaf(
+                "account",
+                "1",
+                1,
+                &[b"rotate", &[2; 32], &[3; 63]]
+            )),
+            None
+        );
+    }
+
+    #[test]
+    fn the_copy_keeps_every_leaf_hash_and_rebuilds_them() {
+        use crate::directory::{DirectoryApi, MemoryDirectory};
+        let dir = MemoryDirectory::new();
+        let k = crate::keys::OwnKeys::create("100001");
+        dir.announce("100001", &k.account_key_bytes());
+        let (key, sig) = k.account_object();
+        let t = crate::token::Token::parse(&dir.token("100001"))
+            .unwrap()
+            .bearer;
+        dir.put_account(&t, &key, &sig).unwrap();
+        let (c, e, d) = k.device_object().unwrap();
+        dir.put_device(&t, k.device_id, &c, &e, &d).unwrap();
+
+        let s = sync(&dir, &LogState::default()).unwrap();
+        assert_eq!(s.leaf_hashes().unwrap().len(), 2);
+        assert_eq!(s.root_at(2), s.edge().unwrap().root());
+        assert_eq!(s.root_at(3), None);
+        // A copy from before the hashes were kept gets them back.
+        let mut old = s.clone();
+        old.hashes.clear();
+        assert_eq!(sync(&dir, &old).unwrap(), s);
+        // And one whose first entries were replaced is a rewrite.
+        dir.rewrite_log(
+            0,
+            build_leaf("account", "100009", 1, &[b"publish", &[9; 32]]),
+        );
+        assert!(matches!(sync(&dir, &old), Err(SyncError::Rewritten(_))));
     }
 
     #[test]

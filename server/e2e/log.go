@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/mod/sumdb/note"
 
@@ -88,7 +90,7 @@ func (h *Handler) getLogCheckpoint(w http.ResponseWriter, r *http.Request) {
 		h.internalError(w, r, err)
 		return
 	}
-	text := fmt.Sprintf("%s\n%d\n%s\n", h.ktOrigin(), size, base64.StdEncoding.EncodeToString(root[:]))
+	text := checkpointBody(h.ktOrigin(), size, root[:])
 	msg, err := note.Sign(&note.Note{Text: text}, signer)
 	if err != nil {
 		h.internalError(w, r, err)
@@ -146,4 +148,143 @@ func writeText(w http.ResponseWriter, body []byte) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+// --- auditors (stage 2) -----------------------------------------------------
+
+// maxCosignatureSkew is how far an auditor's clock may be from ours.
+const maxCosignatureSkew = 10 * time.Minute
+
+// auditors returns the auditors of E2E_KT_AUDITORS; a key that does not read
+// is logged and left out.
+func (h *Handler) auditors() []Cosigner {
+	var out []Cosigner
+	for _, k := range h.cfg.KTAuditors {
+		if strings.TrimSpace(k) == "" {
+			continue
+		}
+		c, err := ParseCosigner(k)
+		if err != nil {
+			h.logger.Error("E2E_KT_AUDITORS: key left out", "key", k, "err", err)
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// getLogAuditors answers GET /e2e/v1/log/auditors: the auditors' verifier
+// keys, one per line.
+func (h *Handler) getLogAuditors(w http.ResponseWriter, r *http.Request) {
+	var b strings.Builder
+	for _, c := range h.auditors() {
+		b.WriteString(CosignerKey(c.Name, c.Key) + "\n")
+	}
+	writeText(w, []byte(b.String()))
+}
+
+type cosignatureRequest struct {
+	Checkpoint  string `json:"checkpoint"`
+	Cosignature string `json:"cosignature"`
+}
+
+// postLogCosignature answers POST /e2e/v1/log/cosignature: an auditor hands in
+// its cosignature over a checkpoint of this log. It needs no token: only a
+// cosignature that verifies under a configured auditor's key, over a
+// checkpoint this log really had, is kept.
+func (h *Handler) postLogCosignature(w http.ResponseWriter, r *http.Request) {
+	var req cosignatureRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	origin, size, root, err := parseCheckpointBody(req.Checkpoint)
+	if err != nil || origin != h.ktOrigin() {
+		writeError(w, http.StatusBadRequest, "bad_request", "not a checkpoint of this log")
+		return
+	}
+	var auditor *Cosigner
+	var at uint64
+	for _, c := range h.auditors() {
+		if t, err := c.VerifyCosignature(req.Checkpoint, req.Cosignature); err == nil {
+			auditor, at = &c, t
+			break
+		}
+	}
+	if auditor == nil {
+		writeError(w, http.StatusForbidden, "unknown_auditor", "the cosignature is not by a configured auditor")
+		return
+	}
+	now := h.now()
+	if d := now.Sub(time.Unix(int64(at), 0)); d > maxCosignatureSkew || d < -maxCosignatureSkew {
+		writeError(w, http.StatusBadRequest, "bad_time", "the cosignature's time is too far from the server's")
+		return
+	}
+	cur, _, err := h.store.E2EKTState(r.Context())
+	if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	if size < 1 || size > cur {
+		writeError(w, http.StatusConflict, "unknown_checkpoint", "this log never had that checkpoint")
+		return
+	}
+	want, err := h.store.E2EKTRoot(r.Context(), size)
+	if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	if !bytes.Equal(want[:], root) {
+		h.logger.Error("e2e key log: an auditor cosigned a root this log never had", "auditor", auditor.Name, "size", size)
+		writeError(w, http.StatusConflict, "unknown_checkpoint", "this log never had that checkpoint")
+		return
+	}
+	if err := h.store.E2EKTSetCosignature(r.Context(), state.E2EKTCosignature{
+		Auditor: auditor.Name, Size: size, Time: int64(at), Line: strings.TrimSpace(req.Cosignature),
+	}); err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type cosignedJSON struct {
+	Checkpoints []string `json:"checkpoints"`
+}
+
+// getLogCosigned answers GET /e2e/v1/log/cosigned: for each configured
+// auditor, the latest checkpoint it cosigned, as a note signed by the log and
+// cosigned by the auditor.
+func (h *Handler) getLogCosigned(w http.ResponseWriter, r *http.Request) {
+	signer, _, err := h.logSigner(r.Context())
+	if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	cosigs, err := h.store.E2EKTCosignatures(r.Context())
+	if err != nil {
+		h.internalError(w, r, err)
+		return
+	}
+	configured := map[string]bool{}
+	for _, c := range h.auditors() {
+		configured[c.Name] = true
+	}
+	out := cosignedJSON{Checkpoints: []string{}}
+	for _, c := range cosigs {
+		if !configured[c.Auditor] {
+			continue
+		}
+		root, err := h.store.E2EKTRoot(r.Context(), c.Size)
+		if err != nil {
+			h.internalError(w, r, err)
+			return
+		}
+		msg, err := note.Sign(&note.Note{Text: checkpointBody(h.ktOrigin(), c.Size, root[:])}, signer)
+		if err != nil {
+			h.internalError(w, r, err)
+			return
+		}
+		out.Checkpoints = append(out.Checkpoints, string(msg)+c.Line+"\n")
+	}
+	writeJSON(w, http.StatusOK, out)
 }

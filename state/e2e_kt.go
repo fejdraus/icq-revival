@@ -33,6 +33,8 @@ const (
 	E2EKTResign = "resign"
 	// E2EKTRevoke revokes a device.
 	E2EKTRevoke = "revoke"
+	// E2EKTDelete deletes the account, its key and devices with it.
+	E2EKTDelete = "delete"
 )
 
 // E2EKTMaxEntries is the most leaves one read returns.
@@ -84,6 +86,74 @@ func e2eKTResignLeaf(screenName IdentScreenName, deviceID uint32, sig []byte, at
 // e2eKTRevokeLeaf is the leaf of a device revoked.
 func e2eKTRevokeLeaf(screenName IdentScreenName, deviceID uint32, at time.Time) []byte {
 	return E2EKTLeaf(E2EKTRevoke, screenName, at, e2eKTDeviceID(deviceID))
+}
+
+// E2EKTDeleteAccount records, in the key log, that the account is deleted,
+// if it has keys. Called inside the transaction that deletes the user.
+func e2eKTDeleteAccount(ctx context.Context, q e2eQuerier, screenName IdentScreenName, now time.Time) error {
+	acc, err := e2eAccount(ctx, q, screenName)
+	if err != nil || acc == nil {
+		return err
+	}
+	return e2eKTAppendLeaf(ctx, q, E2EKTLeaf(E2EKTDelete, screenName, now), now)
+}
+
+// E2EKTRoot returns the root hash of the log's first size leaves; size must
+// not be more than the log has.
+func (f SQLiteUserStore) E2EKTRoot(ctx context.Context, size int64) (tlog.Hash, error) {
+	var root tlog.Hash
+	err := f.e2eTx(ctx, func(tx *sql.Tx) error {
+		n, err := e2eKTSize(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if size < 1 || size > n {
+			return fmt.Errorf("e2e log has %d leaves, not %d", n, size)
+		}
+		root, err = tlog.TreeHash(size, e2eKTHashReader(ctx, tx))
+		return err
+	})
+	return root, err
+}
+
+// E2EKTCosignature is an auditor's latest signature over one of the log's
+// checkpoints (c2sp.org/tlog-cosignature).
+type E2EKTCosignature struct {
+	Auditor string
+	Size    int64
+	Time    int64
+	// Line is the signature line as the auditor sent it.
+	Line string
+}
+
+// E2EKTSetCosignature keeps an auditor's cosignature, unless the one kept
+// already is for a larger log or later.
+func (f SQLiteUserStore) E2EKTSetCosignature(ctx context.Context, c E2EKTCosignature) error {
+	_, err := f.db.ExecContext(ctx, `
+		INSERT INTO e2e_kt_cosignature (auditor, size, time, line) VALUES (?, ?, ?, ?)
+		ON CONFLICT (auditor) DO UPDATE SET size = excluded.size, time = excluded.time, line = excluded.line
+		WHERE excluded.size > e2e_kt_cosignature.size
+		   OR (excluded.size = e2e_kt_cosignature.size AND excluded.time > e2e_kt_cosignature.time)`,
+		c.Auditor, c.Size, c.Time, c.Line)
+	return err
+}
+
+// E2EKTCosignatures returns every auditor's latest cosignature.
+func (f SQLiteUserStore) E2EKTCosignatures(ctx context.Context) ([]E2EKTCosignature, error) {
+	rows, err := f.db.QueryContext(ctx, `SELECT auditor, size, time, line FROM e2e_kt_cosignature ORDER BY auditor`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []E2EKTCosignature
+	for rows.Next() {
+		var c E2EKTCosignature
+		if err := rows.Scan(&c.Auditor, &c.Size, &c.Time, &c.Line); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // E2EKTState returns the log's size and root hash.

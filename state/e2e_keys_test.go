@@ -139,7 +139,7 @@ func TestSQLiteUserStore_E2ERotateAccountKey(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := setup(t)
-			err := f.E2ERotateAccountKey(ctx, e2eAlice, tc.oldKey, bytes32(2), tc.resigned, e2eT0.Add(time.Hour))
+			err := f.E2ERotateAccountKey(ctx, e2eAlice, tc.oldKey, bytes32(2), make([]byte, 64), tc.resigned, e2eT0.Add(time.Hour))
 			assert.ErrorIs(t, err, tc.wantErr)
 
 			acc, err := f.E2EAccount(ctx, e2eAlice)

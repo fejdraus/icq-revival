@@ -161,6 +161,15 @@ pub trait DirectoryApi: Send + Sync {
     fn log_entries(&self, _start: u64, _count: u64) -> DirResult<Vec<Vec<u8>>> {
         Ok(Vec::new())
     }
+    /// `GET /log/auditors`: the auditors' verifier keys, one per line;
+    /// `None` from a server without them.
+    fn log_auditors(&self) -> DirResult<Option<String>> {
+        Ok(None)
+    }
+    /// `GET /log/cosigned`: the latest checkpoint each auditor cosigned.
+    fn log_cosigned(&self) -> DirResult<Vec<String>> {
+        Ok(Vec::new())
+    }
 }
 
 /// A shared directory is the directory: a session owns its directory so it
@@ -216,6 +225,12 @@ impl<T: DirectoryApi + ?Sized> DirectoryApi for std::sync::Arc<T> {
     }
     fn log_entries(&self, start: u64, count: u64) -> DirResult<Vec<Vec<u8>>> {
         (**self).log_entries(start, count)
+    }
+    fn log_auditors(&self) -> DirResult<Option<String>> {
+        (**self).log_auditors()
+    }
+    fn log_cosigned(&self) -> DirResult<Vec<String>> {
+        (**self).log_cosigned()
     }
 }
 
@@ -402,6 +417,32 @@ impl<T: Transport> DirectoryApi for HttpDirectory<T> {
             })
             .collect()
     }
+
+    fn log_auditors(&self) -> DirResult<Option<String>> {
+        self.text("log/auditors")
+    }
+
+    fn log_cosigned(&self) -> DirResult<Vec<String>> {
+        #[derive(Deserialize)]
+        struct Cosigned {
+            checkpoints: Vec<String>,
+        }
+        let (status, reply) = self
+            .transport
+            .call("GET", "log/cosigned", None, None)
+            .map_err(DirError::Net)?;
+        match status {
+            404 => Ok(Vec::new()),
+            200 => serde_json::from_slice::<Cosigned>(&reply)
+                .map(|c| c.checkpoints)
+                .map_err(|e| DirError::Net(format!("unexpected reply to GET log/cosigned: {e}"))),
+            _ => Err(DirError::Api {
+                status,
+                code: format!("http_{status}"),
+                message: String::new(),
+            }),
+        }
+    }
 }
 
 // --- in memory -----------------------------------------------------------------
@@ -430,6 +471,10 @@ struct Memory {
     kt_paused: bool,
     /// The log's signing key; another seed is another key.
     kt_seed: u8,
+    /// The auditor named on `GET /log/auditors`, and the cosigned checkpoints
+    /// handed out.
+    kt_auditor: bool,
+    kt_cosigned: Vec<String>,
 }
 
 impl Memory {
@@ -453,6 +498,9 @@ impl Memory {
 
 /// The name the in-memory key log signs its checkpoints with.
 pub const MEMORY_LOG: &str = "memory.test/e2e-kt";
+/// The in-memory auditor's name and key.
+pub const MEMORY_AUDITOR: &str = "auditor.test/icq";
+const MEMORY_AUDITOR_SEED: [u8; 32] = [0xa0; 32];
 
 #[derive(Default, Clone)]
 struct MemAccount {
@@ -575,6 +623,38 @@ impl MemoryDirectory {
     /// Signs the log with another key from now on.
     pub fn rekey_log(&self) {
         self.inner.lock().unwrap().kt_seed += 1;
+    }
+
+    /// Names the in-memory auditor on `GET /log/auditors` (or stops naming it).
+    pub fn set_auditor(&self, on: bool) {
+        self.inner.lock().unwrap().kt_auditor = on;
+    }
+
+    /// The in-memory auditor cosigns the log as it is now, at `time`: that
+    /// is the cosigned checkpoint handed out from then on.
+    pub fn audit_log(&self, time: u64) {
+        let mut m = self.inner.lock().unwrap();
+        let mut edge = crate::kt::Edge::default();
+        for l in &m.kt {
+            edge.push(crate::kt::leaf_hash(l));
+        }
+        let (size, root) = (edge.size, edge.root().unwrap_or_default());
+        Self::kt_cosign(&mut m, size, root, time);
+    }
+
+    /// The in-memory auditor cosigns a checkpoint of the server's choosing:
+    /// the log the server showed it, which need not be the one a client got.
+    pub fn audit_root(&self, size: u64, root: crate::kt::Hash, time: u64) {
+        let mut m = self.inner.lock().unwrap();
+        Self::kt_cosign(&mut m, size, root, time);
+    }
+
+    fn kt_cosign(m: &mut Memory, size: u64, root: crate::kt::Hash, time: u64) {
+        let (note, _) =
+            crate::kt::sign_checkpoint(MEMORY_LOG, &[m.kt_seed.wrapping_add(1); 32], size, &root);
+        let body = &note[..note.find("\n\n").expect("a signed note") + 1];
+        let (line, _) = crate::kt::cosign(MEMORY_AUDITOR, &MEMORY_AUDITOR_SEED, body, time);
+        m.kt_cosigned = vec![format!("{note}{line}\n")];
     }
 
     /// Adds a device to an account as it is, unchecked - as a server that
@@ -895,6 +975,25 @@ impl DirectoryApi for MemoryDirectory {
             .take(count)
             .cloned()
             .collect())
+    }
+
+    fn log_auditors(&self) -> DirResult<Option<String>> {
+        let m = self.inner.lock().unwrap();
+        if m.offline {
+            return Err(DirError::Net("offline (test)".into()));
+        }
+        Ok(m.kt_auditor.then(|| {
+            let (_, vkey) = crate::kt::cosign(MEMORY_AUDITOR, &MEMORY_AUDITOR_SEED, "", 0);
+            vkey + "\n"
+        }))
+    }
+
+    fn log_cosigned(&self) -> DirResult<Vec<String>> {
+        let m = self.inner.lock().unwrap();
+        if m.offline {
+            return Err(DirError::Net("offline (test)".into()));
+        }
+        Ok(m.kt_cosigned.clone())
     }
 }
 
