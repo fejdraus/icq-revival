@@ -52,6 +52,11 @@ CMD ["node", "server.js"]
 
 
 FROM base AS backup
+# age encrypts the copies to the operator's public keys (BACKUP_AGE_RECIPIENTS
+# in .env); Debian packages it for amd64 and arm64 alike.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends age \
+ && rm -rf /var/lib/apt/lists/*
 COPY --chown=node deploy/scripts/oscar-backup.sh /usr/local/bin/oscar-backup.sh
 RUN chmod 755 /usr/local/bin/oscar-backup.sh
 USER node

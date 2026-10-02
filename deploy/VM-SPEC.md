@@ -20,7 +20,7 @@ so that upstream changes still merge cleanly.
 | `oscar-admin` | Node.js | TCP 8100 | Admin panel over the management API |
 | `oscar-legacy-web` | Node.js (+ Python 3 with Pillow) | TCP 8101 | Pages that replace the dead ICQ.com services the clients still open; shrinks uploaded buddy pictures through `shrink-picture.py` |
 | `oscar-nginx` | nginx 1.28 built against **OpenSSL 1.0.2u** (container) | TCP 1443, 3143, 5193, 8102, 8443 | TLS in front of the services above, including the obsolete protocols old clients speak |
-| `oscar-backup` | shell + Node | - | Daily consistent copy of the database, 14 days kept (systemd timer, 03:43) |
+| `oscar-backup` | shell + Node + age | - | Daily consistent copy of the database, encrypted with age to the operator's public keys, 14 days kept (systemd timer, 03:43) |
 | `oscar-cert-renew` | shell | - | Weekly certificate renewal, copies it to nginx and reloads |
 
 ## 2. Sizing
@@ -120,7 +120,7 @@ both move to nginx with a Let's Encrypt certificate.
 |---|---|
 | `/var/lib/open-oscar-server/oscar.sqlite` | the database: accounts, contact lists, profiles, offline messages. Migrations run on start |
 | `/var/lib/oscar-register/recovery.sqlite` | password recovery tokens |
-| `/var/backups/open-oscar-server/` | daily `VACUUM INTO` copies, gzipped, 14 kept |
+| `/var/backups/open-oscar-server/` | daily `VACUUM INTO` copies, gzipped and age-encrypted (`.sqlite.gz.age`), 14 kept |
 
 `oscar-register` opens `oscar.sqlite` directly as well as through the API, so
 both must see the same file on a local filesystem. A shared volume on the same
@@ -128,6 +128,15 @@ host is fine; a network filesystem is not (SQLite locking).
 
 Backups should also leave the machine: copy `/var/backups/open-oscar-server/`
 off-host (object storage, another server) on the same schedule.
+
+They are encrypted at rest with [age](https://age-encryption.org) to X25519
+public keys set in `OSCAR_BACKUP_AGE_RECIPIENTS` (`BACKUP_AGE_RECIPIENTS` in
+the containers' `.env`); the private key stays with the operator, off every
+server. Without recipients the copies are plain gzip, with a warning.
+`deploy/backup/` has the off-site pair: `icq-backup-stream` on the server
+sends one encrypted archive with the database, `.env`, secrets and
+certificates; `icq-backup-pull` on the backup host fetches it and checks its
+age header. Restoring: `deploy/docker/README.md`, "Backups".
 
 ## 6. Configuration and secrets
 
@@ -151,7 +160,7 @@ Ready: `deploy/docker-compose.yaml`, with the steps in `deploy/docker/README.md`
 | Service | Image | Notes |
 |---|---|---|
 | `server` | `Dockerfile` (Go 1.26 build, Alpine runtime) | runs as uid 1000; advertised address from `PUBLIC_HOST` |
-| `register`, `admin`, `legacy-web`, `backup` | `deploy/docker/services.Dockerfile`, one target each | `node:24-slim`, no npm dependencies; legacy-web adds `python3-pil` |
+| `register`, `admin`, `legacy-web`, `backup` | `deploy/docker/services.Dockerfile`, one target each | `node:24-slim`, no npm dependencies; legacy-web adds `python3-pil`, backup adds `age` |
 | `nginx` | `Dockerfile.nginx` | the TLS front; `deploy/nginx/conf.d/register.conf` adds HTTPS on 443 for the registration pages |
 | `cert-gen`, `certbot` | `Dockerfile.certgen`, `certbot/certbot` | on demand, profile `certs` |
 
@@ -190,6 +199,7 @@ remote; everything under `deploy/`, `tools/`, `patches/` and `NOTES.md` is ours.
 | `deploy/nginx/nginx.conf` | the TLS front |
 | `deploy/systemd/` | units and timers as they run now |
 | `deploy/scripts/` | backup and certificate renewal |
+| `deploy/backup/` | the encrypted off-site backup: stream on the server, pull on the backup host |
 | `deploy/oscar-register/`, `deploy/oscar-admin/`, `deploy/oscar-legacy-web/`, `deploy/shared/` | the three Node services and their shared UI code |
 | `api.yml` | management API specification |
 | `NOTES.md` | findings about each client: what it needs from the server and why |

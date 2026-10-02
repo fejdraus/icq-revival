@@ -18,3 +18,5 @@ tools/miranda-icq/IcqOscarJ/** -text
 # Its diff against upstream likewise: its lines carry the sources' own
 # endings, so it applies with patch --binary only when kept as generated.
 tools/miranda-icq/IcqOscarJ.diff -text
+# The backup scripts run on Linux hosts and have no extension.
+deploy/backup/icq-backup-* text eol=lf

@@ -58,13 +58,95 @@ renewals keep it readable.
 |---|---|
 | Database | volume `icq-revival_oscar-data`, `/var/lib/open-oscar-server/oscar.sqlite` inside |
 | Password-recovery tokens | volume `icq-revival_register-data` |
-| Backups | `deploy/backups/`, one gzipped copy a day, 14 kept by default |
+| Backups | `deploy/backups/`, one copy a day (`.sqlite.gz.age`, or `.sqlite.gz` without a key), 14 kept by default |
 | Certificates | `deploy/certs/` |
 | Miranda NG update packages of ours | `deploy/miranda-updates/` (see below) |
 | Logs | `docker compose logs -f <service>` |
 
 Copy `deploy/backups/` off the machine on a schedule of its own - a backup on
-the same disk does not survive the disk.
+the same disk does not survive the disk. See "Backups" below.
+
+## Backups
+
+What a backup holds is worth stealing: password hashes, offline messages,
+contact lists, the key log's signing key, and - in the off-site archive -
+`.env`, `secrets/` and `certs/` with the private AIM authority's key. So they
+are encrypted with [age](https://age-encryption.org) to public keys only
+(X25519 recipients). The server can write backups but cannot read them; the
+private key lives with the operator, never on a server and never in git.
+
+**The key.** On your own computer (age: `apt install age`, `scoop install
+age`, or a release from github.com/FiloSottile/age):
+
+```
+age-keygen -o icq-backup-key.txt
+```
+
+It prints `Public key: age1...`. Keep `icq-backup-key.txt` in a password
+manager and on paper or a USB stick - without it no backup can be restored.
+Optionally make a second, spare key the same way and keep it offline
+elsewhere; every backup is then readable with either.
+
+**The recipients.** In `.env`, the public keys, comma-separated:
+
+```
+BACKUP_AGE_RECIPIENTS=age1...yourkey,age1...sparekey
+```
+
+then `docker compose up -d --build --no-deps backup` (the image now carries
+age, and the setting is read when the container starts). Its log shows
+`backup written: /backups/oscar-<date>.sqlite.gz.age`. With recipients set
+it never writes a plain copy: if encryption fails, the run fails and
+nothing is kept. Without them it keeps writing plain `oscar-<date>.sqlite.gz`
+copies, as before, with a warning in the log.
+
+**Off the machine.** Two scripts in `deploy/backup/`:
+
+- `icq-backup-stream`, on the server: a fresh database copy, the recovery
+  tokens, `.env`, `secrets/`, `certs/` and `DEPLOYED` as one tar, encrypted
+  through the backup container to the same recipients and written to stdout.
+  It is the forced command of the backup host's SSH key; it fails rather
+  than send anything unencrypted.
+- `icq-backup-pull`, on the backup host, with `icq-backup.service` and
+  `icq-backup.timer`: fetches the archive as `icq-<date>.tar.gz.age` and
+  keeps the last 3. It has no key, so it checks the SSH exit status, a
+  minimum size and the age header (version line, X25519 recipients - and
+  their exact number if `ICQ_BACKUP_RECIPIENTS` is set).
+
+Install instructions are at the top of each script.
+
+**Restoring.** Decrypt on the computer that holds the key; only the plain
+database goes back to the server. The database alone:
+
+```
+scp <host>:<deploy dir>/backups/oscar-<date>.sqlite.gz.age .
+age -d -i icq-backup-key.txt oscar-<date>.sqlite.gz.age | gunzip > restore.sqlite
+scp restore.sqlite <host>:/tmp/restore.sqlite
+```
+
+then on the server, in `deploy/`:
+
+```
+docker compose stop server register backup
+docker compose run --rm --no-deps -v /tmp/restore.sqlite:/import.sqlite:ro volumes-init \
+  sh -c 'cp /import.sqlite /data/oscar.sqlite && rm -f /data/oscar.sqlite-wal /data/oscar.sqlite-shm && chown 1000:1000 /data/oscar.sqlite'
+docker compose up -d
+rm /tmp/restore.sqlite
+```
+
+The whole machine, from an off-site archive:
+
+```
+age -d -i icq-backup-key.txt icq-<date>.tar.gz.age | tar -xz
+```
+
+gives `icq/` with `oscar-<date>.sqlite.gz`, `recovery.sqlite`, `.env`,
+`secrets/`, `certs/` and `DEPLOYED`. Older plain copies (`.sqlite.gz`,
+`.tar.gz`) restore as before, with `gunzip -c` and `tar -xzf`; they are
+rotated out by themselves (14 days here, 3 nights on the backup host), or
+delete them once the first encrypted ones exist.
+
+Test a restore now and then: a key that was never tried is not a backup.
 
 ## Admin panel
 

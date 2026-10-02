@@ -1,0 +1,46 @@
+#!/bin/bash
+# Writes an encrypted archive of everything needed to rebuild the server to
+# stdout: a fresh database copy, the password-recovery tokens, .env,
+# secrets/, certs/ (the only copy of the private AIM authority's server.pem
+# outside the machine) and DEPLOYED, as icq/... in a gzipped tar, encrypted
+# with age to BACKUP_AGE_RECIPIENTS from .env. Nothing is written to stdout
+# unless it is encrypted; without recipients it fails.
+#
+# Meant as the forced command of the off-site backup host's SSH key, which
+# saves the output as icq-<date>.tar.gz.age (see icq-backup-pull). Runs as
+# root on the server: it reads a Docker volume and runs docker compose.
+#
+# Install on the server:
+#   sudo install -m 755 deploy/backup/icq-backup-stream /usr/local/sbin/
+# and in the backup user's ~/.ssh/authorized_keys, on the pulling host's key:
+#   command="sudo /usr/local/sbin/icq-backup-stream",restrict ssh-ed25519 AAAA... backup@host
+# (drop "sudo " if that user is root). See deploy/docker/README.md, "Backups".
+set -euo pipefail
+
+DEPLOY_DIR="${ICQ_DEPLOY_DIR:-/srv/icq-revival/deploy}"
+PROJECT="${ICQ_COMPOSE_PROJECT:-icq-revival}"
+
+cd "$DEPLOY_DIR"
+umask 077
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+mkdir "$tmp/icq"
+
+# A fresh consistent copy straight from the backup container, plain inside
+# the archive (the archive as a whole is encrypted below).
+stamp=$(date +%Y%m%d-%H%M)
+db="$tmp/icq/oscar-$stamp.sqlite.gz"
+docker compose exec -T backup /usr/local/bin/oscar-backup.sh --stdout < /dev/null > "$db"
+gzip -t "$db"
+
+register=$(docker volume inspect -f '{{.Mountpoint}}' "${PROJECT}_register-data")
+if [ -f "$register/recovery.sqlite" ]; then
+    cp "$register/recovery.sqlite" "$tmp/icq/"
+fi
+cp -a .env secrets certs "$tmp/icq/"
+cat ../DEPLOYED > "$tmp/icq/DEPLOYED" 2>/dev/null || echo unknown > "$tmp/icq/DEPLOYED"
+
+# age runs in the backup container, with the recipients it was started with;
+# it refuses when there are none. pipefail turns any failure on the way into
+# a non-zero exit, which the pulling side checks.
+tar -czf - -C "$tmp" icq | docker compose exec -T backup /usr/local/bin/oscar-backup.sh --encrypt

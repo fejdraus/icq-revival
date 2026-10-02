@@ -1,0 +1,78 @@
+#!/bin/bash
+# Pulls the server's encrypted archive (icq-backup-stream) to this host and
+# keeps the last few. Runs on the off-site backup host, from a timer.
+#
+# The archive is age-encrypted and this host has no key to open it - that is
+# the point: a stolen copy is useless. So it checks what it can without the
+# key: the SSH command succeeded, the file is big enough, and it is an age
+# file encrypted to X25519 recipients (not a plain or truncated download).
+# Whether it decrypts is checked by a test restore on the PC that holds the
+# key (deploy/docker/README.md, "Backups").
+#
+# Settings come from the environment or /etc/default/icq-backup:
+#   ICQ_BACKUP_HOST   the server's DNS name                  (required)
+#   ICQ_BACKUP_USER   the SSH user with the forced command   (ubuntu)
+#   ICQ_BACKUP_PORT   SSH port                               (22)
+#   ICQ_BACKUP_KEY    the private SSH key for that user      (/root/.ssh/icq-backup)
+#   ICQ_BACKUP_DEST   where archives are kept                (/var/backups/icq)
+#   ICQ_BACKUP_KEEP   how many archives to keep              (3)
+#   ICQ_BACKUP_MIN_BYTES        smaller means something is wrong   (65536)
+#   ICQ_BACKUP_RECIPIENTS       exact number of age recipients expected
+#                               (empty: at least one)
+#
+# Install (as root):
+#   install -m 755 icq-backup-pull /usr/local/sbin/
+#   install -m 644 icq-backup.service icq-backup.timer /etc/systemd/system/
+#   printf 'ICQ_BACKUP_HOST=<domain>\nICQ_BACKUP_PORT=<port>\n' > /etc/default/icq-backup
+#   systemctl daemon-reload && systemctl enable --now icq-backup.timer
+set -euo pipefail
+
+[ -r /etc/default/icq-backup ] && . /etc/default/icq-backup
+
+HOST="${ICQ_BACKUP_HOST:?set ICQ_BACKUP_HOST}"
+USER_="${ICQ_BACKUP_USER:-ubuntu}"
+PORT="${ICQ_BACKUP_PORT:-22}"
+KEY="${ICQ_BACKUP_KEY:-/root/.ssh/icq-backup}"
+DEST="${ICQ_BACKUP_DEST:-/var/backups/icq}"
+KEEP="${ICQ_BACKUP_KEEP:-3}"
+MIN_BYTES="${ICQ_BACKUP_MIN_BYTES:-65536}"
+RECIPIENTS="${ICQ_BACKUP_RECIPIENTS:-}"
+
+umask 077
+mkdir -p "$DEST"
+part=$(mktemp "$DEST/.icq-pull.XXXXXX")
+trap 'rm -f "$part"' EXIT
+
+# The forced command on the server ignores any command sent; set -e fails
+# the run when it exits non-zero (pipefail on its side covers every step).
+ssh -T -o BatchMode=yes -p "$PORT" -i "$KEY" "$USER_@$HOST" > "$part"
+
+fail() { echo "icq-backup-pull: $*" >&2; exit 1; }
+
+size=$(stat -c %s "$part")
+[ "$size" -ge "$MIN_BYTES" ] || fail "archive is only $size bytes"
+
+# The age header: the version line, one stanza per recipient, then "--- mac".
+# (sed stops early, so head may die of SIGPIPE: hence || true.)
+header=$(head -c 65536 "$part" | tr -d '\000' | LC_ALL=C sed -n '/^--- /{p;q};p' || true)
+[ "$(printf '%s\n' "$header" | head -n 1)" = "age-encryption.org/v1" ] \
+    || fail "not an age file (plain or broken archive)"
+printf '%s\n' "$header" | grep -q '^--- ' || fail "age header has no end"
+if printf '%s\n' "$header" | grep -q '^-> scrypt '; then
+    fail "archive is passphrase-encrypted, expected public-key recipients"
+fi
+n=$(printf '%s\n' "$header" | grep -c '^-> X25519 ' || true)
+[ "$n" -ge 1 ] || fail "no X25519 recipient in the age header"
+if [ -n "$RECIPIENTS" ] && [ "$n" -ne "$RECIPIENTS" ]; then
+    fail "encrypted to $n recipients, expected $RECIPIENTS"
+fi
+
+out="$DEST/icq-$(date +%Y%m%d-%H%M).tar.gz.age"
+mv "$part" "$out"
+trap - EXIT
+echo "icq-backup-pull: saved $out ($size bytes, $n recipients)"
+
+# Keep the newest KEEP archives, older plain ones (icq-*.tar.gz) included.
+find "$DEST" -maxdepth 1 -type f \( -name 'icq-*.tar.gz.age' -o -name 'icq-*.tar.gz' \) \
+    -printf '%T@ %p\n' | sort -rn | tail -n +"$((KEEP + 1))" | cut -d' ' -f2- \
+    | while IFS= read -r old; do rm -f -- "$old"; done

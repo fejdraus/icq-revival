@@ -181,6 +181,10 @@ services:
       OSCAR_BACKUP_DB: /var/lib/open-oscar-server/oscar.sqlite
       OSCAR_BACKUP_DEST: /backups
       OSCAR_BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      # age public keys (age1..., comma-separated) the copies are encrypted
+      # to; empty writes plain copies with a warning (docker/README.md,
+      # "Backups"). icq-backup-stream encrypts through this container too.
+      OSCAR_BACKUP_AGE_RECIPIENTS: ${BACKUP_AGE_RECIPIENTS:-}
     volumes:
       - oscar-data:/var/lib/open-oscar-server
       # On the host, so they are easy to copy off the machine.

@@ -6,3 +6,6 @@ After=open-oscar-server.service
 Type=oneshot
 ExecStart=/usr/local/bin/oscar-backup.sh
 Environment="OSCAR_BACKUP_KEEP_DAYS=14"
+# age public keys (age1..., comma-separated) to encrypt the copies to; needs
+# the age package. Without it the copies are plain gzip, with a warning.
+#Environment="OSCAR_BACKUP_AGE_RECIPIENTS=age1..."
