@@ -341,6 +341,37 @@ pub fn call_plain_note(peer: &str, why: &str, strict: bool) -> String {
     s
 }
 
+/// The note for a file transfer whose data connection both add-ons encrypt
+/// (`files_encrypt=on`, docs/e2e/FILES-RESEARCH.md stage F4).
+pub fn file_encrypted_note(peer: &str, verified: bool) -> String {
+    let trust = if verified {
+        format!("{peer} is verified.")
+    } else {
+        "Type /e2e safety to compare the safety number.".to_string()
+    };
+    format!("{PREFIX}This file transfer with {peer} is end-to-end encrypted: the files and their names travel encrypted with keys agreed through your encrypted chat. {trust}")
+}
+
+/// The note for a file transfer that goes unencrypted, with the reason. A
+/// transfer is never blocked (the owner's rule, as for calls); for a contact
+/// under `/e2e on` or verified the note says so in stronger words.
+pub fn file_plain_note(peer: &str, why: &str, strict: bool) -> String {
+    let why = why.trim_end_matches('.');
+    let mut s =
+        format!("{PREFIX}This file transfer with {peer} is not end-to-end encrypted: {why}.");
+    if strict {
+        s.push_str(&format!(" Encryption is on for {peer} in this chat, but file transfers are never blocked: the network between you, or a relay, can read this one. Cancel it if it must stay private."));
+    }
+    s
+}
+
+/// The note for an encrypted file transfer whose connection was closed
+/// because something on it did not check out (fail closed).
+pub fn file_failed_note(peer: &str, why: &str) -> String {
+    let why = why.trim_end_matches('.');
+    format!("{PREFIX}The encrypted file transfer with {peer} was stopped: {why}. Nothing of it was passed on unencrypted; send the file again.")
+}
+
 /// Whether `/e2e plain` may open a message held for this reason. A contact
 /// switched on by hand never gets clear text (10.8).
 pub fn plain_allowed(setting: Setting) -> bool {

@@ -67,7 +67,10 @@
 //! Each socket has separate locks per direction, so a `recv` waiting on one
 //! thread never holds up a `send` on another. The session has its own lock and
 //! is taken only for the length of one frame. Every hook body runs under
-//! `catch_unwind`; a panic falls back to the original call.
+//! `catch_unwind`. In observe mode a panic falls back to the original call; in
+//! every other mode it fails the call and refuses the socket for good
+//! ([`fail_closed`]), since the original call would send or hand over bytes
+//! the add-on was there to encrypt, decrypt or wrap in TLS.
 
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
@@ -97,6 +100,9 @@ mod tlsio;
 #[path = "hook_calls.rs"]
 mod calls_io;
 
+#[path = "hook_files.rs"]
+mod filesio;
+
 type Socket = usize;
 
 const SOCKET_ERROR: i32 = -1;
@@ -120,6 +126,7 @@ static ORIG_CLOSE: AtomicUsize = AtomicUsize::new(0);
 static ORIG_ASYNC_SELECT: AtomicUsize = AtomicUsize::new(0);
 static ORIG_IOCTL: AtomicUsize = AtomicUsize::new(0);
 static ORIG_GETPEERNAME: AtomicUsize = AtomicUsize::new(0);
+static ORIG_ACCEPT: AtomicUsize = AtomicUsize::new(0);
 
 static INSTALLED: AtomicBool = AtomicBool::new(false);
 
@@ -252,6 +259,19 @@ struct Sock {
     proxy_state: AtomicU8,
     /// Whether `tls=off` was already said on this connection.
     tls_off_said: AtomicBool,
+    /// The pipe of a file transfer both add-ons agreed to encrypt (or we
+    /// offered and wait for), at the bottom of the socket (`hook_files.rs`).
+    file: OnceLock<Arc<filesio::FileConn>>,
+    /// Whether the first outbound / inbound bytes were looked at for a file
+    /// transfer.
+    file_checked: AtomicBool,
+    file_in_checked: AtomicBool,
+    /// `files_log=on`: what the socket's transfer does, and whether the
+    /// socket was found not to be one.
+    file_watch: Mutex<Option<crate::files::Watch>>,
+    file_watch_off: AtomicBool,
+    /// Accepted from a listening socket (a peer connected to us).
+    accepted: AtomicBool,
 }
 
 impl Sock {
@@ -284,6 +304,12 @@ impl Sock {
             unseen_checked: AtomicBool::new(false),
             proxy_state: AtomicU8::new(tlsio::PROXY_UNSEEN),
             tls_off_said: AtomicBool::new(false),
+            file: OnceLock::new(),
+            file_checked: AtomicBool::new(false),
+            file_in_checked: AtomicBool::new(false),
+            file_watch: Mutex::new(None),
+            file_watch_off: AtomicBool::new(false),
+            accepted: AtomicBool::new(false),
         }
     }
 }
@@ -378,10 +404,18 @@ fn account_session() -> Option<Arc<Mutex<Session>>> {
     match Session::open(dir, &policy().home, &uin) {
         Ok(mut sess) => {
             sess.engine().set_calls_encrypt(policy().encrypts_calls());
+            sess.engine()
+                .set_calls_required(policy().encrypts_calls() && policy().calls_required);
+            sess.engine().set_files_encrypt(policy().encrypts_files());
             sess.engine().set_auditors(policy().auditors.clone());
-            log::line(&format!(
-                "[ICQ E2E] device keys ready for {uin} (encrypt mode)"
-            ));
+            match sess.locked_out() {
+                Some(why) => log::line(&format!(
+                    "[ICQ E2E] encryption held for {uin}: {why}; its state file is                      locked by the other one, so messages are held, not sent in clear"
+                )),
+                None => log::line(&format!(
+                    "[ICQ E2E] device keys ready for {uin} (encrypt mode)"
+                )),
+            }
             let s = Arc::new(Mutex::new(sess));
             sessions.insert(uin, s.clone());
             Some(s)
@@ -607,6 +641,7 @@ fn note_traffic(s: Socket, data: &[u8], dir: Direction) {
     let err = unsafe { GetLastError() };
     let _ = panic::catch_unwind(AssertUnwindSafe(|| {
         let sock = sock_for(s);
+        filesio::watch(s, &sock, dir, data);
         let flag = match dir {
             Direction::Outbound => &sock.classified_out,
             Direction::Inbound => &sock.classified_in,
@@ -645,6 +680,7 @@ type CloseFn = unsafe extern "system" fn(Socket) -> i32;
 type AsyncSelectFn = unsafe extern "system" fn(Socket, usize, u32, i32) -> i32;
 type IoctlFn = unsafe extern "system" fn(Socket, i32, *mut u32) -> i32;
 type PeerNameFn = unsafe extern "system" fn(Socket, *mut u8, *mut i32) -> i32;
+type AcceptFn = unsafe extern "system" fn(Socket, *mut u8, *mut i32) -> Socket;
 
 unsafe fn orig_send() -> SendFn {
     std::mem::transmute(ORIG_SEND.load(Ordering::Acquire))
@@ -667,6 +703,19 @@ unsafe fn tls_gate(s: Socket, buf: *const u8, len: i32, flags: i32, outbound: bo
         if tlsio::blocked(s, &sock, data) {
             return Some((SOCKET_ERROR, tlsio::WSAECONNRESET));
         }
+        // A file transfer's encrypted connection closed for failing (fail
+        // closed), and what it answers itself.
+        if let Some(fc) = sock.file.get() {
+            if filesio::refused(fc) {
+                return Some((SOCKET_ERROR, tlsio::WSAECONNRESET));
+            }
+            if flags & MSG_OOB != 0 {
+                return Some((SOCKET_ERROR, tlsio::WSAEOPNOTSUPP));
+            }
+            if len <= 0 || buf.is_null() {
+                return Some((0, 0));
+            }
+        }
         if sock.tls.get().is_some() {
             if flags & MSG_OOB != 0 {
                 return Some((SOCKET_ERROR, tlsio::WSAEOPNOTSUPP));
@@ -684,7 +733,66 @@ unsafe fn tls_gate(s: Socket, buf: *const u8, len: i32, flags: i32, outbound: bo
             }
             Some(v)
         }
-        _ => None,
+        Ok(None) => None,
+        // A panic here may have skipped the check that refuses this socket:
+        // only observe mode, which never has TLS, lets the call go on.
+        Err(_) if policy().mode == Mode::Observe => None,
+        Err(_) => Some(fail_closed(s, "socket check")),
+    }
+}
+
+/// After a panic in a hook that may rewrite, encrypt or wrap the bytes in TLS
+/// (every mode but observe): the client's own buffer must never go out as it
+/// is, and bytes read from the socket must never reach the client as they
+/// came - either would be plaintext, or ciphertext the client cannot use, past
+/// every check. The call fails with `WSAECONNRESET`, the socket is refused for
+/// good (every later call on it fails the same way, see `tlsio::blocked`), and
+/// the user is told why. The client reconnects on a fresh socket.
+fn fail_closed(s: Socket, what: &str) -> i32 {
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        let sock = sock_for(s);
+        if sock.blocked.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        log::line(&format!(
+            "socket {s}: reset (fail closed): the add-on's {what} hook failed;              nothing of this connection goes past it unprotected"
+        ));
+        let note = format!(
+            "[ICQ E2E] The connection was closed: the add-on hit an internal error in its {what} hook, and nothing is sent or shown unprotected because of it. The client reconnects on its own."
+        );
+        let session = lock(&sock.session).clone();
+        match session {
+            Some(sess) => {
+                if let Ok(mut g) = sess.try_lock() {
+                    g.engine().say(note);
+                }
+            }
+            None if policy().mode == Mode::Plain => {
+                if let Ok(mut d) = disabled().try_lock() {
+                    d.say(note);
+                }
+            }
+            None => {}
+        };
+    }));
+    // SAFETY: sets the calling thread's last error.
+    unsafe { SetLastError(tlsio::WSAECONNRESET) };
+    SOCKET_ERROR
+}
+
+/// Sockets whose next `send` or `recv` body panics, for the tests of
+/// [`fail_closed`].
+#[cfg(test)]
+fn panic_sockets() -> &'static Mutex<std::collections::HashSet<Socket>> {
+    static P: std::sync::LazyLock<Mutex<std::collections::HashSet<Socket>>> =
+        std::sync::LazyLock::new(Default::default);
+    &P
+}
+
+#[cfg(test)]
+fn maybe_panic(s: Socket) {
+    if lock(panic_sockets()).remove(&s) {
+        panic!("a panic injected by the test");
     }
 }
 
@@ -710,7 +818,9 @@ unsafe extern "system" fn hook_send(s: Socket, buf: *const u8, len: i32, flags: 
     let data = std::slice::from_raw_parts(buf, len as usize);
     match panic::catch_unwind(AssertUnwindSafe(|| harness_send(s, data, flags))) {
         Ok(n) => n,
-        Err(_) => orig_send()(s, buf, len, flags),
+        // Never the client's own buffer: it is the plaintext the rewriter
+        // was there to encrypt, and on a TLS socket it would skip the TLS.
+        Err(_) => fail_closed(s, "send"),
     }
 }
 
@@ -733,7 +843,9 @@ unsafe extern "system" fn hook_recv(s: Socket, buf: *mut u8, len: i32, flags: i3
         harness_recv(s, buf, len as usize, flags)
     })) {
         Ok(n) => n,
-        Err(_) => orig_recv()(s, buf, len, flags),
+        // Never the socket's own bytes: undecrypted containers, or TLS
+        // records the client cannot read.
+        Err(_) => fail_closed(s, "recv"),
     };
     if n > 0 && flags & MSG_PEEK == 0 {
         note_traffic(
@@ -761,7 +873,10 @@ unsafe extern "system" fn hook_connect(s: Socket, name: *const u8, namelen: i32)
     let _ = panic::catch_unwind(AssertUnwindSafe(|| {
         let mut map = lock(sockets());
         if let Some(old) = map.get(&s) {
-            if old.connect_seen.load(Ordering::Acquire) || old.tls.get().is_some() {
+            if old.connect_seen.load(Ordering::Acquire)
+                || old.tls.get().is_some()
+                || old.file.get().is_some()
+            {
                 map.insert(s, Arc::new(Sock::new()));
             }
         }
@@ -810,6 +925,10 @@ unsafe extern "system" fn hook_connect(s: Socket, name: *const u8, namelen: i32)
         if let tlsio::ConnectPlan::Tls { conn, .. } = &plan {
             tlsio::connect_started(s, &sock, conn, r, err);
         }
+        // A file transfer's connection to an address the peer proposed.
+        if let tlsio::ConnectPlan::Plain = &plan {
+            filesio::on_connect(s, &sock, name, namelen, r, err);
+        }
     }));
     SetLastError(err);
     r
@@ -822,8 +941,37 @@ unsafe extern "system" fn hook_closesocket(s: Socket) -> i32 {
         if let Some(conn) = sock.as_ref().and_then(|k| k.tls.get()) {
             tlsio::close(conn, s);
         }
+        if let Some(k) = sock.as_ref() {
+            if let Some(fc) = k.file.get() {
+                filesio::close(fc, s);
+            }
+            filesio::closed(s, k);
+        }
     }));
     orig(s)
+}
+
+/// `accept`: a peer connected to a port the client listens on - for these
+/// clients, a file transfer's direct or reverse stage. The new socket is
+/// looked at for a transfer it belongs to (`hook_files.rs`); the call itself
+/// is the original's.
+unsafe extern "system" fn hook_accept(s: Socket, addr: *mut u8, addrlen: *mut i32) -> Socket {
+    let orig: AcceptFn = std::mem::transmute(ORIG_ACCEPT.load(Ordering::Acquire));
+    let new = orig(s, addr, addrlen);
+    if new != usize::MAX {
+        let err = GetLastError();
+        let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+            // A handle carries one connection: nothing of an earlier one.
+            let sock = Arc::new(Sock::new());
+            // Seen opened: by the accept, not by a connect.
+            sock.connect_seen.store(true, Ordering::Release);
+            lock(sockets()).insert(new, sock);
+            log::line(&format!("accept: socket {new} from listening socket {s}"));
+            filesio::on_accept(s, new);
+        }));
+        SetLastError(err);
+    }
+    new
 }
 
 unsafe extern "system" fn hook_async_select(s: Socket, hwnd: usize, msg: u32, events: i32) -> i32 {
@@ -876,10 +1024,15 @@ unsafe extern "system" fn hook_ioctlsocket(s: Socket, cmd: i32, argp: *mut u32) 
                     .inb
                     .try_lock()
                     .map_or(0, |side| side.ready.len() as u32);
-                *argp = match sock.tls.get() {
+                *argp = match (sock.tls.get(), sock.file.get()) {
                     // The socket holds ciphertext: only plaintext counts.
-                    Some(conn) => held.saturating_add(tlsio::plaintext_waiting(&sock, conn, s)),
-                    None => (*argp).saturating_add(held),
+                    (Some(conn), _) => {
+                        held.saturating_add(tlsio::plaintext_waiting(&sock, conn, s))
+                    }
+                    (None, Some(fc)) => {
+                        held.saturating_add(filesio::plaintext_waiting(&sock, fc, s))
+                    }
+                    (None, None) => (*argp).saturating_add(held),
                 };
             }
         }));
@@ -910,6 +1063,8 @@ fn observe(s: Socket, bytes: &[u8], dir: Direction) {
 
 /// Harness `send`: rewrite, push out, report the client's length as sent.
 fn harness_send(s: Socket, data: &[u8], flags: i32) -> i32 {
+    #[cfg(test)]
+    maybe_panic(s);
     first_bytes_note(Direction::Outbound, s, data.len());
     let sock = sock_for(s);
     ensure_session(&sock);
@@ -994,8 +1149,30 @@ fn deliver_notes(sock: &Sock, s: Socket) {
     }
 }
 
-/// The client's bytes onto the socket as they are, or into its TLS.
+/// The client's bytes into a file transfer's pipe, for a socket that has one
+/// (or whose first bytes show it should: `hook_files.rs`). `None` for every
+/// other socket.
+fn file_send(sock: &Sock, s: Socket, data: &[u8]) -> Option<Result<(), u32>> {
+    if sock.file.get().is_none() && !sock.file_checked.load(Ordering::Acquire) {
+        filesio::on_first_out(s, &sock_for(s), data);
+    }
+    let fc = sock.file.get()?;
+    Some(filesio::send(sock, fc, s, data))
+}
+
+/// The client's bytes onto the socket as they are, or into its TLS, or into
+/// a file transfer's pipe.
 fn transport_send(sock: &Sock, s: Socket, data: &[u8], flags: i32) -> i32 {
+    if let Some(r) = file_send(sock, s, data) {
+        return match r {
+            Ok(()) => data.len() as i32,
+            Err(e) => {
+                // SAFETY: sets the calling thread's last error.
+                unsafe { SetLastError(e) };
+                SOCKET_ERROR
+            }
+        };
+    }
     match sock.tls.get() {
         // SAFETY: data is the client's buffer, valid for the call.
         None => unsafe { orig_send()(s, data.as_ptr(), data.len() as i32, flags) },
@@ -1014,9 +1191,42 @@ fn transport_send(sock: &Sock, s: Socket, data: &[u8], flags: i32) -> i32 {
 /// TLS. Winsock's answer: a count, 0 at the end, or `SOCKET_ERROR` with the
 /// thread's last error set.
 fn transport_recv(sock: &Sock, s: Socket, buf: *mut u8, len: usize, flags: i32) -> i32 {
-    match sock.tls.get() {
+    if let Some(fc) = sock.file.get() {
         // SAFETY: the caller's buffer, valid for len bytes.
-        None => unsafe { orig_recv()(s, buf, len as i32, flags) },
+        let out = unsafe { std::slice::from_raw_parts_mut(buf, len) };
+        return match filesio::recv(sock, fc, s, out, flags & MSG_PEEK != 0) {
+            Ok(n) => n as i32,
+            Err(e) => {
+                // SAFETY: sets the calling thread's last error.
+                unsafe { SetLastError(e) };
+                SOCKET_ERROR
+            }
+        };
+    }
+    match sock.tls.get() {
+        None => {
+            // SAFETY: the caller's buffer, valid for len bytes.
+            let n = unsafe { orig_recv()(s, buf, len as i32, flags) };
+            // A key hello on a connection not tied to a transfer: closed,
+            // never handed to the client (`hook_files.rs`).
+            if n > 0 && flags & MSG_PEEK == 0 && !sock.file_in_checked.swap(true, Ordering::AcqRel)
+            {
+                // SAFETY: the original wrote n bytes into the caller's buffer.
+                let got = unsafe { std::slice::from_raw_parts(buf, n as usize) };
+                match filesio::first_in(s, &sock_for(s), got) {
+                    filesio::FirstIn::Pass => {}
+                    // The hello went into the transfer's pipe: the client
+                    // gets what the pipe has for it.
+                    filesio::FirstIn::Taken => return transport_recv(sock, s, buf, len, flags),
+                    filesio::FirstIn::Refuse => {
+                        // SAFETY: sets the calling thread's last error.
+                        unsafe { SetLastError(tlsio::WSAECONNRESET) };
+                        return SOCKET_ERROR;
+                    }
+                }
+            }
+            n
+        }
         Some(conn) => {
             // SAFETY: the caller's buffer, valid for len bytes.
             let out = unsafe { std::slice::from_raw_parts_mut(buf, len) };
@@ -1038,6 +1248,13 @@ fn transport_recv(sock: &Sock, s: Socket, buf: *mut u8, len: usize, flags: i32) 
 /// next call. On a TLS socket all of it goes into the TLS, which keeps its own
 /// queue of ciphertext.
 fn flush(sock: &Sock, s: Socket, pending: &mut Vec<u8>, flags: i32) -> Result<(), u32> {
+    if pending.is_empty() {
+        return Ok(());
+    }
+    if let Some(r) = file_send(sock, s, pending) {
+        pending.clear();
+        return r;
+    }
     if let Some(conn) = sock.tls.get() {
         let r = tlsio::send(sock, conn, s, pending);
         pending.clear();
@@ -1102,14 +1319,17 @@ fn wait_writable(s: Socket, ms: u32) {
 /// Harness `recv`: serve held bytes, else read and rewrite until there is
 /// something for the client, the stream ends, or the socket has nothing more.
 fn harness_recv(s: Socket, buf: *mut u8, len: usize, flags: i32) -> i32 {
+    #[cfg(test)]
+    maybe_panic(s);
     let sock = sock_for(s);
     let mut side = lock(&sock.inb);
     // Answered from what is held: on a TLS socket the original `recv` is still
     // called once, because that call is what re-arms Winsock's FD_READ (see
     // `tlsio::recv`). What it brings stays in the TLS for the next call, which
     // is announced.
-    let touched = match sock.tls.get() {
-        Some(conn) if !side.ready.is_empty() => tlsio::touch(&sock, conn, s),
+    let touched = match (sock.tls.get(), sock.file.get()) {
+        (Some(conn), _) if !side.ready.is_empty() => tlsio::touch(&sock, conn, s),
+        (None, Some(fc)) if !side.ready.is_empty() => filesio::touch(&sock, fc, s),
         _ => false,
     };
     // The session is opened from the read loop below, once the bytes have said
@@ -1287,6 +1507,7 @@ fn poll_worker() {
         // The calls' timers (the callee's wait for confirmation, the keys
         // kept after a BYE), whose notes the delivery below carries.
         calls_io::tick();
+        filesio::tick();
         for (s, sock) in chats {
             deliver_notes(&sock, s);
         }
@@ -1310,6 +1531,7 @@ pub fn start(p: Policy) {
     set_policy_once(p);
     install_now_if_loaded();
     calls_io::start();
+    filesio::start();
     register_dll_notification();
     if encrypting {
         spawn(poll_thread);
@@ -1495,6 +1717,7 @@ fn install_into(name: &str, base: usize, via: &str, wait: bool) -> bool {
             hook_getpeername as PeerNameFn as usize,
             &ORIG_GETPEERNAME,
         ),
+        HookSpec::new("accept", hook_accept as AcceptFn as usize, &ORIG_ACCEPT),
     ];
     match patch_iat(base, &hooks, &resolve_ordinal) {
         Ok(report) => {
@@ -1914,6 +2137,7 @@ pub mod testing {
             WinSock::getpeername as *const () as usize,
             Ordering::Release,
         );
+        ORIG_ACCEPT.store(WinSock::accept as *const () as usize, Ordering::Release);
         if first && encrypting {
             spawn(poll_thread);
         }
@@ -2586,6 +2810,68 @@ mod socket_tests {
         server.shutdown(Shutdown::Write).unwrap();
         assert_eq!(read(s, usize::MAX, 64), partial);
         assert_eq!(hooked_recv(s, 64), Some(Vec::new()));
+    }
+
+    /// Whether the server end reads anything within a short wait.
+    fn server_got_anything(server: &mut TcpStream) -> bool {
+        server
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        let mut b = [0u8; 256];
+        matches!(server.read(&mut b), Ok(n) if n > 0)
+    }
+
+    /// Audit 2026-10, finding 1: a panic in the `send` body used to call the
+    /// original `send` with the client's own buffer - the plaintext the
+    /// add-on was there to encrypt, past the TLS too.
+    #[test]
+    fn a_panic_in_send_sends_nothing_and_the_socket_stays_refused() {
+        let (_client, mut server, s) = setup();
+        hooked_send(s, &hello(1));
+        let mut got = vec![0u8; hello(1).len()];
+        server.read_exact(&mut got).unwrap();
+
+        lock(panic_sockets()).insert(s);
+        let secret = out_ch1(2, "100002", 0, b"secret text");
+        let n = unsafe { hook_send(s, secret.as_ptr(), secret.len() as i32, 0) };
+        assert_eq!(n, SOCKET_ERROR);
+        assert_eq!(unsafe { GetLastError() }, tlsio::WSAECONNRESET);
+        assert!(
+            !server_got_anything(&mut server),
+            "the client's buffer never reaches the wire"
+        );
+
+        // No panic this time, and still nothing: the socket is refused.
+        let n = unsafe { hook_send(s, secret.as_ptr(), secret.len() as i32, 0) };
+        assert_eq!(n, SOCKET_ERROR);
+        assert_eq!(unsafe { GetLastError() }, tlsio::WSAECONNRESET);
+        assert!(!server_got_anything(&mut server));
+        let mut buf = [0u8; 64];
+        let n = unsafe { hook_recv(s, buf.as_mut_ptr(), buf.len() as i32, 0) };
+        assert_eq!(n, SOCKET_ERROR);
+    }
+
+    /// The same for `recv`: what the socket holds is never handed to the
+    /// client unprocessed - undecrypted containers, or TLS records.
+    #[test]
+    fn a_panic_in_recv_hands_over_nothing_and_the_socket_stays_refused() {
+        let (_client, mut server, s) = setup();
+        let wire = [hello(1), in_ch1(2, "100002", 0, b"as it came")].concat();
+        server.write_all(&wire).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+
+        lock(panic_sockets()).insert(s);
+        let mut buf = vec![0u8; 256];
+        let n = unsafe { hook_recv(s, buf.as_mut_ptr(), buf.len() as i32, 0) };
+        assert_eq!(n, SOCKET_ERROR);
+        assert_eq!(unsafe { GetLastError() }, tlsio::WSAECONNRESET);
+        assert!(buf.iter().all(|&b| b == 0), "nothing was copied out");
+
+        let n = unsafe { hook_recv(s, buf.as_mut_ptr(), buf.len() as i32, 0) };
+        assert_eq!(n, SOCKET_ERROR, "the socket stays refused");
+        assert!(buf.iter().all(|&b| b == 0));
+        let n = unsafe { hook_send(s, wire.as_ptr(), wire.len() as i32, 0) };
+        assert_eq!(n, SOCKET_ERROR);
     }
 }
 

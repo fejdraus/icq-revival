@@ -1,9 +1,12 @@
 # Encrypted file transfer - research
 
-Status: research (2026-10-03), nothing built. Static analysis of the import,
-export and string tables of the shipped DLLs and of their configuration, plus
-the Go server and the add-on source; native code paths were not reversed, and
-no client was started. Modelled on `CALLS-RESEARCH.md`.
+Status: research (2026-10-03); stages F0 and F2-F4 **built, off by default,
+not yet run on a live transfer** (section 9). F1 (the rendezvous proxy on the
+server) and F5 (the file name) are not built. The research itself: static
+analysis of the import, export and string tables of the shipped DLLs and of
+their configuration, plus the Go server and the add-on source; native code
+paths were not reversed, and no client was started. Modelled on
+`CALLS-RESEARCH.md`.
 
 Files examined: ICQ 7.2 as installed (read only), ICQ 6.5 from the pristine
 copy in the scratchpad. Offsets are file offsets of strings. The server's
@@ -326,6 +329,9 @@ Independently of these, trim the server's `rendezvous proposal` log line
 
 ## 8. Live test (owner)
 
+Section 9.5 has the run for what is built now (F0, F2-F4); this is the
+original plan, with the proxy runs that need F1.
+
 > Run it yourself; nothing here starts a client.
 
 Two clients (the 6.5 VM and 7.2 on this PC), two test accounts, a local
@@ -357,3 +363,197 @@ third-party host.
 4. **Through the proxy** (after F1): block the direct path as in run 1; the
    server log shows the ARS splice; the capture between client and server
    shows TLS only; with both on, the proxy log shows only byte counts.
+
+## 9. F0, F2-F4 status
+
+**Built, off by default, not yet run on a live transfer.** The server is not
+changed. Code: `tools/icq-e2e/core/src/files.rs` (F0: parsing and the watch),
+`filesneg.rs` (F2, F4: key agreement, sockets, notes), `filestream.rs` (F3:
+hellos and records), `hook_files.rs` (F3: the socket layer), `stream.rs` and
+`crypto.rs` (the control messages); README "File transfer observation" and
+"File encryption"; the patch row "End-to-end encryption of file transfers"
+(`e2e-files`, writes `files_encrypt`, needs the messages row).
+
+The owner's rule, as for calls: **backward compatibility of transfers**. A
+transfer where the peer has no add-on, an older one, or `files_encrypt` off
+works exactly as today - every byte untouched - and is never blocked; the
+data connection is encrypted only after both add-ons agreed for that
+cookie; connections that are not file transfers (direct IM, voice) are
+never touched. Once agreed, a transfer fails closed.
+
+Differences from section 5a, decided while building:
+
+- **The hello carries the answer.** The receiver connects (direct stage)
+  before it sends its accept ICBM, so the Olm answer often reaches the sender
+  after the data connection started. The receiver's add-on derives the keys
+  at the proposal (it has the offer) and writes its hello the moment the
+  connection is up; the hello carries its ephemeral key and device, and a MAC
+  under a key that needs the offer's transfer secret, so the sender can
+  derive from the hello alone and the Olm answer only confirms (a mismatch is
+  logged). Who speaks first is fixed: the receiver (the answerer) always;
+  the sender only once it knows the receiver agreed (the answer came, or the
+  hello did). So an add-on never writes a hello to a peer that cannot read it.
+- **The sender's wait** is 4 s from the connection (`HELLO_WAIT_MS`), with
+  its client's first bytes held, not a blocking `select`: the pump thread
+  reads the hello and runs the timer, the client's `send` returns at once.
+  A decline through the chat ends the wait at once; an answer through the
+  chat makes the sender speak first and wait without a limit (agreed: fail
+  closed, never plain). A transfer that went plain by the wait stays plain
+  for its later connections.
+- **Per-connection keys** come from both hellos (connection number and a
+  random 16-byte nonce each side), not from a counter in the transfer keys.
+- **Records**: ChaCha20-Poly1305 through `ring` (`u32 length | ciphertext |
+  tag`, nonce = 11-byte record counter || last flag). The last flag is set
+  on the empty final record only; the receiver knows it by its length.
+- **A rendezvous that is not a message.** The message path took every
+  channel-2 ICBM for a message, a file proposal included (its file name as
+  the text): with keys for the contact it was encrypted and thrown away, and
+  with the message held (`/e2e on`, keys not reachable) the proposal was
+  dropped - a blocked transfer. `icbm.rs` now takes a channel-2 ICBM of the
+  AOL rendezvous family other than the ICQ server relay (`0946134x`) for no
+  message at all.
+
+### 9.1 What is logged (F0)
+
+`files_log = on` (or `ICQE2E_FILES_LOG=on`), any mode, no byte changed. Per
+rendezvous ICBM: direction, propose/accept/cancel, `transfer=` (the first 4
+bytes of the cookie's SHA-256), seq and stage, port, address classes, proxy
+flag, file count and total size, TLV tags. Per peer connection that starts
+with OFT2 or ARS (or carries an encrypted transfer): `connect` or `accept`
+(now hooked), each ARS frame and OFT2 header (type, length, file n of m,
+size, resume offset), and at `closesocket` the totals per direction, files
+done, duration, way and stage. No file name, no address, no content in these
+lines (the add-on's general `connect` lines still name addresses, as before).
+
+### 9.2 Key agreement (F2)
+
+Hidden control messages in the Olm session (`container.rs` kind 0), payload
+`IQF1 | type | cookie (8) | ...`:
+
+| Message | Sent | Fields |
+|---|---|---|
+| Offer | by the sender, just **before** its first proposal ICBM | device id, device Curve25519 key, ephemeral X25519 key, transfer secret (32 random bytes), suites |
+| Answer | by the receiver, queued at the proposal, put **before** its next ICBM to the sender (accept, counter-proposal, cancel) | device id, device key, ephemeral key, suite |
+| Decline | instead of an answer (`/e2e off` for the sender, no keys, no common suite) | reason |
+
+- An offer is made only under the message rules (contact has keys in the
+  directory, not `/e2e off`, our keys published, not a changed safety number
+  of a verified contact); otherwise the transfer is plain at once and the
+  chat says why.
+- Keys: `HKDF-SHA256(IKM = X25519(eS, eR) || transfer secret, salt = label ||
+  cookie || sender UIN/device/key || receiver UIN/device/key, info = label ||
+  eS || eR)` gives the transfer's root and the hello's MAC key; each
+  connection: `HKDF(root, info = direction || both hellos' nonces and
+  connection numbers)` one key per direction. Wiped with the transfer (30 s
+  after a cancel, 2 h idle).
+- The role is fixed by who made the first proposal: a counter-proposal of
+  the receiver (reverse stage) or a proxy proposal is never an offer.
+
+### 9.3 Data connection (F3)
+
+- Which sockets: `connect` to an address and port of the peer's proposal
+  (`0x0002`/`0x0003`/`0x0004`, `0x0005`); an accepted socket on the port of
+  our proposal; first outbound bytes an ARS `INIT_SEND`/`INIT_RECV` (or an
+  OFT2 header) naming the cookie; a receiver's socket whose first inbound
+  bytes are the sender's hello (it has sent nothing yet). Any other socket,
+  and every socket of a transfer not agreed, takes the old path.
+- Hello: `"IQFT" | 1 | role | SHA-256(label || cookie)[..8] | ephemeral key
+  | device id | device key | connection number | nonce (16) | MAC (16)`, 118
+  bytes; checked for role, cookie, the agreed ephemeral key and device, MAC.
+- Proxy: the ARS frames pass untouched both ways; the hello phase starts at
+  `READY`.
+- Fail closed (agreed connection): a wrong hello, plain bytes, a record that
+  does not authenticate, data after the final record, a record cut by the
+  end of the stream, a late hello after the sender went plain, a panic in
+  these hooks - the socket is shut both ways and `send`/`recv` answer
+  `WSAECONNRESET`; one note per transfer. The end of the stream without the
+  final record is logged as truncated (OFT2 itself tells the client whether
+  the file was complete).
+
+### 9.4 Policy and notes (F4)
+
+`files_encrypt = on` in `icq-e2e.ini` (or `ICQE2E_FILES_ENCRYPT=on`), only in
+encrypt mode with frames allowed; **default off** until the live test below.
+The patch row "End-to-end encryption of file transfers" writes it (only with
+the messages row). Never blocked. One note per transfer in the chat with the
+contact: `This file transfer with 100002 is end-to-end encrypted ...` /
+`... is not end-to-end encrypted: <reason>.` (stronger words for a contact
+under `/e2e on` or verified) / `The encrypted file transfer with 100002 was
+stopped: <reason>.` With `files_encrypt` off there are no file notes.
+
+Tests (`cargo test --release`): records (chunking, last flag, truncation,
+reordering, tampering, another key, impossible lengths); the hello and the
+KDFs (every input bound, directions apart, a new connection new keys); the
+pipe (both orders of answer and hello, the wait, a decline, an answer
+during the wait, every fail-closed case, the proxy's frames); the table
+(both on, a peer that never answers, no offer, a decline, mismatched
+cookie/peer/device, reverse stage and resume, a cancel, one note); two
+engines over their Olm sessions; the stream putting the offer before the
+proposal only when on; and two endpoints through the hooks over real
+loopback sockets with a recording relay in between: direct, reverse, proxy
+with simulated ARS frames, a receiver found by the sender's hello, a peer
+that does not take part (byte for byte on the wire after the wait), plain
+bytes on an agreed connection (closed, nothing handed over), `FIONREAD` and
+`MSG_PEEK`.
+
+### 9.5 Live test (owner)
+
+> Run it yourself; nothing here starts a client.
+
+The ICQ 6.5 VM and ICQ 7.2 on this PC, two test accounts (e.g. 100001 and
+100002), the same server as for messages. Direct transfers need the two to
+reach each other (same LAN, or a forwarded port as `docs/RENDEZVOUS.md`
+says): the proxy stage has no proxy until F1, and the patch points both
+clients' proxy at a closed address.
+
+Set-up on both: apply the patches rebuilt by `tools\common\Build-Patches.ps1`
+with the encryption rows (`-Include e2e,e2e-tls`, and `e2e-files` for run 2),
+set `ICQE2E_LOG` to a file, and edit `icq-e2e.ini` next to `ICQ.exe` with ICQ
+closed (the patch keeps the lines). Make sure a message between the two
+accounts is encrypted first (the chat says so): an offer needs the E2E
+session. Have three test files ready: one of ~5 MB, a second one, and a
+folder with two files; note `Get-FileHash -Algorithm SHA256 <file>` of each
+on the sending side.
+
+1. **F0 only** (`files_log = on`, `files_encrypt = off` on both): send the
+   5 MB file each way, then two files at once, then the folder; cancel one
+   in the middle and send it again (resume). Expected: `file rendezvous OUT
+   ... propose ... seq=1` on the sender, `IN ... propose` on the receiver,
+   `accept: socket ...` on whichever side listened, `file transfer ...: socket
+   ...: first bytes OUT OFT2`, the OFT2 lines, and a `closed (...)` line with
+   the totals; no `key offer` line and no file note in the chats. This is the
+   F0 data: which side listens, whether the OFT2 header carries the cookie
+   (the `transfer=` of the rendezvous and of the socket lines match), whether
+   the receiver connects to the proposal's address, the resume frames.
+   Compare SHA-256 of sent and received files: equal.
+2. **Both on** (`files_log = on` and `files_encrypt = on` on both, or the
+   patch row): the same transfers. Expected:
+   - start-up: `files_encrypt=on: a file transfer is encrypted end to end
+     when both add-ons agree ...`;
+   - sender: `proposal out (direct stage), key offer sent first`, `socket ...
+     carries it, we send`, `key hello received and checked`, `key hello
+     sent`, `the data connection is end-to-end encrypted`, `key answer in`;
+     receiver: `proposal in (direct stage) with a key offer; keys agreed`,
+     `socket ... carries it, they send`, `key hello sent`, `key hello
+     received and checked`, `... end-to-end encrypted`;
+   - at close: `closed (..., encrypted): ... records N out / M in`, no
+     `fail closed` line, no `was stopped` note;
+   - both chats: "This file transfer with ... is end-to-end encrypted";
+   - SHA-256 of every received file equal to the sent one (also after the
+     resume, which is a second connection: `connection 2` in the hello
+     lines);
+   - optional capture (`pktmon` as in section 8): after the `IQFT` hello only
+     noise, no `OFT2`, no file name on the peer connection.
+3. **One side off** (`files_encrypt = off` on the 6.5 VM, on here), a
+   transfer each way: it works as in run 1, and the files' SHA-256 match.
+   Sending from here: the log shows `key offer sent first`, then after 4 s
+   `the data connection goes unencrypted, untouched: the other side sent no
+   key hello within 4 s`, and this chat says "This file transfer with ... is
+   not end-to-end encrypted: ..."; the transfer starts about 4 s later than
+   in run 1 (the held prompt) and otherwise behaves the same. Receiving here:
+   "... is not end-to-end encrypted: ... did not offer to encrypt it". On the
+   off side: nothing new at all.
+
+What to collect: both logs with the time of each transfer, the SHA-256 lists,
+and anything the transfers did differently from run 1 (a stall at the start,
+a failed transfer, a retry).

@@ -18,7 +18,7 @@ use crate::config::Policy;
 use crate::crypto::{Engine, Progress};
 use crate::directory::{DirectoryApi, HttpDirectory};
 use crate::icbm::Direction;
-use crate::store::Store;
+use crate::store::{StateLock, Store};
 use crate::stream::StreamRewriter;
 
 /// A signed-on session's cryptography.
@@ -36,6 +36,12 @@ pub struct Session {
     /// Whether "no token yet" has already been said, so a client that never
     /// gets one is not told over and over.
     said_no_token: bool,
+    /// The lock on the state file, held for the life of the session; `None`
+    /// when another process holds it and this session is locked out.
+    _lock: Option<StateLock>,
+    /// Why this session never touches the state file: another process
+    /// signed on as the same account holds it (audit 2026-10, finding 6).
+    locked_out: Option<String>,
 }
 
 /// What an earlier build left for the lock button of the message window
@@ -65,18 +71,53 @@ impl Session {
     /// used: a file that is not ours, or one that cannot be unprotected, means
     /// this device cannot prove who it is, and going on without keys would
     /// quietly turn encryption off instead of saying so.
+    ///
+    /// The state file is locked for the life of the session (audit 2026-10,
+    /// finding 6). When another process holds it - a second client signed on
+    /// as the same account - the session is opened locked out: it never reads
+    /// or writes the state, publishes nothing, and holds every message rather
+    /// than sending it in clear, with a note that says why.
     pub fn open(dir: Arc<dyn DirectoryApi>, home: &Path, uin: &str) -> Result<Session, String> {
         let store = Store::new(home, uin);
+        let Some(lock) = StateLock::take(home, uin)? else {
+            let why = format!(
+                "another ICQ signed on as {uin} on this computer is using its encryption keys"
+            );
+            let mut engine = Engine::new(dir, crate::keys::OwnKeys::create(uin));
+            engine.lock_out(why.clone());
+            return Ok(Session {
+                engine,
+                store,
+                retry_at: 0,
+                told: Vec::new(),
+                unsaved: false,
+                said_no_token: false,
+                _lock: None,
+                locked_out: Some(why),
+            });
+        };
         let keys = Store::open_or_create(home, uin)?;
         forget_lock_button(home);
+        let mut engine = Engine::new(dir, keys);
+        // A message whose ratchet moved on is let go only once this has
+        // written the state (audit 2026-10, finding 5).
+        let saver = Store::new(home, uin);
+        engine.set_persist(Box::new(move |keys| saver.save(keys)));
         Ok(Session {
-            engine: Engine::new(dir, keys),
+            engine,
             store,
             retry_at: 0,
             told: Vec::new(),
             unsaved: false,
             said_no_token: false,
+            _lock: Some(lock),
+            locked_out: None,
         })
+    }
+
+    /// Why this session is locked out of the state file, if it is.
+    pub fn locked_out(&self) -> Option<&str> {
+        self.locked_out.as_deref()
     }
 
     /// The engine, for the stream to drive.
@@ -90,6 +131,12 @@ impl Session {
     /// and a client that is closed without saving comes back with the same keys
     /// and cannot decrypt what it was sent in between.
     pub fn save(&mut self) -> Result<(), String> {
+        // Never the state of a session locked out of it: it is another
+        // process's, and what this one holds is a stand-in.
+        if self.locked_out.is_some() {
+            self.engine.take_changed();
+            return Ok(());
+        }
         // The engine's own flag covers what a message changes: a ratchet step,
         // a pinned key, a contact's setting. Without it only a publish was
         // ever written, and a restart lost every session advanced since.
@@ -141,7 +188,7 @@ impl Session {
     ///
     /// Called from the socket loop, so it must be cheap when nothing is due.
     pub fn poll(&mut self, now: u64) -> Vec<String> {
-        if now < self.retry_at {
+        if now < self.retry_at || self.locked_out.is_some() {
             return Vec::new();
         }
         let mut lines = self.publish(now);
@@ -605,6 +652,8 @@ mod tests {
         let mut s = Session::open(dir.clone(), &home.0, "100001").unwrap();
         assert!(s.engine().command("100002", "/e2e off", NOW));
         s.save().unwrap();
+        // A restart: the first session lets go of the state first.
+        drop(s);
 
         let mut again = Session::open(dir.clone(), &home.0, "100001").unwrap();
         assert_eq!(
@@ -636,6 +685,157 @@ mod tests {
         // Nothing left: a second sign-on is the same device, and quiet.
         let mut again = Session::open(dir.clone(), &home.0, "100001").unwrap();
         assert_eq!(again.engine().keys().account_key_bytes(), key);
+    }
+
+    /// `100002` in the directory with a full pool, as another add-on.
+    fn peer_published(dir: &MemoryDirectory) -> crate::keys::OwnKeys {
+        let mut b = crate::keys::OwnKeys::create("100002");
+        let t = crate::token::Token::parse(&dir.token("100002"))
+            .unwrap()
+            .bearer;
+        let (key, sig) = b.account_object();
+        dir.announce("100002", &b.account_key_bytes());
+        dir.put_account(&t, &key, &sig).unwrap();
+        let (curve, ed, dsig) = b.device_object().unwrap();
+        dir.put_device(&t, b.device_id, &curve, &ed, &dsig).unwrap();
+        let pool = b.new_one_time_keys(0);
+        dir.upload_one_time_keys(&t, b.device_id, &pool).unwrap();
+        b
+    }
+
+    /// A session for `100001` with its keys published.
+    fn published_session(dir: &Arc<MemoryDirectory>, home: &Path) -> Session {
+        let mut s = Session::open(dir.clone(), home, "100001").unwrap();
+        s.on_token(&dir.token("100001"), NOW);
+        let key = s.engine().account_key().unwrap();
+        dir.announce("100001", &key);
+        s.publish(NOW);
+        s.save().unwrap();
+        assert!(s.engine().ready());
+        s
+    }
+
+    fn form() -> crate::container::Form {
+        crate::container::Form::Fragment {
+            charset: 0,
+            language: 0,
+        }
+    }
+
+    /// Audit 2026-10, finding 5: a message whose ratchet moved on used to be
+    /// let go - sent, or shown - whether or not the state it moved on had
+    /// reached the disk. A restart after a failed save could then send
+    /// another message under the same key, or lose what was shown.
+    #[test]
+    fn a_message_is_let_go_only_once_its_state_is_on_disk() {
+        let home = Temp::new("persist-first");
+        let dir = Arc::new(MemoryDirectory::new());
+        let mut b = peer_published(&dir);
+        let mut s = published_session(&dir, &home.0);
+        let path = Store::new(&home.0, "100001").path().to_path_buf();
+
+        // The state cannot be written: its temporary file is a folder.
+        let tmp = path.with_extension("state.tmp");
+        std::fs::create_dir(&tmp).unwrap();
+        let on_disk = std::fs::read(&path).unwrap();
+        let out = s.engine().outbound("100002", form(), b"hi", NOW);
+        match &out {
+            crate::keys::Outbound::Refused(note) => {
+                assert!(note.contains("could not be saved"), "{note}")
+            }
+            other => panic!("nothing may go out unsaved, got {other:?}"),
+        }
+        // And the next one waits too, without encrypting anything.
+        assert!(matches!(
+            s.engine().outbound("100002", form(), b"again", NOW),
+            crate::keys::Outbound::Refused(_)
+        ));
+
+        // An incoming message is not shown either.
+        let to_a = crate::keys::fetch_contact(&*dir, "100001").unwrap();
+        let bearer = crate::token::Token::parse(&dir.token("100002"))
+            .unwrap()
+            .bearer;
+        let wire = match b
+            .encrypt(
+                &*dir,
+                &bearer,
+                &crate::keys::Outgoing {
+                    peer: "100001".into(),
+                    form: form(),
+                    text: b"hello a".to_vec(),
+                    now: NOW,
+                },
+                &to_a,
+            )
+            .unwrap()
+        {
+            crate::keys::Outbound::Encrypted(w) => w,
+            other => panic!("{other:?}"),
+        };
+        let c =
+            crate::container::Container::from_bytes(&crate::container::find_armor(&wire).unwrap())
+                .unwrap();
+        match s.engine().inbound("100002", &c, NOW) {
+            crate::keys::Inbound::Unreadable(note) => {
+                assert!(note.contains("was not shown"), "{note}")
+            }
+            other => panic!("nothing may be shown unsaved, got {other:?}"),
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), on_disk, "nothing written");
+
+        // The disk takes it again: the same message, delivered again, opens,
+        // and messages go out.
+        std::fs::remove_dir(&tmp).unwrap();
+        match s.engine().inbound("100002", &c, NOW) {
+            crate::keys::Inbound::Text { text, .. } => assert_eq!(text, b"hello a"),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            s.engine().outbound("100002", form(), b"now", NOW),
+            crate::keys::Outbound::Encrypted(_)
+        ));
+        assert_ne!(std::fs::read(&path).unwrap(), on_disk, "and it is on disk");
+    }
+
+    /// Audit 2026-10, finding 6: two clients signed on as the same account
+    /// used to load, advance and save one state file each, overwriting each
+    /// other's ratchets. The second is locked out: it never touches the
+    /// state, announces nothing, and holds messages rather than sending them
+    /// in clear.
+    #[test]
+    fn a_second_session_of_the_same_account_is_locked_out_and_holds_messages() {
+        let home = Temp::new("locked-out");
+        let dir = Arc::new(MemoryDirectory::new());
+        let _b = peer_published(&dir);
+        let first = published_session(&dir, &home.0);
+        assert!(first.locked_out().is_none());
+        let path = Store::new(&home.0, "100001").path().to_path_buf();
+        let on_disk = std::fs::read(&path).unwrap();
+
+        let mut second = Session::open(dir.clone(), &home.0, "100001").unwrap();
+        assert!(second.locked_out().is_some());
+        assert!(second.engine().account_key().is_none(), "nothing announced");
+        assert!(!second.engine().ready());
+        second.on_token(&dir.token("100001"), NOW);
+        let out = second.engine().outbound("100002", form(), b"hi", NOW);
+        assert!(
+            matches!(&out, crate::keys::Outbound::Refused(n) if n.contains("NOT sent")),
+            "held, never clear: {out:?}"
+        );
+        assert!(second.poll(NOW).is_empty(), "nothing published");
+        second.save().unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            on_disk,
+            "the state untouched"
+        );
+
+        // Once the first lets go, a new session is the device again.
+        drop(second);
+        drop(first);
+        let third = Session::open(dir.clone(), &home.0, "100001").unwrap();
+        assert!(third.locked_out().is_none());
     }
 
     #[test]

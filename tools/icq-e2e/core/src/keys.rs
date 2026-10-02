@@ -109,6 +109,14 @@ pub const ONE_TIME_REFILL_BELOW: u32 = 25;
 /// so a message claimed before the swap still opens (CHECKLIST 1.4).
 pub const FALLBACK_KEY_LIFETIME: u64 = 7 * 24 * 60 * 60;
 
+/// How long the id of an inbound session made from a pre-key message is
+/// remembered, so the same pre-key message cannot make it again (audit
+/// 2026-10, finding 3). A fallback key opens sessions for as long as its
+/// private half is kept - its own week and the week after its replacement -
+/// and a message older than [`TIME_SKEW_PAST`] is refused anyway; a day more
+/// for clocks that disagree.
+pub const INBOUND_ID_KEEP: u64 = 2 * FALLBACK_KEY_LIFETIME + TIME_SKEW_PAST + 24 * 60 * 60;
+
 /// How far a received message's send time may sit from ours (CHECKLIST 3.5).
 /// Offline messages are stored by the server for hours, so the past is generous;
 /// the future is tight, since a far-future stamp is a replay attempt.
@@ -170,6 +178,29 @@ pub struct OwnKeys {
     /// shows. Not kept in the state file.
     #[serde(skip)]
     pub log_trusted: bool,
+    /// The ids of the inbound sessions made from a pre-key message, by peer
+    /// and device, with when: a pre-key message whose session was made once
+    /// is never let make it again (audit 2026-10, finding 3). Kept for
+    /// [`INBOUND_ID_KEEP`]. State version 3.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub inbound_ids: HashMap<String, HashMap<u32, Vec<SeenSession>>>,
+    /// Our fallback key opened a session: it is replaced at the next publish
+    /// step rather than at the end of its week, so a replayed pre-key message
+    /// has the shortest time to find it. State version 3.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fallback_used: bool,
+    /// Contacts' devices the directory said were revoked: their sessions are
+    /// gone and nothing from them is read again (audit 2026-10, finding 2).
+    /// State version 3.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub revoked: HashMap<String, Vec<u32>>,
+}
+
+/// An inbound session made from a pre-key message, and when.
+#[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
+pub struct SeenSession {
+    pub id: String,
+    pub at: u64,
 }
 
 /// A contact's account key as we pinned it, and when, and whether the user
@@ -252,6 +283,26 @@ pub enum Inbound {
     Unreadable(String),
 }
 
+/// What decrypting a message from one peer may change, as it was before;
+/// see [`OwnKeys::snapshot`].
+pub struct Snapshot {
+    peer: String,
+    sessions: Option<HashMap<u32, String>>,
+    account: String,
+    pin: Option<PinnedKey>,
+    said: Option<String>,
+    inbound_ids: Option<HashMap<u32, Vec<SeenSession>>>,
+    fallback_used: bool,
+}
+
+/// A session [`OwnKeys::decrypt_olm`] made from a pre-key message.
+struct Made {
+    /// Its session id.
+    id: String,
+    /// Whether our fallback key opened it rather than a one-time key.
+    fallback: bool,
+}
+
 /// What the directory says about one contact, already checked.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Contact {
@@ -284,6 +335,9 @@ impl OwnKeys {
             contacts: HashMap::new(),
             log: crate::kt::LogState::default(),
             log_trusted: false,
+            inbound_ids: HashMap::new(),
+            fallback_used: false,
+            revoked: HashMap::new(),
         }
     }
 
@@ -402,8 +456,7 @@ impl OwnKeys {
     /// forgets the private half of the one before that. Returns the new key to
     /// publish, if there is one (CHECKLIST 1.4).
     pub fn rotate_fallback_key(&mut self, now: u64) -> Option<SignedKey> {
-        let due = self.fallback_key_at == 0 || now >= self.fallback_key_at + FALLBACK_KEY_LIFETIME;
-        if !due {
+        if !self.fallback_due(now) {
             return None;
         }
         let mut account = self.account()?;
@@ -415,7 +468,18 @@ impl OwnKeys {
         // at once, so the previous half is only released on a later rotation.
         self.account = pickle_json(&account.pickle());
         self.fallback_key_at = now;
+        self.fallback_used = false;
         signed.into_iter().next()
+    }
+
+    /// Whether the fallback key is to be replaced: never made, a week old,
+    /// or used to open a session since it was made (audit 2026-10, finding
+    /// 3). The key it replaces stays usable until the replacement after it,
+    /// so a message claimed just before the swap still opens.
+    pub fn fallback_due(&self, now: u64) -> bool {
+        self.fallback_key_at == 0
+            || now >= self.fallback_key_at + FALLBACK_KEY_LIFETIME
+            || self.fallback_used
     }
 
     /// Signs a set of public keys with the device's own Ed25519 key, under the
@@ -525,16 +589,164 @@ impl OwnKeys {
             self.said
                 .insert(format!("pin:{}", sign::ident(&ud.screen_name)), note);
         }
+        let devices: Vec<Device> = ud
+            .devices
+            .iter()
+            .filter(|d| {
+                d.revoked_at.is_none() && device_signed_by(&ud.screen_name, &ud.account_key, d)
+            })
+            .cloned()
+            .collect();
+        let revoked: Vec<u32> = ud
+            .devices
+            .iter()
+            .filter(|d| d.revoked_at.is_some())
+            .map(|d| d.device_id)
+            .collect();
+        let active: Vec<u32> = devices.iter().map(|d| d.device_id).collect();
+        self.forget_inactive_devices(&ud.screen_name, &active, &revoked);
         Contact {
             screen_name: ud.screen_name.clone(),
-            devices: ud
-                .devices
-                .iter()
-                .filter(|d| {
-                    d.revoked_at.is_none() && device_signed_by(&ud.screen_name, &ud.account_key, d)
+            devices,
+        }
+    }
+
+    /// Drops the sessions with every device of `peer` that is not in
+    /// `active` - revoked, gone from the directory or the key log, or no
+    /// longer signed by the account key - so nothing from it opens again
+    /// through an old session (audit 2026-10, finding 2). The devices in
+    /// `revoked` are remembered as revoked: nothing from them is read again,
+    /// not even through a new session. Whether anything changed.
+    pub fn forget_inactive_devices(&mut self, peer: &str, active: &[u32], revoked: &[u32]) -> bool {
+        let peer = sign::ident(peer);
+        let mut changed = false;
+        if let Some(m) = self.sessions.get_mut(&peer) {
+            let before = m.len();
+            m.retain(|d, _| active.contains(d));
+            changed |= m.len() != before;
+            if m.is_empty() {
+                self.sessions.remove(&peer);
+            }
+        }
+        for id in revoked {
+            let list = self.revoked.entry(peer.clone()).or_default();
+            if !list.contains(id) {
+                list.push(*id);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// Drops the sessions with every device the key log no longer shows for
+    /// an account it has, after a sync of a trusted log. Whether anything
+    /// changed.
+    pub fn forget_devices_not_in_log(&mut self) -> bool {
+        let peers: Vec<String> = self.sessions.keys().cloned().collect();
+        let mut changed = false;
+        for peer in peers {
+            let Some(acc) = self.log.accounts.get(&peer) else {
+                continue;
+            };
+            let active: Vec<u32> = acc.devices.keys().copied().collect();
+            changed |= self.forget_inactive_devices(&peer, &active, &[]);
+        }
+        changed
+    }
+
+    /// What [`OwnKeys::decrypt`] may change for `peer`, to put back with
+    /// [`OwnKeys::restore`] when the message it opened cannot be let go
+    /// because the state could not be saved (audit 2026-10, finding 5): the
+    /// state in memory is then the one on disk again, and the same message,
+    /// sent again or delivered again from the server's offline store, opens
+    /// as it would have.
+    pub fn snapshot(&self, peer: &str) -> Snapshot {
+        let peer = sign::ident(peer);
+        let said_key = format!("pin:{peer}");
+        Snapshot {
+            sessions: self.sessions.get(&peer).cloned(),
+            account: self.account.clone(),
+            pin: self.pins.get(&peer).cloned(),
+            said: self.said.get(&said_key).cloned(),
+            inbound_ids: self.inbound_ids.get(&peer).cloned(),
+            fallback_used: self.fallback_used,
+            peer,
+        }
+    }
+
+    /// Puts back what [`OwnKeys::snapshot`] took.
+    pub fn restore(&mut self, s: Snapshot) {
+        fn put<V>(map: &mut HashMap<String, V>, key: String, value: Option<V>) {
+            match value {
+                Some(v) => {
+                    map.insert(key, v);
+                }
+                None => {
+                    map.remove(&key);
+                }
+            }
+        }
+        put(&mut self.sessions, s.peer.clone(), s.sessions);
+        put(&mut self.pins, s.peer.clone(), s.pin);
+        put(&mut self.said, format!("pin:{}", s.peer), s.said);
+        put(&mut self.inbound_ids, s.peer, s.inbound_ids);
+        self.account = s.account;
+        self.fallback_used = s.fallback_used;
+    }
+
+    /// Whether the directory said this device of `peer` was revoked.
+    pub fn is_revoked(&self, peer: &str, device: u32) -> bool {
+        self.revoked
+            .get(&sign::ident(peer))
+            .is_some_and(|l| l.contains(&device))
+    }
+
+    /// Whether an inbound session with this id was made with this device of
+    /// `peer` before.
+    pub fn inbound_seen(&self, peer: &str, device: u32, id: &str) -> bool {
+        self.inbound_ids
+            .get(&sign::ident(peer))
+            .and_then(|m| m.get(&device))
+            .is_some_and(|l| l.iter().any(|x| x.id == id))
+    }
+
+    /// Records an inbound session made from a pre-key message, and forgets
+    /// the ones older than [`INBOUND_ID_KEEP`].
+    pub fn remember_inbound(&mut self, peer: &str, device: u32, id: String, now: u64) {
+        for m in self.inbound_ids.values_mut() {
+            for l in m.values_mut() {
+                l.retain(|x| x.at.saturating_add(INBOUND_ID_KEEP) > now);
+            }
+            m.retain(|_, l| !l.is_empty());
+        }
+        self.inbound_ids.retain(|_, m| !m.is_empty());
+        let list = self
+            .inbound_ids
+            .entry(sign::ident(peer))
+            .or_default()
+            .entry(device)
+            .or_default();
+        if !list.iter().any(|x| x.id == id) {
+            list.push(SeenSession { id, at: now });
+        }
+    }
+
+    /// Records the session id of every session a state file of an older
+    /// version holds, as seen at `now`: those sessions were made before their
+    /// ids were remembered (the migration to state version 3).
+    pub fn remember_held_sessions(&mut self, now: u64) {
+        let held: Vec<(String, u32, String)> = self
+            .sessions
+            .iter()
+            .flat_map(|(peer, m)| {
+                m.iter().filter_map(|(d, json)| {
+                    let pickle = serde_json::from_str::<SessionPickle>(json).ok()?;
+                    Some((peer.clone(), *d, Session::from_pickle(pickle).session_id()))
                 })
-                .cloned()
-                .collect(),
+            })
+            .collect();
+        for (peer, d, id) in held {
+            self.remember_inbound(&peer, d, id, now);
         }
     }
 
@@ -723,7 +935,7 @@ impl OwnKeys {
         // directory that cannot be reached leaves the message unreadable for
         // now - the alternative is that an outage silently accepts an
         // unverified sender.
-        let Some((payload, advanced)) =
+        let Some((payload, advanced, made)) =
             self.decrypt_olm(&peer, container.sender_device, &olm, dir, now)
         else {
             return Inbound::Unreadable(unreadable(&peer));
@@ -758,6 +970,14 @@ impl OwnKeys {
             .entry(peer.clone())
             .or_default()
             .insert(device, pickle_json(&advanced));
+        // A session made from this pre-key message: the same message must
+        // never make it again (audit 2026-10, finding 3).
+        if let Some(made) = made {
+            if made.fallback {
+                self.fallback_used = true;
+            }
+            self.remember_inbound(&peer, device, made.id, now);
+        }
         match envelope.kind {
             Kind::Control => Inbound::Control(envelope.text),
             Kind::Message => Inbound::Text {
@@ -769,11 +989,17 @@ impl OwnKeys {
         }
     }
 
-    /// Tries the sessions held for `peer`, and for a pre-key message makes one
-    /// when the sender's device checks out against the directory. Returns the
-    /// wrapped payload key and the session's state as it stands after the
-    /// message; the caller keeps that state only once the payload opened, so a
-    /// container that is tampered with costs no ratchet step (CHECKLIST 2.5).
+    /// Tries the session held with the device the container names, and for a
+    /// pre-key message makes one when that device checks out against the
+    /// directory. Returns the wrapped payload key, the session's state as it
+    /// stands after the message, and the new session if one was made; the
+    /// caller keeps that state only once the payload opened, so a container
+    /// that is tampered with costs no ratchet step (CHECKLIST 2.5).
+    ///
+    /// Only that one device's session is tried (audit 2026-10, finding 2):
+    /// trying every device's session of the peer let a message that names one
+    /// device open under another's - a revoked device's session among them -
+    /// and the advanced ratchet was then stored under the device it named.
     fn decrypt_olm(
         &mut self,
         peer: &str,
@@ -781,25 +1007,18 @@ impl OwnKeys {
         olm: &OlmMessage,
         dir: &dyn DirectoryApi,
         now: u64,
-    ) -> Option<(Vec<u8>, SessionPickle)> {
-        // First: any session we already hold for the sender, whichever device
-        // it is for. A session that fails leaves its pickle untouched, so a
-        // ratchet only advances when a message really opened.
-        let devices: Vec<u32> = self
-            .sessions
-            .get(peer)
-            .map(|m| m.keys().copied().collect())
-            .unwrap_or_default();
-        for d in devices {
-            let Some(json) = self.sessions.get(peer).and_then(|m| m.get(&d)) else {
-                continue;
-            };
-            let Ok(pickle) = serde_json::from_str::<SessionPickle>(json) else {
-                continue;
-            };
-            let mut session = Session::from_pickle(pickle);
-            if let Ok(plain) = session.decrypt(olm) {
-                return Some((plain, session.pickle()));
+    ) -> Option<(Vec<u8>, SessionPickle, Option<Made>)> {
+        if self.is_revoked(peer, sender_device) {
+            return None;
+        }
+        // A session that fails leaves its pickle untouched, so a ratchet only
+        // advances when a message really opened.
+        if let Some(json) = self.sessions.get(peer).and_then(|m| m.get(&sender_device)) {
+            if let Ok(pickle) = serde_json::from_str::<SessionPickle>(json) {
+                let mut session = Session::from_pickle(pickle);
+                if let Ok(plain) = session.decrypt(olm) {
+                    return Some((plain, session.pickle(), None));
+                }
             }
         }
         // Then: a pre-key message may make a new session, but only once the
@@ -808,6 +1027,14 @@ impl OwnKeys {
         let OlmMessage::PreKey(pre) = olm else {
             return None;
         };
+        // A pre-key message that made a session once never makes it again: a
+        // fallback key is not used up the way a one-time key is, so the same
+        // first message would otherwise open a second, fresh session over the
+        // one that has moved on (audit 2026-10, finding 3).
+        let id = pre.session_id();
+        if self.inbound_seen(peer, sender_device, &id) {
+            return None;
+        }
         let ud = dir.user_devices(peer).ok()?;
         let device = ud
             .devices
@@ -817,14 +1044,26 @@ impl OwnKeys {
         if !device_signed_by(&ud.screen_name, &ud.account_key, &device) {
             return None;
         }
-        // Nothing is pinned and no one-time key spent for a sender whose keys
-        // the key log does not show.
-        if self.log_trusted && !self.log_shows(peer, &ud.account_key, &device) {
+        if self.log.broken.is_some() {
+            // A key log that was trusted and then broke (audit 2026-10,
+            // finding 4): only an account key pinned before, and a device the
+            // last trusted copy of the log shows, may make a new session.
+            let pinned = self.pinned(peer).is_some_and(|p| p.key == ud.account_key);
+            if !pinned || !self.log_shows(peer, &ud.account_key, &device) {
+                return None;
+            }
+        } else if self.log_trusted && !self.log_shows(peer, &ud.account_key, &device) {
+            // Nothing is pinned and no one-time key spent for a sender whose
+            // keys the key log does not show.
             return None;
         }
         let their_curve = curve_key(&device.curve25519_key).ok()?;
         let mut account = self.account()?;
+        let one_time_before = account.stored_one_time_key_count();
         let (session, plaintext) = HANDSHAKE.start_inbound(&mut account, their_curve, pre)?;
+        // A one-time key is used up by the session it opens; the fallback key
+        // is not, which is how its use is told apart.
+        let fallback = account.stored_one_time_key_count() == one_time_before;
         // The account dropped the private half of the one-time key the message
         // used (CHECKLIST 1.5); keep it so the pool is right after a restart.
         self.account = pickle_json(&account.pickle());
@@ -834,7 +1073,7 @@ impl OwnKeys {
         if let Some(note) = self.pin(peer, &ud.account_key, now) {
             self.said.insert(format!("pin:{}", sign::ident(peer)), note);
         }
-        Some((plaintext, next))
+        Some((plaintext, next, Some(Made { id, fallback })))
     }
 
     /// Whether our copy of the key log has `peer` with this account key and
@@ -1087,6 +1326,20 @@ mod tests {
         peer: &str,
         envelope: Envelope,
     ) -> Container {
+        let own = a.device_id;
+        seal_envelope_from(a, dir, peer, envelope, own)
+    }
+
+    /// [`seal_envelope`] with `sender_device` in the container's header,
+    /// which the AEAD binds: a container that names another device of the
+    /// same account and is otherwise genuine.
+    fn seal_envelope_from(
+        a: &mut OwnKeys,
+        dir: &MemoryDirectory,
+        peer: &str,
+        envelope: Envelope,
+        sender_device: u32,
+    ) -> Container {
         let contact = fetch_contact(dir, peer).unwrap();
         let mut out = outgoing(peer, &envelope.text);
         out.form = envelope.form;
@@ -1108,7 +1361,7 @@ mod tests {
             } else {
                 0
             },
-            sender_device: a.device_id,
+            sender_device,
             wraps,
             ciphertext: Vec::new(),
         };
@@ -1493,5 +1746,200 @@ mod tests {
         assert!(k.note_once("k", "hello").is_none());
         assert_eq!(k.already_said("k"), Some("hello"));
         assert_eq!(k.already_said("other"), None);
+    }
+
+    /// `a` and `b` published, and a session between them that has heard
+    /// from both sides, so `a`'s messages are normal ones.
+    fn talking() -> (MemoryDirectory, OwnKeys, OwnKeys) {
+        let dir = MemoryDirectory::new();
+        let mut a = OwnKeys::create("100001");
+        let mut b = OwnKeys::create("100002");
+        publish(&dir, &mut a);
+        publish(&dir, &mut b);
+        let first = sealed(&mut a, &dir, "100002", b"first");
+        assert!(matches!(
+            b.decrypt(&dir, "100001", &first, NOW),
+            Inbound::Text { .. }
+        ));
+        let back = reply(&mut b, &dir, "100001", b"back");
+        assert!(matches!(
+            a.decrypt(&dir, "100002", &back, NOW),
+            Inbound::Text { .. }
+        ));
+        (dir, a, b)
+    }
+
+    /// Audit 2026-10, finding 2: a container is opened only with the session
+    /// of the device it names. Every session of the peer used to be tried,
+    /// and the ratchet that opened it was stored under the device named.
+    #[test]
+    fn only_the_session_of_the_device_a_message_names_is_tried() {
+        let (dir, mut a, mut b) = talking();
+        let own = a.device_id;
+
+        // Session A, sender device A: read.
+        let second = sealed(&mut a, &dir, "100002", b"second");
+        assert_eq!(second.wraps[0].olm_type, OLM_NORMAL);
+        assert!(matches!(
+            b.decrypt(&dir, "100001", &second, NOW),
+            Inbound::Text { .. }
+        ));
+        let held = b.sessions["100001"].clone();
+
+        // Session A, sender device B: not read, and nothing stored.
+        let other = own.wrapping_add(1);
+        let env = envelope_for(&a, "100002", Kind::Message, b"as device B", NOW);
+        let named_b = seal_envelope_from(&mut a, &dir, "100002", env, other);
+        assert_eq!(named_b.wraps[0].olm_type, OLM_NORMAL);
+        let got = b.decrypt(&dir, "100001", &named_b, NOW);
+        assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
+        assert_eq!(b.sessions["100001"], held, "no ratchet moved or moved over");
+    }
+
+    /// A device the directory says is revoked: its session is dropped on the
+    /// next look at the contact, and nothing from it is read again - neither
+    /// through the old session nor through a new one.
+    #[test]
+    fn a_revoked_devices_session_opens_nothing() {
+        let (dir, mut a, mut b) = talking();
+        let own = a.device_id;
+        let before = sealed(&mut a, &dir, "100002", b"before");
+        assert!(matches!(
+            b.decrypt(&dir, "100001", &before, NOW),
+            Inbound::Text { .. }
+        ));
+
+        dir.revoke("100001", own);
+        b.contact(&dir, "100001", NOW).unwrap();
+        assert!(b.session("100001", own).is_none(), "its session is gone");
+        assert!(b.is_revoked("100001", own));
+
+        let after = sealed(&mut a, &dir, "100002", b"after the revoke");
+        assert_eq!(after.wraps[0].olm_type, OLM_NORMAL);
+        let got = b.decrypt(&dir, "100001", &after, NOW);
+        assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
+
+        // A fresh pre-key message from the revoked device: refused too.
+        a.sessions.clear();
+        let fresh = sealed(&mut a, &dir, "100002", b"a new session");
+        assert_eq!(fresh.wraps[0].olm_type, OLM_PRE_KEY);
+        let got = b.decrypt(&dir, "100001", &fresh, NOW);
+        assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
+        assert!(b.session("100001", own).is_none());
+
+        // And it stays refused across a restart.
+        let b2 = serde_json::to_string(&b).unwrap();
+        let b = serde_json::from_str::<OwnKeys>(&b2).unwrap();
+        assert!(b.is_revoked("100001", own));
+    }
+
+    /// A device that is gone from the directory loses its session too.
+    #[test]
+    fn a_device_gone_from_the_directory_loses_its_session() {
+        let (_dir, a, mut b) = talking();
+        assert!(b.forget_inactive_devices("100001", &[], &[]));
+        assert!(b.session("100001", a.device_id).is_none());
+        assert!(!b.is_revoked("100001", a.device_id), "gone is not revoked");
+    }
+
+    /// `k` in the directory with its account, its device and a fallback key,
+    /// and no one-time key at all: every claim gets the fallback key.
+    fn publish_fallback_only(dir: &MemoryDirectory, k: &mut OwnKeys) {
+        let t = token(dir, &k.screen_name);
+        let (key, sig) = k.account_object();
+        dir.announce(&k.screen_name, &raw32(&key).unwrap());
+        dir.put_account(&t, &key, &sig).unwrap();
+        let (curve, ed, dsig) = k.device_object().unwrap();
+        dir.put_device(&t, k.device_id, &curve, &ed, &dsig).unwrap();
+        let fk = k.rotate_fallback_key(NOW).unwrap();
+        dir.put_fallback_key(&t, k.device_id, &fk).unwrap();
+        assert_eq!(dir.pool(&k.screen_name, k.device_id), 0);
+    }
+
+    /// Audit 2026-10, finding 3, the test the auditor asked for, on vodozemac
+    /// 0.11.1: a session made over the fallback key, its ratchet moved on,
+    /// and then its first pre-key message again. The fallback key is not
+    /// used up, so the replay used to make a second, fresh session over the
+    /// one that had moved on - shown as a new message, and the conversation
+    /// rolled back to its start.
+    #[test]
+    fn a_replayed_first_message_over_the_fallback_key_is_refused_and_rolls_nothing_back() {
+        let dir = MemoryDirectory::new();
+        let mut a = OwnKeys::create("100001");
+        let mut b = OwnKeys::create("100002");
+        publish(&dir, &mut a);
+        publish_fallback_only(&dir, &mut b);
+
+        let first = sealed(&mut a, &dir, "100002", b"first");
+        assert_eq!(first.wraps[0].olm_type, OLM_PRE_KEY);
+        assert!(matches!(
+            b.decrypt(&dir, "100001", &first, NOW),
+            Inbound::Text { .. }
+        ));
+        assert!(b.fallback_used, "the fallback key opened it");
+        // The ratchet moves on, both ways.
+        let back = reply(&mut b, &dir, "100001", b"back");
+        assert!(matches!(
+            a.decrypt(&dir, "100002", &back, NOW),
+            Inbound::Text { .. }
+        ));
+        let second = sealed(&mut a, &dir, "100002", b"second");
+        assert_eq!(second.wraps[0].olm_type, OLM_NORMAL);
+        assert!(matches!(
+            b.decrypt(&dir, "100001", &second, NOW),
+            Inbound::Text { .. }
+        ));
+        let stored = b.sessions["100001"][&a.device_id].clone();
+        let account = b.account.clone();
+
+        let got = b.decrypt(&dir, "100001", &first, NOW + 60);
+        assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
+        assert_eq!(
+            b.sessions["100001"][&a.device_id], stored,
+            "the stored session is the one that moved on"
+        );
+        assert_eq!(b.account, account);
+
+        // The session goes on where it was.
+        let third = sealed(&mut a, &dir, "100002", b"third");
+        match b.decrypt(&dir, "100001", &third, NOW + 120) {
+            Inbound::Text { text, .. } => assert_eq!(text, b"third"),
+            other => panic!("{other:?}"),
+        }
+        // And a restart does not forget it.
+        let b2 = serde_json::to_string(&b).unwrap();
+        let mut b = serde_json::from_str::<OwnKeys>(&b2).unwrap();
+        let got = b.decrypt(&dir, "100001", &first, NOW + 180);
+        assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
+    }
+
+    /// A fallback key that opened a session is replaced at once, not at the
+    /// end of its week; one that did not waits for its week.
+    #[test]
+    fn a_used_fallback_key_is_replaced_at_the_next_step() {
+        let mut k = OwnKeys::create("100001");
+        assert!(k.rotate_fallback_key(NOW).is_some());
+        assert!(k.rotate_fallback_key(NOW + 1).is_none());
+        k.fallback_used = true;
+        assert!(k.fallback_due(NOW + 2));
+        assert!(k.rotate_fallback_key(NOW + 2).is_some());
+        assert!(!k.fallback_used);
+        assert!(k.rotate_fallback_key(NOW + 3).is_none());
+    }
+
+    /// The ids of inbound sessions are kept for [`INBOUND_ID_KEEP`] and no
+    /// longer.
+    #[test]
+    fn inbound_session_ids_are_kept_long_enough_and_then_forgotten() {
+        assert!(INBOUND_ID_KEEP >= FALLBACK_KEY_LIFETIME + TIME_SKEW_PAST);
+        let mut k = OwnKeys::create("100001");
+        k.remember_inbound("100002", 7, "old".into(), NOW);
+        assert!(k.inbound_seen("100002", 7, "old"));
+        assert!(!k.inbound_seen("100002", 8, "old"), "per device");
+        k.remember_inbound("100002", 7, "new".into(), NOW + INBOUND_ID_KEEP - 1);
+        assert!(k.inbound_seen("100002", 7, "old"));
+        k.remember_inbound("100002", 7, "newer".into(), NOW + INBOUND_ID_KEEP);
+        assert!(!k.inbound_seen("100002", 7, "old"));
+        assert!(k.inbound_seen("100002", 7, "new"));
     }
 }

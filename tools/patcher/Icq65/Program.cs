@@ -9,9 +9,9 @@
 //   ICQ-6.5-Patch.exe -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>] [-Include tzers-player] [-Player <dll>]
 //   ICQ-6.5-Patch.exe -Restore [-Root <folder>]
 // -Skip takes job keys (xtraz, tzers, sms, zlango, ads, fix, links, sign-in,
-// tzers-player, e2e, e2e-tls, e2e-calls), separated by commas; they are left out, or taken
+// tzers-player, e2e, e2e-tls, e2e-calls, e2e-files), separated by commas; they are left out, or taken
 // out if in place. -Include takes the jobs that are off unless asked for:
-// tzers-player (which then wins over tzers), e2e, e2e-tls, e2e-calls (which needs e2e). -Player is our FlashPlayerControl-Ruffle.dll for it,
+// tzers-player (which then wins over tzers), e2e, e2e-tls, e2e-calls, e2e-files (which need e2e). -Player is our FlashPlayerControl-Ruffle.dll for it,
 // when not next to this exe. The run reports on the standard output
 // ("applied: ...", "changes made: N", "files restored: N") and exits with 0,
 // or with 1 and the reason on the standard error.
@@ -223,7 +223,7 @@ namespace IcqRevival.Patch
             // elevated with another account's password, that is not the one
             // who starts ICQ.
             if (ui.IsSelected("tzers-player")) msg += "\n\ntZers play for the Windows user " + Environment.UserName + ", who has to be the one starting ICQ.";
-            string e2e = E2eIni.Summary(server, ui.IsSelected(E2eIni.E2eJob), ui.IsSelected(E2eIni.TlsJob), ui.IsSelected(E2eIni.CallsJob),
+            string e2e = E2eIni.Summary(server, ui.IsSelected(E2eIni.E2eJob), ui.IsSelected(E2eIni.TlsJob), ui.IsSelected(E2eIni.CallsJob), ui.IsSelected(E2eIni.FilesJob),
                 ui.IsSelected("sign-in") ? server + ":" + E2eIni.TlsPort + " (the BUCP sign-in)" : null, Icq65Client.E2eProbeFile, client.E2eAuditorsNote);
             if (e2e.Length > 0) msg += "\n\n" + e2e;
             msg += "\n\nYou can start ICQ now.";

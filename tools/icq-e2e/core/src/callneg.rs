@@ -53,9 +53,14 @@
 //! number). Keys are dropped at BYE (after a short grace for trailing
 //! packets) or when the call is given up.
 //!
-//! Policy (C3): a call is never blocked. A contact under `/e2e on` or
-//! verified whose call is not encrypted gets the same note in stronger words:
-//! not end-to-end encrypted, with the reason, hang up if it must stay private.
+//! Policy (C3, audit 2026-10, finding 8): "encryption is on for this
+//! contact" means the same for calls as for text. With `calls_encrypt = on`,
+//! a call with a contact under `/e2e on` or verified that did not agree on
+//! keys is not let through; with any other contact it goes plain, with a
+//! note. `calls_encrypt = required` makes every contact strict. A call that
+//! is not let through has its RTP and RTCP, bare or in TURN framing, dropped
+//! both ways, so nothing of it is heard in clear; STUN and TURN control
+//! still pass, so a call that does agree can set up. The chat says why.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
@@ -525,6 +530,9 @@ pub struct CallTable {
     notes: Vec<Note>,
     log: Vec<String>,
     rng: SystemRandom,
+    /// `calls_encrypt = required`: every contact is strict - the media of a
+    /// call that did not agree on keys is dropped, never let through plain.
+    required: bool,
 }
 
 impl Default for CallTable {
@@ -535,8 +543,27 @@ impl Default for CallTable {
             notes: Vec::new(),
             log: Vec::new(),
             rng: SystemRandom::new(),
+            required: false,
         }
     }
+}
+
+/// The note for a call that is not let through: `required` says the ini
+/// lets no unencrypted call through; otherwise encryption is on for the
+/// contact (`/e2e on`, or verified), for calls as for messages.
+fn blocked_note(peer: &str, why: &str, required: bool, verified: bool) -> String {
+    let why = why.trim_end_matches('.');
+    let rule = if required {
+        "calls_encrypt = required in icq-e2e.ini lets no other call through".to_string()
+    } else if verified {
+        format!("{peer} is verified, so a call with them is encrypted or not let through, as messages are")
+    } else {
+        format!("encryption is on for {peer} in this chat (/e2e on), for calls as for messages")
+    };
+    format!(
+        "{}This call with {peer} is not let through: it is not end-to-end encrypted ({why}), and {rule} - neither side hears the other. Hang up.",
+        crate::policy::PREFIX
+    )
 }
 
 /// The table the hooks and the session share.
@@ -1081,6 +1108,43 @@ impl CallTable {
         }
     }
 
+    /// Switches the strict level on or off (`calls_encrypt = required`).
+    pub fn set_required(&mut self, on: bool) {
+        self.required = on;
+    }
+
+    /// Whether the strict level is on: no call's media goes plain.
+    pub fn required(&self) -> bool {
+        self.required
+    }
+
+    /// Whether a call with this contact must be encrypted or not let
+    /// through: `calls_encrypt = required`, or a contact under `/e2e on` or
+    /// verified.
+    fn strict(&self, info: &PeerInfo) -> bool {
+        self.required || info.strict
+    }
+
+    /// Whether media that no agreed call covers is dropped rather than
+    /// passed: with `calls_encrypt = required`, or while a call with a strict
+    /// contact is set up or went without keys. The client makes one call at
+    /// a time, so all such media is that call's.
+    pub fn blocks_plain(&self) -> bool {
+        self.required
+            || self.calls.values().any(|c| {
+                c.info.strict && c.media.is_none() && !matches!(c.state, State::Ended { .. })
+            })
+    }
+
+    /// A datagram no agreed call covers: passed as it is, or dropped when it
+    /// carries media and a strict call is in progress.
+    fn unagreed(&mut self, d: &[u8]) -> Verdict {
+        if self.blocks_plain() && callmedia::split(d).is_some() {
+            return Verdict::Drop("the call did not agree on keys and must be encrypted");
+        }
+        Verdict::Pass
+    }
+
     fn go_plain(&mut self, c: &mut Call, why: &str) {
         if let Some(m) = &c.media {
             self.log.push(format!(
@@ -1094,10 +1158,21 @@ impl CallTable {
         c.outbox.clear();
         if c.told != Some(false) {
             c.told = Some(false);
-            self.notes.push(Note::to(
-                &c.peer_name,
-                crate::policy::call_plain_note(&c.peer_name, why, c.info.strict),
-            ));
+            let note = if self.strict(&c.info) {
+                self.log.push(format!(
+                    "{}: not encrypted, so its media is dropped ({})",
+                    c.label(),
+                    if self.required {
+                        "calls_encrypt=required"
+                    } else {
+                        "encryption is on for the contact"
+                    }
+                ));
+                blocked_note(&c.peer_name, why, self.required, c.info.verified)
+            } else {
+                crate::policy::call_plain_note(&c.peer_name, why, c.info.strict)
+            };
+            self.notes.push(Note::to(&c.peer_name, note));
         }
     }
 
@@ -1204,7 +1279,7 @@ impl CallTable {
     pub fn media_out(&mut self, port: u16, d: &[u8], now: u64) -> Verdict {
         self.expire_confirm(now);
         let Some(h) = self.find(port) else {
-            return Verdict::Pass;
+            return self.unagreed(d);
         };
         let c = self.calls.get_mut(&h).expect("found");
         c.touched = now;
@@ -1244,7 +1319,7 @@ impl CallTable {
     pub fn media_in(&mut self, port: u16, d: &[u8], now: u64) -> Verdict {
         self.expire_confirm(now);
         let Some(h) = self.find(port) else {
-            return Verdict::Pass;
+            return self.unagreed(d);
         };
         let mut c = self.calls.remove(&h).expect("found");
         c.touched = now;
@@ -1614,18 +1689,19 @@ mod tests {
             n[0].contains("not end-to-end encrypted") && n[0].contains("did not answer"),
             "{n:?}"
         );
+        // A verified contact is strict: the call is not let through (audit
+        // 2026-10, finding 8).
         assert!(
-            n[0].contains("calls are never blocked"),
+            n[0].contains("not let through") && n[0].contains("is verified"),
             "strict wording: {n:?}"
         );
         assert!(!a.keyed());
         let p = rtp(1, 1);
-        assert_eq!(
+        assert!(matches!(
             a.media_out(16384, &p, T0 + 4000),
-            Verdict::Pass,
-            "untouched"
-        );
-        assert_eq!(a.media_in(16384, &p, T0 + 4000), Verdict::Pass);
+            Verdict::Drop(_)
+        ));
+        assert!(matches!(a.media_in(16384, &p, T0 + 4000), Verdict::Drop(_)));
         // An answer that comes late changes nothing.
         let mut b = CallTable::default();
         deliver(&mut b, A, 1, offer, T0);
@@ -1652,9 +1728,185 @@ mod tests {
         assert!(matches!(b.media_in(20000, &p, T0 + 100), Verdict::Drop(_)));
         b.tick(T0 + CONFIRM_TIMEOUT_MS);
         assert_eq!(b.state_of(call), Some("plain"));
-        assert!(texts(&mut b)[0].contains("never confirmed"));
-        assert_eq!(b.media_in(20000, &p, T0 + 9000), Verdict::Pass);
-        assert_eq!(b.media_out(20000, &p, T0 + 9000), Verdict::Pass);
+        let n = texts(&mut b);
+        assert!(
+            n[0].contains("never confirmed") && n[0].contains("not let through"),
+            "{n:?}"
+        );
+        // B's side is strict too (the same contact info): held back, not plain.
+        assert!(matches!(b.media_in(20000, &p, T0 + 9000), Verdict::Drop(_)));
+        assert!(matches!(
+            b.media_out(20000, &p, T0 + 9000),
+            Verdict::Drop(_)
+        ));
+    }
+
+    /// Audit 2026-10, finding 8: with `calls_encrypt = required` a call that
+    /// did not agree on keys is not let through - its media is dropped both
+    /// ways, the chat says why - while STUN still passes and an agreed call
+    /// is encrypted as with `on`.
+    #[test]
+    fn with_calls_required_a_call_that_did_not_agree_is_not_let_through() {
+        let call = "strict@h";
+        let mut a = CallTable::default();
+        a.set_required(true);
+        let info = PeerInfo::default();
+        a.sip(
+            Direction::Outbound,
+            B,
+            &invite(call, 16384),
+            info,
+            &mut go(me(A, 1, 1)),
+            T0,
+        );
+        // No answer: B has no add-on, or calls off.
+        a.sip(
+            Direction::Inbound,
+            B,
+            &ok(call, 20000),
+            info,
+            &mut go(me(A, 1, 1)),
+            T0 + 3000,
+        );
+        assert_eq!(a.state_of(call), Some("plain"));
+        let n = texts(&mut a);
+        assert!(
+            n.len() == 1 && n[0].contains("not let through") && n[0].contains("did not answer"),
+            "{n:?}"
+        );
+        let p = rtp(1, 1);
+        assert!(matches!(
+            a.media_out(16384, &p, T0 + 4000),
+            Verdict::Drop(_)
+        ));
+        assert!(matches!(a.media_in(16384, &p, T0 + 4000), Verdict::Drop(_)));
+        // Media on a port no call named, too: nothing plain at all.
+        assert!(matches!(
+            a.media_out(40000, &p, T0 + 4000),
+            Verdict::Drop(_)
+        ));
+        // STUN is no media and passes, so a call can still set up.
+        let mut stun = vec![0x00, 0x01, 0x00, 0x00];
+        stun.extend_from_slice(&0x2112_A442u32.to_be_bytes());
+        stun.extend_from_slice(&[7; 12]);
+        assert_eq!(a.media_out(16384, &stun, T0 + 4000), Verdict::Pass);
+
+        // A callee with the strict level and no offer: the same.
+        let mut b = CallTable::default();
+        b.set_required(true);
+        b.sip(
+            Direction::Inbound,
+            A,
+            &invite("strict2@h", 16384),
+            info,
+            &mut go(me(B, 2, 2)),
+            T0,
+        );
+        b.sip(
+            Direction::Outbound,
+            A,
+            &ok("strict2@h", 20000),
+            info,
+            &mut go(me(B, 2, 2)),
+            T0,
+        );
+        assert!(texts(&mut b)[0].contains("not let through"));
+        assert!(matches!(b.media_in(20000, &p, T0), Verdict::Drop(_)));
+
+        // `on` stays the level that never blocks.
+        let mut c = CallTable::default();
+        assert!(!c.required());
+        assert_eq!(c.media_out(16384, &p, T0), Verdict::Pass);
+    }
+
+    /// With `calls_encrypt = on`: a contact under `/e2e on`, or verified, is
+    /// strict - its unencrypted call is not let through; a plain contact's
+    /// call goes plain with a note; once the strict call is over, nothing is
+    /// held back any more.
+    #[test]
+    fn with_calls_on_a_strict_contact_is_blocked_and_a_plain_one_is_not() {
+        let p = rtp(1, 1);
+        for (what, info, blocked) in [
+            (
+                "/e2e on",
+                PeerInfo {
+                    strict: true,
+                    verified: false,
+                },
+                true,
+            ),
+            (
+                "verified",
+                PeerInfo {
+                    strict: true,
+                    verified: true,
+                },
+                true,
+            ),
+            ("plain contact", PeerInfo::default(), false),
+        ] {
+            let call = format!("on-{what}@h");
+            let mut a = CallTable::default();
+            a.sip(
+                Direction::Outbound,
+                B,
+                &invite(&call, 16384),
+                info,
+                &mut go(me(A, 1, 1)),
+                T0,
+            );
+            a.sip(
+                Direction::Inbound,
+                B,
+                &ok(&call, 20000),
+                info,
+                &mut go(me(A, 1, 1)),
+                T0 + 3000,
+            );
+            assert_eq!(a.state_of(&call), Some("plain"), "{what}");
+            let n = texts(&mut a);
+            assert_eq!(n.len(), 1, "{what}: {n:?}");
+            assert_eq!(n[0].contains("not let through"), blocked, "{what}: {n:?}");
+            assert!(n[0].contains("not end-to-end encrypted"), "{what}: {n:?}");
+            assert_eq!(a.blocks_plain(), blocked, "{what}");
+            assert_eq!(
+                matches!(a.media_out(16384, &p, T0 + 4000), Verdict::Drop(_)),
+                blocked,
+                "{what}"
+            );
+            assert_eq!(
+                matches!(a.media_in(16384, &p, T0 + 4000), Verdict::Drop(_)),
+                blocked,
+                "{what}"
+            );
+            // BYE: the call is over and media is no longer held back.
+            a.sip(
+                Direction::Outbound,
+                B,
+                &req("BYE", &call, 2),
+                info,
+                &mut go(me(A, 1, 1)),
+                T0 + 5000,
+            );
+            assert!(!a.blocks_plain(), "{what}");
+            assert_eq!(a.media_out(16384, &p, T0 + 6000), Verdict::Pass, "{what}");
+        }
+    }
+
+    /// An agreed call is encrypted under the strict level as under `on`.
+    #[test]
+    fn with_calls_required_an_agreed_call_is_encrypted() {
+        let (mut a, mut b) = agreed("strict-ok@h");
+        a.set_required(true);
+        b.set_required(true);
+        let e = match a.media_out(16384, &rtp(1, 0xA), T0 + 10) {
+            Verdict::Replace(e) => e,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            b.media_in(20000, &e, T0 + 10),
+            Verdict::Replace(rtp(1, 0xA))
+        );
     }
 
     #[test]

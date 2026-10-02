@@ -264,10 +264,12 @@ fn log_table(t: &mut CallTable) {
 }
 
 /// The local port of a datagram socket an agreed call uses, if `s` is one.
-/// Never panics out: a panic here means "not known", and the datagram is
-/// passed as it is.
+/// Never panics out: after a panic the socket counts as an agreed call's
+/// whenever [`keyed_after_panic`] cannot rule it out, so its media goes the
+/// encrypted path - which drops what it cannot handle - and never out plain
+/// or in to the client undecrypted.
 fn keyed_socket(s: Socket) -> Option<u16> {
-    panic::catch_unwind(AssertUnwindSafe(|| {
+    match panic::catch_unwind(AssertUnwindSafe(|| {
         let i = info(s);
         if !i.udp {
             return None;
@@ -275,19 +277,34 @@ fn keyed_socket(s: Socket) -> Option<u16> {
         let t = table();
         let g = lock(&t);
         g.covers(i.local_port).then_some(i.local_port)
-    }))
-    .ok()
-    .flatten()
+    })) {
+        Ok(port) => port,
+        Err(_) => keyed_after_panic(s).then_some(0),
+    }
 }
 
-/// After a panic: whether the socket belongs to an agreed call, asked as
-/// simply as possible. Unknown counts as yes (the packet is then dropped,
-/// never sent plain).
+/// After a panic: whether the socket belongs to an agreed call - or, with
+/// `calls_encrypt=required`, to any call - asked as simply as possible.
+/// Unknown counts as yes (the packet is then dropped, never sent plain).
 fn keyed_after_panic(s: Socket) -> bool {
     panic::catch_unwind(AssertUnwindSafe(|| {
         let t = table();
         let g = lock(&t);
-        g.keyed() && g.covers(local_port(s))
+        g.blocks_plain() || (g.keyed() && g.covers(local_port(s)))
+    }))
+    .unwrap_or(true)
+}
+
+/// Whether unagreed media is held back now ([`CallTable::blocks_plain`]:
+/// `calls_encrypt=required`, or a call with a contact under `/e2e on` or
+/// verified) for datagram socket `s`: then every datagram of it goes the
+/// encrypted path, which drops the media of a call that did not agree on
+/// keys (audit 2026-10, finding 8). A stream socket keeps its own path.
+/// Unknown counts as yes.
+fn required_now(s: Socket) -> bool {
+    panic::catch_unwind(AssertUnwindSafe(|| {
+        let blocks = lock(&table()).blocks_plain();
+        blocks && info(s).udp
     }))
     .unwrap_or(true)
 }
@@ -311,7 +328,7 @@ unsafe fn media_send(
         }
         let t = table();
         let mut g = lock(&t);
-        if !g.keyed() {
+        if !g.keyed() && !g.blocks_plain() {
             return None;
         }
         let v = g.media_out(i.local_port, data, now_ms());
@@ -558,7 +575,7 @@ unsafe extern "system" fn hook_recvfrom<const M: usize>(
         && len > 0
         && flags & MSG_PEEK == 0
         && encrypting()
-        && keyed_socket(s).is_some()
+        && (keyed_socket(s).is_some() || required_now(s))
     {
         let recv =
             |p: *mut u8, n: i32| orig::<RecvFromFn>(M, F_RECVFROM)(s, p, n, flags, from, fromlen);
@@ -620,7 +637,7 @@ unsafe extern "system" fn hook_recv<const M: usize>(
         && len > 0
         && flags & MSG_PEEK == 0
         && encrypting()
-        && keyed_socket(s).is_some()
+        && (keyed_socket(s).is_some() || required_now(s))
     {
         let recv = |p: *mut u8, n: i32| orig::<RecvFn>(M, F_RECV)(s, p, n, flags);
         return media_recv(
@@ -680,7 +697,7 @@ unsafe extern "system" fn hook_wsasendto<const M: usize>(
 ) -> i32 {
     // Media of an agreed call cannot be encrypted in place here and must not
     // go plain: it is dropped and reported as sent.
-    if encrypting() && keyed_socket(s).is_some() {
+    if encrypting() && (keyed_socket(s).is_some() || required_now(s)) {
         let err = GetLastError();
         let total = panic::catch_unwind(AssertUnwindSafe(|| {
             let data = gather(bufs, count, usize::MAX);
@@ -1267,6 +1284,48 @@ mod tests {
             0u8, 1, 0, 0, 0x21, 0x12, 0xA4, 0x42, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
         ];
         set_table(Some(ta.clone()));
+        // SAFETY: as above.
+        unsafe { send_via_hook(&a, &b, &stun) };
+        let (n, _) = b.recv_from(&mut wire).unwrap();
+        assert_eq!(&wire[..n], &stun[..]);
+        set_table(None);
+    }
+
+    /// Audit 2026-10, finding 8, over real sockets: with
+    /// `calls_encrypt=required` and no agreed call, the client's media never
+    /// reaches the wire and media that comes in plain never reaches the
+    /// client; STUN passes both ways.
+    #[test]
+    fn with_calls_required_no_media_passes_plain() {
+        point_at_winsock(0);
+        let a = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let b = UdpSocket::bind("127.0.0.1:0").unwrap();
+        b.set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+        let t: Arc<Mutex<CallTable>> = Default::default();
+        lock(&t).set_required(true);
+        set_table(Some(t.clone()));
+
+        let p = rtp(1);
+        // SAFETY: real sockets, live buffers.
+        assert_eq!(
+            unsafe { send_via_hook(&a, &b, &p) },
+            p.len() as i32,
+            "the client is told it went"
+        );
+        let mut wire = [0u8; 1500];
+        assert!(b.recv_from(&mut wire).is_err(), "but nothing was sent");
+
+        b.send_to(&rtp(2), a.local_addr().unwrap()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let mut buf = [0u8; 1500];
+        // SAFETY: as above.
+        assert_eq!(unsafe { recv_via_hook(&a, &mut buf) }, 0, "dropped");
+        assert!(!buf.windows(12).any(|w| w == b"spoken words"));
+
+        let stun = [
+            0u8, 1, 0, 0, 0x21, 0x12, 0xA4, 0x42, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+        ];
         // SAFETY: as above.
         unsafe { send_via_hook(&a, &b, &stun) };
         let (n, _) = b.recv_from(&mut wire).unwrap();

@@ -253,6 +253,36 @@ pub struct LogState {
     /// file from before several auditors has none; it fills on the next look.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audits: Vec<Audited>,
+    /// Why the log broke after we had trusted it - rewritten, signed by
+    /// another key, gone, or a split view an auditor saw (audit 2026-10,
+    /// finding 4). Sticky: kept in the state file across sign-ons until
+    /// `/e2e resetlog`. While it is set, the rest of this copy is frozen as
+    /// it was last trusted, and only what was vouched for by then is used:
+    /// sessions already made, account keys already pinned, devices this copy
+    /// shows. State version 3.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broken: Option<String>,
+}
+
+/// What the client can rely on from the key log right now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Trust {
+    /// No log was ever seen: an older server, or none read yet. Keys are
+    /// trusted on first use, as before the log existed.
+    NeverHadLog,
+    /// The copy is up to date and adds up: keys are checked against it.
+    Trusted,
+    /// A log we had trusted broke; nothing new is taken until `/e2e
+    /// resetlog`, see [`LogState::broken`].
+    BrokenAfterTrust(String),
+}
+
+impl LogState {
+    /// Whether a log was ever seen and trusted in this copy: its key is
+    /// pinned or it has entries.
+    pub fn was_trusted(&self) -> bool {
+        self.key.is_some() || self.size > 0
+    }
 }
 
 /// A checkpoint an auditor cosigned and that agrees with our copy.

@@ -137,6 +137,20 @@ fn decode_channel(
         }
         CHANNEL_RENDEZVOUS => {
             let data = snac::find_tlv(tlvs, TLV_RENDEZVOUS_DATA)?;
+            // A rendezvous of the AOL family other than the ICQ server relay
+            // (`0946134x-4C7F-11D1-8222-444553540000`: a file transfer, a
+            // direct connection, file sharing, voice) has no text of its own:
+            // it must never be taken for a message - and so never be
+            // encrypted, held or dropped as one - and its file name never
+            // logged as one.
+            if let Some(cap) = data.get(10..26) {
+                if cap[..3] == CAP_ICQ_SERVER_RELAY[..3]
+                    && cap[4..] == CAP_ICQ_SERVER_RELAY[4..]
+                    && cap[3] != CAP_ICQ_SERVER_RELAY[3]
+                {
+                    return None;
+                }
+            }
             let text = decode_ch2_text(data)?;
             // Channel-2 text is 8-bit and has no charset of its own; the
             // server relay carries Latin-1.

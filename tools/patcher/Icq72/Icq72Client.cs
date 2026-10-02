@@ -1252,11 +1252,11 @@ namespace IcqRevival.Patch
             return pins.Line;
         }
 
-        void WriteE2eIni(string domain, bool e2e, bool tls, bool calls)
+        void WriteE2eIni(string domain, bool e2e, bool tls, bool calls, bool files)
         {
             string path = At(E2eIniFile);
             string current = E2eIniAt(path);
-            string text = E2eIni.Compose(E2eIniHeader, current, E2eDirectoryUrl(domain), domain, e2e, tls, calls, E2eAuditors(current, domain, e2e));
+            string text = E2eIni.Compose(E2eIniHeader, current, E2eDirectoryUrl(domain), domain, e2e, tls, calls, files, E2eAuditors(current, domain, e2e));
             if (current != null && Ps.Ceq(current, text)) return;
             if (current != null && !E2eIniIsOurs()) PatchFiles.BackupOnce(path, Suffix);
             try
@@ -1302,6 +1302,7 @@ namespace IcqRevival.Patch
             if (text == null || !E2eIni.Points(text, E2eDirectoryUrl(domain), domain)) return "original";
             bool on = job == E2eIni.E2eJob ? E2eIni.E2eOn(text)
                 : job == E2eIni.TlsJob ? E2eIni.TlsOn(text)
+                : job == E2eIni.FilesJob ? E2eIni.FilesOn(text)
                 : E2eIni.CallsOn(text);
             return on ? "patched" : "original";
         }
@@ -1364,9 +1365,9 @@ namespace IcqRevival.Patch
         //
         // Both rows need the DLL: it goes in when either is ticked, and stays as
         // long as one of them is; the ini then says which of the two it does.
-        // The row for calls only adds calls_encrypt= to that, so it does not
-        // put the DLL in by itself.
-        string SetE2e(bool e2e, bool tls, bool calls, string domain)
+        // The rows for calls and file transfers only add calls_encrypt= and
+        // files_encrypt= to that, so they do not put the DLL in by themselves.
+        string SetE2e(bool e2e, bool tls, bool calls, bool files, string domain)
         {
             bool wanted = e2e || tls;
             string path = At(E2eProbeFile);
@@ -1394,8 +1395,12 @@ namespace IcqRevival.Patch
                 PatchFiles.Copy(E2eSource, path, true);
             }
             if (!IsOurE2e(path)) return E2eProbeFile + " could not be put in - E2E add-on left out";
-            WriteE2eIni(domain, e2e, tls, calls);
-            return calls && !e2e ? "encryption of calls left out: it needs end-to-end encryption of messages" : null;
+            WriteE2eIni(domain, e2e, tls, calls, files);
+            if (e2e) return null;
+            var left = new List<string>();
+            if (calls) left.Add("encryption of calls left out: it needs end-to-end encryption of messages");
+            if (files) left.Add("encryption of file transfers left out: it needs end-to-end encryption of messages");
+            return left.Count == 0 ? null : string.Join("; ", left);
         }
 
         // --- the dropped E2E lock button (CHECKLIST 10.9) -------------------------
@@ -1472,11 +1477,12 @@ namespace IcqRevival.Patch
             // messages uses the key directory of the domain above; the
             // encrypted connection sends every connection to the domain over
             // TLS 1.3, with or without it. Set ICQE2E_LOG to write a log.
-            // A third row encrypts calls inside the E2E session (calls_encrypt=);
-            // it needs the first.
+            // A third row encrypts calls inside the E2E session (calls_encrypt=),
+            // a fourth file transfers (files_encrypt=); both need the first.
             j.Add(E2eIni.E2eJob, "Your server", E2eIni.E2eRow, off: true);
             j.Add(E2eIni.TlsJob, "Your server", E2eIni.TlsRow, off: true);
             j.Add(E2eIni.CallsJob, "Your server", E2eIni.CallsRow, off: true);
+            j.Add(E2eIni.FilesJob, "Your server", E2eIni.FilesRow, off: true);
 
             j.Assign("the SMS tab of the main window", "sms");
             j.Assign("the Zlango buttons of the message window", "zlango");
@@ -1520,6 +1526,7 @@ namespace IcqRevival.Patch
             j.Assign("the E2E add-on: TLS to the server", E2eIni.TlsJob);
             j.Assign("the E2E add-on: sign-in only over TLS", E2eIni.TlsJob);
             j.Assign("the E2E add-on: encryption of calls", E2eIni.CallsJob);
+            j.Assign("the E2E add-on: encryption of file transfers", E2eIni.FilesJob);
             return j;
         }
 
@@ -1663,6 +1670,7 @@ namespace IcqRevival.Patch
             add("the E2E add-on: TLS to the server", E2eProbeFile + ", " + E2eIniFile, E2eRowState(E2eIni.TlsJob, domain));
             add("the E2E add-on: sign-in only over TLS", PatchFiles.Leaf(AppConfig), TlsSignInState(domain));
             add("the E2E add-on: encryption of calls", E2eProbeFile + ", " + E2eIniFile, E2eRowState(E2eIni.CallsJob, domain));
+            add("the E2E add-on: encryption of file transfers", E2eProbeFile + ", " + E2eIniFile, E2eRowState(E2eIni.FilesJob, domain));
             List<PatchItem> rows = Jobs.Merge(items);
             // Without our DLL there is nothing to put in: the row says why.
             if (player == "unavailable")
@@ -1796,7 +1804,7 @@ namespace IcqRevival.Patch
             // The E2E add-on after the fix removal, so ours goes into a freed
             // slot or over the stock, as the two selections require.
             PatchSteps.Step("E2E add-on...");
-            string e2eNote = SetE2e(wanted(E2eIni.E2eJob), wanted(E2eIni.TlsJob), wanted(E2eIni.CallsJob), domain);
+            string e2eNote = SetE2e(wanted(E2eIni.E2eJob), wanted(E2eIni.TlsJob), wanted(E2eIni.CallsJob), wanted(E2eIni.FilesJob), domain);
             if (e2eNote != null) notes.Add(e2eNote);
             // Whatever the selection: the lock button is gone for good.
             TakeDroppedLockFiles();

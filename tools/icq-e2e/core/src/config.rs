@@ -39,7 +39,20 @@
 //!   end when both sides' add-ons agree on keys for it through the E2E
 //!   session (stages C1-C3 of `docs/e2e/CALLS-RESEARCH.md`); any other call
 //!   stays exactly as it is. Off by default; only in encrypt mode, and only
-//!   where frames may be added.
+//!   where frames may be added. `required` encrypts the same way, and a call
+//!   that did not agree on keys is not let through: its media is dropped
+//!   and the chat says why, instead of the call going plain (audit 2026-10,
+//!   finding 8).
+//! - `ICQE2E_FILES_LOG` - overrides the `files_log=` line of `icq-e2e.ini`.
+//!   `on` logs what each file transfer does: the rendezvous ICBMs, which
+//!   stage carried the data, the OFT2 header types and sizes, the totals -
+//!   never a file name, an address or content (stage F0 of
+//!   `docs/e2e/FILES-RESEARCH.md`, observation only). Off by default.
+//! - `ICQE2E_FILES_ENCRYPT` - overrides the `files_encrypt=` line of
+//!   `icq-e2e.ini`. `on` encrypts the data connection of a file transfer end
+//!   to end when both sides' add-ons agree on keys for it through the E2E
+//!   session (stages F2-F4); any other transfer stays exactly as it is. Off
+//!   by default; only in encrypt mode, and only where frames may be added.
 //! - `ICQE2E_AUDITORS` - overrides the `auditors=` line of `icq-e2e.ini`: the
 //!   verifier keys of the key log's auditors, comma-separated, as
 //!   `e2e-kt-auditor -print-key` prints them (docs/e2e/KEY-TRANSPARENCY.md).
@@ -91,6 +104,15 @@ pub struct Policy {
     /// `calls_encrypt=on`: offer, answer and encrypt calls (stages C1-C3).
     /// What the ini says; [`Policy::encrypts_calls`] is whether it applies.
     pub calls_encrypt: bool,
+    /// `calls_encrypt=required`: as `on`, and a call that did not agree on
+    /// keys is not let through (its media is dropped) instead of going plain.
+    pub calls_required: bool,
+    /// `files_log=on`: observe file transfers (stage F0).
+    pub files_log: bool,
+    /// `files_encrypt=on`: offer, answer and encrypt file transfers (stages
+    /// F2-F4). What the ini says; [`Policy::encrypts_files`] is whether it
+    /// applies.
+    pub files_encrypt: bool,
     /// `auditors=`: the key log's auditors to trust, exactly; `None` when
     /// the line is absent, and the server's are pinned on first use.
     pub auditors: Option<Vec<String>>,
@@ -269,6 +291,9 @@ impl Policy {
             tls: TlsPolicy::NoServer,
             calls_log: false,
             calls_encrypt: false,
+            calls_required: false,
+            files_log: false,
+            files_encrypt: false,
             auditors: None,
             auditors_unread: Vec::new(),
         }
@@ -285,6 +310,9 @@ impl Policy {
             tls: TlsPolicy::NoServer,
             calls_log: false,
             calls_encrypt: false,
+            calls_required: false,
+            files_log: false,
+            files_encrypt: false,
             auditors: None,
             auditors_unread: Vec::new(),
         }
@@ -347,6 +375,8 @@ impl Policy {
             tls_pin: pick(s.tls_pin, env("ICQE2E_TLS_PIN")),
             calls_log: env("ICQE2E_CALLS_LOG"),
             calls_encrypt: env("ICQE2E_CALLS_ENCRYPT"),
+            files_log: env("ICQE2E_FILES_LOG"),
+            files_encrypt: env("ICQE2E_FILES_ENCRYPT"),
             auditors: env("ICQE2E_AUDITORS").filter(|a| !a.trim().is_empty()),
         })
     }
@@ -381,6 +411,8 @@ impl Policy {
         let tls_pin = raw.tls_pin.clone().or_else(|| ini("tls_pin"));
         let calls_log = raw.calls_log.clone().or_else(|| ini("calls_log"));
         let calls_encrypt = raw.calls_encrypt.clone().or_else(|| ini("calls_encrypt"));
+        let files_log = raw.files_log.clone().or_else(|| ini("files_log"));
+        let files_encrypt = raw.files_encrypt.clone().or_else(|| ini("files_encrypt"));
         let (auditors, auditors_unread) = match raw.auditors.clone().or_else(|| ini("auditors")) {
             Some(line) => {
                 let (good, bad) = crate::kt::parse_auditor_list(&line);
@@ -399,7 +431,11 @@ impl Policy {
             ),
             tls: TlsPolicy::parse(server.as_deref(), tls.as_deref(), tls_pin.as_deref()),
             calls_log: switched_on(calls_log.as_deref()),
-            calls_encrypt: switched_on(calls_encrypt.as_deref()),
+            calls_encrypt: switched_on(calls_encrypt.as_deref())
+                || required(calls_encrypt.as_deref()),
+            calls_required: required(calls_encrypt.as_deref()),
+            files_log: switched_on(files_log.as_deref()),
+            files_encrypt: switched_on(files_encrypt.as_deref()),
             auditors,
             auditors_unread,
         }
@@ -410,6 +446,13 @@ impl Policy {
     /// (the exchange is frames of the add-on's own).
     pub fn encrypts_calls(&self) -> bool {
         self.calls_encrypt && self.mode == Mode::Encrypt && self.may_inject()
+    }
+
+    /// Whether file transfers are encrypted: `files_encrypt=on`, in encrypt
+    /// mode (the key exchange rides the E2E session), with frames allowed to
+    /// be added (the exchange is frames of the add-on's own).
+    pub fn encrypts_files(&self) -> bool {
+        self.files_encrypt && self.mode == Mode::Encrypt && self.may_inject()
     }
 
     /// Whether the call modules are hooked at all: to observe, or to encrypt.
@@ -461,7 +504,7 @@ impl Policy {
             ),
         };
         format!(
-            "{what}{peers}, directory={}, frames={}, {}, home={}{}{}{auditors}",
+            "{what}{peers}, directory={}, frames={}, {}, home={}{}{}{}{}{auditors}",
             self.directory.as_deref().unwrap_or("unset"),
             if self.inject {
                 "may be added"
@@ -476,11 +519,28 @@ impl Policy {
                 ""
             },
             match (self.calls_encrypt, self.encrypts_calls()) {
+                (true, true) if self.calls_required => {
+                    ", calls_encrypt=required (call media encrypted when both add-ons agree; any other call's media is dropped)"
+                }
                 (true, true) => {
                     ", calls_encrypt=on (call media encrypted when both add-ons agree; any other call untouched)"
                 }
                 (true, false) => {
                     ", calls_encrypt=on but inactive (needs encrypt mode with frames allowed)"
+                }
+                _ => "",
+            },
+            if self.files_log {
+                ", files_log=on (file transfers observed)"
+            } else {
+                ""
+            },
+            match (self.files_encrypt, self.encrypts_files()) {
+                (true, true) => {
+                    ", files_encrypt=on (file transfers encrypted when both add-ons agree; any other transfer untouched)"
+                }
+                (true, false) => {
+                    ", files_encrypt=on but inactive (needs encrypt mode with frames allowed)"
                 }
                 _ => "",
             }
@@ -512,11 +572,18 @@ struct Raw {
     tls_pin: Option<String>,
     calls_log: Option<String>,
     calls_encrypt: Option<String>,
+    files_log: Option<String>,
+    files_encrypt: Option<String>,
     auditors: Option<String>,
 }
 
 /// Whether a switch that is off unless asked for (`calls_log=`) is on: only a
 /// clear yes.
+/// Whether `calls_encrypt=` asks for the strict level: `required`.
+fn required(v: Option<&str>) -> bool {
+    matches!(v.map(str::trim), Some(t) if t.eq_ignore_ascii_case("required"))
+}
+
 fn switched_on(v: Option<&str>) -> bool {
     matches!(v.map(str::trim), Some(t) if ["on", "1", "true", "yes"]
         .iter()
@@ -584,6 +651,8 @@ mod tests {
             tls_pin: own(s.tls_pin),
             calls_log: None,
             calls_encrypt: None,
+            files_log: None,
+            files_encrypt: None,
             auditors: None,
         })
     }
@@ -888,6 +957,58 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    /// `calls_encrypt = required` is `on` and the strict level besides;
+    /// `on` stays the level that never blocks a call (audit 2026-10,
+    /// finding 8).
+    #[test]
+    fn calls_encrypt_required_is_on_and_strict() {
+        let dir = std::env::temp_dir().join("icqe2e-ini-calls-required-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ini = dir.join("icq-e2e.ini");
+        let path = ini.to_str().unwrap();
+        for (text, on, strict) in [
+            (
+                "calls_encrypt = required
+",
+                true,
+                true,
+            ),
+            (
+                "calls_encrypt = REQUIRED
+",
+                true,
+                true,
+            ),
+            (
+                "calls_encrypt = on
+",
+                true,
+                false,
+            ),
+            (
+                "calls_encrypt = off
+",
+                false,
+                false,
+            ),
+            ("", false, false),
+        ] {
+            std::fs::write(&ini, text).unwrap();
+            let p = policy(Settings {
+                ini_path: Some(path),
+                ..Default::default()
+            });
+            assert_eq!(p.encrypts_calls(), on, "{text:?}");
+            assert_eq!(p.calls_required, strict, "{text:?}");
+            assert_eq!(
+                p.describe().contains("calls_encrypt=required"),
+                strict,
+                "{text:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// `calls_encrypt=` is off unless it says on, and applies only in
     /// encrypt mode with frames allowed: the key exchange is frames of the
     /// add-on's own on the E2E session.
@@ -932,6 +1053,88 @@ mod tests {
             assert!(p.describe().contains("calls_encrypt=on but inactive"));
         }
         assert!(!Policy::observe().encrypts_calls() && !Policy::harness().hooks_calls());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `files_log=` and `files_encrypt=` are off unless they say on, and
+    /// encryption applies only in encrypt mode with frames allowed.
+    #[test]
+    fn files_switches_are_off_by_default_and_encryption_needs_encrypt_mode() {
+        let dir = std::env::temp_dir().join("icqe2e-ini-files-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ini = dir.join("icq-e2e.ini");
+        let path = ini.to_str().unwrap();
+        let read = |text: &str, no_inject: Option<&str>| {
+            std::fs::write(&ini, text).unwrap();
+            policy(Settings {
+                ini_path: Some(path),
+                no_inject,
+                ..Default::default()
+            })
+        };
+        for (text, log, enc) in [
+            ("", false, false),
+            (
+                "calls_encrypt = on
+calls_log = on
+",
+                false,
+                false,
+            ),
+            (
+                "files_log = maybe
+files_encrypt = off
+",
+                false,
+                false,
+            ),
+            (
+                "files_log = on
+",
+                true,
+                false,
+            ),
+            (
+                "files_encrypt = on
+",
+                false,
+                true,
+            ),
+            (
+                "FILES_ENCRYPT=yes
+files_log=1
+",
+                true,
+                true,
+            ),
+        ] {
+            let p = read(text, None);
+            assert_eq!((p.files_log, p.encrypts_files()), (log, enc), "{text:?}");
+            assert_eq!(p.describe().contains("files_log=on"), log, "{text:?}");
+            assert_eq!(
+                p.describe()
+                    .contains("files_encrypt=on (file transfers encrypted"),
+                enc,
+                "{text:?}"
+            );
+        }
+        for p in [
+            read(
+                "files_encrypt = on
+e2e = off
+",
+                None,
+            ),
+            read(
+                "files_encrypt = on
+",
+                Some("1"),
+            ),
+        ] {
+            assert!(p.files_encrypt && !p.encrypts_files());
+            assert!(p.describe().contains("files_encrypt=on but inactive"));
+        }
+        assert!(!Policy::observe().encrypts_files() && !Policy::harness().files_log);
         std::fs::remove_dir_all(&dir).ok();
     }
 

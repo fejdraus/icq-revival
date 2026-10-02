@@ -460,7 +460,10 @@ The owner's rule, which overrides section 5a: **backward compatibility of
 calls**. A call where either side has no add-on, an older one, or
 `calls_encrypt` off works exactly as today - plain, every byte untouched.
 Encryption only after both add-ons agreed for that Call-ID; anything not
-agreed passes untouched. A call is never blocked.
+agreed passes untouched. A call is never blocked. (Changed by the audit of
+2026-10, finding 8: a call with a contact under `/e2e on` or verified, or
+any call with `calls_encrypt = required`, that did not agree on keys is not
+let through - see `docs/e2e/AUDIT-2026-10.md`.)
 
 ### 9.1 Key agreement (C1)
 

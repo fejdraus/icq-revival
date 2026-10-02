@@ -17,9 +17,7 @@ use std::time::Duration;
 use crate::container::{self, Form};
 use crate::directory::UserDevices;
 use crate::directory::{DeviceState, DirError, DirectoryApi, SignedKey};
-use crate::keys::{
-    self, Inbound, Outbound, OwnKeys, FALLBACK_KEY_LIFETIME, ONE_TIME_REFILL_BELOW, ONE_TIME_TARGET,
-};
+use crate::keys::{self, Inbound, Outbound, OwnKeys, ONE_TIME_REFILL_BELOW, ONE_TIME_TARGET};
 use crate::kt;
 use crate::policy::{self, Command, Held, Remembered, Setting, Status};
 use crate::safety;
@@ -106,6 +104,21 @@ pub trait Crypto {
         lines: &mut Vec<String>,
     ) -> Vec<Vec<u8>> {
         let _ = (dir, peer, sip, now, lines);
+        Vec::new()
+    }
+
+    /// A file rendezvous ICBM (channel 2, `CapFileTransfer`) passing in its
+    /// direction, with `files_encrypt=on` (`filesneg.rs`). Returns the control
+    /// containers to put on the wire to the peer *before* that ICBM; the ICBM
+    /// itself is never changed. Nothing by default: an engine that does not
+    /// encrypt files leaves them as they are.
+    fn file_icbm(
+        &mut self,
+        rdv: &crate::files::Rendezvous,
+        now: u64,
+        lines: &mut Vec<String>,
+    ) -> Vec<Vec<u8>> {
+        let _ = (rdv, now, lines);
         Vec::new()
     }
 }
@@ -296,10 +309,18 @@ impl Publisher {
                 Err(p) => return p,
             }
         }
-        if !done.fallback {
+        // A fallback key that is due - a week old, or used to open a session
+        // (audit 2026-10, finding 3) - is replaced on the next poll of the
+        // sign-on, not only at the next sign-on.
+        let rotate = done.fallback && keys.fallback_due(now);
+        if !done.fallback || rotate {
             match self.fallback_key(keys, bearer, now) {
                 Ok(()) => done.fallback = true,
                 Err(p) => return p,
+            }
+            if rotate {
+                // A new key was made and sent: the state file must keep it.
+                return Progress::Done(done);
             }
         }
         // Whether anything was actually sent, or whether the account, the
@@ -474,7 +495,7 @@ pub fn refresh_due(now: u64, expires_at: u64) -> bool {
 /// Whether the fallback key is due to be replaced, which is also how a device
 /// that never published one is noticed.
 pub fn fallback_due(keys: &OwnKeys, now: u64) -> bool {
-    keys.fallback_key_at == 0 || now >= keys.fallback_key_at + FALLBACK_KEY_LIFETIME
+    keys.fallback_due(now)
 }
 
 /// Whether the pool is low enough to top up.
@@ -585,6 +606,12 @@ pub struct Engine {
     calls_encrypt: bool,
     /// The calls, shared with the media hooks.
     calls: Arc<std::sync::Mutex<crate::callneg::CallTable>>,
+    /// `files_encrypt=on`: file transfers are offered, answered and
+    /// encrypted ([`crate::filesneg`]). Off, a file payload is an ordinary
+    /// control message, exactly as for an add-on without file support.
+    files_encrypt: bool,
+    /// The file transfers, shared with the socket hooks.
+    files: Arc<std::sync::Mutex<crate::filesneg::FileTable>>,
     /// When our copy of the key log was last brought up to date, and how
     /// that went.
     log_synced_at: Option<u64>,
@@ -594,6 +621,18 @@ pub struct Engine {
     /// The `auditors =` line of `icq-e2e.ini`, read: exactly the auditors
     /// trusted, instead of the ones the server names on first sight.
     pinned_auditors: Option<Vec<String>>,
+    /// Writes the state file, when the engine runs inside a session: a
+    /// message whose ratchet moved on is let go - out to the contact, or in
+    /// to the client - only once this has kept the new state (audit 2026-10,
+    /// finding 5). `None` for an engine without a state file (the tests).
+    persist: Option<Persist>,
+    /// Contacts whose last message could not be let go because the state
+    /// could not be saved: encryption with them waits for a save that works.
+    unsaved: HashSet<String>,
+    /// Why this engine has no keys of its own: another process holds the
+    /// account's state file (audit 2026-10, finding 6). Every message is
+    /// then held, never sent in clear, and nothing is published.
+    locked_out: Option<String>,
 }
 
 impl Engine {
@@ -619,11 +658,92 @@ impl Engine {
             publish_failed: false,
             calls_encrypt: false,
             calls: crate::callneg::shared(),
+            files_encrypt: false,
+            files: crate::filesneg::shared(),
             log_synced_at: None,
             log_status: LogStatus::Unknown,
             audit_status: AuditStatus::Unknown,
             pinned_auditors: None,
+            persist: None,
+            unsaved: HashSet::new(),
+            locked_out: None,
         }
+    }
+
+    /// Locks the engine out: another process holds the account's state file.
+    /// It announces and publishes nothing, holds every outgoing message and
+    /// reads no incoming one, each with a note saying why.
+    pub fn lock_out(&mut self, why: String) {
+        self.locked_out = Some(why);
+        self.ready = false;
+    }
+
+    /// The note for a message the locked-out engine does not handle.
+    fn locked_out_note(&mut self, peer: &str, outbound: bool) -> Option<String> {
+        let why = self.locked_out.clone()?;
+        let note = if outbound {
+            format!(
+                "{}The message to {peer} was NOT sent: {why}, so this one has no keys to encrypt with and does not send it unencrypted. Close the other ICQ and sign on again.",
+                policy::PREFIX
+            )
+        } else {
+            format!(
+                "{}An encrypted message from {peer} was not shown: {why}, so this one has no keys to read it with. It is shown in the other one.",
+                policy::PREFIX
+            )
+        };
+        self.queue(Note::to(peer, note.clone()));
+        Some(note)
+    }
+
+    /// Gives the engine the way to write its state file, which it then uses
+    /// before any message whose ratchet moved on is let go.
+    pub fn set_persist(&mut self, persist: Persist) {
+        self.persist = Some(persist);
+    }
+
+    /// Writes the state file now. Nothing to do without one.
+    fn persist_now(&mut self) -> Result<(), String> {
+        let Some(save) = self.persist.as_mut() else {
+            return Ok(());
+        };
+        save(&self.keys)?;
+        self.changed = false;
+        Ok(())
+    }
+
+    /// Whether encryption with `peer` waits for a save that works, trying
+    /// one first: a save that works now releases every contact.
+    fn waits_for_save(&mut self, peer: &str) -> Option<String> {
+        if !self.unsaved.contains(&sign::ident(peer)) {
+            return None;
+        }
+        match self.persist_now() {
+            Ok(()) => {
+                self.unsaved.clear();
+                None
+            }
+            Err(why) => Some(why),
+        }
+    }
+
+    /// A message to or from `peer` that is not let go because the state it
+    /// moved on could not be saved; the note says so, in that chat.
+    fn not_saved(&mut self, peer: &str, why: &str, outbound: bool) -> String {
+        self.unsaved.insert(sign::ident(peer));
+        let note = if outbound {
+            format!(
+                "{}The message to {peer} was NOT sent: this add-on's state could not be saved ({why}), and an encrypted message goes out only once the state it moved on is safe on disk. Messages to {peer} wait until it can be saved; send it again then.",
+                policy::PREFIX
+            )
+        } else {
+            format!(
+                "{}An encrypted message from {peer} was not shown: this add-on's state could not be saved ({why}), and a message is shown only once the state it moved on is safe on disk. Ask {peer} to send it again.",
+                policy::PREFIX
+            )
+        };
+        self.queue(Note::to(peer, note.clone()));
+        note
     }
 
     /// Trusts exactly these auditors (the `auditors =` line of
@@ -636,6 +756,25 @@ impl Engine {
     /// Switches call encryption on or off (`calls_encrypt=` of the ini).
     pub fn set_calls_encrypt(&mut self, on: bool) {
         self.calls_encrypt = on;
+    }
+
+    /// Switches file transfer encryption on or off (`files_encrypt=` of the
+    /// ini).
+    pub fn set_files_encrypt(&mut self, on: bool) {
+        self.files_encrypt = on;
+    }
+
+    /// Gives the engine a file table of its own instead of the one the hooks
+    /// share: two engines in one test process.
+    pub fn use_file_table(&mut self, t: Arc<std::sync::Mutex<crate::filesneg::FileTable>>) {
+        self.files = t;
+    }
+
+    /// Switches the strict level of call encryption on or off
+    /// (`calls_encrypt=required`): a call that did not agree on keys is not
+    /// let through. On the call table, which the media hooks share.
+    pub fn set_calls_required(&mut self, on: bool) {
+        lock_calls(&self.calls).set_required(on);
     }
 
     /// Gives the engine a call table of its own instead of the one the hooks
@@ -725,6 +864,12 @@ impl Engine {
             .encrypt_control(&*self.dir, &bearer, &out, &contact)
         {
             Ok(Outbound::Encrypted(wire)) => {
+                // The ratchet moved on: not sent unless that is on disk
+                // (audit 2026-10, finding 5).
+                if let Err(why) = self.persist_now() {
+                    self.unsaved.insert(sign::ident(peer));
+                    return Err(format!("the add-on's state could not be saved ({why})"));
+                }
                 container::find_armor(&wire).ok_or_else(|| "no container".to_string())
             }
             Ok(Outbound::Refused(note)) => Err(note),
@@ -807,6 +952,11 @@ impl Engine {
     /// What it says goes to the log only (the session writes it): a publish
     /// step is about the add-on, not about any one chat.
     pub fn publish(&mut self, now: u64) -> Progress {
+        if let Some(why) = &self.locked_out {
+            return Progress::Off {
+                note: format!("{why}; encryption is held in this one"),
+            };
+        }
         let Some(bearer) = self.token.as_ref().map(|t| t.bearer.clone()) else {
             return Progress::Off {
                 note: "no token yet; encryption stays off".into(),
@@ -849,6 +999,14 @@ impl Engine {
         }
         self.log_synced_at = Some(now);
         self.keys.log_trusted = false;
+        // A log that broke after we trusted it stays broken until `/e2e
+        // resetlog` (audit 2026-10, finding 4): the copy is frozen as it was
+        // last trusted, and nothing the server says now changes it.
+        if let Some(why) = self.keys.log.broken.clone() {
+            self.note_once(None, "kt:broken".into(), policy::log_broken_note(&why));
+            self.log_status = LogStatus::Broken(why);
+            return true;
+        }
         match kt::sync(&*self.dir, &self.keys.log) {
             Ok(next) => {
                 if next != self.keys.log {
@@ -857,6 +1015,11 @@ impl Engine {
                 }
                 self.log_status = LogStatus::Ok;
                 self.keys.log_trusted = true;
+                // A device the log no longer shows has no session any more
+                // (audit 2026-10, finding 2).
+                if self.keys.forget_devices_not_in_log() {
+                    self.changed = true;
+                }
                 self.check_own_log();
                 self.audit_log(now, true);
             }
@@ -864,11 +1027,31 @@ impl Engine {
             Err(kt::SyncError::Net(e)) => self.log_status = LogStatus::Failed(e),
             Err(e) => {
                 let why = e.to_string();
-                self.note_once(None, "kt:broken".into(), policy::log_broken_note(&why));
-                self.log_status = LogStatus::Broken(why);
+                self.log_broke(&why);
             }
         }
         true
+    }
+
+    /// The key log does not add up: said once, and, if we had trusted it
+    /// before, remembered as broken for good (audit 2026-10, finding 4).
+    fn log_broke(&mut self, why: &str) {
+        self.note_once(None, "kt:broken".into(), policy::log_broken_note(why));
+        self.log_status = LogStatus::Broken(why.to_string());
+        self.keys.log_trusted = false;
+        if self.keys.log.was_trusted() && self.keys.log.broken.is_none() {
+            self.keys.log.broken = Some(why.to_string());
+            self.changed = true;
+        }
+    }
+
+    /// What the key log can be relied on for right now.
+    pub fn log_trust(&self) -> kt::Trust {
+        match (&self.keys.log.broken, &self.log_status) {
+            (Some(why), _) => kt::Trust::BrokenAfterTrust(why.clone()),
+            (None, LogStatus::Ok) => kt::Trust::Trusted,
+            _ => kt::Trust::NeverHadLog,
+        }
     }
 
     /// Looks at the cosignatures of the log's auditors (stage 2). A
@@ -907,9 +1090,7 @@ impl Engine {
                 AuditStatus::Stale(why)
             }
             Err(kt::AuditError::SplitView(why)) => {
-                self.note_once(None, "kt:broken".into(), policy::log_broken_note(&why));
-                self.log_status = LogStatus::Broken(why.clone());
-                self.keys.log_trusted = false;
+                self.log_broke(&why);
                 AuditStatus::Stale(why)
             }
         };
@@ -978,6 +1159,11 @@ impl Engine {
     /// the log does not have with these keys. Nothing while the log is not
     /// readable.
     fn log_check(&self, peer: &str, ud: &UserDevices) -> Result<Vec<u32>, String> {
+        // Never "no constraints" for a log that broke after it was trusted
+        // (audit 2026-10, finding 4).
+        if let Some(why) = &self.keys.log.broken {
+            return self.frozen_log_check(peer, ud, why);
+        }
         if self.log_status != LogStatus::Ok {
             return Ok(Vec::new());
         }
@@ -999,6 +1185,42 @@ impl Engine {
                         || l.ed25519_key != d.ed25519_key
                         || l.account_signature != d.account_signature
                 })
+            })
+            .map(|d| d.device_id)
+            .collect())
+    }
+
+    /// [`Engine::log_check`] while the log is broken after it was trusted:
+    /// only what was vouched for before it broke is used. The account key
+    /// must be the one pinned - a contact never pinned, or a changed key, is
+    /// refused - and a device must already have a session with us or be in
+    /// the last trusted copy of the log; any other device is left out.
+    fn frozen_log_check(
+        &self,
+        peer: &str,
+        ud: &UserDevices,
+        why: &str,
+    ) -> Result<Vec<u32>, String> {
+        match self.keys.pinned(peer) {
+            Some(p) if p.key == ud.account_key => {}
+            Some(_) => {
+                return Err(format!(
+                    "{peer}'s account key changed while the server's key log is broken ({why}); it is not taken until the log is trusted again (/e2e resetlog once the operator explains)"
+                ))
+            }
+            None => {
+                return Err(format!(
+                    "{peer}'s keys were never checked, and the server's key log is broken ({why}); they are not taken until the log is trusted again (/e2e resetlog once the operator explains)"
+                ))
+            }
+        }
+        Ok(ud
+            .devices
+            .iter()
+            .filter(|d| d.revoked_at.is_none())
+            .filter(|d| {
+                self.keys.session(peer, d.device_id).is_none()
+                    && !self.keys.log_shows(peer, &ud.account_key, d)
             })
             .map(|d| d.device_id)
             .collect())
@@ -1029,7 +1251,7 @@ impl Engine {
             }
             LogStatus::Failed(e) => format!("; key log: could not be read ({e})"),
             LogStatus::Broken(why) => {
-                format!("; key log: NOT TRUSTED - {why} (/e2e resetlog once the operator explains)")
+                format!("; key log: NOT TRUSTED - {why}; only keys checked before it broke are used (/e2e resetlog once the operator explains)")
             }
             LogStatus::Ok => {
                 let logged = self
@@ -1175,6 +1397,12 @@ impl Engine {
                 if c.usable() {
                     self.remember(peer, |r| r.seen_encrypting = true);
                     Ok(c)
+                } else if let Some(why) = self.keys.log.broken.clone() {
+                    // Every device left out because the log is broken: held,
+                    // never sent in clear as for a contact without keys.
+                    Err(Lookup::NotInLog(format!(
+                        "no device of {peer} was checked before the server's key log broke ({why})"
+                    )))
                 } else {
                     Err(Lookup::NoKeys)
                 }
@@ -1424,10 +1652,14 @@ impl Crypto for Engine {
     }
 
     fn ready(&self) -> bool {
-        self.ready
+        self.ready && self.locked_out.is_none()
     }
 
+    /// None while locked out: the stand-in keys must never be announced.
     fn account_key(&self) -> Option<[u8; 32]> {
+        if self.locked_out.is_some() {
+            return None;
+        }
         Some(self.keys.account_key_bytes())
     }
 
@@ -1435,6 +1667,14 @@ impl Crypto for Engine {
         let Some(cmd) = policy::parse_command(text) else {
             return false;
         };
+        if let Some(why) = self.locked_out.clone() {
+            let note = format!(
+                "{}Encryption is held in this ICQ: {why}. Commands work in the other one.",
+                policy::PREFIX
+            );
+            self.queue(Note::to(peer, note));
+            return true;
+        }
         let p = sign::ident(peer);
         let pre = policy::PREFIX;
         let note = match cmd {
@@ -1546,6 +1786,9 @@ impl Crypto for Engine {
     }
 
     fn outbound(&mut self, peer: &str, form: Form, text: &[u8], now: u64) -> Outbound {
+        if let Some(note) = self.locked_out_note(peer, true) {
+            return Outbound::Refused(note);
+        }
         let contact = match self.decide(peer, now, true) {
             Decision::Encrypt(c) => c,
             Decision::Hold(why) => {
@@ -1606,9 +1849,18 @@ impl Crypto for Engine {
         let Some(bearer) = self.bearer() else {
             return self.hold(peer, Held::NotPublished);
         };
+        if let Some(why) = self.waits_for_save(peer) {
+            return Outbound::Refused(self.not_saved(peer, &why, true));
+        }
         self.changed = true;
         match self.keys.encrypt(&*self.dir, &bearer, &out, &contact) {
             Ok(Outbound::Encrypted(wire)) => {
+                // The ratchet moved on: the message goes out only once that
+                // is on disk, or a restart could send another message under
+                // the same key (audit 2026-10, finding 5).
+                if let Err(why) = self.persist_now() {
+                    return Outbound::Refused(self.not_saved(peer, &why, true));
+                }
                 self.count(peer);
                 self.show_status(peer, Status::On);
                 // Encrypting may have made a note (a pinned key that changed);
@@ -1637,6 +1889,9 @@ impl Crypto for Engine {
         container: &crate::container::Container,
         now: u64,
     ) -> Inbound {
+        if let Some(note) = self.locked_out_note(peer, false) {
+            return Inbound::Unreadable(note);
+        }
         // A new session from a key our copy of the key log does not have may
         // only mean the copy is behind: once more with a fresh one. A message
         // that did not open left no ratchet step and spent no one-time key.
@@ -1644,13 +1899,32 @@ impl Crypto for Engine {
         let pre_key = container
             .wrap_for(self.keys.device_id)
             .is_some_and(|w| w.olm_type == 0);
-        let fresh = pre_key && self.sync_log(now, false);
+        // Every message, not only a pre-key one: a device the log no longer
+        // shows loses its session here (audit 2026-10, finding 2).
+        let fresh = self.sync_log(now, false) && pre_key;
+        // What the message may change, to put back if it cannot be saved.
+        let before = self.persist.is_some().then(|| self.keys.snapshot(peer));
         let mut got = self.keys.decrypt(&*self.dir, peer, container, now);
         if pre_key && matches!(got, Inbound::Unreadable(_)) && self.keys.log_trusted && !fresh {
             self.sync_log(now, true);
             got = self.keys.decrypt(&*self.dir, peer, container, now);
         }
         self.changed = true;
+        // What opened moved the ratchet on: it reaches the client only once
+        // that is on disk (audit 2026-10, finding 5). Otherwise it is
+        // dropped with a note and the keys go back to what the disk has; the
+        // sender sends again, or the server's offline copy comes again, and
+        // it opens then.
+        if matches!(got, Inbound::Text { .. } | Inbound::Control(_)) {
+            if let Err(why) = self.persist_now() {
+                // Memory goes back to what the disk has, so the same message
+                // opens when it comes again.
+                if let Some(before) = before {
+                    self.keys.restore(before);
+                }
+                return Inbound::Unreadable(self.not_saved(peer, &why, false));
+            }
+        }
         // A call key exchange (`calls_encrypt=on` only): it goes to the call
         // table and is answered by the call's own SIP, not by a control
         // message of ours. Off, it is taken below like any control message,
@@ -1660,6 +1934,22 @@ impl Crypto for Engine {
                 if let Some(msg) = crate::callneg::Msg::decode(payload) {
                     let table = self.calls.clone();
                     lock_calls(&table).control(peer, container.sender_device, msg, now * 1000);
+                    self.remember(peer, |r| r.seen_encrypting = true);
+                    return got;
+                }
+            }
+        }
+        // The same for a file transfer's key exchange (`files_encrypt=on`).
+        if self.files_encrypt {
+            if let Inbound::Control(payload) = &got {
+                if let Some(msg) = crate::filesneg::Msg::decode(payload) {
+                    let table = self.files.clone();
+                    crate::filesneg::lock(&table).control(
+                        peer,
+                        container.sender_device,
+                        msg,
+                        crate::filesneg::now_ms(),
+                    );
                     self.remember(peer, |r| r.seen_encrypting = true);
                     return got;
                 }
@@ -1698,6 +1988,11 @@ impl Crypto for Engine {
             let mut t = lock_calls(&table);
             self.notes.extend(t.take_notes());
         }
+        if self.files_encrypt {
+            let table = self.files.clone();
+            let mut t = crate::filesneg::lock(&table);
+            self.notes.extend(t.take_notes());
+        }
         if self.notes.is_empty() {
             None
         } else {
@@ -1706,6 +2001,9 @@ impl Crypto for Engine {
     }
 
     fn take_control(&mut self, peer: &str) -> Option<Vec<u8>> {
+        if self.locked_out.is_some() {
+            return None;
+        }
         // A call's confirmation that no SIP message has carried yet.
         if self.calls_encrypt {
             let table = self.calls.clone();
@@ -1714,6 +2012,17 @@ impl Crypto for Engine {
                 match self.encrypt_call_payload(peer, &payload, unix_now()) {
                     Ok(c) => return Some(c),
                     Err(why) => lock_calls(&table).send_failed(&payload, &why),
+                }
+            }
+        }
+        // A file answer that no rendezvous ICBM has carried yet.
+        if self.files_encrypt {
+            let table = self.files.clone();
+            let waiting = crate::filesneg::lock(&table).take_outbox(peer);
+            if let Some(payload) = waiting {
+                match self.encrypt_call_payload(peer, &payload, unix_now()) {
+                    Ok(c) => return Some(c),
+                    Err(why) => crate::filesneg::lock(&table).send_failed(&payload, &why),
                 }
             }
         }
@@ -1744,9 +2053,18 @@ impl Crypto for Engine {
             text: Vec::new(),
             now: unix_now(),
         };
+        if self.waits_for_save(peer).is_some() {
+            return None;
+        }
         self.changed = true;
         match self.keys.encrypt(&*self.dir, &bearer, &out, &contact) {
-            Ok(Outbound::Encrypted(wire)) => container::find_armor(&wire),
+            Ok(Outbound::Encrypted(wire)) => {
+                if self.persist_now().is_err() {
+                    self.unsaved.insert(sign::ident(peer));
+                    return None;
+                }
+                container::find_armor(&wire)
+            }
             Ok(Outbound::Refused(note)) => {
                 self.queue(Note::to(peer, note));
                 None
@@ -1790,7 +2108,39 @@ impl Crypto for Engine {
         lines.extend(lock_calls(&table).take_log());
         out
     }
+
+    fn file_icbm(
+        &mut self,
+        rdv: &crate::files::Rendezvous,
+        now: u64,
+        lines: &mut Vec<String>,
+    ) -> Vec<Vec<u8>> {
+        if !self.files_encrypt {
+            return Vec::new();
+        }
+        let peer = rdv.peer.clone();
+        let info = self.peer_info(&peer);
+        let table = self.files.clone();
+        let payloads = {
+            let mut t = crate::filesneg::lock(&table);
+            let mut me = || self.call_me(&peer, now);
+            t.icbm(rdv, info, &mut me, crate::filesneg::now_ms())
+        };
+        let mut out = Vec::new();
+        for p in payloads {
+            match self.encrypt_call_payload(&peer, &p, now) {
+                Ok(c) => out.push(c),
+                Err(why) => crate::filesneg::lock(&table).send_failed(&p, &why),
+            }
+        }
+        lines.extend(crate::filesneg::lock(&table).take_log());
+        out
+    }
 }
+
+/// How an engine writes its state file: [`crate::session::Session`] gives it
+/// one over its [`crate::store::Store`].
+pub type Persist = Box<dyn FnMut(&OwnKeys) -> Result<(), String> + Send>;
 
 /// The call table, even if a panic poisoned its lock.
 fn lock_calls(
@@ -1859,6 +2209,7 @@ mod tests {
     use super::*;
     use crate::directory::MemoryDirectory;
     use crate::keys;
+    use crate::keys::FALLBACK_KEY_LIFETIME;
     use crate::token::Token;
     use std::time::Instant;
 
@@ -3097,6 +3448,165 @@ mod tests {
         ));
     }
 
+    // --- file transfers (files_encrypt) ----------------------------------------
+
+    type FileTableRef = Arc<std::sync::Mutex<crate::filesneg::FileTable>>;
+
+    /// Two running engines, each with its own file table and files on or off.
+    fn senders(a_on: bool, b_on: bool) -> (Engine, Engine, FileTableRef, FileTableRef) {
+        let (dir, a, b) = two_published();
+        let mut ea = running(&dir, a);
+        let mut eb = running(&dir, b);
+        let (ta, tb): (FileTableRef, FileTableRef) = Default::default();
+        ea.use_file_table(ta.clone());
+        eb.use_file_table(tb.clone());
+        ea.set_files_encrypt(a_on);
+        eb.set_files_encrypt(b_on);
+        (ea, eb, ta, tb)
+    }
+
+    const FILE_COOKIE: [u8; 8] = [0xF1, 0x1E, 1, 2, 3, 4, 5, 6];
+
+    fn file_rdv(dir: crate::icbm::Direction, peer: &str, kind: u16) -> crate::files::Rendezvous {
+        let payload = if kind == crate::files::RDV_PROPOSE {
+            crate::files::tests::proposal(
+                dir,
+                peer,
+                FILE_COOKIE,
+                1,
+                std::net::Ipv4Addr::new(192, 168, 1, 20),
+                5190,
+                false,
+            )
+        } else {
+            crate::files::tests::rdv_payload(dir, peer, kind, FILE_COOKIE, &[])
+        };
+        crate::files::rendezvous(dir, &payload).unwrap()
+    }
+
+    /// A sends B a file: proposal out, B sees it, B accepts - every step
+    /// through the engines and their Olm sessions.
+    fn send_file(ea: &mut Engine, eb: &mut Engine) {
+        use crate::icbm::Direction;
+        let mut lines = Vec::new();
+        let offer = ea.file_icbm(
+            &file_rdv(Direction::Outbound, "100002", crate::files::RDV_PROPOSE),
+            NOW,
+            &mut lines,
+        );
+        hand(eb, "100001", offer);
+        assert!(eb
+            .file_icbm(
+                &file_rdv(Direction::Inbound, "100001", crate::files::RDV_PROPOSE),
+                NOW,
+                &mut lines
+            )
+            .is_empty());
+        let answer = eb.file_icbm(
+            &file_rdv(Direction::Outbound, "100001", crate::files::RDV_ACCEPT),
+            NOW,
+            &mut lines,
+        );
+        hand(ea, "100002", answer);
+    }
+
+    #[test]
+    fn a_file_transfer_between_two_add_ons_with_files_on_is_keyed_the_same() {
+        use crate::filestream::KeySource;
+        let (mut ea, mut eb, ta, tb) = senders(true, true);
+        send_file(&mut ea, &mut eb);
+        let (ka, kb) = (
+            crate::filesneg::lock(&ta).agreement(&FILE_COOKIE),
+            crate::filesneg::lock(&tb).agreement(&FILE_COOKIE),
+        );
+        let (ka, kb) = (ka.expect("A keyed"), kb.expect("B keyed"));
+        assert_eq!(ka.root, kb.root);
+        assert_eq!(ka.confirm, kb.confirm);
+        assert_eq!(ka.answerer_device, kb.answerer_device);
+        // No ordinary control message is owed for a file exchange.
+        assert!(ea.take_control("100002").is_none() && eb.take_control("100001").is_none());
+        // Nothing is said before the data connection says it.
+        assert!(texts(&mut ea).is_empty() && texts(&mut eb).is_empty());
+    }
+
+    #[test]
+    fn a_receiver_with_files_off_takes_the_offer_as_an_old_add_on_would() {
+        use crate::icbm::Direction;
+        let (mut ea, mut eb, ta, tb) = senders(true, false);
+        let mut lines = Vec::new();
+        let offer = ea.file_icbm(
+            &file_rdv(Direction::Outbound, "100002", crate::files::RDV_PROPOSE),
+            NOW,
+            &mut lines,
+        );
+        assert_eq!(offer.len(), 1, "an offer is made");
+        let got = hand(&mut eb, "100001", offer);
+        assert!(matches!(got[0], Inbound::Control(_)));
+        assert!(
+            eb.take_control("100001").is_some(),
+            "an ordinary control message back"
+        );
+        assert!(eb
+            .file_icbm(
+                &file_rdv(Direction::Outbound, "100001", crate::files::RDV_ACCEPT),
+                NOW,
+                &mut lines
+            )
+            .is_empty());
+        assert_eq!(crate::filesneg::lock(&tb).state_of(&FILE_COOKIE), None);
+        assert_eq!(
+            crate::filesneg::lock(&ta).state_of(&FILE_COOKIE),
+            Some("offered"),
+            "A waits for a hello on the data connection, then goes plain"
+        );
+        assert!(texts(&mut eb).is_empty(), "B, with files off, says nothing");
+    }
+
+    #[test]
+    fn a_sender_with_files_off_offers_nothing_and_the_receiver_says_plain() {
+        use crate::icbm::Direction;
+        let (mut ea, mut eb, ta, tb) = senders(false, true);
+        let mut lines = Vec::new();
+        assert!(ea
+            .file_icbm(
+                &file_rdv(Direction::Outbound, "100002", crate::files::RDV_PROPOSE),
+                NOW,
+                &mut lines
+            )
+            .is_empty());
+        assert_eq!(crate::filesneg::lock(&ta).state_of(&FILE_COOKIE), None);
+        eb.file_icbm(
+            &file_rdv(Direction::Inbound, "100001", crate::files::RDV_PROPOSE),
+            NOW,
+            &mut lines,
+        );
+        assert_eq!(
+            crate::filesneg::lock(&tb).state_of(&FILE_COOKIE),
+            Some("plain")
+        );
+        assert!(texts(&mut eb).iter().any(|n| n
+            .contains("This file transfer with 100001 is not end-to-end encrypted")
+            && n.contains("did not offer")));
+    }
+
+    #[test]
+    fn e2e_off_for_the_sender_declines_the_file_and_both_say_why() {
+        let (mut ea, mut eb, ta, tb) = senders(true, true);
+        assert!(eb.command("100001", "/e2e off", NOW));
+        texts(&mut eb);
+        send_file(&mut ea, &mut eb);
+        assert_eq!(
+            crate::filesneg::lock(&ta).state_of(&FILE_COOKIE),
+            Some("plain")
+        );
+        assert_eq!(
+            crate::filesneg::lock(&tb).state_of(&FILE_COOKIE),
+            Some("plain")
+        );
+        assert!(texts(&mut ea).iter().any(|n| n.contains("declined")));
+        assert!(texts(&mut eb).iter().any(|n| n.contains("/e2e off")));
+    }
+
     // --- calls (calls_encrypt) ------------------------------------------------
 
     use crate::callmedia::Verdict;
@@ -3323,7 +3833,7 @@ mod tests {
     }
 
     #[test]
-    fn a_verified_contact_s_plain_call_is_said_in_strong_words_not_blocked() {
+    fn a_contact_under_e2e_on_whose_call_is_not_encrypted_is_not_let_through() {
         let (mut ea, mut eb, ta, _) = callers(true, false);
         assert!(ea.command("100002", "/e2e on", NOW));
         texts(&mut ea);
@@ -3343,15 +3853,18 @@ mod tests {
             NOW,
             &mut lines,
         );
+        // Encryption is on for 100002, for calls as for messages (audit
+        // 2026-10, finding 8): the call is not let through.
         let n = texts(&mut ea);
         assert!(
-            n.iter().any(|n| n.contains("calls are never blocked")),
+            n.iter()
+                .any(|n| n.contains("not let through") && n.contains("/e2e on")),
             "{n:?}"
         );
-        assert_eq!(
+        assert!(matches!(
             ta.lock().unwrap().media_out(1, &rtp(1), NOW * 1000),
-            Verdict::Pass
-        );
+            Verdict::Drop(_)
+        ));
     }
 
     // --- the key log (docs/e2e/KEY-TRANSPARENCY.md) -------------------------
@@ -3529,35 +4042,107 @@ mod tests {
         );
     }
 
+    /// Audit 2026-10, finding 4: a log that was trusted and then broke used
+    /// to put every key back on trust on first use - a new contact, a new
+    /// device, a changed account key all taken unchecked, the moment the
+    /// server rewrote its log. Now the break is remembered across sign-ons
+    /// until `/e2e resetlog`, the sessions already made go on, and nothing
+    /// new is taken.
     #[test]
-    fn a_rewritten_log_is_said_and_keys_fall_back_to_first_use() {
-        let (dir, a, _) = two_published();
+    fn a_log_broken_after_it_was_trusted_takes_nothing_new_until_resetlog() {
+        let (dir, a, b) = two_published();
+        let mut c = OwnKeys::create("100003");
+        publish_keys(&dir, &mut c);
         let mut e = running(&dir, a);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        notes(&mut e);
+
         dir.rewrite_log(
             0,
             kt::build_leaf("account", "100009", 1, &[b"publish", &[9; 32]]),
         );
         let later = NOW + LOG_SYNC_EVERY;
+        // The contact checked before goes on, over its session.
         assert!(matches!(
-            e.outbound("100002", form(), b"hi", later),
+            e.outbound("100002", form(), b"hi again", later),
             Outbound::Encrypted(_)
         ));
         let n = notes(&mut e);
-        let warned: Vec<_> = n
+        let warned = n
             .iter()
             .filter(|n| n.text.contains("WARNING: the key log was rewritten"))
-            .collect();
-        assert_eq!(warned.len(), 1, "{n:?}");
-        assert!(
-            status_of(&mut e, "100002", later + LOG_SYNC_EVERY).contains("key log: NOT TRUSTED")
-        );
-        // The copy that was good is kept.
-        assert_eq!(e.keys().log.size, 4);
+            .count();
+        assert_eq!(warned, 1, "{n:?}");
+        assert!(matches!(e.log_trust(), kt::Trust::BrokenAfterTrust(_)));
+        // The copy that was good is kept, frozen.
+        assert_eq!(e.keys().log.size, 6);
+
+        // A contact never checked: held, not trusted on first use.
+        let out = e.outbound("100003", form(), b"new contact", later);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+        assert!(e.keys().pinned("100003").is_none());
+        let n = notes(&mut e);
+        assert!(n.iter().any(|n| n.text.contains("never checked")), "{n:?}");
+
+        // A new session from a contact never checked: not read.
+        let sent = c
+            .encrypt(
+                &*dir,
+                &bearer(&dir, "100003"),
+                &keys::Outgoing {
+                    peer: "100001".into(),
+                    form: form(),
+                    text: b"hello".to_vec(),
+                    now: later,
+                },
+                &keys::fetch_contact(&*dir, "100001").unwrap(),
+            )
+            .unwrap();
+        let got = e.inbound("100003", &container_of(sent), later);
+        assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
+        assert!(e.keys().session("100003", c.device_id).is_none());
+
+        // A changed account key of a contact checked before: held.
+        reset_contact(&dir, &b);
+        let out = e.outbound("100002", form(), b"to the new key", later);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+        assert_eq!(e.keys().pinned("100002").unwrap().key, b.account_key_b64());
+
+        // Sticky: a restart reads it back broken, and still holds.
+        let mut again = restarted(&dir, &e);
+        assert!(matches!(again.log_trust(), kt::Trust::BrokenAfterTrust(_)));
+        assert!(status_of(&mut again, "100003", later).contains("key log: NOT TRUSTED"));
+        let out = again.outbound("100003", form(), b"still held", later);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
 
         // The operator explains; the user starts the copy afresh.
-        assert!(e.command("100002", "/e2e resetlog", later));
-        assert!(notes(&mut e)[0].text.contains("forgotten"));
-        assert!(status_of(&mut e, "100002", later).contains("100002's keys are in it, checked"));
+        assert!(again.command("100003", "/e2e resetlog", later));
+        assert!(notes(&mut again)
+            .iter()
+            .any(|n| n.text.contains("forgotten")));
+        assert!(status_of(&mut again, "100003", later).contains("100003's keys are in it, checked"));
+        assert!(matches!(
+            again.outbound("100003", form(), b"now", later),
+            Outbound::Encrypted(_)
+        ));
+    }
+
+    /// An older server, or a log never seen: trust on first use, as before
+    /// the log existed - not the state of a log that broke.
+    #[test]
+    fn a_server_that_never_had_a_log_is_not_a_broken_one() {
+        let (dir, a, _) = two_published();
+        dir.set_log(false);
+        let mut e = running(&dir, a);
+        assert_eq!(e.log_trust(), kt::Trust::NeverHadLog);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        assert!(e.keys().log.broken.is_none());
     }
 
     #[test]
@@ -3634,11 +4219,12 @@ mod tests {
         );
         let s = status_of(&mut e, "100002", NOW);
         assert!(s.contains("key log: NOT TRUSTED"), "{s}");
-        // Messages still go, trusted on first use as without a log.
-        assert!(matches!(
-            e.outbound("100002", form(), b"hi", NOW),
-            Outbound::Encrypted(_)
-        ));
+        // A contact whose keys were never checked is not trusted on first
+        // use now: the log broke after it was trusted (audit 2026-10,
+        // finding 4). The message is held, never sent in clear.
+        let out = e.outbound("100002", form(), b"hi", NOW);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+        assert!(e.keys().pinned("100002").is_none());
     }
 
     #[test]

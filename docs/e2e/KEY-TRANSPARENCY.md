@@ -185,12 +185,20 @@ log's key, the size, the tree's right edge and every account replayed.
   is not ours is a warning (once per key); a device we have not been told
   about is reported once (`LogState::own_seen`, kept in the state file) - it
   may be another computer the user linked, or someone else's.
-- **A log that cannot be trusted** (rewritten, other key): a warning once per
-  sign-on, `/e2e status` says `NOT TRUSTED`, and until it is sorted out keys
-  are trusted on first use as without a log. Holding every message instead
-  would leave the user with no messenger whenever the operator restores an
-  old backup. `/e2e resetlog` forgets the copy and its key, for when the
-  operator explains.
+- **A log that cannot be trusted** (rewritten, other key, gone, a split
+  view): a warning once per sign-on and `/e2e status` says `NOT TRUSTED`.
+  Three states are told apart (`kt::Trust`, audit 2026-10, finding 4):
+  *never had a log* (an older server) - trust on first use as before;
+  *trusted*; and *broken after trust* - kept in the state file
+  (`LogState::broken`) across sign-ons until `/e2e resetlog`. Broken after
+  trust, the copy is frozen as it was last trusted: sessions already made go
+  on, so the user keeps a messenger with the contacts they had, but a
+  contact never checked, a changed account key, a device neither in the
+  frozen copy nor already in a session, and a new Olm session from any of
+  them are refused (held, or unreadable, with a note). It used to fall back
+  to trust on first use, which handed a server that breaks its own log the
+  very keys the log is there to check. `/e2e resetlog` forgets the copy and
+  its key, for when the operator explains.
 - **Unreadable for now** (network): nothing is checked against the copy until
   it can be brought up to date again; no note.
 - **No log on the server** (an older server: the endpoints answer 404): the

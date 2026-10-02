@@ -473,6 +473,30 @@ impl StreamRewriter {
                 }
             }
         }
+        // A file transfer's rendezvous (ICBM channel 2, `CapFileTransfer`):
+        // with `files_log=on` it is logged without name or address, and its
+        // facts are kept so the socket hooks can tell its connections; with
+        // `files_encrypt=on` the key exchange (filesneg.rs) goes on the wire
+        // *before* the ICBM, which goes on below exactly as it came.
+        if policy.files_log || policy.encrypts_files() {
+            if let Some(rdv) = crate::files::rendezvous(self.dir, payload) {
+                if policy.files_log {
+                    lines.push(rdv.log_line());
+                }
+                crate::filesneg::lock(&crate::filesneg::shared())
+                    .observe(&rdv, crate::filesneg::now_ms());
+                if policy.encrypts_files() && may_add {
+                    if let Some(c) = ctx.as_deref_mut() {
+                        let containers = c.crypto.file_icbm(&rdv, c.now, lines);
+                        if self.dir == Direction::Outbound {
+                            for container in containers {
+                                self.put_control(&rdv.peer, &container, out, lines);
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // The contact a message is about, so a note or a control message goes
         // into the conversation it belongs to.
         // Only on the crypto path, the one that puts notes in.
@@ -1127,6 +1151,9 @@ mod tests {
         /// What `call_sip` answers, and the SIP it was shown.
         call: Vec<Vec<u8>>,
         sip_seen: Vec<(Direction, String)>,
+        /// What `file_icbm` answers, and the rendezvous it was shown.
+        file: Vec<Vec<u8>>,
+        rdv_seen: Vec<(Direction, String)>,
     }
 
     impl Fake {
@@ -1139,6 +1166,8 @@ mod tests {
                 seen: Vec::new(),
                 call: Vec::new(),
                 sip_seen: Vec::new(),
+                file: Vec::new(),
+                rdv_seen: Vec::new(),
             }
         }
 
@@ -1230,6 +1259,16 @@ mod tests {
         ) -> Vec<Vec<u8>> {
             self.sip_seen.push((dir, peer.to_string()));
             std::mem::take(&mut self.call)
+        }
+
+        fn file_icbm(
+            &mut self,
+            rdv: &crate::files::Rendezvous,
+            _now: u64,
+            _lines: &mut Vec<String>,
+        ) -> Vec<Vec<u8>> {
+            self.rdv_seen.push((rdv.dir, rdv.peer.clone()));
+            std::mem::take(&mut self.file)
         }
     }
 
@@ -1820,6 +1859,58 @@ next"]);
                 on,
                 "{lines:?}"
             );
+        }
+    }
+
+    /// A file proposal: with `files_log=on` it is logged without its name;
+    /// with `files_encrypt=on` the engine sees it and its control message
+    /// goes on the wire before it. The proposal itself always goes on byte
+    /// for byte; with both off the engine is never asked.
+    #[test]
+    fn a_file_proposal_goes_on_unchanged_with_the_key_offer_before_it_only_when_on() {
+        let payload = crate::files::tests::proposal(
+            Direction::Outbound,
+            "100002",
+            [5; 8],
+            1,
+            std::net::Ipv4Addr::new(192, 168, 1, 20),
+            5190,
+            false,
+        );
+        let f = frame(2, 101, &payload);
+        for (log, enc) in [(false, false), (true, false), (false, true)] {
+            let mut policy = encrypt();
+            policy.files_log = log;
+            policy.files_encrypt = enc;
+            let (mut r, _) = opened(Direction::Outbound);
+            let mut c = Fake::new();
+            c.file = vec![any_container()];
+            let mut out = Vec::new();
+            let lines = r.push_crypto(&f, &mut c, 1, &policy, &mut out);
+            assert_eq!(
+                lines
+                    .iter()
+                    .any(|l| l.starts_with("file rendezvous OUT peer=100002 propose")),
+                log,
+                "{lines:?}"
+            );
+            assert!(!lines.iter().any(|l| l.contains("secret")), "{lines:?}");
+            if !enc {
+                assert_eq!(out, f, "the client's own frame, nothing else");
+                assert!(c.rdv_seen.is_empty());
+                continue;
+            }
+            assert_eq!(
+                c.rdv_seen,
+                vec![(Direction::Outbound, "100002".to_string())]
+            );
+            let got = frames_of(&out);
+            assert_eq!(got.len(), 2, "{lines:?}");
+            let s0 = snac::parse(&got[0].1).unwrap();
+            let m = icbm::parse_to_host(s0.body).unwrap();
+            assert_eq!(m.peer, "100002");
+            assert_eq!(container::find_armor(&m.text).unwrap(), any_container());
+            assert_eq!(got[1].1, payload, "the proposal untouched");
         }
     }
 

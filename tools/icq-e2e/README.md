@@ -183,9 +183,14 @@ the add-on checks against it on its own, as Signal does
   account"). That is what catches a server that quietly adds a device to read
   your messages.
 - A log that changes its past - shorter than before, another history, another
-  key - gets a WARNING once per sign-on, and keys fall back to trust on first
-  use until it is sorted out. After the operator restores an old backup every
-  user sees this once and types `/e2e resetlog`.
+  key, gone, or a split view an auditor saw - gets a WARNING once per
+  sign-on, and once it had been trusted the break is kept in the state file
+  until `/e2e resetlog` (audit 2026-10, finding 4). Until then the copy is
+  frozen as last trusted: the sessions already made go on, but a contact
+  never checked, a changed account key, a device the frozen copy does not
+  show and a new session from any of them are held or unreadable with a
+  note, never trusted on first use. After the operator restores an old backup
+  every user sees this once and types `/e2e resetlog`.
 - `/e2e status` ends its key part with what the log says ("key log: 100002's
   keys are in it, checked (N entries)").
 - A server without a log (an older one) works as before.
@@ -259,6 +264,9 @@ earlier build kept a file per contact for the button under
 | `calls.rs`, `hook_calls.rs` | Call observation (`calls_log=on`, stage C0 of `docs/e2e/CALLS-RESEARCH.md`): the media sockets of `sipXtapi.dll` / `sipXmediaLib.dll`, each datagram classified (STUN, TURN, RTP, RTCP, other) without content, and the SIP of a call (ICBM channel 6) reduced to its media fields. With `calls_encrypt=on` the same hooks encrypt the media of a call both add-ons agreed on. |
 | `callneg.rs` | Call encryption, key agreement (`calls_encrypt=on`, stages C1/C3): offer / answer / confirm as hidden control messages in the E2E session, keyed by the Call-ID; the state of each call; which datagrams belong to an agreed call; the notes. |
 | `callmedia.rs` | Call encryption, media (stage C2): HKDF keys per direction, AES-128-GCM over RTP (RFC 7714, explicit rollover counter) and RTCP (SRTCP index), the replay window, and the TURN / ChannelData framing around them. |
+| `files.rs` | File transfers as the wire shows them (`files_log=on`, stage F0): the rendezvous ICBM (channel 2, `CapFileTransfer`), the rendezvous proxy's ARS frames, OFT2 headers, and the per-connection watch for the log - never a name, an address or content. |
+| `filesneg.rs` | File encryption, key agreement (`files_encrypt=on`, stages F2/F4): offer / answer / decline as hidden control messages in the E2E session, keyed by the transfer's cookie; the state of each transfer; which sockets belong to which transfer; the notes. |
+| `filestream.rs`, `hook_files.rs` | File encryption, the data connection (stage F3): the key hellos and the ChaCha20-Poly1305 record stream, and that stream at the bottom of the peer socket (`connect`, `accept`, `send`, `recv`, `FIONREAD`, `closesocket`, a pump thread), fail closed once agreed. |
 | `route.rs` | Which connections go to our server (`server=` in `icq-e2e.ini`), and the TLS port and ALPN they go to instead (docs/e2e/STAGE-TLS.md). |
 | `tls.rs`, `hook_tls.rs` | TLS 1.3 as byte buffers (rustls), and TLS at the bottom of the hooked sockets: the pump thread, `recv`/`send`/`FIONREAD`/`closesocket`/`getpeername`, fail closed with a message box; `tls=off` is the opt-out. |
 
@@ -272,7 +280,8 @@ earlier build kept a file per contact for the button under
    code runs. A polling thread stays as the fallback, and a second thread runs
    the publish and refill steps that come due.
 2. The hooks replace that module's Winsock imports: `send`, `recv`, `connect`,
-   `closesocket`, `WSAAsyncSelect` and `ioctlsocket`. The imports are by
+   `closesocket`, `WSAAsyncSelect`, `ioctlsocket`, `getpeername` and
+   `accept` (the last for the peer connections of file transfers). The imports are by
    ordinal, and an ordinal is turned into a name from the export table of the
    DLL it comes from (`wsock32` and `ws2_32` number 10-12 differently). Every
    `connect` is logged with its target, and the first bytes of each direction
@@ -302,7 +311,20 @@ earlier build kept a file per contact for the button under
    device cannot read), so the add-on keeps its own FLAP sequence numbering per
    direction. `ICQE2E_NO_INJECT=1` turns that off, and nothing is added or
    removed at all.
-9. A panic inside the add-on falls back to the original Winsock call.
+9. A panic inside the add-on falls back to the original Winsock call only in
+   observe mode. In every other mode the call fails with `WSAECONNRESET`, the
+   socket is refused from then on, and the chat says why: the original call
+   would send the client's plaintext, past the TLS too, or hand the client
+   undecrypted bytes (audit 2026-10, finding 1). The client reconnects.
+10. An encrypted message goes out, and a decrypted one reaches the client,
+   only once the state its ratchet moved on to is saved; if the state file
+   cannot be written, the message is held with a note and the keys in memory
+   go back to what the disk has (audit 2026-10, finding 5).
+11. `<uin>.lock` next to the state file is locked for as long as the client
+   runs. A second ICQ signed on as the same account on the same computer
+   leaves the state alone: it encrypts nothing, publishes nothing, and holds
+   every message rather than sending it in clear, with a note (audit
+   2026-10, finding 6).
 
 ## Settings
 
@@ -318,7 +340,9 @@ Environment variables, read when ICQ starts:
 | `ICQE2E_PEERS` | `uin1,uin2`: encrypt outbound messages only to these contacts. Unset: to everybody. |
 | `ICQE2E_NO_INJECT` | `1`: never add or remove a frame. |
 | `ICQE2E_CALLS_LOG` | Overrides `calls_log =` of the ini (see "Call observation" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is off. |
-| `ICQE2E_CALLS_ENCRYPT` | Overrides `calls_encrypt =` of the ini (see "Call encryption" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is **off** (the default). |
+| `ICQE2E_CALLS_ENCRYPT` | Overrides `calls_encrypt =` of the ini (see "Call encryption" below). `on`/`1`/`true`/`yes` is on; `required` is on and lets no call through that did not agree on keys; anything else, or nothing, is **off** (the default). |
+| `ICQE2E_FILES_LOG` | Overrides `files_log =` of the ini (see "File transfer observation" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is off. |
+| `ICQE2E_FILES_ENCRYPT` | Overrides `files_encrypt =` of the ini (see "File encryption" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is **off** (the default). |
 | `ICQE2E_AUDITORS` | Overrides `auditors =` of the ini: the key log's auditors to trust, their verifier keys comma-separated as `e2e-kt-auditor -print-key` prints them. Given, exactly these are trusted; absent or empty, the server's are pinned on first use. A key that does not read is left out and named in the start-up line. |
 | `ICQE2E_LOG` | File to append the log to (local-time stamps). Lines also go to `OutputDebugString`. Unset: `%LOCALAPPDATA%\icqe2e\icqe2e.log`. |
 
@@ -469,10 +493,24 @@ frames allowed (not `ICQE2E_NO_INJECT`); otherwise the start-up line says
 `calls_encrypt=on (call media encrypted when both add-ons agree; any other
 call untouched)`. It can be combined with `calls_log = on`.
 
-The rule the owner set: **a call is never blocked, and a call that is not
-encrypted is exactly what it was without the add-on** - no byte of it
-changed. Encryption happens only when both add-ons agreed on keys for that
-Call-ID; anything else passes untouched.
+Encryption happens only when both add-ons agreed on keys for that Call-ID.
+What happens to a call that did not agree depends on the contact (audit
+2026-10, finding 8): "encryption is on for this contact" means the same for
+calls as for messages.
+
+- With `calls_encrypt = on`, a call with a contact under `/e2e on` or
+  verified that did not agree on keys is **not let through**: its RTP and
+  RTCP are dropped both ways (STUN and TURN control still pass, so a call
+  that does agree can set up), and the chat says `This call with 100002 is
+  not let through: ...`. A call with any other contact is exactly what it
+  was without the add-on - no byte of it changed - with a note that it is
+  not encrypted.
+- `calls_encrypt = required` makes every contact strict: no call that did
+  not agree on keys is let through. The start-up line ends in
+  `calls_encrypt=required (...; any other call's media is dropped)`. The
+  patches' calls row keeps a `required` it finds rather than turning it back
+  into `on`.
+- `calls_encrypt = off`: no call encryption, nothing blocked.
 
 - **Key agreement** (`callneg.rs`): when the client sends an INVITE (ICBM
   channel 6) to a contact with E2E keys, the add-on first puts a hidden
@@ -497,17 +535,19 @@ Call-ID; anything else passes untouched.
   TURN Send / Data Indication (the attribute and message lengths fixed),
   RFC 5766 ChannelData, or bare (direct path, or relayed after Set Active
   Destination). STUN and TURN control are never touched.
-- **Fail closed, only for an agreed call**: a packet that does not
-  authenticate, a replay, or plain RTP in an encrypted call is dropped; a
-  packet that cannot be encrypted is dropped, never sent plain; a panic in a
-  hook drops the packet of an agreed call and passes anything else.
+- **Fail closed, only for an agreed call** (with `required`, for every
+  call): a packet that does not authenticate, a replay, or plain RTP in an
+  encrypted call is dropped; a packet that cannot be encrypted is dropped,
+  never sent plain; a panic in a hook drops the packet of an agreed call, or
+  of a socket it cannot rule out being one, and passes anything else.
 - The callee holds the call as *answered* until the caller proves it has the
   keys (its confirmation, or its first packet that decrypts); without either
   in 8 s it goes plain too, so the two sides never disagree.
 - **Notes** in the chat with the contact: `This call with 100002 is
   end-to-end encrypted ...`, or `This call with 100002 is not end-to-end
-  encrypted: <reason>.`; for a contact under `/e2e on` or verified, it adds
-  that calls are never blocked and to hang up if the call must stay private.
+  encrypted: <reason>.`; for a contact under `/e2e on` or verified (or with
+  `required`), `This call with 100002 is not let through: it is not
+  end-to-end encrypted (<reason>), and ...`.
 - **Packet size**: an encrypted datagram over 1472 bytes of UDP payload is
   logged (`... is over 1472 B of UDP payload; sent unfragmented by us`); the
   add-on does not fragment.
@@ -523,6 +563,134 @@ call 5d41402a with 100002 (we call): first media packet encrypted (local port 16
 call 5d41402a with 100002 (we call): first media packet decrypted (local port 16384)
 call 5d41402a with 100002 (we call): BYE; keys kept 10 s for packets on the way
 call 5d41402a with 100002 (we call): forgotten (ended); media: out: 1500 RTP + 30 RTCP encrypted (...); in: ...; dropped: 0 plain, 0 failed authentication, 0 replayed, 0 other
+```
+
+## File transfer observation (`files_log`)
+
+Stage F0 of `docs/e2e/FILES-RESEARCH.md`: a spike that only looks at file
+transfers. Off by default; a line typed by hand into `icq-e2e.ini` (the patch
+keeps it), or `ICQE2E_FILES_LOG=on`:
+
+```
+files_log = on
+```
+
+**No byte is changed.** It logs, per transfer - named by the first four bytes
+of its cookie's SHA-256, never by the cookie, a file name or an address:
+
+- each rendezvous ICBM on the BOS connection (channel 2 with the file
+  transfer capability): propose / accept / cancel, the sequence number (1
+  direct, 2 reverse, 3 proxy), the port, the classes of the addresses
+  (`private`, `public`, ...), whether through the proxy, the number of files
+  and their total size, the TLV tags;
+- each peer connection whose first bytes are OFT2 or an ARS frame (or that
+  carries an encrypted transfer): how it was opened (`connect` or `accept`),
+  each ARS frame and OFT2 header (type, length, file *n* of *m*, size,
+  resume offset), and at `closesocket` the totals per direction (bytes, OFT2
+  headers, file data), the files done, the duration, which way and which
+  stage.
+
+```
+file rendezvous OUT peer=100002 propose transfer=9c1d2e3f seq=1 stage=direct port=5190 addresses=[private] ars=no files=1 size=5242880 tlvs=0x000a,0x0002,0x0003,0x0005,0x2711
+accept: socket 1234 from listening socket 1200
+file transfer 9c1d2e3f: socket 1234: first bytes OUT OFT2
+file transfer 9c1d2e3f: socket 1234: OUT OFT2 prompt (0x0101, 256 B) file 1 of 1, size 5242880
+file transfer 9c1d2e3f: socket 1234: IN  OFT2 ack (0x0202, 256 B) file 1 of 1, size 5242880
+file transfer 9c1d2e3f: socket 1234: IN  OFT2 done (0x0204, 256 B) file 1 of 1, size 5242880
+file transfer 9c1d2e3f: socket 1234 closed (accepted, we send, direct) after 3.2 s: OUT 5243136 B (1 OFT2 headers, 5242880 B file data), IN 512 B (2 OFT2 headers, 0 B file data); files done 1
+```
+
+The general lines of the add-on (`connect: socket ... -> address`, the first
+bytes of a connection the hooks did not see opened) are as before and do
+show addresses; the file lines never do.
+
+## File encryption (`files_encrypt`)
+
+Stages F2-F4 of `docs/e2e/FILES-RESEARCH.md` (section 9 there has the
+details and the live test). **Off by default**, until the owner's live test;
+turned on by a line in `icq-e2e.ini` next to `ICQ.exe`, on **both** clients:
+
+```
+files_encrypt = on
+```
+
+The ICQ 6.5 and 7.2 patches write that line themselves: the row "End-to-end
+encryption of file transfers" (job `e2e-files`, off until ticked) sets it `on`,
+and unticking it and applying again sets it `off`. It is written `on` only when
+"End-to-end encryption of messages" is ticked too, since the keys are agreed in
+that session; on its own the row reports that it was left out. Without the
+patch, set the line by hand or use `ICQE2E_FILES_ENCRYPT=on`. It needs encrypt
+mode (not `e2e=off`) and frames allowed (not `ICQE2E_NO_INJECT`); otherwise the
+start-up line says `files_encrypt=on but inactive`. In effect, the start-up
+line ends in `files_encrypt=on (file transfers encrypted when both add-ons
+agree; any other transfer untouched)`.
+
+The rule: **a transfer is never blocked, and a transfer that is not encrypted
+is exactly what it was without the add-on** - every byte the client's own.
+The data connection is encrypted only after both add-ons agreed for that
+transfer's cookie. Direct IM and voice connections are never touched.
+
+- **Key agreement** (`filesneg.rs`): when the client sends its first proposal
+  of a file (ICBM channel 2, `CapFileTransfer`) to a contact with E2E keys,
+  the add-on first puts a hidden control message in the E2E session: `IQF1
+  offer {cookie, device, device key, ephemeral X25519 key, a random 32-byte
+  transfer secret, suites}`. The receiver's add-on, at that proposal, derives
+  the keys and puts its answer (device, device key, ephemeral key, suite)
+  before its next ICBM to the sender (its accept, or its counter-proposal);
+  or a decline (`/e2e off` for that chat, no keys). An add-on without file
+  support (older, or `files_encrypt` off) takes the offer as an ordinary
+  control message: nothing shown, nothing answered.
+- **Keys**: HKDF-SHA256 over the X25519 secret and the transfer secret; salt:
+  the cookie, both UINs, both device ids and Curve25519 device keys; info:
+  both ephemeral keys. Each connection derives its own pair of keys from both
+  sides' hellos (connection number and a random nonce each), so a resumed
+  transfer or a second connection never reuses a key.
+- **Which sockets**: a `connect` to an address and port the peer's proposal
+  named; an accepted socket on the port our proposal named; a socket whose
+  first bytes are an ARS `INIT_SEND`/`INIT_RECV` (or an OFT2 header) naming
+  the cookie; a receiver's connection whose first bytes are the sender's key
+  hello. Nothing else is looked at.
+- **The data connection** (`filestream.rs`, `hook_files.rs`): the receiver's
+  add-on writes its key hello (`IQFT`, 118 bytes, MAC under a key only the
+  two add-ons have) the moment the connection is up; the sender's add-on
+  holds its client's first bytes (the OFT2 prompt) until that hello came and
+  checked out, answers with its own hello, and from then on everything -
+  OFT2 headers, file names, resume, every file of a folder - goes as
+  ChaCha20-Poly1305 records of at most 16 KiB (`u32 length | ciphertext |
+  tag`, nonce = record counter || last flag), with an empty final record at
+  `closesocket`. Through the rendezvous proxy the ARS frames pass untouched
+  and the hellos start after `READY`. Non-blocking sockets as the clients
+  use them: `FD_READ` reposted for plaintext left over, `FIONREAD` counts
+  plaintext, `MSG_PEEK` served from it.
+- **Backward compatibility**: no hello from the receiver within 4 s, or its
+  first bytes not a hello (no add-on, an older one, files off, no answer),
+  and the sender's add-on lets the held bytes go exactly as they were: the
+  transfer is the clients' own. A decline makes it plain at once.
+- **Fail closed, once agreed**: a hello that does not check out, plain bytes
+  where the stream should be, a record that does not authenticate, bytes after
+  the final record, a cut record, or a panic in these hooks: the socket is
+  shut both ways, the client gets `WSAECONNRESET` (its transfer fails; it may
+  send again), and nothing is passed on unencrypted.
+- **Notes** in the chat with the contact, once per transfer: `This file
+  transfer with 100002 is end-to-end encrypted ...`, or `This file transfer
+  with 100002 is not end-to-end encrypted: <reason>.` (for a contact under
+  `/e2e on` or verified, with the reminder that transfers are never blocked),
+  or `The encrypted file transfer with 100002 was stopped: <reason>.`
+- What the server still sees: the proposal itself (file name, size, both
+  addresses) - stage F5 of the research would move the name into the offer.
+
+In the log, per transfer:
+
+```
+files_encrypt=on: a file transfer is encrypted end to end when both add-ons agree on its keys through the E2E session; any other transfer is left exactly as it is
+file transfer 9c1d2e3f with 100002 (we send): proposal out (direct stage), key offer sent first
+file transfer 9c1d2e3f: socket 1234 (accepted, direct stage) carries it, we send: key hello and encryption below the client
+file transfer 9c1d2e3f with 100002 (we send): keys agreed from the key hello (the answer through the chat had not come yet)
+file transfer 9c1d2e3f with 100002 (we send): key hello received and checked (connection 1)
+file transfer 9c1d2e3f with 100002 (we send): key hello sent (connection 1)
+file transfer 9c1d2e3f with 100002 (we send): the data connection is end-to-end encrypted
+file transfer 9c1d2e3f with 100002 (we send): key answer in (keys already agreed by the hello)
+file transfer 9c1d2e3f: socket 1234 closed (accepted, direct stage, encrypted): 5243136 B from the client, 512 B to it, records 322 out / 3 in, we send
 ```
 
 ## Build

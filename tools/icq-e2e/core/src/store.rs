@@ -37,11 +37,17 @@ const MAGIC: &[u8; 8] = b"IQE2E\0S\0";
 ///   CHECKLIST 10.10). A version-1 build would read such a file but drop both
 ///   when it saves it back - a verification silently lost, and a held
 ///   conversation released - so it must refuse it instead.
-pub const STATE_VERSION: u32 = 2;
+/// - 3: the ids of inbound sessions made from a pre-key message
+///   (`keys::OwnKeys::inbound_ids`), whether the fallback key was used, the
+///   contacts' revoked devices, and a key log that broke after it was
+///   trusted (`kt::LogState::broken`) - audit 2026-10, findings 2 to 4. A
+///   version-2 build would drop them when it saves the state back, and with
+///   them the refusal of a replayed first message and of a broken log.
+pub const STATE_VERSION: u32 = 3;
 
 /// Brings a state read from disk up to [`STATE_VERSION`], one version at a
-/// time. A new version adds its step here.
-fn migrate(mut keys: OwnKeys) -> OwnKeys {
+/// time. A new version adds its step here. `now` is the time of the load.
+fn migrate(mut keys: OwnKeys, now: u64) -> OwnKeys {
     // Version 0 is a file from before the version was recorded; its layout
     // is version 1's.
     if keys.version == 0 {
@@ -52,7 +58,52 @@ fn migrate(mut keys: OwnKeys) -> OwnKeys {
     if keys.version == 1 {
         keys.version = 2;
     }
+    // Version 2 did not remember which inbound sessions a pre-key message
+    // made: every session it holds is taken as made now, so its first
+    // message cannot make it again. No device is known to be revoked, and a
+    // log that broke was not remembered as broken - the next look at it says
+    // so again.
+    if keys.version == 2 {
+        keys.remember_held_sessions(now);
+        keys.version = 3;
+    }
     keys
+}
+
+/// The lock on one account's state file, held for as long as a session uses
+/// it (audit 2026-10, finding 6): an exclusive lock on `<uin>.lock` next to
+/// the state. Two processes - two clients signed on as the same UIN - that
+/// both loaded, advanced and saved the same state would each overwrite the
+/// other's ratchets, and a message key could be used twice. The lock is the
+/// operating system's (`LockFileEx` on Windows), so it is given up when the
+/// process ends, however it ends.
+#[derive(Debug)]
+pub struct StateLock {
+    _file: fs::File,
+}
+
+impl StateLock {
+    /// Takes the lock on `uin`'s state in `home`. `Ok(None)` when another
+    /// process - or another session of this one - holds it.
+    pub fn take(home: &Path, uin: &str) -> Result<Option<StateLock>, String> {
+        fs::create_dir_all(home)
+            .map_err(|e| format!("{} cannot be created: {e}", home.display()))?;
+        let path = home.join(format!("{uin}.lock"));
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(|e| format!("{} cannot be opened: {e}", path.display()))?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(StateLock { _file: file })),
+            Err(fs::TryLockError::WouldBlock) => Ok(None),
+            Err(fs::TryLockError::Error(e)) => {
+                Err(format!("{} cannot be locked: {e}", path.display()))
+            }
+        }
+    }
 }
 
 /// One device's state.
@@ -109,7 +160,7 @@ impl Store {
             ));
         }
         let keys: OwnKeys = serde_json::from_value(value).map_err(not_understood)?;
-        Ok(Some(migrate(keys)))
+        Ok(Some(migrate(keys, crate::crypto::unix_now())))
     }
 
     /// Writes the state, creating the folder if it is not there yet.
@@ -341,6 +392,38 @@ mod tests {
         assert!(again.pinned("100002").unwrap().is_verified());
     }
 
+    /// A version-2 state, written before the ids of inbound sessions were
+    /// remembered (audit 2026-10, finding 3): every session it holds is
+    /// taken as made at the load, so its first message cannot make it again.
+    #[test]
+    fn a_version_two_state_remembers_the_sessions_it_holds() {
+        use vodozemac::olm::Account;
+        let home = Home::new("v2");
+        let mut keys = OwnKeys::create("100001");
+        let mut theirs = Account::new();
+        theirs.generate_one_time_keys(1);
+        let otk = *theirs.one_time_keys().values().next().unwrap();
+        let session = keys
+            .account()
+            .unwrap()
+            .create_outbound_session(crate::keys::SESSION_CONFIG, theirs.curve25519_key(), otk)
+            .unwrap();
+        let id = session.session_id();
+        keys.sessions
+            .entry("100002".into())
+            .or_default()
+            .insert(7, serde_json::to_string(&session.pickle()).unwrap());
+        let mut json = serde_json::to_value(&keys).unwrap();
+        json["version"] = 2.into();
+        json.as_object_mut().unwrap().remove("inbound_ids");
+        write_json(&home, &json.to_string());
+
+        let loaded = Store::new(&home.0, "100001").load().unwrap().unwrap();
+        assert_eq!(loaded.version, STATE_VERSION);
+        assert!(loaded.inbound_seen("100002", 7, &id));
+        assert!(!loaded.inbound_seen("100002", 8, &id));
+    }
+
     #[test]
     fn a_state_from_a_newer_build_is_refused_and_left_alone() {
         let home = Home::new("newer");
@@ -386,6 +469,23 @@ mod tests {
         store.save(&keys).unwrap();
         assert!(!home.0.join("100001.state.tmp").exists());
         assert_eq!(store.load().unwrap().unwrap().device_id, keys.device_id);
+    }
+
+    #[test]
+    fn the_state_lock_is_held_once_and_free_again_when_dropped() {
+        let home = Home::new("lock");
+        let first = StateLock::take(&home.0, "100001").unwrap();
+        assert!(first.is_some());
+        assert!(
+            StateLock::take(&home.0, "100001").unwrap().is_none(),
+            "a second holder is refused"
+        );
+        assert!(
+            StateLock::take(&home.0, "100002").unwrap().is_some(),
+            "another account has its own lock"
+        );
+        drop(first);
+        assert!(StateLock::take(&home.0, "100001").unwrap().is_some());
     }
 
     #[test]
