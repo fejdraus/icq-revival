@@ -155,6 +155,9 @@ func (f SQLiteUserStore) E2EPublishAccountKey(ctx context.Context, screenName Id
 			screenName.String(), key, now.Unix(), now.Unix()); err != nil {
 			return err
 		}
+		if err := e2eKTAppendLeaf(ctx, tx, e2eKTAccountLeaf(screenName, E2EKeyPublished, key, now), now); err != nil {
+			return err
+		}
 		return e2eRecordKeyChange(ctx, tx, screenName, E2EKeyPublished, nil, key, now)
 	})
 }
@@ -168,6 +171,9 @@ func (f SQLiteUserStore) E2ERotateAccountKey(ctx context.Context, screenName Ide
 		if err := e2eReplaceAccountKey(ctx, tx, screenName, oldKey, newKey, now); err != nil {
 			return err
 		}
+		if err := e2eKTAppendLeaf(ctx, tx, e2eKTAccountLeaf(screenName, E2EKeyRotated, newKey, now), now); err != nil {
+			return err
+		}
 		keep := make(map[uint32]bool, len(resigned))
 		for _, d := range resigned {
 			res, err := tx.ExecContext(ctx, `
@@ -175,6 +181,9 @@ func (f SQLiteUserStore) E2ERotateAccountKey(ctx context.Context, screenName Ide
 				WHERE identScreenName = ? AND deviceID = ? AND revokedAt IS NULL`,
 				d.AccountSignature, screenName.String(), d.DeviceID)
 			if err := e2eOneRow(res, err, fmt.Errorf("device %d: %w", d.DeviceID, ErrE2EDeviceNotFound)); err != nil {
+				return err
+			}
+			if err := e2eKTAppendLeaf(ctx, tx, e2eKTResignLeaf(screenName, d.DeviceID, d.AccountSignature, now), now); err != nil {
 				return err
 			}
 			keep[d.DeviceID] = true
@@ -211,6 +220,9 @@ func (f SQLiteUserStore) E2EResetAccountKey(ctx context.Context, screenName Iden
 			return ErrE2EActiveDevices
 		}
 		if err := e2eReplaceAccountKey(ctx, tx, screenName, oldKey, newKey, now); err != nil {
+			return err
+		}
+		if err := e2eKTAppendLeaf(ctx, tx, e2eKTAccountLeaf(screenName, E2EKeyReset, newKey, now), now); err != nil {
 			return err
 		}
 		return e2eRecordKeyChange(ctx, tx, screenName, E2EKeyReset, oldKey, newKey, now)
@@ -275,11 +287,16 @@ func (f SQLiteUserStore) E2EPutDevice(ctx context.Context, screenName IdentScree
 			case !bytes.Equal(cur.Curve25519Key, dev.Curve25519Key) || !bytes.Equal(cur.Ed25519Key, dev.Ed25519Key):
 				return ErrE2EDeviceConflict
 			}
-			_, err := tx.ExecContext(ctx, `
+			if _, err := tx.ExecContext(ctx, `
 				UPDATE e2e_device SET accountSignature = ?, lastSeenAt = ?
 				WHERE identScreenName = ? AND deviceID = ?`,
-				dev.AccountSignature, now.Unix(), screenName.String(), dev.DeviceID)
-			return err
+				dev.AccountSignature, now.Unix(), screenName.String(), dev.DeviceID); err != nil {
+				return err
+			}
+			if bytes.Equal(cur.AccountSignature, dev.AccountSignature) {
+				return nil
+			}
+			return e2eKTAppendLeaf(ctx, tx, e2eKTResignLeaf(screenName, dev.DeviceID, dev.AccountSignature, now), now)
 		}
 
 		var active int
@@ -295,6 +312,9 @@ func (f SQLiteUserStore) E2EPutDevice(ctx context.Context, screenName IdentScree
 			INSERT INTO e2e_device (identScreenName, deviceID, curve25519Key, ed25519Key, accountSignature, createdAt, lastSeenAt)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			screenName.String(), dev.DeviceID, dev.Curve25519Key, dev.Ed25519Key, dev.AccountSignature, now.Unix(), now.Unix()); err != nil {
+			return err
+		}
+		if err := e2eKTAppendLeaf(ctx, tx, e2eKTDeviceLeaf(screenName, dev, now), now); err != nil {
 			return err
 		}
 		created = true
@@ -548,6 +568,12 @@ func (f SQLiteUserStore) e2eTx(ctx context.Context, fn func(tx *sql.Tx) error) e
 	if err != nil {
 		return err
 	}
+	// The log must hold the directory as it was before the first change it
+	// records, so its genesis comes before anything else.
+	if err := e2eKTGenesis(ctx, tx, time.Now()); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	if err := fn(tx); err != nil {
 		_ = tx.Rollback()
 		return err
@@ -661,6 +687,9 @@ func e2eRevokeDevice(ctx context.Context, q e2eQuerier, screenName IdentScreenNa
 	if _, err := q.ExecContext(ctx,
 		`UPDATE e2e_device SET revokedAt = ? WHERE identScreenName = ? AND deviceID = ?`,
 		now.Unix(), sn, deviceID); err != nil {
+		return err
+	}
+	if err := e2eKTAppendLeaf(ctx, q, e2eKTRevokeLeaf(screenName, deviceID, now), now); err != nil {
 		return err
 	}
 	if _, err := q.ExecContext(ctx,

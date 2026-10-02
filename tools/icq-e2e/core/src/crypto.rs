@@ -15,10 +15,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::container::{self, Form};
+use crate::directory::UserDevices;
 use crate::directory::{DeviceState, DirError, DirectoryApi, SignedKey};
 use crate::keys::{
     self, Inbound, Outbound, OwnKeys, FALLBACK_KEY_LIFETIME, ONE_TIME_REFILL_BELOW, ONE_TIME_TARGET,
 };
+use crate::kt;
 use crate::policy::{self, Command, Held, Remembered, Setting, Status};
 use crate::safety;
 use crate::sign;
@@ -31,6 +33,9 @@ pub const ANNOUNCE_RETRY: Duration = Duration::from_secs(30);
 pub const ANNOUNCE_EVERY: Duration = Duration::from_secs(2);
 /// A token is refreshed this long before it expires.
 pub const TOKEN_REFRESH_BEFORE: Duration = Duration::from_secs(3600);
+/// Our copy of the key log is brought up to date at most this often, in
+/// seconds - and at once when a contact's keys are not in it.
+pub const LOG_SYNC_EVERY: u64 = 60;
 
 /// What the stream needs to know about us without touching any keys.
 pub trait Crypto {
@@ -580,6 +585,10 @@ pub struct Engine {
     calls_encrypt: bool,
     /// The calls, shared with the media hooks.
     calls: Arc<std::sync::Mutex<crate::callneg::CallTable>>,
+    /// When our copy of the key log was last brought up to date, and how
+    /// that went.
+    log_synced_at: Option<u64>,
+    log_status: LogStatus,
 }
 
 impl Engine {
@@ -605,6 +614,8 @@ impl Engine {
             publish_failed: false,
             calls_encrypt: false,
             calls: crate::callneg::shared(),
+            log_synced_at: None,
+            log_status: LogStatus::Unknown,
         }
     }
 
@@ -654,6 +665,7 @@ impl Engine {
             Err(Lookup::Transient(e)) => {
                 return Err(format!("the key directory could not be reached ({e})"))
             }
+            Err(Lookup::NotInLog(why)) => return Err(why),
         }
         let key = self
             .keys
@@ -679,7 +691,7 @@ impl Engine {
         let contact = match self.contact(peer, now) {
             Ok(c) => c,
             Err(Lookup::NoKeys) => return Err(format!("{peer} has no encryption keys")),
-            Err(Lookup::Transient(e)) => return Err(e),
+            Err(Lookup::Transient(e)) | Err(Lookup::NotInLog(e)) => return Err(e),
         };
         if self.keys.pinned(peer).is_some_and(|k| k.held) {
             return Err(format!("{peer}'s safety number changed"));
@@ -802,7 +814,158 @@ impl Engine {
             _ => {}
         }
         self.say_publish_state(&p);
+        // Our own account in the key log, once our keys are in.
+        if self.ready {
+            self.sync_log(now, false);
+        }
         p
+    }
+
+    // --- the key log (docs/e2e/KEY-TRANSPARENCY.md) -------------------------
+
+    /// Brings our copy of the key log up to date - at most once a minute
+    /// unless `force` - and looks at our own account in it. Whether it did.
+    fn sync_log(&mut self, now: u64, force: bool) -> bool {
+        if !force
+            && self
+                .log_synced_at
+                .is_some_and(|t| now < t.saturating_add(LOG_SYNC_EVERY))
+        {
+            return false;
+        }
+        self.log_synced_at = Some(now);
+        self.keys.log_trusted = false;
+        match kt::sync(&*self.dir, &self.keys.log) {
+            Ok(next) => {
+                if next != self.keys.log {
+                    self.keys.log = next;
+                    self.changed = true;
+                }
+                self.log_status = LogStatus::Ok;
+                self.keys.log_trusted = true;
+                self.check_own_log();
+            }
+            Err(kt::SyncError::NoLog) => self.log_status = LogStatus::NoLog,
+            Err(kt::SyncError::Net(e)) => self.log_status = LogStatus::Failed(e),
+            Err(e) => {
+                let why = e.to_string();
+                self.note_once(None, "kt:broken".into(), policy::log_broken_note(&why));
+                self.log_status = LogStatus::Broken(why);
+            }
+        }
+        true
+    }
+
+    /// Our account in the key log must hold our account key and only devices
+    /// the user knows of: anything else is said, once per key or device.
+    fn check_own_log(&mut self) {
+        if !self.ready {
+            return;
+        }
+        let Some(acc) = self.keys.log.accounts.get(&self.keys.screen_name).cloned() else {
+            return;
+        };
+        if acc.key != self.keys.account_key_b64() {
+            if self.keys.log.own_key_said.as_deref() != Some(acc.key.as_str()) {
+                self.keys.log.own_key_said = Some(acc.key);
+                self.changed = true;
+                self.say(policy::log_own_key_note());
+            }
+            return;
+        }
+        let own = self.keys.device_id;
+        if !self.keys.log.own_seen.contains(&own) {
+            self.keys.log.own_seen.push(own);
+            self.changed = true;
+        }
+        for id in acc.devices.keys() {
+            if !self.keys.log.own_seen.contains(id) {
+                self.keys.log.own_seen.push(*id);
+                self.changed = true;
+                self.say(policy::log_own_device_note(*id));
+            }
+        }
+    }
+
+    /// What the key log has to say about a contact's keys from the directory:
+    /// `Err` if their account key is not the log's, else the ids of devices
+    /// the log does not have with these keys. Nothing while the log is not
+    /// readable.
+    fn log_check(&self, peer: &str, ud: &UserDevices) -> Result<Vec<u32>, String> {
+        if self.log_status != LogStatus::Ok {
+            return Ok(Vec::new());
+        }
+        let Some(acc) = self.keys.log.accounts.get(&sign::ident(peer)) else {
+            return Err(format!("{peer}'s keys are not in the server's key log"));
+        };
+        if acc.key != ud.account_key {
+            return Err(format!(
+                "{peer}'s account key in the key directory is not the one the server's key log shows"
+            ));
+        }
+        Ok(ud
+            .devices
+            .iter()
+            .filter(|d| d.revoked_at.is_none())
+            .filter(|d| {
+                acc.devices.get(&d.device_id).is_none_or(|l| {
+                    l.curve25519_key != d.curve25519_key
+                        || l.ed25519_key != d.ed25519_key
+                        || l.account_signature != d.account_signature
+                })
+            })
+            .map(|d| d.device_id)
+            .collect())
+    }
+
+    /// [`Engine::log_check`] against a copy of the log that is up to date: a
+    /// change the contact made a moment ago may not be in our copy yet.
+    fn logged(&mut self, peer: &str, ud: &UserDevices, now: u64) -> Result<Vec<u32>, String> {
+        let fresh = self.sync_log(now, false);
+        match self.log_check(peer, ud) {
+            Ok(none) if none.is_empty() => Ok(none),
+            _ if !fresh => {
+                self.sync_log(now, true);
+                self.log_check(peer, ud)
+            }
+            other => other,
+        }
+    }
+
+    /// The key log's part of `/e2e status`.
+    fn describe_log(&mut self, peer: &str, now: u64) -> String {
+        self.sync_log(now, false);
+        let size = self.keys.log.size;
+        match &self.log_status {
+            LogStatus::Unknown => String::new(),
+            LogStatus::NoLog => {
+                "; key log: the server keeps none, so keys are trusted on first use".into()
+            }
+            LogStatus::Failed(e) => format!("; key log: could not be read ({e})"),
+            LogStatus::Broken(why) => {
+                format!("; key log: NOT TRUSTED - {why} (/e2e resetlog once the operator explains)")
+            }
+            LogStatus::Ok => {
+                let logged = self
+                    .keys
+                    .log
+                    .accounts
+                    .get(&sign::ident(peer))
+                    .map(|a| a.key.clone());
+                match (logged, self.keys.pinned(peer)) {
+                    (Some(l), Some(p)) if l == p.key => {
+                        format!("; key log: {peer}'s keys are in it, checked ({size} entries)")
+                    }
+                    (Some(_), Some(_)) => {
+                        format!("; key log: {peer}'s key is NOT the one it shows ({size} entries)")
+                    }
+                    (None, Some(_)) => {
+                        format!("; key log: {peer}'s keys are NOT in it ({size} entries)")
+                    }
+                    (_, None) => format!("; key log: checked ({size} entries)"),
+                }
+            }
+        }
     }
 
     /// Tells the user, in the chat, about a publish that leaves encryption
@@ -906,9 +1069,22 @@ impl Engine {
     fn contact(&mut self, peer: &str, now: u64) -> Result<keys::Contact, Lookup> {
         match self.dir.user_devices(peer) {
             Ok(ud) => {
-                let c = self.keys.checked_contact(&ud, now);
+                // A key the log does not show is never pinned.
+                let left_out = self.logged(peer, &ud, now).map_err(Lookup::NotInLog)?;
+                let mut c = self.keys.checked_contact(&ud, now);
                 // The pin may have been made or moved.
                 self.changed = true;
+                if !left_out.is_empty() {
+                    let p = sign::ident(peer);
+                    c.devices.retain(|d| !left_out.contains(&d.device_id));
+                    for id in left_out {
+                        self.note_once(
+                            Some(peer),
+                            format!("kt:device:{p}:{id}"),
+                            policy::log_device_left_out_note(peer, id),
+                        );
+                    }
+                }
                 if c.usable() {
                     self.remember(peer, |r| r.seen_encrypting = true);
                     Ok(c)
@@ -973,6 +1149,7 @@ impl Engine {
                     Decision::Clear(ClearWhy::Unreachable(e))
                 }
             }
+            Err(Lookup::NotInLog(why)) => Decision::Hold(Held::NotInLog(why)),
         }
     }
 
@@ -1023,21 +1200,26 @@ impl Engine {
         let keys = if !self.ready {
             "this add-on's keys are not in the key directory yet".to_string()
         } else {
-            match self.dir.user_devices(peer) {
-                Ok(ud) => {
-                    let n = self.keys.checked_contact(&ud, now).devices.len();
-                    self.changed = true;
-                    if n > 0 {
-                        format!("{peer} has {n} signed device(s) in the key directory")
-                    } else {
-                        format!("{peer} has no encryption keys in the key directory")
-                    }
-                }
-                Err(e) if e.code() == "no_account" => {
+            // Through the key log like any lookup, so asking never pins a key
+            // the log does not show.
+            match self.contact(peer, now) {
+                Ok(c) => format!(
+                    "{peer} has {} signed device(s) in the key directory",
+                    c.devices.len()
+                ),
+                Err(Lookup::NoKeys) => {
                     format!("{peer} has no encryption keys in the key directory")
                 }
-                Err(e) => format!("the key directory could not be reached ({e})"),
+                Err(Lookup::NotInLog(why)) => format!("{peer}'s keys are not used: {why}"),
+                Err(Lookup::Transient(e)) => {
+                    format!("the key directory could not be reached ({e})")
+                }
             }
+        };
+        let log = if self.ready {
+            self.describe_log(peer, now)
+        } else {
+            String::new()
         };
         let verified = match self.keys.pinned(peer) {
             Some(p) if p.is_verified() => "; verified: yes (safety number compared)",
@@ -1060,7 +1242,7 @@ impl Engine {
             "; seen encrypting: no"
         };
         format!(
-            "{}Encryption with {peer}: {setting}; {keys}{verified}{seen}. The next message goes {next}. Commands: {}.",
+            "{}Encryption with {peer}: {setting}; {keys}{log}{verified}{seen}. The next message goes {next}. Commands: {}.",
             policy::PREFIX,
             policy::COMMANDS
         )
@@ -1079,6 +1261,9 @@ impl Engine {
                 Err(Lookup::Transient(e)) => format!(
                     "{pre}There is no safety number with {peer} yet: the key directory could not be reached ({e})."
                 ),
+                Err(Lookup::NotInLog(why)) => format!(
+                    "{pre}There is no safety number with {peer}: {why}."
+                ),
                 _ => format!(
                     "{pre}There is no safety number with {peer}: they have no encryption keys in the key directory."
                 ),
@@ -1088,6 +1273,11 @@ impl Engine {
         let (key, verified) = (pin.key.clone(), pin.is_verified());
         self.safety_shown.insert(p, key);
         let mut note = policy::safety_note(peer, &safety::grouped(&digits, "\n"), verified);
+        if let Err(Lookup::NotInLog(why)) = &looked {
+            note.push_str(&format!(
+                " (This is the number for the key you had before: the key directory now gives {peer} another one, and {why}.)"
+            ));
+        }
         if let Err(Lookup::Transient(e)) = looked {
             note.push_str(&format!(
                 " (The key directory could not be reached to look for a newer key: {e}.)"
@@ -1177,6 +1367,9 @@ impl Crypto for Engine {
                         Err(Lookup::Transient(e)) => note.push_str(&format!(
                             " The key directory could not be reached to check {peer}'s keys ({e})."
                         )),
+                        Err(Lookup::NotInLog(why)) => note.push_str(&format!(
+                            " Messages to {peer} are held: {why}."
+                        )),
                     }
                 }
                 note
@@ -1240,6 +1433,17 @@ impl Crypto for Engine {
                         "{pre}/e2e accept does nothing here: no message to {peer} is held for a changed safety number."
                     )
                 }
+            }
+            Command::ResetLog => {
+                self.keys.log = kt::LogState::default();
+                self.keys.log_trusted = false;
+                self.log_synced_at = None;
+                self.log_status = LogStatus::Unknown;
+                self.said.remove("kt:broken");
+                self.changed = true;
+                format!(
+                    "{pre}Your copy of the server's key log is forgotten: it is read anew, and its key trusted on first use again. Do this only when the server's operator says the log was restored from a backup or started afresh."
+                )
             }
             Command::Help => format!(
                 "{pre}Unknown command. The commands are: {}.",
@@ -1345,7 +1549,19 @@ impl Crypto for Engine {
         container: &crate::container::Container,
         now: u64,
     ) -> Inbound {
-        let got = self.keys.decrypt(&*self.dir, peer, container, now);
+        // A new session from a key our copy of the key log does not have may
+        // only mean the copy is behind: once more with a fresh one. A message
+        // that did not open left no ratchet step and spent no one-time key.
+        // Only a pre-key message can make a new session.
+        let pre_key = container
+            .wrap_for(self.keys.device_id)
+            .is_some_and(|w| w.olm_type == 0);
+        let fresh = pre_key && self.sync_log(now, false);
+        let mut got = self.keys.decrypt(&*self.dir, peer, container, now);
+        if pre_key && matches!(got, Inbound::Unreadable(_)) && self.keys.log_trusted && !fresh {
+            self.sync_log(now, true);
+            got = self.keys.decrypt(&*self.dir, peer, container, now);
+        }
         self.changed = true;
         // A call key exchange (`calls_encrypt=on` only): it goes to the call
         // table and is answered by the call's own SIP, not by a control
@@ -1503,6 +1719,27 @@ enum Lookup {
     NoKeys,
     /// The directory could not be reached, or did not answer.
     Transient(String),
+    /// The directory gives the contact an account key the key log does not
+    /// show for them.
+    NotInLog(String),
+}
+
+/// How the last look at the key log went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LogStatus {
+    /// Not looked at yet this sign-on.
+    Unknown,
+    /// Our copy is up to date and adds up: contacts' keys are checked
+    /// against it.
+    Ok,
+    /// The server keeps no log, and we never saw one.
+    NoLog,
+    /// The log could not be read just now; nothing is checked against it
+    /// until it can be.
+    Failed(String),
+    /// The log was rewritten or is signed by another key: the user was told,
+    /// and nothing is checked against it.
+    Broken(String),
 }
 
 /// The current time in Unix seconds.
@@ -3011,5 +3248,243 @@ mod tests {
             ta.lock().unwrap().media_out(1, &rtp(1), NOW * 1000),
             Verdict::Pass
         );
+    }
+
+    // --- the key log (docs/e2e/KEY-TRANSPARENCY.md) -------------------------
+
+    fn status_of(e: &mut Engine, peer: &str, now: u64) -> String {
+        assert!(e.command(peer, "/e2e status", now));
+        notes(e).pop().unwrap().text
+    }
+
+    /// A device for `owner`'s account, signed by `owner`'s account key, with
+    /// the keys of a device that is not theirs: what a server would plant.
+    fn planted_device(owner: &OwnKeys, id: u32) -> crate::directory::Device {
+        let other = OwnKeys::create("100009");
+        let (curve, ed, _) = other.device_object().unwrap();
+        let raw = |k: &str| vodozemac::base64_decode(k).unwrap();
+        let msg = sign::device(
+            &owner.screen_name,
+            id,
+            &raw(&curve).try_into().unwrap(),
+            &raw(&ed).try_into().unwrap(),
+        );
+        crate::directory::Device {
+            device_id: id,
+            curve25519_key: curve,
+            ed25519_key: ed,
+            account_signature: owner.account_key.sign(&msg).to_base64(),
+            created_at: 1,
+            last_seen_at: 1,
+            revoked_at: None,
+        }
+    }
+
+    #[test]
+    fn a_contacts_keys_are_checked_against_the_log() {
+        let (dir, a, _) = two_published();
+        let mut e = running(&dir, a);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        let s = status_of(&mut e, "100002", NOW);
+        assert!(
+            s.contains("key log: 100002's keys are in it, checked (4 entries)"),
+            "{s}"
+        );
+        // The copy survives a restart and needs nothing new.
+        let mut again = restarted(&dir, &e);
+        assert_eq!(again.keys().log.size, 4);
+        assert!(status_of(&mut again, "100002", NOW).contains("checked"));
+    }
+
+    #[test]
+    fn a_key_the_log_does_not_show_holds_the_message_and_is_not_pinned() {
+        let (dir, a, b) = two_published();
+        let mut e = running(&dir, a);
+        e.outbound("100002", form(), b"hi", NOW);
+        notes(&mut e);
+
+        // The directory hands out a new key for 100002 and leaves the log
+        // alone.
+        dir.pause_log(true);
+        reset_contact(&dir, &b);
+        let out = e.outbound("100002", form(), b"secret", NOW);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+        let n = notes(&mut e);
+        assert!(
+            n.iter().any(|n| n.text.contains("was NOT sent")
+                && n.text.contains("not the one the server's key log shows")),
+            "{n:?}"
+        );
+        assert!(
+            !n.iter()
+                .any(|n| n.text.contains("safety number with 100002 has changed")),
+            "{n:?}"
+        );
+        assert_eq!(e.keys().pinned("100002").unwrap().key, b.account_key_b64());
+        let s = status_of(&mut e, "100002", NOW);
+        assert!(s.contains("nowhere: it is held"), "{s}");
+        assert!(s.contains("100002's keys are not used"), "{s}");
+        // Asking does not pin the key either.
+        assert_eq!(e.keys().pinned("100002").unwrap().key, b.account_key_b64());
+    }
+
+    #[test]
+    fn a_new_session_from_a_key_the_log_does_not_show_is_not_accepted() {
+        let (dir, a, b) = two_published();
+        let mut e = running(&dir, a);
+        e.outbound("100002", form(), b"hi", NOW);
+        notes(&mut e);
+
+        // Someone with a key the log does not show writes as 100002.
+        dir.pause_log(true);
+        let fake = reset_contact(&dir, &b);
+        let mut ef = Engine::new(dir.clone(), fake);
+        ef.set_token(&dir.token("100002"));
+        // Its own publish went through the directory, not the log; it writes
+        // anyway.
+        let _ = ef.publish(NOW);
+        let sent = ef.keys_mut().encrypt(
+            &*dir,
+            &bearer(&dir, "100002"),
+            &keys::Outgoing {
+                peer: "100001".into(),
+                form: form(),
+                text: b"it is me".to_vec(),
+                now: NOW,
+            },
+            &keys::fetch_contact(&*dir, "100001").unwrap(),
+        );
+        let c = container_of(sent.unwrap());
+        assert!(matches!(
+            e.inbound("100002", &c, NOW),
+            Inbound::Unreadable(_)
+        ));
+        assert_eq!(e.keys().pinned("100002").unwrap().key, b.account_key_b64());
+        assert!(e.keys().session("100002", ef.keys().device_id).is_none());
+    }
+
+    #[test]
+    fn a_device_the_log_does_not_show_gets_nothing() {
+        let (dir, a, b) = two_published();
+        let mut e = running(&dir, a);
+        dir.pause_log(true);
+        dir.plant_device("100002", planted_device(&b, 777));
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        let n = notes(&mut e);
+        assert!(
+            n.iter().any(|n| n.text.contains("(device 777)")
+                && n.text.contains("not in the server's key log")),
+            "{n:?}"
+        );
+        // Encrypted for the device in the log only.
+        assert!(e.keys().session("100002", 777).is_none());
+        assert!(e.keys().session("100002", b.device_id).is_some());
+    }
+
+    #[test]
+    fn a_device_added_to_our_account_is_said_once() {
+        let (dir, a, b) = two_published();
+        let _ea = running(&dir, a);
+        let mut eb = running(&dir, b);
+        assert!(notes(&mut eb).is_empty());
+
+        // The server puts its own device into 100002's account, in the log.
+        let planted = planted_device(eb.keys(), 4242);
+        dir.plant_device("100002", planted);
+        let said = |n: &[Note]| n.iter().filter(|n| n.text.contains("device 4242")).count();
+        assert!(eb.command("100001", "/e2e status", NOW + LOG_SYNC_EVERY));
+        assert_eq!(said(&notes(&mut eb)), 1);
+        assert!(eb.keys().log.own_seen.contains(&4242));
+
+        // Not again, in this sign-on or after a restart.
+        assert!(eb.command("100001", "/e2e status", NOW + 3 * LOG_SYNC_EVERY));
+        assert_eq!(said(&notes(&mut eb)), 0);
+        let mut again = restarted(&dir, &eb);
+        assert!(again.command("100001", "/e2e status", NOW + 5 * LOG_SYNC_EVERY));
+        assert_eq!(said(&notes(&mut again)), 0);
+    }
+
+    #[test]
+    fn the_note_about_a_device_added_to_our_account_names_it() {
+        let (dir, _, b) = two_published();
+        let mut eb = running(&dir, b);
+        dir.plant_device("100002", planted_device(eb.keys(), 4242));
+        assert!(eb.command("100001", "/e2e status", NOW + LOG_SYNC_EVERY));
+        let n = notes(&mut eb);
+        assert!(
+            n.iter().any(|n| n.peer.is_none()
+                && n.text.contains("A device was added to your account")
+                && n.text.contains("device 4242")),
+            "{n:?}"
+        );
+    }
+
+    #[test]
+    fn a_rewritten_log_is_said_and_keys_fall_back_to_first_use() {
+        let (dir, a, _) = two_published();
+        let mut e = running(&dir, a);
+        dir.rewrite_log(
+            0,
+            kt::build_leaf("account", "100009", 1, &[b"publish", &[9; 32]]),
+        );
+        let later = NOW + LOG_SYNC_EVERY;
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", later),
+            Outbound::Encrypted(_)
+        ));
+        let n = notes(&mut e);
+        let warned: Vec<_> = n
+            .iter()
+            .filter(|n| n.text.contains("WARNING: the key log was rewritten"))
+            .collect();
+        assert_eq!(warned.len(), 1, "{n:?}");
+        assert!(
+            status_of(&mut e, "100002", later + LOG_SYNC_EVERY).contains("key log: NOT TRUSTED")
+        );
+        // The copy that was good is kept.
+        assert_eq!(e.keys().log.size, 4);
+
+        // The operator explains; the user starts the copy afresh.
+        assert!(e.command("100002", "/e2e resetlog", later));
+        assert!(notes(&mut e)[0].text.contains("forgotten"));
+        assert!(status_of(&mut e, "100002", later).contains("100002's keys are in it, checked"));
+    }
+
+    #[test]
+    fn a_log_restored_from_an_old_backup_or_signed_by_another_key_is_not_trusted() {
+        for (what, says) in [
+            ("truncate", "4 before"),
+            ("rekey", "signature is wrong"),
+            ("drop", "no longer has it"),
+        ] {
+            let (dir, a, _) = two_published();
+            let mut e = running(&dir, a);
+            match what {
+                "truncate" => dir.truncate_log(2),
+                "rekey" => dir.rekey_log(),
+                _ => dir.set_log(false),
+            }
+            let s = status_of(&mut e, "100002", NOW + LOG_SYNC_EVERY);
+            assert!(s.contains("NOT TRUSTED") && s.contains(says), "{what}: {s}");
+        }
+    }
+
+    #[test]
+    fn a_server_without_a_log_works_as_before() {
+        let (dir, a, _) = two_published();
+        dir.set_log(false);
+        let mut e = running(&dir, a);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        assert!(status_of(&mut e, "100002", NOW).contains("key log: the server keeps none"));
+        assert_eq!(e.keys().log, kt::LogState::default());
     }
 }

@@ -162,6 +162,14 @@ pub struct OwnKeys {
     /// seen encrypting (CHECKLIST 10.1, 10.7), by screen name in ident form.
     #[serde(default)]
     pub contacts: HashMap<String, crate::policy::Remembered>,
+    /// Our copy of the key log (docs/e2e/KEY-TRANSPARENCY.md).
+    #[serde(default)]
+    pub log: crate::kt::LogState,
+    /// Set by the engine while its copy of the key log is up to date and
+    /// trusted: a new inbound session is then made only with a key the log
+    /// shows. Not kept in the state file.
+    #[serde(skip)]
+    pub log_trusted: bool,
 }
 
 /// A contact's account key as we pinned it, and when, and whether the user
@@ -274,6 +282,8 @@ impl OwnKeys {
             sessions: HashMap::new(),
             said: HashMap::new(),
             contacts: HashMap::new(),
+            log: crate::kt::LogState::default(),
+            log_trusted: false,
         }
     }
 
@@ -807,6 +817,11 @@ impl OwnKeys {
         if !device_signed_by(&ud.screen_name, &ud.account_key, &device) {
             return None;
         }
+        // Nothing is pinned and no one-time key spent for a sender whose keys
+        // the key log does not show.
+        if self.log_trusted && !self.log_shows(peer, &ud.account_key, &device) {
+            return None;
+        }
         let their_curve = curve_key(&device.curve25519_key).ok()?;
         let mut account = self.account()?;
         let (session, plaintext) = HANDSHAKE.start_inbound(&mut account, their_curve, pre)?;
@@ -820,6 +835,21 @@ impl OwnKeys {
             self.said.insert(format!("pin:{}", sign::ident(peer)), note);
         }
         Some((plaintext, next))
+    }
+
+    /// Whether our copy of the key log has `peer` with this account key and
+    /// this device, keys and signature alike.
+    pub fn log_shows(&self, peer: &str, account_key: &str, d: &Device) -> bool {
+        self.log
+            .accounts
+            .get(&sign::ident(peer))
+            .filter(|a| a.key == account_key)
+            .and_then(|a| a.devices.get(&d.device_id))
+            .is_some_and(|l| {
+                l.curve25519_key == d.curve25519_key
+                    && l.ed25519_key == d.ed25519_key
+                    && l.account_signature == d.account_signature
+            })
     }
 
     // --- the directory -----------------------------------------------------

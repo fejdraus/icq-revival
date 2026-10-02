@@ -80,6 +80,9 @@ pub enum Command {
     /// Send on to a verified contact whose safety number changed, without
     /// verifying the new number: the contact is unverified from then on.
     Accept,
+    /// Forget our copy of the key log and its key, and read it anew: after
+    /// the server's operator restored it from a backup or started it afresh.
+    ResetLog,
     /// `/e2e` with something it does not know: the list of commands.
     Help,
 }
@@ -111,6 +114,7 @@ pub fn parse_command(text: &str) -> Option<Command> {
         Some("verify") => Command::Verify,
         Some("unverify") => Command::Unverify,
         Some("accept") => Command::Accept,
+        Some("resetlog") => Command::ResetLog,
         Some(_) => Command::Help,
     })
 }
@@ -154,7 +158,7 @@ pub fn plain_text(html: &str) -> String {
 pub const PREFIX: &str = "[ICQ E2E] ";
 
 /// The commands, for the end of a note.
-pub const COMMANDS: &str = "/e2e on, /e2e off, /e2e auto, /e2e status, /e2e plain, /e2e safety, /e2e verify, /e2e unverify, /e2e accept";
+pub const COMMANDS: &str = "/e2e on, /e2e off, /e2e auto, /e2e status, /e2e plain, /e2e safety, /e2e verify, /e2e unverify, /e2e accept, /e2e resetlog";
 
 /// The note for a status the chat is now in.
 pub fn status_note(peer: &str, status: Status) -> String {
@@ -225,6 +229,9 @@ pub enum Held {
     /// The contact was verified and their safety number has changed since:
     /// nothing goes to the new key until the user says so (CHECKLIST 10.10).
     SafetyChanged,
+    /// The directory gives the contact an account key that is not theirs in
+    /// the key log (docs/e2e/KEY-TRANSPARENCY.md).
+    NotInLog(String),
 }
 
 /// The note for a message that was held.
@@ -245,7 +252,36 @@ pub fn held_note(peer: &str, why: &Held) -> String {
         Held::SafetyChanged => format!(
             "{PREFIX}The message to {peer} was NOT sent: you had verified {peer}, and your safety number with them has changed. Type /e2e safety and compare the new number with {peer} in person or by phone - not through this chat - then /e2e verify, and send the message again. To send without verifying, type /e2e accept."
         ),
+        Held::NotInLog(why) => format!(
+            "{PREFIX}The message to {peer} was NOT sent: {why}. The key directory is handing out a key that the server's public key log does not show, which is what an attack on the server looks like. Ask {peer} another way whether they reset their keys. Type /e2e plain to send the next message unencrypted once."
+        ),
     }
+}
+
+// --- the key log (docs/e2e/KEY-TRANSPARENCY.md) -------------------------------
+
+/// The note when the key log cannot be trusted any more: rewritten, gone, or
+/// signed by another key. Once per sign-on.
+pub fn log_broken_note(why: &str) -> String {
+    format!("{PREFIX}WARNING: {why}. The key log lets this add-on check that everyone gets the same keys; a log that changes its past is what an attack on the server looks like. Until it is sorted out, keys are trusted on first use, as without a log. If the server's operator says the log was restored from a backup or started afresh, type /e2e resetlog.")
+}
+
+/// The note when the key log shows our account with an account key that is
+/// not ours.
+pub fn log_own_key_note() -> String {
+    format!("{PREFIX}WARNING: the server's key log shows your account with an account key that is not this add-on's. If you did not reset your keys on another computer, someone may be posing as you to your contacts: change your password and tell the server's operator.")
+}
+
+/// The note when the key log shows a device of our account that we have not
+/// been told about.
+pub fn log_own_device_note(device_id: u32) -> String {
+    format!("{PREFIX}A device was added to your account in the key directory (device {device_id}). If you linked another computer, nothing needs doing. If not, someone can read the messages sent to you on it: change your password and tell the server's operator.")
+}
+
+/// The note when one of a contact's devices is in the directory but not in
+/// the key log, so nothing is encrypted for it.
+pub fn log_device_left_out_note(peer: &str, device_id: u32) -> String {
+    format!("{PREFIX}One of {peer}'s devices (device {device_id}) is in the key directory but not in the server's key log, so messages are not encrypted for it. That device may not be theirs.")
 }
 
 /// The note when a contact's safety number changed (CHECKLIST 10.10), once

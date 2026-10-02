@@ -126,6 +126,7 @@ stream, so the contact never gets it, and answers with a note in that chat.
 | `/e2e verify` | Marks the contact verified, for the number `/e2e safety` showed last in this sign-on (the key behind it, not the contact). Refused if the number was not shown, or changed since. |
 | `/e2e unverify` | Takes the verification back. |
 | `/e2e accept` | After a verified contact's safety number changed: send on, encrypted to the new key, without verifying it. The contact is unverified from then on. |
+| `/e2e resetlog` | Forgets this add-on's copy of the server's key log and its key, and reads it anew. Only when the server's operator says the log was restored from a backup or started afresh. |
 
 The setting is kept per contact in the state file, with whether the contact was
 ever seen encrypting. Without a setting a contact is encrypted whenever the key
@@ -156,6 +157,34 @@ contact does not change it; only a new account key does, which is a key reset.
   (`/e2e safety`, compare, `/e2e verify`) or types `/e2e accept` to send on
   without verifying. The hold survives a restart. `/e2e plain` stays what it
   always is - one message in clear - and is not the way past this hold.
+
+## Automatic key checking: the key log (CHECKLIST 4.5)
+
+Comparing safety numbers by hand is the strongest check, and few people do it.
+So the server also keeps a key log - every account key and device the key
+directory ever handed out, in a signed Merkle tree that can only grow - and
+the add-on checks against it on its own, as Signal does
+(docs/e2e/KEY-TRANSPARENCY.md):
+
+- A contact's account key must be the one the log shows for them, or the
+  message is held ("was NOT sent ... the server's key log") and the key is not
+  pinned. A device of theirs the log does not show gets nothing, and the chat
+  says so once.
+- Your own account: a device you did not add, or an account key that is not
+  this add-on's, is reported in the chat once ("A device was added to your
+  account"). That is what catches a server that quietly adds a device to read
+  your messages.
+- A log that changes its past - shorter than before, another history, another
+  key - gets a WARNING once per sign-on, and keys fall back to trust on first
+  use until it is sorted out. After the operator restores an old backup every
+  user sees this once and types `/e2e resetlog`.
+- `/e2e status` ends its key part with what the log says ("key log: 100002's
+  keys are in it, checked (N entries)").
+- A server without a log (an older one) works as before.
+
+What it does not catch yet: a server that shows you one log and your contact
+another. That takes witnesses - others who cosign the log - which are a later
+stage.
 
 ## No lock in the window (CHECKLIST 10.4, 10.9)
 
@@ -397,14 +426,19 @@ what each line answers.
 
 Stages C1-C3 of `docs/e2e/CALLS-RESEARCH.md` (section 9 there has the
 details and the live test). **Off by default**, until the C0 data is in;
-turned on by a line in `icq-e2e.ini` next to `ICQ.exe` (the patch keeps it),
-on **both** clients:
+turned on by a line in `icq-e2e.ini` next to `ICQ.exe`, on **both** clients:
 
 ```
 calls_encrypt = on
 ```
 
-or `ICQE2E_CALLS_ENCRYPT=on`. It needs encrypt mode (not `e2e=off`) and
+The ICQ 6.5 and 7.2 patches write that line themselves: the row "End-to-end
+encryption of calls" (job `e2e-calls`, off until ticked) sets it `on`, and
+unticking it and applying again sets it `off`. It is written `on` only when
+"End-to-end encryption of messages" is ticked too, since calls are keyed in
+that session; on its own the row reports that it was left out. Other lines
+added by hand (`calls_log`, `tls_pin`, ...) are kept. Without the patch, set
+the line by hand or use `ICQE2E_CALLS_ENCRYPT=on`. It needs encrypt mode (not `e2e=off`) and
 frames allowed (not `ICQE2E_NO_INJECT`); otherwise the start-up line says
 `calls_encrypt=on but inactive`. In effect, the start-up line ends in
 `calls_encrypt=on (call media encrypted when both add-ons agree; any other

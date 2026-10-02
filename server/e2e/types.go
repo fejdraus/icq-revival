@@ -2,7 +2,10 @@ package e2e
 
 import (
 	"context"
+	"crypto/ed25519"
 	"time"
+
+	"golang.org/x/mod/sumdb/tlog"
 
 	"github.com/mk6i/open-oscar-server/state"
 )
@@ -27,6 +30,9 @@ type Store interface {
 	E2ELinkRequest(ctx context.Context, screenName state.IdentScreenName, id string, now time.Time) (*state.E2ELinkRequest, error)
 	E2EReplyLinkRequest(ctx context.Context, screenName state.IdentScreenName, id string, reply []byte, now time.Time) error
 	E2EDeleteLinkRequest(ctx context.Context, screenName state.IdentScreenName, id string) error
+	E2EKTState(ctx context.Context) (int64, tlog.Hash, error)
+	E2EKTEntries(ctx context.Context, start, count int64) ([][]byte, error)
+	E2EKTSigningKey(ctx context.Context) (ed25519.PrivateKey, error)
 }
 
 // CookieBaker issues and checks the signed tokens (state.HMACCookieBaker).

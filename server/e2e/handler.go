@@ -58,6 +58,7 @@ type Handler struct {
 	sessions SessionRetriever
 	logger   *slog.Logger
 	limiter  *accountLimiter
+	keys     logKeys
 	now      func() time.Time
 }
 
@@ -90,6 +91,10 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /e2e/v1/users/{uin}/devices", h.getDevices)
 	mux.HandleFunc("GET /e2e/v1/users/{uin}/account-history", h.getAccountHistory)
 	mux.Handle("POST /e2e/v1/users/{uin}/devices/{device_id}/claim", h.authed(h.claim))
+
+	mux.HandleFunc("GET /e2e/v1/log/checkpoint", h.getLogCheckpoint)
+	mux.HandleFunc("GET /e2e/v1/log/key", h.getLogKey)
+	mux.HandleFunc("GET /e2e/v1/log/entries", h.getLogEntries)
 
 	mux.Handle("POST /e2e/v1/link", h.authed(h.createLink))
 	mux.Handle("GET /e2e/v1/link", h.authed(h.listLinks))

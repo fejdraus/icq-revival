@@ -292,6 +292,7 @@ type E2EConfig struct {
 	TokenTTL       time.Duration `envconfig:"E2E_TOKEN_TTL" required:"false" default:"12h" basic:"12h" ssl:"12h" description:"Lifetime of the key directory token handed to a client when it signs in over BOS. A token also dies with the session it was issued to; a client refreshes it before it expires."`
 	MaxDevices     int           `envconfig:"E2E_MAX_DEVICES" required:"false" default:"10" basic:"10" ssl:"10" description:"Most devices that are not revoked an account may have in the key directory."`
 	MaxOneTimeKeys int           `envconfig:"E2E_MAX_ONE_TIME_KEYS" required:"false" default:"100" basic:"100" ssl:"100" description:"Most one-time keys the key directory holds for one device."`
+	KTOrigin       string        `envconfig:"E2E_KT_ORIGIN" required:"false" default:"open-oscar-server/e2e-kt" basic:"open-oscar-server/e2e-kt" ssl:"open-oscar-server/e2e-kt" description:"Name of the key transparency log, the first line of its signed checkpoints. Make it unique to this server, such as icq.example.org/e2e-kt, and keep it: clients pin the log key under this name. No spaces or plus signs."`
 	LinkTTL        time.Duration `envconfig:"E2E_LINK_TTL" required:"false" default:"10m" basic:"10m" ssl:"10m" description:"How long a device-link request waits for one of the account's devices to answer before it is dropped."`
 }
 

@@ -148,6 +148,19 @@ pub trait DirectoryApi: Send + Sync {
     fn claim(&self, bearer: &str, uin: &str, device_id: u32) -> DirResult<Claim>;
     /// `POST /token`: a fresh token for the same session.
     fn refresh_token(&self, bearer: &str) -> DirResult<String>;
+    /// `GET /log/checkpoint`: the key log's signed checkpoint, `None` if the
+    /// server keeps no log (docs/e2e/KEY-TRANSPARENCY.md).
+    fn log_checkpoint(&self) -> DirResult<Option<String>> {
+        Ok(None)
+    }
+    /// `GET /log/key`: the key log's verifier key, `None` without a log.
+    fn log_key(&self) -> DirResult<Option<String>> {
+        Ok(None)
+    }
+    /// `GET /log/entries`: up to `count` leaves from index `start`.
+    fn log_entries(&self, _start: u64, _count: u64) -> DirResult<Vec<Vec<u8>>> {
+        Ok(Vec::new())
+    }
 }
 
 /// A shared directory is the directory: a session owns its directory so it
@@ -194,6 +207,15 @@ impl<T: DirectoryApi + ?Sized> DirectoryApi for std::sync::Arc<T> {
     }
     fn refresh_token(&self, bearer: &str) -> DirResult<String> {
         (**self).refresh_token(bearer)
+    }
+    fn log_checkpoint(&self) -> DirResult<Option<String>> {
+        (**self).log_checkpoint()
+    }
+    fn log_key(&self) -> DirResult<Option<String>> {
+        (**self).log_key()
+    }
+    fn log_entries(&self, start: u64, count: u64) -> DirResult<Vec<Vec<u8>>> {
+        (**self).log_entries(start, count)
     }
 }
 
@@ -262,6 +284,26 @@ impl<T: Transport> HttpDirectory<T> {
 
     fn need<R>(r: DirResult<Option<R>>, what: &str) -> DirResult<R> {
         r?.ok_or_else(|| DirError::Net(format!("empty reply to {what}")))
+    }
+
+    /// A `GET` whose answer is plain text; `None` for a 404, the answer of a
+    /// server that does not have the endpoint.
+    fn text(&self, path: &str) -> DirResult<Option<String>> {
+        let (status, reply) = self
+            .transport
+            .call("GET", path, None, None)
+            .map_err(DirError::Net)?;
+        match status {
+            404 => Ok(None),
+            200..=299 => String::from_utf8(reply)
+                .map(Some)
+                .map_err(|_| DirError::Net(format!("unexpected reply to GET {path}"))),
+            _ => Err(DirError::Api {
+                status,
+                code: format!("http_{status}"),
+                message: String::new(),
+            }),
+        }
     }
 }
 
@@ -336,6 +378,30 @@ impl<T: Transport> DirectoryApi for HttpDirectory<T> {
         Self::need::<Fresh>(self.call("POST", "token", Some(bearer), None), "token")
             .map(|f| f.token)
     }
+
+    fn log_checkpoint(&self) -> DirResult<Option<String>> {
+        self.text("log/checkpoint")
+    }
+
+    fn log_key(&self) -> DirResult<Option<String>> {
+        self.text("log/key")
+    }
+
+    fn log_entries(&self, start: u64, count: u64) -> DirResult<Vec<Vec<u8>>> {
+        #[derive(Deserialize)]
+        struct Entries {
+            entries: Vec<String>,
+        }
+        let path = format!("log/entries?start={start}&count={count}");
+        Self::need::<Entries>(self.call("GET", &path, None, None), &path)?
+            .entries
+            .iter()
+            .map(|e| {
+                vodozemac::base64_decode(e)
+                    .map_err(|_| DirError::Net(format!("a log entry is not base64 ({path})")))
+            })
+            .collect()
+    }
 }
 
 // --- in memory -----------------------------------------------------------------
@@ -355,9 +421,38 @@ struct Memory {
     announced: HashMap<String, String>,
     /// Calls that fail as if the directory could not be reached.
     offline: bool,
-    /// Requests seen, for tests: "METHOD path".
+    /// Requests seen, for tests: "METHOD path". The key log's are not.
     log: Vec<String>,
+    /// The key log: its leaves, and whether changes are written to it.
+    kt: Vec<Vec<u8>>,
+    kt_off: bool,
+    /// Changes are made without a leaf: a directory that lies.
+    kt_paused: bool,
+    /// The log's signing key; another seed is another key.
+    kt_seed: u8,
 }
+
+impl Memory {
+    fn kt_append(&mut self, kind: &str, sn: &str, fields: &[&[u8]]) {
+        if !self.kt_paused {
+            let time = self.kt.len() as u64 + 1;
+            self.kt.push(crate::kt::build_leaf(kind, sn, time, fields));
+        }
+    }
+
+    fn kt_device(&mut self, sn: &str, d: &Device) {
+        let raw = |s: &str| vodozemac::base64_decode(s).unwrap_or_default();
+        let (c, e, s) = (
+            raw(&d.curve25519_key),
+            raw(&d.ed25519_key),
+            raw(&d.account_signature),
+        );
+        self.kt_append("device", sn, &[&d.device_id.to_be_bytes(), &c, &e, &s]);
+    }
+}
+
+/// The name the in-memory key log signs its checkpoints with.
+pub const MEMORY_LOG: &str = "memory.test/e2e-kt";
 
 #[derive(Default, Clone)]
 struct MemAccount {
@@ -434,15 +529,81 @@ impl MemoryDirectory {
     /// Revokes a device, as the management API does.
     pub fn revoke(&self, screen_name: &str, device_id: u32) {
         let mut m = self.inner.lock().unwrap();
-        if let Some(a) = m.accounts.get_mut(&sign::ident(screen_name)) {
+        let sn = sign::ident(screen_name);
+        let mut revoked = false;
+        if let Some(a) = m.accounts.get_mut(&sn) {
             for d in &mut a.devices {
-                if d.device.device_id == device_id {
+                if d.device.device_id == device_id && d.device.revoked_at.is_none() {
                     d.device.revoked_at = Some(1);
                     d.one_time.clear();
                     d.fallback = None;
+                    revoked = true;
                 }
             }
         }
+        if revoked {
+            m.kt_append("revoke", &sn, &[&device_id.to_be_bytes()]);
+        }
+    }
+
+    /// Takes the key log away (or brings it back), as an older server.
+    pub fn set_log(&self, on: bool) {
+        self.inner.lock().unwrap().kt_off = !on;
+    }
+
+    /// Changes made while paused get no leaf: the directory then serves keys
+    /// the log does not have.
+    pub fn pause_log(&self, paused: bool) {
+        self.inner.lock().unwrap().kt_paused = paused;
+    }
+
+    /// Replaces a leaf: the log's history rewritten.
+    pub fn rewrite_log(&self, index: usize, leaf: Vec<u8>) {
+        self.inner.lock().unwrap().kt[index] = leaf;
+    }
+
+    /// Drops the leaves from `size` on: the log restored from an old backup.
+    pub fn truncate_log(&self, size: usize) {
+        self.inner.lock().unwrap().kt.truncate(size);
+    }
+
+    /// The number of leaves in the log.
+    pub fn log_size(&self) -> usize {
+        self.inner.lock().unwrap().kt.len()
+    }
+
+    /// Signs the log with another key from now on.
+    pub fn rekey_log(&self) {
+        self.inner.lock().unwrap().kt_seed += 1;
+    }
+
+    /// Adds a device to an account as it is, unchecked - as a server that
+    /// slips its own device into someone's account would. It goes into the
+    /// log like any device, unless the log is paused.
+    pub fn plant_device(&self, screen_name: &str, device: Device) {
+        let mut m = self.inner.lock().unwrap();
+        let sn = sign::ident(screen_name);
+        m.kt_device(&sn, &device);
+        if let Some(a) = m.accounts.get_mut(&sn) {
+            a.devices.push(MemDevice {
+                device,
+                one_time: Vec::new(),
+                fallback: None,
+            });
+        }
+    }
+
+    fn kt_checkpoint(m: &Memory) -> (String, String) {
+        let mut edge = crate::kt::Edge::default();
+        for l in &m.kt {
+            edge.push(crate::kt::leaf_hash(l));
+        }
+        crate::kt::sign_checkpoint(
+            MEMORY_LOG,
+            &[m.kt_seed.wrapping_add(1); 32],
+            edge.size,
+            &edge.root().unwrap_or_default(),
+        )
     }
 
     fn with<R>(
@@ -512,6 +673,7 @@ impl DirectoryApi for MemoryDirectory {
                         return Err(api(403, "not_announced"));
                     }
                     a.key = account_key.to_string();
+                    m.kt_append("account", sn, &[b"reset", &key]);
                     Ok(())
                 }
                 None => {
@@ -525,6 +687,7 @@ impl DirectoryApi for MemoryDirectory {
                             devices: Vec::new(),
                         },
                     );
+                    m.kt_append("account", sn, &[b"publish", &key]);
                     Ok(())
                 }
             }
@@ -540,6 +703,7 @@ impl DirectoryApi for MemoryDirectory {
         account_signature: &str,
     ) -> DirResult<DeviceState> {
         self.with(format!("PUT devices/{device_id}"), Some(bearer), |m, sn| {
+            let resigned = vodozemac::base64_decode(account_signature).unwrap_or_default();
             let a = m
                 .accounts
                 .get_mut(sn)
@@ -566,8 +730,13 @@ impl DirectoryApi for MemoryDirectory {
                 {
                     return Err(api(409, "device_conflict"));
                 }
+                let changed = d.device.account_signature != account_signature;
                 d.device.account_signature = account_signature.to_string();
-                return Ok(Memory::state(d));
+                let state = Memory::state(d);
+                if changed {
+                    m.kt_append("resign", sn, &[&device_id.to_be_bytes(), &resigned]);
+                }
+                return Ok(state);
             }
             let d = MemDevice {
                 device: Device {
@@ -583,7 +752,9 @@ impl DirectoryApi for MemoryDirectory {
                 fallback: None,
             };
             let state = Memory::state(&d);
+            let logged = d.device.clone();
             a.devices.push(d);
+            m.kt_device(sn, &logged);
             Ok(state)
         })
     }
@@ -692,6 +863,39 @@ impl DirectoryApi for MemoryDirectory {
                 .bearer)
         })
     }
+
+    fn log_checkpoint(&self) -> DirResult<Option<String>> {
+        let m = self.inner.lock().unwrap();
+        if m.offline {
+            return Err(DirError::Net("offline (test)".into()));
+        }
+        Ok((!m.kt_off).then(|| Self::kt_checkpoint(&m).0))
+    }
+
+    fn log_key(&self) -> DirResult<Option<String>> {
+        let m = self.inner.lock().unwrap();
+        if m.offline {
+            return Err(DirError::Net("offline (test)".into()));
+        }
+        Ok((!m.kt_off).then(|| Self::kt_checkpoint(&m).1))
+    }
+
+    fn log_entries(&self, start: u64, count: u64) -> DirResult<Vec<Vec<u8>>> {
+        let m = self.inner.lock().unwrap();
+        if m.offline {
+            return Err(DirError::Net("offline (test)".into()));
+        }
+        if m.kt_off {
+            return Err(api(404, "http_404"));
+        }
+        let count = count.min(crate::kt::MAX_ENTRIES) as usize;
+        Ok(m.kt
+            .iter()
+            .skip(start as usize)
+            .take(count)
+            .cloned()
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -728,6 +932,29 @@ mod tests {
             answers: Mutex::new(answers),
             seen: Mutex::new(Vec::new()),
         })
+    }
+
+    #[test]
+    fn the_key_log_endpoints_read_as_the_server_writes_them() {
+        let d = script(vec![
+            (200, "log\n0\nAAAA\n\n- log x\n"),
+            (200, "log+01020304+AQ\n"),
+            (200, r#"{"start":2,"entries":["T1NDQVI","AQID"]}"#),
+            (404, "404 page not found\n"),
+            (502, "Bad Gateway"),
+        ]);
+        assert!(d.log_checkpoint().unwrap().unwrap().starts_with("log\n0\n"));
+        assert_eq!(d.log_key().unwrap().as_deref(), Some("log+01020304+AQ\n"));
+        assert_eq!(
+            d.log_entries(2, 1000).unwrap(),
+            vec![b"OSCAR".to_vec(), vec![1, 2, 3]]
+        );
+        // An older server has no log; a broken one is an error.
+        assert_eq!(d.log_checkpoint().unwrap(), None);
+        assert_eq!(d.log_checkpoint().unwrap_err().code(), "http_502");
+        let seen = d.transport.seen.lock().unwrap().clone();
+        assert_eq!(seen[0], "GET log/checkpoint - ");
+        assert_eq!(seen[2], "GET log/entries?start=2&count=1000 - ");
     }
 
     #[test]

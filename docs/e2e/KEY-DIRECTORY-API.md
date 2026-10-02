@@ -321,6 +321,9 @@ UIN 123456.
 | GET    | `/e2e/v1/users/{uin}/devices`                       |   | an account's key and devices              |
 | GET    | `/e2e/v1/users/{uin}/account-history`               |   | an account's key changes                  |
 | POST   | `/e2e/v1/users/{uin}/devices/{device_id}/claim`     | T | claim a one-time (or fallback) key        |
+| GET    | `/e2e/v1/log/checkpoint`                            |   | the key log's signed checkpoint           |
+| GET    | `/e2e/v1/log/key`                                   |   | the key log's verifier key                |
+| GET    | `/e2e/v1/log/entries?start=N&count=M`               |   | key log entries (KEY-TRANSPARENCY.md)     |
 | POST   | `/e2e/v1/link`                                      | T | new device opens a link request           |
 | GET    | `/e2e/v1/link`                                      | T | existing devices list pending requests    |
 | GET    | `/e2e/v1/link/{id}`                                 | T | read one request (new device polls reply) |

@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS e2e_kt_meta;
+DROP TABLE IF EXISTS e2e_kt_hash;
+DROP TABLE IF EXISTS e2e_kt_leaf;
