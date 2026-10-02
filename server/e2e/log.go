@@ -61,7 +61,8 @@ func newLogSigner(name string, priv ed25519.PrivateKey) (note.Signer, string, er
 	if err != nil {
 		return nil, "", err
 	}
-	parts := strings.Split(vkey, "+")
+	// The base64 key may itself hold plus signs.
+	parts := strings.SplitN(vkey, "+", 3)
 	if len(parts) != 3 {
 		return nil, "", fmt.Errorf("e2e log verifier key %q", vkey)
 	}

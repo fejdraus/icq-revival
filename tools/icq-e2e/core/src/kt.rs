@@ -327,7 +327,8 @@ fn key_hash(name: &str, alg_key: &[u8]) -> u32 {
 /// Reads a verifier key and checks that its hash is its own.
 pub fn parse_verifier(vkey: &str) -> Result<Verifier, String> {
     let vkey = vkey.trim();
-    let mut parts = vkey.split('+');
+    // The base64 key may itself hold plus signs.
+    let mut parts = vkey.splitn(3, '+');
     let (Some(name), Some(hash), Some(key), None) =
         (parts.next(), parts.next(), parts.next(), parts.next())
     else {
@@ -660,6 +661,23 @@ mod tests {
             vodozemac::base64_encode([1u8; 32])
         );
         assert!(s.accounts["100001"].devices.is_empty());
+    }
+
+    #[test]
+    fn a_log_key_whose_base64_holds_a_plus_sign_reads() {
+        let mut seen = 0;
+        for i in 0..64u8 {
+            let mut seed = [0u8; 32];
+            seed[0] = i;
+            let (note, vkey) = sign_checkpoint("x.test/e2e-kt", &seed, 1, &[3; 32]);
+            if !vkey.splitn(3, '+').nth(2).unwrap().contains('+') {
+                continue;
+            }
+            seen += 1;
+            let v = parse_verifier(&vkey).unwrap();
+            assert_eq!(open_checkpoint(&note, &v).unwrap().size, 1);
+        }
+        assert!(seen >= 3, "no key with a plus sign among the seeds");
     }
 
     #[test]

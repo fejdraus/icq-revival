@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -136,4 +137,26 @@ func TestHandler_Log(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/e2e/v1/log/key", nil))
 	assert.Equal(t, k1, rec.Body.String())
+}
+
+// A log key whose base64 holds a plus sign signs and verifies like any other.
+func TestNewLogSigner_KeyWithPlus(t *testing.T) {
+	seen := 0
+	for i := 0; i < 64 && seen < 3; i++ {
+		seed := make([]byte, ed25519.SeedSize)
+		seed[0] = byte(i)
+		signer, vkey, err := newLogSigner("icq.example/e2e-kt", ed25519.NewKeyFromSeed(seed))
+		require.NoError(t, err)
+		if !strings.Contains(strings.SplitN(vkey, "+", 3)[2], "+") {
+			continue
+		}
+		seen++
+		verifier, err := note.NewVerifier(vkey)
+		require.NoError(t, err)
+		msg, err := note.Sign(&note.Note{Text: "icq.example/e2e-kt\n0\nAAAA\n"}, signer)
+		require.NoError(t, err)
+		_, err = note.Open(msg, note.VerifierList(verifier))
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 3, seen, "no key with a plus sign among the seeds")
 }
