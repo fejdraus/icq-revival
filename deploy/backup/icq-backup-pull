@@ -14,6 +14,8 @@
 #   ICQ_BACKUP_USER   the SSH user with the forced command   (ubuntu)
 #   ICQ_BACKUP_PORT   SSH port                               (22)
 #   ICQ_BACKUP_KEY    the private SSH key for that user      (/root/.ssh/icq-backup)
+#   ICQ_BACKUP_KNOWN_HOSTS  the server's host key, checked strictly
+#                           (/root/.ssh/icq-backup.known_hosts)
 #   ICQ_BACKUP_DEST   where archives are kept                (/var/backups/icq)
 #   ICQ_BACKUP_KEEP   how many archives to keep              (3)
 #   ICQ_BACKUP_MIN_BYTES        smaller means something is wrong   (65536)
@@ -33,6 +35,7 @@ HOST="${ICQ_BACKUP_HOST:?set ICQ_BACKUP_HOST}"
 USER_="${ICQ_BACKUP_USER:-ubuntu}"
 PORT="${ICQ_BACKUP_PORT:-22}"
 KEY="${ICQ_BACKUP_KEY:-/root/.ssh/icq-backup}"
+KNOWN_HOSTS="${ICQ_BACKUP_KNOWN_HOSTS:-/root/.ssh/icq-backup.known_hosts}"
 DEST="${ICQ_BACKUP_DEST:-/var/backups/icq}"
 KEEP="${ICQ_BACKUP_KEEP:-3}"
 MIN_BYTES="${ICQ_BACKUP_MIN_BYTES:-65536}"
@@ -45,7 +48,9 @@ trap 'rm -f "$part"' EXIT
 
 # The forced command on the server ignores any command sent; set -e fails
 # the run when it exits non-zero (pipefail on its side covers every step).
-ssh -T -o BatchMode=yes -p "$PORT" -i "$KEY" "$USER_@$HOST" > "$part"
+# The server's host key is pinned in its own file and checked strictly: a
+# host that answers with another key gets nothing sent and nothing kept.
+ssh -T -o BatchMode=yes -o ConnectTimeout=30     -o UserKnownHostsFile="$KNOWN_HOSTS" -o StrictHostKeyChecking=yes     -p "$PORT" -i "$KEY" "$USER_@$HOST" > "$part"
 
 fail() { echo "icq-backup-pull: $*" >&2; exit 1; }
 
