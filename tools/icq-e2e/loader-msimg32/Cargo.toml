@@ -1,6 +1,6 @@
 [package]
 name = "icqe2e_msimg32"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "ICQ 6.5 loader stub: ships as msimg32.dll, proxies the real msimg32, installs the E2E add-on"
 license = "MIT"

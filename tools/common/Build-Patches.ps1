@@ -83,7 +83,7 @@ if (-not $NoPlayer) {
     }
 }
 
-# The E2E encryption add-on (Phase 1, rewrite harness), an owner-only test build:
+# The E2E encryption add-on (stage 3), an owner-only test build:
 # tbdiag.dll for ICQ 7.2 and msimg32.dll for ICQ 6.5 (tools\icq-e2e). They are
 # copied next to the patches under their own names, Icqe2eProbe.dll and
 # Icqe2eProbe-msimg32.dll, gitignored like the player and deliberately NOT put

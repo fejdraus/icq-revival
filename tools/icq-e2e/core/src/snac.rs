@@ -10,12 +10,28 @@ pub const FOOD_ICBM: u16 = 0x0004;
 pub const FOOD_LOCATE: u16 = 0x0002;
 pub const FOOD_BUDDY: u16 = 0x0003;
 pub const FOOD_ICQ: u16 = 0x0015;
+/// OService (`0x0001`): sign-on, versions and the MOTD.
+pub const FOOD_OSERVICE: u16 = 0x0001;
+/// `OServiceMOTD` (`0x0001/0x0013`), whose TLV block carries TLV 0x0E2E: the
+/// key directory's token (KEY-DIRECTORY-API.md 3.1).
+pub const OSERVICE_MOTD: u16 = 0x0013;
+
+/// `OServiceSignOn` (`0x0001/0x0001`). Its TLV `0x0001` is the screen name,
+/// which for these clients is the UIN: the one place the add-on can learn
+/// which account is signing on without the command line having to say so.
+pub const OSERVICE_SIGN_ON: u16 = 0x0001;
+/// TLV `0x0001` of a sign-on: the screen name (`wire.LoginTLVTagsScreenName`).
+pub const LOGIN_TLV_SCREEN_NAME: u16 = 0x0001;
+/// `OServiceUserInfoUpdate` (`0x0001/0x000F`), the server telling the client
+/// about itself right after sign-on.
+pub const OSERVICE_USER_INFO: u16 = 0x000F;
 
 pub const LOCATE_SET_INFO: u16 = 0x0004; // outbound: profile, away message, capabilities
 pub const BUDDY_ARRIVED: u16 = 0x000B; // inbound: a contact's user info
 
 pub const ICBM_MSG_TO_HOST: u16 = 0x0006; // outbound (client -> server)
 pub const ICBM_MSG_TO_CLIENT: u16 = 0x0007; // inbound (server -> client)
+pub const ICBM_HOST_ACK: u16 = 0x000C; // inbound: the server's ack of a message that asked for one
 
 pub const ICQ_DB_QUERY: u16 = 0x0002; // ICQ meta request (client -> server)
 pub const ICQ_DB_REPLY: u16 = 0x0003; // ICQ meta reply (server -> client), offline messages ride here

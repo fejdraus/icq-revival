@@ -6,7 +6,10 @@
 mod common;
 
 use common::*;
+use icqe2e_core::config::Policy;
 use icqe2e_core::engine::Engine;
+use icqe2e_core::icbm::Direction;
+use icqe2e_core::stream::StreamRewriter;
 
 /// An engine with socket 1 already past its opening frame in both directions.
 fn opened() -> Engine {
@@ -140,4 +143,78 @@ fn a_stream_that_is_not_oscar_is_not_decoded() {
     assert!(e
         .on_recv(1, &in_ch1(3, "1", 0x0000, b"mid-stream"))
         .is_empty());
+}
+
+/// The account is learned from the server's own user info wherever in the
+/// stream it lands. A raw `recv` may start in the middle of the frame before
+/// it, so the detection has to happen where frames are reassembled - this is
+/// the regression for the add-on logging «no UIN yet» while the server log
+/// showed `0x0001/0x000F` arriving.
+#[test]
+fn own_user_info_is_read_from_the_reassembled_stream() {
+    let mut body = Vec::new();
+    body.extend_from_slice(&[6, b'1', b'0', b'0', b'0', b'0', b'1']);
+    body.extend_from_slice(&7u16.to_be_bytes());
+    body.extend_from_slice(&[0x00, 0x02, 0x00, 0x01, 0x00, 0x02, 0x00, 0x10]);
+    let frame = data(3, &snac(0x0001, 0x000F, &body));
+
+    for split in 1..frame.len() {
+        let mut rw = StreamRewriter::new(Direction::Inbound);
+        let mut out = Vec::new();
+        rw.push(&hello(1), &Policy::observe(), &mut out);
+        rw.push(&frame[..split], &Policy::observe(), &mut out);
+        assert_eq!(rw.take_sign_on_uin(), None, "half a frame names nothing");
+        rw.push(&frame[split..], &Policy::observe(), &mut out);
+        assert_eq!(
+            rw.take_sign_on_uin().as_deref(),
+            Some("100001"),
+            "split at byte {split}"
+        );
+    }
+}
+
+/// Several frames in one read, the last of them the one that names the account:
+/// nothing before it may swallow it.
+#[test]
+fn own_user_info_behind_other_frames_in_one_read() {
+    let mut body = Vec::new();
+    body.extend_from_slice(&[6, b'1', b'0', b'0', b'0', b'0', b'1']);
+    body.extend_from_slice(&7u16.to_be_bytes());
+    body.extend_from_slice(&[0x00, 0x02, 0x00, 0x01, 0x00, 0x02, 0x00, 0x10]);
+
+    let mut chunk = hello(1);
+    chunk.extend(data(2, &snac(0x0001, 0x0014, &[0, 1, 2, 3])));
+    chunk.extend(data(3, &snac(0x0003, 0x0005, &[0, 4, 5])));
+    chunk.extend(data(4, &snac(0x0001, 0x000F, &body)));
+
+    let mut rw = StreamRewriter::new(Direction::Inbound);
+    let mut out = Vec::new();
+    rw.push(&chunk, &Policy::observe(), &mut out);
+    assert_eq!(rw.take_sign_on_uin().as_deref(), Some("100001"));
+}
+
+/// A MOTD token split across two reads is still read: the key directory
+/// depends on it, and a client never sends the MOTD in one piece.
+#[test]
+fn a_split_motd_still_yields_its_token() {
+    let token = vec![0xA5u8; 24];
+    // An MOTD body is the `uint16` message type `0x0004` and then its TLVs:
+    // the message text in 0x000B, the key directory token in 0x0E2E.
+    let mut body = 0x0004u16.to_be_bytes().to_vec();
+    body.extend(tlv(0x000B, b"welcome"));
+    body.extend(tlv(0x0E2E, &token));
+    let frame = data(5, &snac(0x0001, 0x0013, &body));
+
+    for split in [1, frame.len() / 3, frame.len() - 1] {
+        let mut rw = StreamRewriter::new(Direction::Inbound);
+        let mut out = Vec::new();
+        rw.push(&hello(1), &Policy::observe(), &mut out);
+        rw.push(&frame[..split], &Policy::observe(), &mut out);
+        rw.push(&frame[split..], &Policy::observe(), &mut out);
+        assert_eq!(
+            rw.take_token(),
+            Some(token.clone()),
+            "split at byte {split}"
+        );
+    }
 }

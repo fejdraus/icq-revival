@@ -12,3 +12,13 @@ path = "src/main.rs"
 
 [dependencies]
 icqe2e_core = { path = "../core" }
+# The TLS run (over_tls.rs): an in-process rustls server with rcgen
+# certificates, and the client side driven like coolcore does it - real
+# loopback sockets, WSAAsyncSelect to a message-only window.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.14.10", default-features = false, features = ["ring", "pem"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Networking_WinSock",
+    "Win32_UI_WindowsAndMessaging",
+] }

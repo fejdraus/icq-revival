@@ -2,8 +2,8 @@
 // ProductName and InternalName (tools\patcher\Icq72\Icq72Client.cs), so keep
 // those two as they are; Explorer shows the rest.
 1 VERSIONINFO
-FILEVERSION 0,2,0,0
-PRODUCTVERSION 0,2,0,0
+FILEVERSION 0,3,0,0
+PRODUCTVERSION 0,3,0,0
 FILEFLAGSMASK 0x3F
 FILEFLAGS 0x0
 FILEOS 0x40004
@@ -15,12 +15,12 @@ BEGIN
         BLOCK "040904B0"
         BEGIN
             VALUE "CompanyName", "ICQ Revival"
-            VALUE "FileDescription", "ICQ E2E add-on (Phase 1 rewrite harness) for ICQ 7.2"
-            VALUE "FileVersion", "0.2.0"
+            VALUE "FileDescription", "ICQ E2E add-on (end-to-end encryption) for ICQ 7.2"
+            VALUE "FileVersion", "0.3.0"
             VALUE "InternalName", "ICQ-E2E-Probe"
             VALUE "OriginalFilename", "tbdiag.dll"
             VALUE "ProductName", "ICQ Revival"
-            VALUE "ProductVersion", "0.2.0"
+            VALUE "ProductVersion", "0.3.0"
             VALUE "LegalCopyright", "ICQ Revival contributors; MIT"
         END
     END

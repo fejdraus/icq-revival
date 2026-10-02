@@ -1,6 +1,16 @@
 //! Builders for synthetic FLAP/SNAC/ICBM frames shared by the integration tests.
 #![allow(dead_code)]
 
+/// Keeps these tests out of the live client's log.
+///
+/// `ICQE2E_LOG` is set for the whole user, and an integration test links the
+/// library as an ordinary dependency where `cfg!(test)` is false, so this
+/// binary has to say so itself before anything writes a line.
+#[ctor::ctor(unsafe)]
+fn own_log() {
+    icqe2e_core::log::own_file();
+}
+
 pub const FLAP_MARKER: u8 = 0x2A;
 pub const FLAP_SNAC: u8 = 0x02;
 
@@ -193,4 +203,131 @@ pub fn buddy_arrived(seq: u16, sn: &str, caps: &[[u8; 16]]) -> Vec<u8> {
     b.extend(tlv(0x0006, &[0, 0, 0, 0]));
     b.extend(tlv(0x000D, &caps.concat()));
     data(seq, &snac(0x0003, 0x000B, &b))
+}
+
+/// The channel-1 message as it sits on the wire: the declared charset and the
+/// text's raw bytes, before anything decodes them.
+///
+/// `icbm::parse_*` hands back a decoded `String`, which is what the log wants
+/// but not what a test of the message path wants: there the bytes must survive
+/// the round trip exactly, HTML and all.
+pub struct RawText {
+    /// The charset declared in the fragment, not what the text really is.
+    pub charsets: Vec<u16>,
+    /// The text as sent.
+    pub text: Vec<u8>,
+}
+
+/// Finds the message fragment of a channel-1 SNAC payload and returns its
+/// charset and raw text. `None` if this is not a channel-1 message.
+pub fn snac_text(payload: &[u8]) -> Option<RawText> {
+    // SNAC header: food group, subgroup, flags, request id - 10 bytes. Then
+    // cookie[8] channel:u16 and a len8 screen name.
+    let channel = u16::from_be_bytes([*payload.get(18)?, *payload.get(19)?]);
+    if channel != 1 {
+        return None;
+    }
+    let name_len = *payload.get(20)? as usize;
+    // `tlvs` starts here and `r` indexes into it, not into the whole payload.
+    let tlvs = &payload[21 + name_len..];
+    let mut charsets = Vec::new();
+    // A `ToClient` body carries a warning level and a count of user-info TLVs
+    // between the screen name and the message TLVs; a `ToHost` body does not.
+    let sub_group = u16::from_be_bytes([*payload.get(2)?, *payload.get(3)?]);
+    let mut r = 0usize;
+    if sub_group == 0x0007 {
+        // warning level:u16 then a count of user-info TLVs, each walked by its
+        // own length - they are not all four bytes.
+        let count = u16::from_be_bytes([*tlvs.get(2)?, *tlvs.get(3)?]) as usize;
+        r = 4;
+        for _ in 0..count {
+            let len = u16::from_be_bytes([*tlvs.get(r + 2)?, *tlvs.get(r + 3)?]) as usize;
+            r += 4 + len;
+        }
+    }
+    while r + 4 <= tlvs.len() {
+        let tag = u16::from_be_bytes([tlvs[r], tlvs[r + 1]]);
+        let len = u16::from_be_bytes([tlvs[r + 2], tlvs[r + 3]]) as usize;
+        let Some(value) = tlvs.get(r + 4..r + 4 + len) else {
+            break;
+        };
+        if tag == 0x0002 {
+            // The fragment list: id:u8 version:u8 len:u16 payload.
+            let mut f = 0usize;
+            while f + 4 <= value.len() {
+                let id = value[f];
+                let flen = u16::from_be_bytes([value[f + 2], value[f + 3]]) as usize;
+                let Some(payload) = value.get(f + 4..f + 4 + flen) else {
+                    break;
+                };
+                if id == 1 && payload.len() >= 4 {
+                    charsets.push(u16::from_be_bytes([payload[0], payload[1]]));
+                    return Some(RawText {
+                        charsets,
+                        text: payload[4..].to_vec(),
+                    });
+                }
+                f += 4 + flen;
+            }
+        }
+        r += 4 + len;
+    }
+    None
+}
+
+/// The declared charset of the message in a SNAC payload.
+pub fn snac_charset(payload: &[u8]) -> Option<u16> {
+    snac_text(payload).and_then(|t| t.charsets.first().copied())
+}
+
+/// The offline message the client *sends*: `0x0015/0x0002`, the same block as
+/// the reply with the recipient where the reply has the sender.
+pub fn offline_send(seq: u16, recipient: u32, text: &[u8]) -> Vec<u8> {
+    let mut inner = Vec::new();
+    inner.extend_from_slice(&100003u32.to_le_bytes()); // our UIN
+    inner.extend_from_slice(&0x0006u16.to_le_bytes()); // offline message, sent
+    inner.extend_from_slice(&7u16.to_le_bytes()); // seq
+    inner.extend_from_slice(&recipient.to_le_bytes());
+    inner.extend_from_slice(&2026u16.to_le_bytes());
+    inner.extend_from_slice(&[9, 30, 12, 0]); // month, day, hour, minute
+    inner.push(0x01); // plain
+    inner.push(0x00); // flags
+                      // NUL-terminated, with its length in front, little-endian like the block.
+    let mut t = text.to_vec();
+    t.push(0);
+    inner.extend_from_slice(&(t.len() as u16).to_le_bytes());
+    inner.extend_from_slice(&t);
+    let mut env = Vec::new();
+    env.extend_from_slice(&(inner.len() as u16).to_le_bytes());
+    env.extend_from_slice(&inner);
+    data(seq, &snac(0x0015, 0x0002, &tlv(0x0001, &env)))
+}
+
+/// The text of the offline message in an `0x0015` SNAC on the wire.
+///
+/// The block starts with a u16 little-endian length, then the message, and the
+/// text is the last thing in it.
+pub fn offline_text_on_wire(frame: &[u8]) -> Option<String> {
+    // FLAP header, SNAC header, then the TLV block of tag 0x0001.
+    let body = 6 + 10;
+    let tag = u16::from_be_bytes([*frame.get(body)?, *frame.get(body + 1)?]);
+    let len = u16::from_be_bytes([*frame.get(body + 2)?, *frame.get(body + 3)?]) as usize;
+    if tag != 0x0001 {
+        return None;
+    }
+    let env = frame.get(body + 4..body + 4 + len)?;
+    let block_len = u16::from_le_bytes([*env.get(0)?, *env.get(1)?]) as usize;
+    let block = env.get(2..2 + block_len)?;
+    // Everything before the text length is fixed for a plain message: the
+    // recipient, the request type, the sequence, the other party, the
+    // timestamp, the message type and the flags.
+    let len_at = 4 + 2 + 2 + 4 + 2 + 1 + 1 + 1 + 1 + 1 + 1;
+    let text_len = u16::from_le_bytes([*block.get(len_at)?, *block.get(len_at + 1)?]) as usize;
+    let start = len_at + 2;
+    let raw = block.get(start..start + text_len)?;
+    Some(
+        String::from_utf8_lossy(raw)
+            .trim_end_matches('\0')
+            .to_string(),
+    )
 }

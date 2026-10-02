@@ -1,82 +1,235 @@
-# ICQ E2E add-on — Phase 1 (pass-through rewrite harness)
+# ICQ E2E add-on — stage 3 (end-to-end encryption)
 
-An in-process native add-on for the classic ICQ 6.5 and 7.2 clients. This phase
-**rewrites the text of every instant message in place** with a trivial,
-reversible transform - a marker and ROT13 going out, undone coming in - to prove
-that the transport works before any crypto is added: frames grow and shrink,
-every length is fixed up, the client's frame count and sequence numbers stay as
-they were, and the client notices nothing. **There is no encryption yet.** The
-plan of this stage is `docs/e2e/STAGE-2-CLIENT-REWRITE-HARNESS.md`; the overall
-design is `docs/e2e/DESIGN.md`.
+A native add-on for the classic ICQ 6.5 and 7.2 clients that **encrypts instant
+messages end to end** with Olm (the [vodozemac] Rust implementation, Apache-2.0).
+A message leaves the sender's client as an opaque container, travels through the
+ICQ server unreadable, and is opened on the recipient's device. The server never
+holds anything it could read.
 
-Phase 0 (observation only) is still there: `ICQE2E_MODE=observe`.
+This is the third stage. Stage 1 proved the transport by rewriting message text
+in place with a reversible transform; stage 3 replaces that with real crypto.
+The plan is `docs/e2e/STAGE-3-CLIENT-CRYPTO.md`, the design is
+`docs/e2e/DESIGN.md`, and the requirement list with its status is
+`docs/e2e/CHECKLIST.md`. The key directory's API is
+`docs/e2e/KEY-DIRECTORY-API.md`.
+
+[vodozemac]: https://github.com/matrix-org/vodozemac
+
+## What the user sees
+
+- A message to someone with the add-on: normal text, HTML, `<FONT sml>` smileys,
+  Cyrillic, Latin-1 accents — the sender's own bytes come back exactly as
+  written, nothing added to them. Whether a chat is encrypted is said by the
+  notes below and by `/e2e status`, not by a mark on each message (see "No lock
+  in the window").
+- A message to someone **without** it: the text goes out in clear, and the chat
+  shows one note saying so, once per sign-on rather than once per message.
+- The state of each chat as a note: when it is first used in a sign-on, and on
+  every change ("Encryption is on in this chat", "off", "they do not have the
+  add-on", "switched on: they sent an encrypted message").
+- A container this device cannot open (a tampered one, or one for another
+  device): a note, never garbage in the chat, and never a new key exchange
+  because of it.
+- A key publication that leaves encryption not working (keys refused, key
+  directory unreachable, token refused): one note with the reason, once per
+  sign-on for each kind; after it, one "Encryption is ready" once it works.
+  Nothing when publishing simply works.
+- Notes from the add-on itself are marked `[ICQ E2E]` and arrive as messages
+  from the contact the chat is with.
+
+## Commands (CHECKLIST section 10)
+
+Typed in the chat window and sent as a message; the add-on takes it out of the
+stream, so the contact never gets it, and answers with a note in that chat.
+
+| Command | What it does |
+|---|---|
+| `/e2e on` | Encryption on for this contact, by hand: nothing ever goes to them in clear. Without their keys the message is held and the chat says why. |
+| `/e2e off` | Encryption off for this contact: messages go in clear. An encrypted message from them is still read, and gives one hint. |
+| `/e2e auto` | Back to the default: the manual on/off is forgotten; whether the contact was seen encrypting is kept, so downgrade protection stays. |
+| `/e2e status` | The setting (auto/on/off), whether the contact was seen encrypting, their signed devices in the key directory, and what the next message will do. |
+| `/e2e plain` | The next message goes in clear, once - for a contact that encrypted before and now shows no keys. Refused when encryption is on by hand. |
+
+The setting is kept per contact in the state file, with whether the contact was
+ever seen encrypting. Without a setting a contact is encrypted whenever the key
+directory has a signed device of theirs; the OSCAR capability is only a hint.
+Once a contact has encrypted, the add-on never falls back to clear text by
+itself: if the server later shows no keys for them, the message is held and the
+chat says so (downgrade protection).
+
+## No lock in the window (CHECKLIST 10.4, 10.9)
+
+Two ways of showing encryption in the window were tried and dropped:
+
+- **A lock button in the message window** (ICQ 6.5 and 7.2, put in by the
+  patches). The window's markup does not expose which contact a chat is with,
+  so the button could show no state; and having its script send `/e2e status`
+  through the window's Send was unreliable - it sent the user's draft, live,
+  instead of the command. The patches no longer put it in, and an Apply takes
+  out what an earlier build put there (the markup edits, `e2eLock.js` and the
+  pictures).
+- **A mark before each decrypted message** (`🔒 `, or `[E2E] ` for 8-bit
+  text). ICQ 6.5 and 7.2 draw that character as `??`. The add-on no longer adds
+  anything: the reader sees the message exactly as the sender wrote it.
+
+What says whether a chat is encrypted is the add-on's notes in the chat (when
+the chat is first used in a sign-on and on every change) and `/e2e status`. An
+earlier build kept a file per contact for the button under
+`%APPDATA%\ICQ E2E\state\`, and the button's script logged to
+`%APPDATA%\ICQ E2E\lockbutton.log`; the add-on removes both at sign-on.
 
 ## Layout
 
 | Crate | Output | Role |
 |-------|--------|------|
-| `core` | `icqe2e_core` (lib) | The engine: stream rewriting over FLAP, SNAC/ICBM/ICQ-offline rewriting, the harness transform, the Winsock IAT hook and the logger. Everything but `hook`/`log` is plain Rust and unit-tested. |
+| `core` | `icqe2e_core` (lib) | The engine: FLAP stream rewriting, the Olm keys and container, the key directory client, the state file, and the Winsock IAT hook. Everything but `hook`/`log`/`store`/`winhttp` is plain Rust and unit-tested. |
 | `loader-tbdiag` | `tbdiag.dll` | ICQ 7.2 loader. ICQ.exe loads `tbdiag.dll` from its own folder at startup; this replacement pins itself, starts the add-on, and answers the `FC*` telemetry probe harmlessly. |
 | `loader-msimg32` | `msimg32.dll` | ICQ 6.5 loader. A proxy for `msimg32.dll` (a non-KnownDLL that `MUtils.dll` imports at process init); it forwards the real exports to `system32\msimg32.dll` and starts the add-on. |
-| `testhost` | `icqe2e_testhost.exe` | Plays two clients with the add-on in-process: a message goes out rewritten and comes back as typed. |
+| `testhost` | `icqe2e_testhost.exe` | Plays two clients in-process with the add-on on encrypt: a message goes out as a container and comes back exactly as typed. Then the same path through the real Winsock hooks over TLS 1.3 (`over_tls.rs`): sign-in, BOS, E2E, slow delivery, resets and every fail-closed case. `--go` runs a sign-in against a local Open OSCAR Server's TLS listener. |
 
-`core/src`: `stream.rs` (per-direction FLAP stream rewriter), `rewrite.rs`
-(message SNACs rebuilt with new text), `harness.rs` (the transform), `caps.rs`
-(the add-on's capability), `config.rs`
-(the environment variables), `engine.rs` (both directions of many sockets behind
-a simple API), `icbm.rs`/`snac.rs`/`text.rs` (decoding for the log), `hook.rs`
-(Winsock), `log.rs`.
+`core/src`, roughly in the order a message travels:
 
-## What is rewritten
+| File | Role |
+|---|---|
+| `stream.rs` | One direction of a socket as a stream of FLAP frames. Adds, removes and renumbers frames when the crypto path needs it. |
+| `session.rs` | One signed-on session: owns the engine, its state file, the publish and refill steps. |
+| `crypto.rs` | The `Crypto` trait the stream drives, and `Engine`/`Publisher` over the directory. |
+| `keys.rs` | The Olm account and sessions, one-time and fallback keys, the state that survives a restart. |
+| `container.rs` | The container: envelope, AEAD, padding, and the ASCII armor that carries it in the message text. |
+| `directory.rs` | The key directory API, over WinHTTP or in memory for tests. |
+| `store.rs` | The state file, protected with DPAPI. |
+| `policy.rs` | The user's control (CHECKLIST 10): the `/e2e` commands, the per-contact setting, downgrade protection, the words of the notes. |
+| `rewrite.rs` | Which SNACs are messages, and what happens to each one. |
+| `icbm.rs`, `snac.rs`, `text.rs`, `caps.rs` | Decoding, and the add-on's capability and account-key announcement. |
+| `hook.rs`, `log.rs` | Winsock, and the log. |
+| `route.rs` | Which connections go to our server (`server=` in `icq-e2e.ini`), and the TLS port and ALPN they go to instead (docs/e2e/STAGE-TLS.md). |
+| `tls.rs`, `hook_tls.rs` | TLS 1.3 as byte buffers (rustls), and TLS at the bottom of the hooked sockets: the pump thread, `recv`/`send`/`FIONREAD`/`closesocket`/`getpeername`, fail closed with a message box; `tls=off` is the opt-out. |
 
-- Outbound ICBM `0x0004/0x0006` and inbound `0x0004/0x0007`: channel 1 (fragment
-  1 of TLV 0x0002, in its own charset - ASCII/UTF-8, UCS-2 BE or Latin-1) and
-  channel 2 type-2 plain text under the ICQ server-relay capability (TLV 0x2711).
-- Inbound ICQ `0x0015/0x0003` offline messages (`0x0041`).
-
-- The capability `CapE2EEncrypt` (`0946E2E1-4C7F-11D1-8222-444553540000`) is
-  appended to the client's capability list in `LocateSetInfo` (`0x0002/0x0004`);
-  contacts announcing it are read from "buddy arrived" (`0x0003/0x000B`) and
-  logged (`contact 100002 announces the E2E add-on`).
-
-Outbound text `T` becomes `[e2e-harness] ` + ROT13(`T`); ROT13 changes only ASCII
-letters outside HTML tags and entities, and the marker goes after any leading
-tags, so HTML and `<FONT sml>` smileys stay intact. Inbound text carrying the
-marker is restored; text without it (a contact without the add-on) is left
-alone. Everything else - typing, acks, presence, file transfer, tZers, login -
-passes byte for byte, and so does any connection that does not open like OSCAR.
-
-## How it works
+## How a message travels
 
 1. The loader's `DllMain(DLL_PROCESS_ATTACH)` pins the module and calls
-   `icqe2e_core::install`, which reads the settings and starts a worker thread.
-2. The thread waits for the networking module (`coolcore59.dll` on 7.2,
-   `coolcore49.dll` on 6.5) to load, then IAT-patches that module's `wsock32`
-   imports: `send`, `recv`, `connect`, `closesocket`, `WSAAsyncSelect`, and
-   `ioctlsocket` (6.5 only).
-3. `send` takes the client's bytes whole, rewrites complete frames (holding a
-   partial one until the rest comes) and pushes the result out, waiting for room
-   on `WSAEWOULDBLOCK`; the client is told all its bytes went.
-4. `recv` reads the socket, rewrites, and hands the client what is ready. With
-   only part of a frame so far it answers `WSAEWOULDBLOCK`; with more ready than
-   the client's buffer holds, it keeps the rest and posts a synthetic `FD_READ`
-   to the window given to `WSAAsyncSelect`. `ioctlsocket(FIONREAD)` counts the
-   bytes held.
-5. A panic inside the add-on falls back to the original Winsock call.
+   `icqe2e_core::install`, which reads the settings and installs the hooks in
+   the networking module (`coolcore59.dll` on 7.2, `coolcore49.dll` on 6.5):
+   at once if it is already loaded, else from a loader notification
+   (`LdrRegisterDllNotification`) the moment it is mapped, before any of its
+   code runs. A polling thread stays as the fallback, and a second thread runs
+   the publish and refill steps that come due.
+2. The hooks replace that module's Winsock imports: `send`, `recv`, `connect`,
+   `closesocket`, `WSAAsyncSelect` and `ioctlsocket`. The imports are by
+   ordinal, and an ordinal is turned into a name from the export table of the
+   DLL it comes from (`wsock32` and `ws2_32` number 10-12 differently). Every
+   `connect` is logged with its target, and the first bytes of each direction
+   are classified (FLAP, HTTP, TLS, other) without being changed.
+3. The server's MOTD carries a key-directory token in TLV `0x0E2E`. The add-on
+   reads it and **never changes that SNAC**: the client's own copy goes out byte
+   for byte.
+4. The client claims its capability in `LocateSetInfo` (`0x0002/0x0004`). The
+   add-on appends the account key to that same SNAC, so the server can tie a
+   first publish to this connection. No frame is added and the client sends
+   nothing extra.
+5. Publishing then runs in the order the API expects: account, device, a pool of
+   one-time keys topped up below 25, and a fallback key replaced on its own
+   schedule.
+6. Outbound, the message's own bytes — not a decoded and re-encoded copy — are
+   sealed into a container with the recipient's Olm session, armored as ASCII,
+   and put back into the message fragment, which now declares ASCII. The real
+   charset rides in the envelope.
+   An offline message (`0x0015/0x0002` out, `0x0015/0x0003` in) is treated the
+   same way: the server stores whatever text it is given, so the stored text is
+   a container and it is opened when it is replayed.
+7. Inbound, the armor is found wherever the container was carried, opened, and
+   the sender's bytes put back with the charset the envelope carried. A control
+   message — an empty container that only advances the ratchet — is removed from
+   the stream, along with the server's ack for it.
+8. Frames may be added (a note, a control message) and removed (a container this
+   device cannot read), so the add-on keeps its own FLAP sequence numbering per
+   direction. `ICQE2E_NO_INJECT=1` turns that off, and nothing is added or
+   removed at all.
+9. A panic inside the add-on falls back to the original Winsock call.
 
-## Settings (environment, read when ICQ starts)
+## Settings
+
+Environment variables, read when ICQ starts:
 
 | Variable | Effect |
 |----------|--------|
-| `ICQE2E_LOG` | File to append the log to (local-time stamps). Lines also go to `OutputDebugString`. Unset: no file. |
-| `ICQE2E_PEERS` | `uin1,uin2`: rewrite outbound messages only to these contacts. Unset: to everybody. |
-| `ICQE2E_MODE` | `observe`: Phase 0 - bytes untouched, log only. Anything else: the harness. |
+| `ICQE2E_MODE` | `encrypt` (the default), `harness` (stage 2's reversible transform), or `observe` (bytes untouched, log only). |
+| `ICQE2E_DIRECTORY` | The key directory's base URL. Without one there is nothing to publish to and encryption stays off, said out loud in the log. |
+| `ICQE2E_HOME` | Where the state files go. Default: `%APPDATA%\ICQ E2E\`. |
+| `ICQE2E_INI` | A different `icq-e2e.ini` to read. Only an override: the add-on finds `icq-e2e.ini` next to the client executable on its own, because the patch writes it there and never tells the add-on where it went. |
+| `ICQE2E_PEERS` | `uin1,uin2`: encrypt outbound messages only to these contacts. Unset: to everybody. |
+| `ICQE2E_NO_INJECT` | `1`: never add or remove a frame. |
+| `ICQE2E_LOG` | File to append the log to (local-time stamps). Lines also go to `OutputDebugString`. Unset: `%LOCALAPPDATA%\icqe2e\icqe2e.log`. |
 
-A log line per message, for example:
+At start-up the log says where it looked for the ini and whether it was there:
 
 ```
-OUT peer=100002 ch1/html text="<b>Hello</b>" rewritten +14 bytes wire="<b>[e2e-harness] Uryyb</b>" via=203.0.113.5:5190
-IN  peer=100002 ch1/html text="<b>Hi</b>" restored -14 bytes wire="<b>[e2e-harness] Uv</b>" via=203.0.113.5:5190
+Looking for icq-e2e.ini in C:\Program Files (x86)\ICQ7.2: found
+```
+
+Then a line per inbound OService SNAC, and one that names the account, so it is
+visible which account the add-on thinks it is and whether the server's MOTD
+carried a token:
+
+```
+IN MOTD: key directory token read (63 byte(s) in 0x000B, 0x0E2E)
+IN OService SNAC 0x0001/0x0014 (24 bytes)
+IN own user info: account is 100001
+[ICQ E2E] signed on as 100001
+[ICQ E2E] device keys ready for 100001 (encrypt mode)
+[ICQ E2E] Key directory token accepted.
+[ICQ E2E] Keys published: 50 one-time key(s) in the directory.
+```
+
+That line appears **once**. The add-on checks the directory every two seconds
+and tops the one-time pool up only when it has fallen below 25; a check that
+finds nothing to send says nothing, so a quiet client and a broken one do not
+look alike in the log.
+
+```
+OUT capabilities: E2E add-on announced (+16 bytes)
+```
+
+Every mode but observe sends the capability. It is how one client learns the
+other has the add-on, and without it a contact reads as a plain ICQ client.
+
+The account comes from the server's own user info (`0x0001/0x000F`) on the BOS
+connection, not from the command line: both clients sign in over the web API,
+so the BOS sign-on carries only a cookie, and ICQ 6.5 sends its UIN on the
+authorization connection instead. The MOTD with the token can arrive before
+that user info, so a token that has nowhere to go yet is held and applied as
+soon as the account is known:
+
+```
+[ICQ E2E] MOTD token (63 bytes) held until the account is known
+[ICQ E2E] applying the MOTD token that arrived first
+```
+
+This is read where frames are reassembled, not off the raw socket bytes: one
+`recv` can return the tail of the previous frame, or three frames at once, and
+the account must be found in all of those cases.
+
+A service connection's MOTD has no token and says so - `token not present`. That
+is the normal case, and it is why the log names the tags a MOTD carried: a BOS
+MOTD that should have had one and did not is visible at once.
+
+Nothing is published until the account key has gone out in the client's own
+`LocateSetInfo`, because the directory accepts a first publish only for a key
+announced on the BOS connection the token belongs to. The MOTD arrives before
+that frame, so publishing on the token alone would spend a request the
+directory refuses.
+
+The keys, the token and what has been published belong to the account, not to a
+connection. An ICQ client has several connections, and only the BOS one carries
+the token; with the state on each connection, a service connection's tokenless
+MOTD would put the account back to "encryption off" while its keys sat
+published in the directory.
+
+Then one line per message:
+
+```
+A  OUT peer=100002 ch1/html text="<font sml="default">Привет</font>" encrypted 538 bytes
+B  IN  peer=100001 ch1/html text="<font sml="default">Привет</font>" decrypted 80 bytes
 ```
 
 ## Build
@@ -86,10 +239,10 @@ cargo build --release
 ```
 
 Built for `i686-pc-windows-msvc` with a static CRT (see `.cargo/config.toml`),
-the same way `tools/icq65/flashplayer` builds its DLL. `tools/common/Build-Patches.ps1`
-builds these and copies them next to the patch exes as `Icqe2eProbe.dll`
-(7.2) and `Icqe2eProbe-msimg32.dll` (6.5) — gitignored, and deliberately kept
-out of the public download zips (owner-only test build).
+the same way `tools/icq65/flashplayer` builds its DLL.
+`tools/common/Build-Patches.ps1` builds these and copies them next to the patch
+exes as `Icqe2eProbe.dll` (7.2) and `Icqe2eProbe-msimg32.dll` (6.5) — gitignored,
+and deliberately kept out of the public download zips (owner-only test build).
 
 ## Test
 
@@ -98,19 +251,65 @@ cargo test --release            # unit, integration and loopback-socket tests (r
 cargo run --release -p icqe2e_testhost
 ```
 
-## Enabling in the client (owner test)
+The test host plays two clients against an in-memory key directory and checks
+that the plaintext is nowhere on the wire and that every message comes back
+byte for byte.
 
-Use the patch's opt-in row **"E2E encryption test harness (Phase 1 ...)"** (job
-key `e2e-probe`, off by default), or a scripted run:
+## How it is checked (owner)
 
-```
-ICQ-7.2-Patch.exe -Apply -Root <copy> -Server icq.example.org -Include e2e-probe
-ICQ-6.5-Patch.exe -Apply -Root <copy> -Server icq.example.org -Include e2e-probe
-```
+> Run this yourself — do not start the clients from here.
 
-With the add-on on both sides, messages read normally (HTML, smileys, Cyrillic,
-offline messages), typing notifications and acks work, and the log shows the
-`wire=` form. With it on one side only, the other side sees `[e2e-harness] ` and
-ROT13 text - the proof that the wire really changed. Use `ICQE2E_PEERS` to keep
-other contacts out of the test. "Restore original" (or `-Restore`) removes the
-add-on and puts the client back.
+1. Apply the patch with the **"E2E encryption (stage 3 test build)"** row (job
+   key `e2e-probe`, off by default) on both clients, or:
+
+   ```
+   ICQ-7.2-Patch.exe -Apply -Root <copy> -Server icq.example.org -Include e2e-probe
+   ICQ-6.5-Patch.exe -Apply -Root <copy> -Server icq.example.org -Include e2e-probe
+   ```
+
+2. Sign both on **without** `-uin` — the account has to come from the server's
+   own user info, which is the path that was broken. Each log should show:
+
+   ```
+   IN MOTD: key directory token read (63 byte(s) in 0x000B, 0x0E2E)
+   IN own user info: account is 100001
+   [ICQ E2E] signed on as 100001
+   [ICQ E2E] device keys ready for 100001 (encrypt mode)
+   [ICQ E2E] Key directory token accepted.
+   [ICQ E2E] Keys published: 50 one-time key(s) in the directory.
+   ```
+
+   If the token line comes first, `MOTD token (N bytes) held until the account
+   is known` and then `applying the MOTD token that arrived first` follow it:
+   also correct.
+
+3. Give **both** clients the same `ICQE2E_LOG`, or set it for none of them —
+   a client with it and a client without it write two different files and the
+   second one looks like it never ran. With nothing set the add-on writes
+   `%LOCALAPPDATA%\icqe2e\icqe2e.log`: it always leaves a trail, because a
+   silent log and an add-on that never loaded are indistinguishable from the
+   outside, and that ambiguity is what made 100002 hard to diagnose.
+
+4. Send a message each way. Both chats show the text normally. The log shows
+   `encrypted N bytes` on the way out and `decrypted N bytes` on the way in,
+   and the state file `%APPDATA%\ICQ E2E\<uin>.state` exists.
+
+5. Capture the traffic between the client and the server: the message TLV holds
+   `IQE1:` and base64, not the text.
+
+6. Send from a client **without** the add-on. The message arrives in clear and
+   the chat shows one `[ICQ E2E]` note that messages to that contact go
+   unencrypted — once, not per message.
+
+7. Restart one client and send again: the message still opens, which is what the
+   state file is for.
+
+8. The commands, in a chat between the two clients: `/e2e status`, `/e2e off`
+   (the next message goes in clear, and the far side gets it as a plain message),
+   `/e2e on`, and in the chat with a contact without the add-on `/e2e on`
+   (the next message is held, not sent). None of the commands reaches the
+   contact.
+
+9. "Restore original" (or `-Restore`) removes the add-on and the `icq-e2e.ini`,
+   and puts the client back. The state file is left alone on purpose — it is the
+   device's identity, and deleting it would make every contact see a new device.

@@ -543,6 +543,23 @@ Both are left out when the device has published neither.
 }
 ```
 
+`one_time_key` and `fallback_key` have the same shape as `signedKeyJSON`
+(`key_id`, `public_key`, `signature`), and both are omitted when the device has
+published neither. Exactly one of the two is present: `one_time_key` when the
+pool had a key left, `fallback_key` when the pool was empty, so a client reads
+`one_time_key` and falls back to `fallback_key` rather than treating the field
+names as alternatives to try.
+
+```json
+{
+  "screen_name": "123456",
+  "account_key": "iojj3XQJ8ZX9UtstPLpdcspnCb8dlBIb83SIAbQPb1w",
+  "device": {"device_id": 1, "curve25519_key": "AwMD...AwM", "ed25519_key": "gTl3...s5Q",
+             "account_signature": "s966...jAQ", "created_at": 1790000000, "last_seen_at": 1790000000},
+  "fallback_key": {"key_id": "", "public_key": "AQID...AQ", "signature": "1a7c...bEw"}
+}
+```
+
 The caller checks the chain: `account_key` → device (`device` message) →
 one-time or fallback key (`one-time-key` / `fallback-key` message, by the
 device's `ed25519_key`). Errors: `404 no_account`, `404 no_device`,
@@ -635,3 +652,37 @@ Push notifications (device-list-changed, pool-low: DESIGN.md 8.1). For now
 clients poll `GET /e2e/v1/devices/{device_id}` and the peers' device lists.
 Also not here: the message container, the encryption itself, and the
 management page shown in ICQ. Those are later stages.
+
+### Post-quantum keys (planned, CHECKLIST 9.1, 9.8)
+
+PQXDH needs ML-KEM-768 keys next to the Curve25519 ones. They come as an
+addition to v1; nothing that exists changes, so current clients and the
+current server keep working:
+
+- **Key kinds**: ML-KEM-768 one-time keys (a pool) and one last-resort key per
+  device, 1184-byte encapsulation keys, each signed by the device's Ed25519
+  key over new purposes: `"pq-one-time-key"` / `"pq-last-resort-key"` |
+  screen name | device id | key id | key bytes (the 16-bit field length takes
+  1184). They get their own length check; the 32-byte rule of section 4 stays
+  for the Curve25519 and Ed25519 keys.
+- **Endpoints** (new, so the strict request decoding stays as it is):
+  `POST /e2e/v1/devices/{device_id}/pq-one-time-keys`,
+  `PUT /e2e/v1/devices/{device_id}/pq-last-resort-key`, and
+  `POST /e2e/v1/users/{uin}/devices/{device_id}/claim-pq`, which answers with
+  everything PQXDH needs at once: the fallback key (PQXDH's signed prekey), a
+  Curve25519 one-time key if one is left, and a PQ one-time key or else the PQ
+  last-resort key. `claim` stays as it is for scheme 1. A server without the
+  new endpoints answers `404`, which a new client takes as "scheme 1 only".
+- **Replies** may gain fields, such as the PQ pool count in
+  `GET /e2e/v1/devices/{device_id}`: the add-on ignores reply fields it does
+  not know, and reads replies up to 512 KiB.
+- **Sizes**: one PQ key is about 1.75 KB of JSON, so a 64 KiB body takes about
+  35; uploads are limited to 25 keys and the pool to 50 per device (about
+  60 KB stored per device).
+- **Storage**: a new migration with `e2e_pq_one_time_key` and
+  `e2e_pq_last_resort_key`, with the columns of the Curve25519 tables (`BLOB`
+  has no size limit in SQLite); revoking a device deletes them with it.
+- **Downgrade**: a server could leave a device's PQ keys out and so push
+  senders back to scheme 1. The device's PQ support therefore has to be
+  covered by a signature the account key makes, and a client that has once
+  seen it for a contact's device does not fall back silently (CHECKLIST 10).

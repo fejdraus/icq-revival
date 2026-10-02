@@ -27,6 +27,125 @@ const TLV_SET_INFO_CAPS: u16 = 0x0005;
 const TLV_USER_INFO_CAPS: u16 = 0x000D;
 
 /// What adding the capability to a `LocateSetInfo` body came to.
+
+/// TLV of `LocateSetInfo` carrying our account key, raw, so the key directory
+/// will accept a first publish or a reset on this connection
+/// (KEY-DIRECTORY-API.md 3.3). The server ignores a value that is not 32 bytes.
+pub const TLV_ACCOUNT_KEY: u16 = 0x0E2E;
+/// TLV of the MOTD (`0x0001/0x0013`) carrying the key directory's token.
+pub const TLV_TOKEN: u16 = 0x0E2E;
+/// The account key the server will accept as an announcement.
+pub const ACCOUNT_KEY_LEN: usize = 32;
+/// The `uint16` message type at the head of an MOTD body, before its TLVs.
+const MOTD_MESSAGE_TYPE_LEN: usize = 2;
+/// What appending the account key to a `LocateSetInfo` body came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyAnnounce {
+    /// The body with TLV 0x0E2E added or replaced.
+    Added(Vec<u8>),
+    /// The body already carries this key.
+    AlreadyThere,
+    /// The body has no key to announce: no account key has been made yet.
+    NoKey,
+    /// The key was not 32 bytes; left alone.
+    Malformed,
+}
+
+/// Adds or replaces TLV `0x0E2E` in a `LocateSetInfo` body with the 32 raw bytes
+/// of `account_key`, keeping every other TLV and any trailing bytes.
+pub fn announce_key(body: &[u8], account_key: &[u8]) -> KeyAnnounce {
+    if account_key.len() != ACCOUNT_KEY_LEN {
+        return KeyAnnounce::Malformed;
+    }
+    let (tlvs, tail) = snac::split_tlvs(body);
+    if tlvs
+        .iter()
+        .any(|t| t.tag == TLV_ACCOUNT_KEY && t.value == account_key)
+    {
+        return KeyAnnounce::AlreadyThere;
+    }
+    // A stale announcement from an earlier key would be replaced rather than
+    // left beside the new one: the server keeps the last one it saw.
+    let mut out = Vec::with_capacity(body.len() + 40);
+    let mut added = false;
+    for t in &tlvs {
+        if t.tag == TLV_ACCOUNT_KEY {
+            if !added {
+                snac::put_tlv(&mut out, TLV_ACCOUNT_KEY, account_key);
+                added = true;
+            }
+        } else {
+            snac::put_tlv(&mut out, t.tag, t.value);
+        }
+    }
+    if !added {
+        snac::put_tlv(&mut out, TLV_ACCOUNT_KEY, account_key);
+    }
+    out.extend_from_slice(tail);
+    KeyAnnounce::Added(out)
+}
+
+/// The key directory's token out of an MOTD body, read without changing a byte
+/// (KEY-DIRECTORY-API.md 3.1). `None` when this MOTD carries none, which is
+/// what any server not running the directory sends.
+///
+/// An MOTD body is a `uint16` message type and then its TLVs, so the TLVs
+/// start two bytes in. Reading them from the start picks the message type up
+/// as a tag and the first TLV's length as its value, which is why an MOTD that
+/// does carry a token was read as carrying a single empty `0x0004`.
+pub fn motd_token(body: &[u8]) -> Option<&[u8]> {
+    let (tlvs, _) = snac::split_tlvs(motd_tlvs(body));
+    tlvs.iter().find(|t| t.tag == TLV_TOKEN).map(|t| t.value)
+}
+
+/// The TLV tags a MOTD carries, in the order they came, as `0xNNNN`. For the
+/// log: a MOTD that ought to carry [`TLV_TOKEN`] and does not says so by
+/// listing every tag it does carry.
+pub fn motd_tags(body: &[u8]) -> Vec<String> {
+    let (tlvs, _) = snac::split_tlvs(motd_tlvs(body));
+    tlvs.iter().map(|t| format!("{:#06X}", t.tag)).collect()
+}
+
+/// The TLVs of an MOTD body, past its `uint16` message type.
+fn motd_tlvs(body: &[u8]) -> &[u8] {
+    body.get(MOTD_MESSAGE_TYPE_LEN..).unwrap_or(&[])
+}
+
+/// The screen name of a sign-on body, when it is a UIN.
+///
+/// Both clients are launched from a shortcut that carries no UIN, so this is
+/// how the add-on learns which account it is running as. `None` when the body
+/// has no screen name or names something that is not a number: a guessed
+/// account would publish a key nobody could tie to this connection.
+pub fn sign_on_uin(body: &[u8]) -> Option<String> {
+    let (tlvs, _) = snac::split_tlvs(body);
+    let name = snac::find_tlv(&tlvs, snac::LOGIN_TLV_SCREEN_NAME)?;
+    let text = std::str::from_utf8(name).ok()?.trim();
+    text.parse::<u64>().ok().map(|n| n.to_string())
+}
+
+/// Our own UIN, out of an `OServiceUserInfoUpdate` body, when it is one.
+///
+/// This is the reliable source, for both clients. The clients do sign in over
+/// the web API, so the BOS sign-on carries only a cookie and no screen name,
+/// and ICQ 6.5 sends its UIN on the authorization connection instead - neither
+/// of which the BOS stream ever sees. The server's own user info on the BOS
+/// connection opens with the screen name, and that is the one place both
+/// clients learn which account they are.
+///
+/// The body is not a TLV block: `TLVUserInfo` is a screen name with a `uint8`
+/// length, then a `uint16` warning level, and only then the TLVs
+/// (`wire.TLVUserInfo`).
+pub fn own_uin_in_user_info(body: &[u8]) -> Option<String> {
+    let len = *body.first()? as usize;
+    let name = body.get(1..1 + len)?;
+    // len8 counts the byte that carries it, so the name is one shorter.
+    let name = name.strip_suffix(&[0]).unwrap_or(name);
+    let text = std::str::from_utf8(name).ok()?.trim();
+    text.parse::<u64>().ok().map(|n| n.to_string())
+}
+
+/// What adding the capability to a `LocateSetInfo` body came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Announce {
     /// The body with the capability appended to the list.
@@ -170,5 +289,42 @@ mod tests {
             contacts(&body),
             vec![("100001".to_string(), true), ("100002".to_string(), false)]
         );
+    }
+}
+
+#[cfg(test)]
+mod userinfo_tests {
+    use super::own_uin_in_user_info;
+
+    /// The exact bytes `wire.MarshalBE` produces for
+    /// `TLVUserInfo{ScreenName: "100001", WarningLevel: 7, ...}`, taken from
+    /// the Go encoder rather than guessed. The screen name has a `uint8`
+    /// length that counts the name only, and the warning level follows it.
+    const FROM_SERVER: [u8; 22] = [
+        0x06, 0x31, 0x30, 0x30, 0x30, 0x30, 0x31, 0x00, 0x07, 0x00, 0x02, 0x00, 0x01, 0x00, 0x02,
+        0x00, 0x10, 0x00, 0x03, 0x00, 0x04, 0x6A,
+    ];
+
+    #[test]
+    fn the_account_comes_off_the_servers_own_user_info() {
+        assert_eq!(
+            own_uin_in_user_info(&FROM_SERVER[..]).as_deref(),
+            Some("100001")
+        );
+    }
+
+    #[test]
+    fn a_truncated_user_info_gives_no_account() {
+        assert_eq!(own_uin_in_user_info(&FROM_SERVER[..2]), None);
+        assert_eq!(own_uin_in_user_info(&[]), None);
+    }
+
+    #[test]
+    fn a_screen_name_that_is_not_a_number_gives_no_account() {
+        // len8 "somename", then a warning level.
+        let mut body = vec![9u8];
+        body.extend_from_slice(b"somename");
+        body.extend_from_slice(&[0, 0]);
+        assert_eq!(own_uin_in_user_info(&body), None);
     }
 }

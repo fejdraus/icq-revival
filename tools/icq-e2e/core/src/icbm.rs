@@ -13,6 +13,9 @@ pub const CHANNEL_RENDEZVOUS: u16 = 0x0002;
 /// TLVs inside an ICBM body (see wire/snacs.go).
 pub const TLV_AOL_IM_DATA: u16 = 0x0002; // channel-1 fragment list
 pub const TLV_RENDEZVOUS_DATA: u16 = 0x0005; // channel-2 fragment
+/// ICBM TLV 0x0003: an ack request, whose answer is `ICBMHostAck`
+/// (`0x0004/0x000C`) naming the same request id.
+pub const TLV_REQUEST_HOST_ACK: u16 = 0x0003;
 
 /// The rendezvous service-data TLV, big-endian inside the ch2 fragment.
 pub const RDV_TLV_SVC_DATA: u16 = 0x2711;
@@ -47,6 +50,18 @@ pub struct Message {
     pub form: String,
     /// The decoded, display-ready text.
     pub text: String,
+    /// The text exactly as it was on the wire, and the charset it declared.
+    ///
+    /// The decoded `text` is for the log and the user; the raw bytes are what
+    /// encryption must carry, because the recipient's own client is what
+    /// renders the message and it must get back the bytes the sender produced,
+    /// HTML and `<FONT sml>` smileys included (CHECKLIST 3.2). Decoding and
+    /// re-encoding is not the same thing.
+    pub raw: Vec<u8>,
+    /// The charset the message declared. An armoured container declares ASCII
+    /// whatever the message really was, so this is what the envelope carries
+    /// and the inbound path restores it from there.
+    pub charset: u16,
 }
 
 impl Message {
@@ -106,32 +121,42 @@ fn decode_channel(
     match channel {
         CHANNEL_IM => {
             let data = snac::find_tlv(tlvs, TLV_AOL_IM_DATA)?;
-            let (text, is_html) = decode_ch1_fragments(data)?;
+            let Some((charset, raw)) = ch1_message_fragment(data) else {
+                return None;
+            };
+            let text = text::decode(charset, &raw);
+            let is_html = looks_like_html(&text);
             Some(Message {
                 direction: dir,
                 peer,
                 form: format!("ch1/{}", if is_html { "html" } else { "text" }),
                 text,
+                raw,
+                charset,
             })
         }
         CHANNEL_RENDEZVOUS => {
             let data = snac::find_tlv(tlvs, TLV_RENDEZVOUS_DATA)?;
             let text = decode_ch2_text(data)?;
+            // Channel-2 text is 8-bit and has no charset of its own; the
+            // server relay carries Latin-1.
+            let raw = text.clone().into_bytes();
             Some(Message {
                 direction: dir,
                 peer,
                 form: "ch2/type2".to_string(),
                 text,
+                raw,
+                charset: text::CHARSET_LATIN1,
             })
         }
         _ => None,
     }
 }
 
-/// Decodes a channel-1 fragment list, returning the message text and whether it
-/// looks like HTML. Fragment: id:u8, version:u8, len:u16, payload[len]. The
-/// message fragment is id==1: charset:u16, lang:u16, text[].
-fn decode_ch1_fragments(data: &[u8]) -> Option<(String, bool)> {
+/// The charset and raw text of a channel-1 fragment list's message fragment
+/// (id 1): `charset:u16 lang:u16 text[]`. `None` if there is no such fragment.
+fn ch1_message_fragment(data: &[u8]) -> Option<(u16, Vec<u8>)> {
     let mut r = Reader::new(data);
     while r.remaining() >= 4 {
         let id = r.u8()?;
@@ -142,10 +167,7 @@ fn decode_ch1_fragments(data: &[u8]) -> Option<(String, bool)> {
             let mut m = Reader::new(payload);
             let charset = m.u16()?;
             let _lang = m.u16()?;
-            let text_bytes = m.bytes(m.remaining())?;
-            let decoded = text::decode(charset, text_bytes);
-            let is_html = looks_like_html(&decoded);
-            return Some((decoded, is_html));
+            return Some((charset, m.bytes(m.remaining())?.to_vec()));
         }
     }
     None
@@ -248,11 +270,18 @@ pub fn type2_plain_text(svc: &[u8]) -> Option<TextAt> {
     Some(TextAt { len_at, start, len })
 }
 
-/// Finds the message text in the 0x0001 TLV of an ICQ DB reply carrying an
-/// offline message (0x0041). Positions are relative to the TLV value, which
-/// starts with the u16 little-endian length of the ICQ block. Also returns the
-/// sender's UIN. `None` for any other reply or message type.
+/// Finds the message text in the 0x0001 TLV of an ICQ DB block carrying an
+/// offline message, and returns the other party's UIN: the sender in a reply
+/// (0x0041), the recipient in a message the client sends (0x0006). Positions
+/// are relative to the TLV value, which starts with the u16 little-endian
+/// length of the ICQ block. `None` for any other request or message type.
 pub fn offline_text(env: &[u8]) -> Option<(TextAt, u32)> {
+    offline_block(env, &[ICQ_REQ_OFFLINE_REPLY, ICQ_REQ_OFFLINE_MSG])
+}
+
+/// As [`offline_text`], but for the given request types, so the caller can tell
+/// a reply from a send without parsing twice.
+fn offline_block(env: &[u8], req_types: &[u16]) -> Option<(TextAt, u32)> {
     if env.len() < 2 {
         return None;
     }
@@ -262,7 +291,7 @@ pub fn offline_text(env: &[u8]) -> Option<(TextAt, u32)> {
     let _uin = r.u32()?;
     let req_type = r.u16()?;
     let _seq = r.u16()?;
-    if req_type != ICQ_REQ_OFFLINE_REPLY {
+    if !req_types.contains(&req_type) {
         return None;
     }
     let sender = r.u32()?;
@@ -354,6 +383,9 @@ fn longest_printable(bytes: &[u8]) -> Option<String> {
 // --- ICQ offline messages (food group 0x0015) -------------------------------
 
 const ICQ_REQ_OFFLINE_REPLY: u16 = 0x0041;
+/// The request type of an offline message the client *sends*: the same block
+/// as the reply, with the recipient instead of the sender.
+const ICQ_REQ_OFFLINE_MSG: u16 = 0x0006;
 
 /// The TLV of an ICQ DB reply that carries the little-endian ICQ block.
 pub const ICQ_TLV_DATA: u16 = 0x0001;
@@ -374,6 +406,31 @@ pub fn parse_icq_offline(body: &[u8]) -> Option<Message> {
         peer: sender.to_string(),
         form: "offline".to_string(),
         text,
+        raw: raw.to_vec(),
+        charset: text::CHARSET_LATIN1,
+    })
+}
+
+/// Parses an offline message the client sends, `0x0015/0x0002`.
+///
+/// The block is the reply's, with the recipient's UIN where the reply has the
+/// sender's, so the other party to encrypt to is known without the request
+/// being a reply at all. The sender's own UIN comes from the block's first
+/// field and is not who this message goes to.
+pub fn parse_icq_offline_out(body: &[u8]) -> Option<Message> {
+    let tlvs = snac::read_tlvs(body);
+    let env = snac::find_tlv(&tlvs, ICQ_TLV_DATA)?;
+    let (at, recipient) = offline_block(env, &[ICQ_REQ_OFFLINE_MSG])?;
+    let raw = env.get(at.start..at.start + at.len)?;
+    let raw = raw.strip_suffix(&[0]).unwrap_or(raw);
+    let text = bytes_to_display(raw);
+    Some(Message {
+        direction: Direction::Outbound,
+        peer: recipient.to_string(),
+        form: "offline".to_string(),
+        text,
+        raw: raw.to_vec(),
+        charset: text::CHARSET_LATIN1,
     })
 }
 

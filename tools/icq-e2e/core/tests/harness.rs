@@ -6,7 +6,7 @@
 mod common;
 
 use common::*;
-use icqe2e_core::config::Policy;
+use icqe2e_core::config::{Policy, Settings};
 use icqe2e_core::engine::Engine;
 use icqe2e_core::harness::{apply_charset, MARKER};
 
@@ -166,7 +166,11 @@ fn everything_else_passes_byte_for_byte() {
 
 #[test]
 fn contacts_outside_the_peer_list_are_not_rewritten() {
-    let mut e = Engine::with_policy(Policy::from_values(None, Some("100005")));
+    let mut e = Engine::with_policy(Policy::from_settings(Settings {
+        mode: Some("harness"),
+        peers: Some("100005"),
+        ..Settings::default()
+    }));
     let frame = out_ch1(10, "100002", 0, b"not for the harness");
     let (wire, lines) = send_all(&mut e, &frame);
     assert_eq!(wire, frame);

@@ -19,11 +19,8 @@ struct SocketState {
 
 impl SocketState {
     fn new(peer: Option<String>) -> Self {
-        SocketState {
-            out: StreamRewriter::new(Direction::Outbound),
-            inb: StreamRewriter::new(Direction::Inbound),
-            peer,
-        }
+        let (out, inb) = StreamRewriter::pair();
+        SocketState { out, inb, peer }
     }
 }
 

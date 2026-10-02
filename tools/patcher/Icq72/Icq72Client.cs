@@ -47,6 +47,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace IcqRevival.Patch
@@ -768,16 +769,16 @@ namespace IcqRevival.Patch
             return null;
         }
 
-        // --- E2E add-on (Phase 1, rewrite harness) --------------------------------------
+        // --- E2E add-on (stage 3, end-to-end encryption) ------------------------------
         //
-        // The end-to-end-encryption add-on, in its second phase a rewrite
-        // harness: a DLL that hooks the client's own Winsock calls in
-        // coolcore59.dll, reassembles FLAP and rewrites the text of every instant
-        // message in place with a trivial reversible transform - a marker and
-        // ROT13 going out, undone coming in - so the transport is proven before
-        // any crypto. Decoded messages go to the file named by the ICQE2E_LOG
-        // environment variable; ICQE2E_PEERS limits rewriting to some contacts
-        // and ICQE2E_MODE=observe brings back the log-only first phase. See
+        // The end-to-end-encryption add-on: a DLL that hooks the client's own
+        // Winsock calls in coolcore59.dll, reassembles FLAP and encrypts the
+        // text of every instant message to the recipient's device, with the
+        // keys the server's key directory hands out. The rewriting harness of
+        // the earlier phase is still there for transport checks and for the
+        // log-only first phase (ICQE2E_MODE=observe); ICQE2E_PEERS limits
+        // rewriting and encryption to some contacts. Decoded messages go to the
+        // file named by the ICQE2E_LOG environment variable. See
         // tools\icq-e2e.
         //
         // ICQ.exe (3525) loads tbdiag.dll from its own folder at startup, so the
@@ -795,6 +796,147 @@ namespace IcqRevival.Patch
         // stock by its version resource.
 
         public const string E2eProbeFile = "tbdiag.dll";
+        // Where the add-on is told the key directory's URL: an ini file next to
+        // the client executable, which the patch writes when it puts the add-on
+        // in and takes away when it takes it out. The add-on looks for exactly
+        // this name beside its own executable (tools\icq-e2e\core\src\config.rs),
+        // so it needs no environment variable; ICQE2E_INI only overrides where
+        // it looks. Nothing is hardcoded here, the domain is the one this
+        // installation was configured with.
+        public const string E2eIniFile = "icq-e2e.ini";
+        // The first line of the ini, which says in as many words that the patch
+        // wrote it. It is what tells our own file from one that was in the
+        // folder before we came, so that applying again - with another domain -
+        // does not copy our own text aside as though it were the user's, and
+        // "Restore original" does not put it back. The add-on skips every line
+        // beginning with "#" (tools\icq-e2e\core\src\config.rs), so the line
+        // costs it nothing.
+        const string E2eIniHeader = "# written by the ICQ 7.2 patch; ICQE2E_DIRECTORY overrides it";
+
+        // The key directory's base URL, from the domain of this installation.
+        // The port and the path are the same on every ICQ Revival server
+        // (deploy/VM-SPEC.md, section 3), so the patch fills them in itself.
+        static string E2eDirectoryUrl(string domain)
+        {
+            return "https://" + domain + ":" + PagesPortHttps + "/e2e/v1/";
+        }
+
+        // The ini as it is written: the header, then the lines the add-on
+        // reads. `key = value`, `#` comments, ASCII, CRLF - what config.rs
+        // parses, and what the repo writes elsewhere.
+        //
+        // server = the domain, and only the domain: the add-on resolves it,
+        // sends every connection the client makes to it on the plain ports
+        // (5190 FLAP, 8082 HTTP sign-in) to the server's TLS 1.3 port instead,
+        // and checks the certificate against that name. The TLS port is the
+        // add-on's own constant (tools\icq-e2e\core\src\route.rs), so nothing
+        // but the domain is asked for here (docs\e2e\STAGE-TLS.md, T4).
+        // tls = on, or off: the user's deliberate opt-out, which the add-on
+        // then says in the chat at every sign-on.
+        static string E2eIniText(string domain, bool tls = true)
+        {
+            return E2eIniHeader + "\r\n"
+                + "directory = " + E2eDirectoryUrl(domain) + "\r\n"
+                + "server = " + domain + "\r\n"
+                + "tls = " + (tls ? "on" : "off") + "\r\n";
+        }
+
+        // Whether the ini there is ours and says tls = off. Writing the file
+        // again - another Apply, another domain - keeps that choice: turning
+        // TLS back on behind the user's back would lock out a user who turned
+        // it off because their server does not have it yet.
+        bool E2eIniTlsOff()
+        {
+            if (!E2eIniIsOurs()) return false;
+            string text = E2eIniAt(At(E2eIniFile));
+            foreach (string raw in text.Split('\n'))
+            {
+                string line = raw.Trim();
+                if (line.StartsWith("#") || line.StartsWith(";")) continue;
+                int eq = line.IndexOf('=');
+                if (eq < 0) continue;
+                if (line.Substring(0, eq).Trim().Equals("tls", StringComparison.OrdinalIgnoreCase)
+                    && line.Substring(eq + 1).Trim().Trim('"').Equals("off", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        // What the ini file there says, or null when there is none or it cannot
+        // be read.
+        static string E2eIniAt(string path)
+        {
+            try { return File.Exists(path) ? PatchFiles.ReadText(path).Text : null; }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                PatchFiles.Error(e.Message);
+                return null;
+            }
+        }
+
+        // Whether the ini there is the one this patch wrote, told by its header.
+        bool E2eIniIsOurs()
+        {
+            string text = E2eIniAt(At(E2eIniFile));
+            return text != null && text.StartsWith(E2eIniHeader, StringComparison.Ordinal);
+        }
+
+        // Writes the ini next to the client, and keeps whatever was there
+        // before under the backup suffix first: the patch takes files out as
+        // well as puts them in, and "Restore original" must leave the folder as
+        // it found it. A file that is already ours is not backed up again - it
+        // is simply overwritten - so the copy beside it stays the user's file,
+        // whatever the domain changes to. Nothing is written when the text is
+        // already what would be written, so applying twice in a row changes
+        // nothing and reports nothing.
+        void WriteE2eIni(string domain)
+        {
+            string path = At(E2eIniFile);
+            string text = E2eIniText(domain, !E2eIniTlsOff());
+            string current = E2eIniAt(path);
+            if (current != null && Ps.Ceq(current, text)) return;
+            if (current != null && !E2eIniIsOurs()) PatchFiles.BackupOnce(path, Suffix);
+            try
+            {
+                // UTF-8 without a byte order mark: ReadText reads it back byte for
+                // byte, so a re-run sees the same text it wrote.
+                File.WriteAllText(path, text, new UTF8Encoding(false));
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                PatchFiles.Error(e.Message);
+            }
+        }
+
+        // Takes the ini away again, leaving the folder as it was found. A copy
+        // beside it under a backup suffix is a file that was there before the
+        // patch wrote over it - and only ever that, since a file the patch wrote
+        // is recognised as its own and not copied aside - so that copy goes
+        // back. With no copy the file in place is the patch's own writing and is
+        // simply removed. An ini the patch did not write and has no copy of is
+        // left alone.
+        bool RemoveE2eIni()
+        {
+            string path = At(E2eIniFile);
+            if (!PatchFiles.Exists(path) && !PatchFiles.Exists(path + Suffix)) return false;
+            if (PatchFiles.Exists(path + Suffix)) PatchFiles.Copy(path + Suffix, path, true);
+            else if (E2eIniIsOurs()) PatchFiles.Remove(path);
+            else return false;
+            PatchFiles.Remove(path + Suffix);
+            return !PatchFiles.Exists(path);
+        }
+
+        // patched (what this installation should have written) / original (a
+        // different file, or none at all). "missing" would be dropped when the
+        // job's states are folded together, and a file that should be there and
+        // is not is what the row must show.
+        string E2eIniState(string domain)
+        {
+            string text = E2eIniAt(At(E2eIniFile));
+            return text != null && (Ps.Ceq(text, E2eIniText(domain, true)) || Ps.Ceq(text, E2eIniText(domain, false)))
+                ? "patched" : "original";
+        }
+
         // Our DLL as it is handed out, next to the patch.
         public const string E2eProbeShipped = "Icqe2eProbe.dll";
         // What our DLL says in its version resource (tools\icq-e2e\loader-tbdiag\resource.rc).
@@ -844,14 +986,18 @@ namespace IcqRevival.Patch
             return E2eMissing() != null ? "unavailable" : "original";
         }
 
-        // Makes tbdiag.dll match the selection, cooperating with the "fix"
-        // removal (which runs first and may already have renamed the stock
-        // aside). A line for the report when it could not be done, or null.
-        string SetE2e(bool wanted)
+        // Makes tbdiag.dll and the ini next to it match the selection,
+        // cooperating with the "fix" removal (which runs first and may already
+        // have renamed the stock aside). The ini is written only once the DLL is
+        // really in place, and taken away with it, so an add-on that could not
+        // be put in never leaves one behind. A line for the report when it
+        // could not be done, or null.
+        string SetE2e(bool wanted, string domain)
         {
             string path = At(E2eProbeFile);
             if (!wanted)
             {
+                RemoveE2eIni();
                 if (!IsOurE2e(path)) return null;
                 // Put the stock back from its backup, or, with none known, just
                 // remove ours.
@@ -873,7 +1019,39 @@ namespace IcqRevival.Patch
                 PatchFiles.Copy(E2eSource, path, true);
             }
             if (!IsOurE2e(path)) return E2eProbeFile + " could not be put in - E2E add-on left out";
+            WriteE2eIni(domain);
             return null;
+        }
+
+        // --- the dropped E2E lock button (CHECKLIST 10.9) -------------------------
+        //
+        // An earlier build put a lock into the toolbar of the message window,
+        // with the E2E add-on, and a hidden Send button next to it. It was
+        // tried and dropped: the window's markup does not tell a script which
+        // contact a chat is with, so the button could show no state, and
+        // sending "/e2e status" from its script was unreliable - it sent the
+        // draft instead. Its markup edits go with every Apply, since each file
+        // is built again from its original; its script and pictures, files the
+        // client never had, are taken out here, by every name a build ever
+        // gave them (DroppedFiles, in Common).
+
+        const string DroppedLockImages = Theme + @"\images\Common\IcqIcons\SpecificIcons\";
+
+        static readonly string[] DroppedLockFiles =
+        {
+            Content + @"\MUIMessage\e2eLock.js",
+            DroppedLockImages + @"GeneralIcons\list-msg-e2e.png",
+            DroppedLockImages + @"MessageDlg\icon-e2e.png",
+            DroppedLockImages + @"MessageDlg\icon-e2e-on.png",
+            DroppedLockImages + @"MessageDlg\icon-e2e-off.png",
+            DroppedLockImages + @"MessageDlg\icon-e2e-none.png",
+            DroppedLockImages + @"MessageDlg\icon-e2e-held.png",
+        };
+
+        // Takes the lock button's files out; how many there were.
+        int TakeDroppedLockFiles()
+        {
+            return DroppedFiles.TakeAll(Root, DroppedLockFiles, new[] { Suffix });
         }
 
         // --- files taken out of the way -------------------------------------------------
@@ -912,9 +1090,10 @@ namespace IcqRevival.Patch
             // Off until chosen: it needs our DLL next to the patch, and the
             // registration it makes is the user's, not the folder's.
             j.Add("tzers-player", "Your server", "tZers and Flash avatars without Flash: our player (" + PlayerShipped + " next to this patch)", off: true);
-            // Off until chosen: the E2E add-on (Phase 1, rewrite harness). Needs our
-            // DLL next to the patch and ICQE2E_LOG set to write a log.
-            j.Add("e2e-probe", "Your server", "E2E encryption test harness (Phase 1, rewrites message text both ways): our " + E2eProbeShipped + " as tbdiag.dll; set ICQE2E_LOG to log", off: true);
+            // Off until chosen: the E2E add-on (stage 3, end-to-end encryption).
+            // Needs our DLL next to the patch; the ini it writes names the key
+            // directory of the domain above. Set ICQE2E_LOG to write a log.
+            j.Add("e2e-probe", "Your server", "E2E encryption (stage 3 test build): our " + E2eProbeShipped + " as tbdiag.dll, with " + E2eIniFile + " for the key directory; set ICQE2E_LOG to log", off: true);
 
             j.Assign("the SMS tab of the main window", "sms");
             j.Assign("the Zlango buttons of the message window", "zlango");
@@ -953,6 +1132,7 @@ namespace IcqRevival.Patch
             j.Assign("the Flash registration", "tzers-player");
             j.Assign("the tZers list", "tzers-player");
             j.Assign("the E2E add-on (tbdiag.dll)", "e2e-probe");
+            j.Assign("the E2E key directory settings", "e2e-probe");
             return j;
         }
 
@@ -1092,6 +1272,7 @@ namespace IcqRevival.Patch
             add("the Flash registration", PlayerFile, RegistrationState());
             string e2e = E2eState();
             add("the E2E add-on (tbdiag.dll)", E2eProbeFile, e2e);
+            add("the E2E key directory settings", E2eIniFile, E2eIniState(domain));
             List<PatchItem> rows = Jobs.Merge(items);
             // Without our DLL there is nothing to put in: the row says why.
             if (player == "unavailable")
@@ -1217,8 +1398,10 @@ namespace IcqRevival.Patch
             // The E2E add-on after the fix removal, so ours goes into a freed
             // slot or over the stock, as the two selections require.
             PatchSteps.Step("E2E add-on...");
-            string e2eNote = SetE2e(wanted("e2e-probe"));
+            string e2eNote = SetE2e(wanted("e2e-probe"), domain);
             if (e2eNote != null) notes.Add(e2eNote);
+            // Whatever the selection: the lock button is gone for good.
+            TakeDroppedLockFiles();
 
             // Last, once every file is as it stays: the client's update
             // manifests list them so, and it does not put the originals back.
@@ -1246,6 +1429,12 @@ namespace IcqRevival.Patch
             string note = UnregisterPlayer();
             if (note != null) PatchFiles.Error(note);
             int count = 0;
+            // The ini the patch wrote for the add-on goes with it: what was
+            // there before it, if anything, comes back in its place.
+            if (RemoveE2eIni()) count++;
+            // The script and pictures of the dropped lock button, which the
+            // client never had, go the same way.
+            count += TakeDroppedLockFiles();
             List<FileSystemInfo> items = PatchFiles.Tree(Root).Where(i => i is FileInfo && i.Name.EndsWith(Suffix)).ToList();
             PatchSteps.Start(items.Count);
             foreach (FileSystemInfo item in items)

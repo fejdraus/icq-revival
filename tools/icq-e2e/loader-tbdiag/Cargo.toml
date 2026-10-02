@@ -1,6 +1,6 @@
 [package]
 name = "icqe2e_tbdiag"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "ICQ 7.2 loader stub: ships as tbdiag.dll, loaded by ICQ.exe at startup, installs the E2E add-on"
 license = "MIT"
