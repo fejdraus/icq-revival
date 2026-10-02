@@ -24,7 +24,9 @@
 //      let in by the client's content whitelists; the Xtraz list with them.
 //   3. Sign-in. The default ACC connection settings (AppConfig.xml) are
 //      pointed at our server's web API: the web login, the BOS redirect and
-//      the STUN server of calls.
+//      the STUN server of calls. With the TLS row of the E2E add-on as well,
+//      the web login and the BOS redirect go to a port only the add-on
+//      reaches, so the client cannot sign in without it (fail closed).
 //   4. Fixes. The AOL Diagnostics module, tbdiag.dll, which ICQ.exe loads
 //      from its own folder when aolload.exe is there and which takes ICQ 7
 //      down, is renamed out of the way.
@@ -324,6 +326,9 @@ namespace IcqRevival.Patch
 
             // Your server.
             Linked(AppConfig, "sign-in", SetSignIn),
+            // With the TLS row too: the sign-in ports only the add-on reaches
+            // (fail closed, see "sign-in").
+            Follows(AppConfig, w => w("sign-in") && w(E2eIni.TlsJob), SetTlsSignIn),
             Linked(LinksXml, "page links", RetargetLinksXml),
             Linked(Config + @"\System.xml", "links", RetargetByPath),
             Linked(Config + @"\XtraConfig.xml", "links", RetargetByPath),
@@ -511,6 +516,16 @@ namespace IcqRevival.Patch
         // the defaults of the ACC preferences, which the client starts from; a
         // server typed in its own connection settings stays the user's. The
         // STUN server of calls is the same domain, on its standard port.
+        //
+        // With the TLS row ticked as well, both ports become E2eIni.TlsOnlyWebPort
+        // (5195), which the server never listens on: the E2E add-on maps it to
+        // the TLS port with ALPN http/1.1, and without the add-on the sign-in is
+        // refused instead of going out in plaintext (fail closed). The BOS host
+        // startOSCARSession hands out next is the plain domain:5190, which the
+        // add-on maps to TLS as well; a client without it never gets that far.
+        // The web sign-in cannot use the TLS port itself: the add-on picks the
+        // ALPN by the port, before the client has said anything.
+        static readonly string[] SignInPorts = { "aimcc.connect.host.port", "aimcc.connect.bossRedirect.port" };
 
         static string SetAcc(string text, string name, string value)
         {
@@ -524,13 +539,66 @@ namespace IcqRevival.Patch
             return m.Success ? m.Groups[1].Value : "";
         }
 
+        // A port the TLS row has set is left as it is: the sign-in is in place
+        // either way, and the file is rebuilt from its original on every Apply.
+        static string SetSignInPort(string text, string name)
+        {
+            if (ReadAcc(text, name) == E2eIni.TlsOnlyWebPort.ToString()) return text;
+            return SetAcc(text, name, WebApiPort.ToString());
+        }
+
         static string SetSignIn(string text, string domain)
         {
             text = SetAcc(text, "aimcc.connect.host.address", domain);
-            text = SetAcc(text, "aimcc.connect.host.port", WebApiPort.ToString());
+            text = SetSignInPort(text, SignInPorts[0]);
             text = SetAcc(text, "aimcc.connect.bossRedirect.address", domain);
-            text = SetAcc(text, "aimcc.connect.bossRedirect.port", WebApiPort.ToString());
+            text = SetSignInPort(text, SignInPorts[1]);
             return SetAcc(text, "aimcc.connect.stun.address", domain);
+        }
+
+        // The ports alone are not enough on a client that has signed in
+        // before. ACC (acccore.dll) tries "sources" for a connection in turn,
+        // and the first one is the last connection that worked, which the
+        // client keeps per Windows user (%APPDATA%\ICQ\Application.qdb,
+        // ConnectionSettings / AccCachedSettings, the pref
+        // aimcc.connect.settings.OpenAuth1.0): host and port, here
+        // domain:8082. Only after that come the ports above, then retries on
+        // port 80. aimcc.connect.skipSources - read when autoConnect is 1, a
+        // bit per source - leaves out:
+        //   0x2       the cached last good connection
+        //   0x20, 0x20000, 0x40000, 0x80000, 0x100000, 0x200000
+        //             the same host retried on port 80 (plain HTTP)
+        // so the web sign-in has the configured port and nothing else. The
+        // cache itself is the user's and is not touched: with the row
+        // unticked the line goes, and a cached 5195 is then simply refused
+        // before the client falls back to 8082.
+        const string SkipSources = "aimcc.connect.skipSources";
+        const int SkipCachedAndPort80 = 0x2 | 0x20 | 0x20000 | 0x40000 | 0x80000 | 0x100000 | 0x200000;
+
+        // The TLS row's part of AppConfig.xml, after the sign-in: both sign-in
+        // ports to the one only the add-on reaches, and no other source.
+        static string SetTlsSignIn(string text)
+        {
+            foreach (string name in SignInPorts) text = SetAcc(text, name, E2eIni.TlsOnlyWebPort.ToString());
+            string skip = SkipCachedAndPort80.ToString();
+            if (Regex.IsMatch(text, "<p\\s+name=\"" + Regex.Escape(SkipSources) + "\"")) return SetAcc(text, SkipSources, skip);
+            Match after = Regex.Match(text, "([ \\t]*)<p\\s+name=\"aimcc\\.connect\\.autoConnect\"[^>]*/>(\\r?\\n)");
+            if (!after.Success) return text;
+            string line = after.Groups[1].Value + "<p name=\"" + SkipSources + "\" value=\"" + skip + "\" />" + after.Groups[2].Value;
+            return text.Insert(after.Index + after.Length, line);
+        }
+
+        // The state of that part: patched when the sign-in goes to the domain on
+        // the TLS-only port; missing - not counted in the row - when the
+        // sign-in is not ours, since the ports then follow the sign-in row.
+        string TlsSignInState(string domain)
+        {
+            string path = At(AppConfig);
+            if (!PatchFiles.Exists(path)) return "missing";
+            string text = PatchFiles.ReadText(path).Text;
+            if (!Ps.Eq(ReadAcc(text, "aimcc.connect.host.address"), domain)) return "missing";
+            bool ports = SignInPorts.All(n => ReadAcc(text, n) == E2eIni.TlsOnlyWebPort.ToString());
+            return ports && ReadAcc(text, SkipSources) == SkipCachedAndPort80.ToString() ? "patched" : "original";
         }
 
         // --- tZers without Flash ---------------------------------------------------------
@@ -803,7 +871,7 @@ namespace IcqRevival.Patch
         // so it needs no environment variable; ICQE2E_INI only overrides where
         // it looks. Nothing is hardcoded here, the domain is the one this
         // installation was configured with.
-        public const string E2eIniFile = "icq-e2e.ini";
+        public const string E2eIniFile = E2eIni.FileName;
         // The first line of the ini, which says in as many words that the patch
         // wrote it. It is what tells our own file from one that was in the
         // folder before we came, so that applying again - with another domain -
@@ -821,46 +889,15 @@ namespace IcqRevival.Patch
             return "https://" + domain + ":" + PagesPortHttps + "/e2e/v1/";
         }
 
-        // The ini as it is written: the header, then the lines the add-on
-        // reads. `key = value`, `#` comments, ASCII, CRLF - what config.rs
-        // parses, and what the repo writes elsewhere.
-        //
-        // server = the domain, and only the domain: the add-on resolves it,
-        // sends every connection the client makes to it on the plain ports
-        // (5190 FLAP, 8082 HTTP sign-in) to the server's TLS 1.3 port instead,
-        // and checks the certificate against that name. The TLS port is the
-        // add-on's own constant (tools\icq-e2e\core\src\route.rs), so nothing
-        // but the domain is asked for here (docs\e2e\STAGE-TLS.md, T4).
-        // tls = on, or off: the user's deliberate opt-out, which the add-on
-        // then says in the chat at every sign-on.
-        static string E2eIniText(string domain, bool tls = true)
-        {
-            return E2eIniHeader + "\r\n"
-                + "directory = " + E2eDirectoryUrl(domain) + "\r\n"
-                + "server = " + domain + "\r\n"
-                + "tls = " + (tls ? "on" : "off") + "\r\n";
-        }
-
-        // Whether the ini there is ours and says tls = off. Writing the file
-        // again - another Apply, another domain - keeps that choice: turning
-        // TLS back on behind the user's back would lock out a user who turned
-        // it off because their server does not have it yet.
-        bool E2eIniTlsOff()
-        {
-            if (!E2eIniIsOurs()) return false;
-            string text = E2eIniAt(At(E2eIniFile));
-            foreach (string raw in text.Split('\n'))
-            {
-                string line = raw.Trim();
-                if (line.StartsWith("#") || line.StartsWith(";")) continue;
-                int eq = line.IndexOf('=');
-                if (eq < 0) continue;
-                if (line.Substring(0, eq).Trim().Equals("tls", StringComparison.OrdinalIgnoreCase)
-                    && line.Substring(eq + 1).Trim().Trim('"').Equals("off", StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            return false;
-        }
+        // What goes in the ini, and which lines of it are the patch's own, is
+        // E2eIni (in Common): directory, server, and e2e and tls for the two
+        // rows; every other line the user put there stays. server = the domain,
+        // and only the domain: the add-on resolves it, sends every connection
+        // the client makes to it on the plain ports (5190 FLAP, 8082 HTTP
+        // sign-in) to the server's TLS 1.3 port instead, and checks the
+        // certificate against that name. The TLS port is the add-on's own
+        // constant (tools\icq-e2e\core\src\route.rs), so nothing but the domain
+        // is asked for here (docs\e2e\STAGE-TLS.md, T4).
 
         // What the ini file there says, or null when there is none or it cannot
         // be read.
@@ -886,14 +923,15 @@ namespace IcqRevival.Patch
         // well as puts them in, and "Restore original" must leave the folder as
         // it found it. A file that is already ours is not backed up again - it
         // is simply overwritten - so the copy beside it stays the user's file,
-        // whatever the domain changes to. Nothing is written when the text is
+        // whatever the domain changes to. The lines the user added are kept,
+        // only the patch's own are set. Nothing is written when the text is
         // already what would be written, so applying twice in a row changes
         // nothing and reports nothing.
-        void WriteE2eIni(string domain)
+        void WriteE2eIni(string domain, bool e2e, bool tls)
         {
             string path = At(E2eIniFile);
-            string text = E2eIniText(domain, !E2eIniTlsOff());
             string current = E2eIniAt(path);
+            string text = E2eIni.Compose(E2eIniHeader, current, E2eDirectoryUrl(domain), domain, e2e, tls);
             if (current != null && Ps.Ceq(current, text)) return;
             if (current != null && !E2eIniIsOurs()) PatchFiles.BackupOnce(path, Suffix);
             try
@@ -926,15 +964,19 @@ namespace IcqRevival.Patch
             return !PatchFiles.Exists(path);
         }
 
-        // patched (what this installation should have written) / original (a
-        // different file, or none at all). "missing" would be dropped when the
-        // job's states are folded together, and a file that should be there and
-        // is not is what the row must show.
-        string E2eIniState(string domain)
+        // The state of one of the two rows, job E2eIni.E2eJob or E2eIni.TlsJob:
+        // patched when our DLL is in place and current and the ini - ours, for
+        // this domain - has the row's setting on; unavailable without our DLL
+        // to put in; original otherwise. A file that should be there and is not
+        // is "original", not "missing", which folding the rows would drop.
+        string E2eRowState(string job, string domain)
         {
-            string text = E2eIniAt(At(E2eIniFile));
-            return text != null && (Ps.Ceq(text, E2eIniText(domain, true)) || Ps.Ceq(text, E2eIniText(domain, false)))
-                ? "patched" : "original";
+            string dll = E2eState();
+            if (dll != "patched") return dll;
+            string text = E2eIniIsOurs() ? E2eIniAt(At(E2eIniFile)) : null;
+            if (text == null || !E2eIni.Points(text, E2eDirectoryUrl(domain), domain)) return "original";
+            bool on = job == E2eIni.E2eJob ? E2eIni.E2eOn(text) : E2eIni.TlsOn(text);
+            return on ? "patched" : "original";
         }
 
         // Our DLL as it is handed out, next to the patch.
@@ -992,8 +1034,12 @@ namespace IcqRevival.Patch
         // really in place, and taken away with it, so an add-on that could not
         // be put in never leaves one behind. A line for the report when it
         // could not be done, or null.
-        string SetE2e(bool wanted, string domain)
+        //
+        // Both rows need the DLL: it goes in when either is ticked, and stays as
+        // long as one of them is; the ini then says which of the two it does.
+        string SetE2e(bool e2e, bool tls, string domain)
         {
+            bool wanted = e2e || tls;
             string path = At(E2eProbeFile);
             if (!wanted)
             {
@@ -1019,7 +1065,7 @@ namespace IcqRevival.Patch
                 PatchFiles.Copy(E2eSource, path, true);
             }
             if (!IsOurE2e(path)) return E2eProbeFile + " could not be put in - E2E add-on left out";
-            WriteE2eIni(domain);
+            WriteE2eIni(domain, e2e, tls);
             return null;
         }
 
@@ -1090,10 +1136,15 @@ namespace IcqRevival.Patch
             // Off until chosen: it needs our DLL next to the patch, and the
             // registration it makes is the user's, not the folder's.
             j.Add("tzers-player", "Your server", "tZers and Flash avatars without Flash: our player (" + PlayerShipped + " next to this patch)", off: true);
-            // Off until chosen: the E2E add-on (stage 3, end-to-end encryption).
-            // Needs our DLL next to the patch; the ini it writes names the key
-            // directory of the domain above. Set ICQE2E_LOG to write a log.
-            j.Add("e2e-probe", "Your server", "E2E encryption (stage 3 test build): our " + E2eProbeShipped + " as tbdiag.dll, with " + E2eIniFile + " for the key directory; set ICQE2E_LOG to log", off: true);
+            // Off until chosen: the E2E add-on (tools\icq-e2e), our DLL next to
+            // the patch, as two rows. Either puts the DLL in as tbdiag.dll, with
+            // icq-e2e.ini beside it, which says which of the two the add-on does
+            // (e2e= and tls=, see E2eIni in Common). End-to-end encryption of
+            // messages uses the key directory of the domain above; the
+            // encrypted connection sends every connection to the domain over
+            // TLS 1.3, with or without it. Set ICQE2E_LOG to write a log.
+            j.Add(E2eIni.E2eJob, "Your server", E2eIni.E2eRow, off: true);
+            j.Add(E2eIni.TlsJob, "Your server", E2eIni.TlsRow, off: true);
 
             j.Assign("the SMS tab of the main window", "sms");
             j.Assign("the Zlango buttons of the message window", "zlango");
@@ -1131,8 +1182,9 @@ namespace IcqRevival.Patch
             j.Assign("the tZers player", "tzers-player");
             j.Assign("the Flash registration", "tzers-player");
             j.Assign("the tZers list", "tzers-player");
-            j.Assign("the E2E add-on (tbdiag.dll)", "e2e-probe");
-            j.Assign("the E2E key directory settings", "e2e-probe");
+            j.Assign("the E2E add-on: end-to-end encryption", E2eIni.E2eJob);
+            j.Assign("the E2E add-on: TLS to the server", E2eIni.TlsJob);
+            j.Assign("the E2E add-on: sign-in only over TLS", E2eIni.TlsJob);
             return j;
         }
 
@@ -1271,8 +1323,9 @@ namespace IcqRevival.Patch
             add("the tZers player", PlayerFile, player);
             add("the Flash registration", PlayerFile, RegistrationState());
             string e2e = E2eState();
-            add("the E2E add-on (tbdiag.dll)", E2eProbeFile, e2e);
-            add("the E2E key directory settings", E2eIniFile, E2eIniState(domain));
+            add("the E2E add-on: end-to-end encryption", E2eProbeFile + ", " + E2eIniFile, E2eRowState(E2eIni.E2eJob, domain));
+            add("the E2E add-on: TLS to the server", E2eProbeFile + ", " + E2eIniFile, E2eRowState(E2eIni.TlsJob, domain));
+            add("the E2E add-on: sign-in only over TLS", PatchFiles.Leaf(AppConfig), TlsSignInState(domain));
             List<PatchItem> rows = Jobs.Merge(items);
             // Without our DLL there is nothing to put in: the row says why.
             if (player == "unavailable")
@@ -1285,7 +1338,7 @@ namespace IcqRevival.Patch
             }
             if (e2e == "unavailable")
             {
-                foreach (PatchItem row in rows.Where(r => r.Key == "e2e-probe"))
+                foreach (PatchItem row in rows.Where(r => r.Key == E2eIni.E2eJob || r.Key == E2eIni.TlsJob))
                 {
                     row.State = "unavailable";
                     row.Where = E2eMissing();
@@ -1311,10 +1364,11 @@ namespace IcqRevival.Patch
                 notes.Add("tZers player left out: " + PlayerMissing());
                 asked.Add("tzers-player");
             }
-            if (Jobs.IsWanted(asked, "e2e-probe") && E2eState() == "unavailable")
+            if ((Jobs.IsWanted(asked, E2eIni.E2eJob) || Jobs.IsWanted(asked, E2eIni.TlsJob)) && E2eState() == "unavailable")
             {
                 notes.Add("E2E add-on left out: " + E2eMissing());
-                asked.Add("e2e-probe");
+                asked.Add(E2eIni.E2eJob);
+                asked.Add(E2eIni.TlsJob);
             }
             skip = asked;
             Func<string, bool> wanted = key => Jobs.IsWanted(skip, key);
@@ -1398,7 +1452,7 @@ namespace IcqRevival.Patch
             // The E2E add-on after the fix removal, so ours goes into a freed
             // slot or over the stock, as the two selections require.
             PatchSteps.Step("E2E add-on...");
-            string e2eNote = SetE2e(wanted("e2e-probe"), domain);
+            string e2eNote = SetE2e(wanted(E2eIni.E2eJob), wanted(E2eIni.TlsJob), domain);
             if (e2eNote != null) notes.Add(e2eNote);
             // Whatever the selection: the lock button is gone for good.
             TakeDroppedLockFiles();

@@ -359,8 +359,13 @@ Crypto scheme (Signal-like, per the owner's spec):
   **Double Ratchet** per pair-of-devices;
 - messages carry **per-device wrapped message keys** (the `wraps[]` array) so
   offline delivery to every one of the recipient's devices works;
-- **one safety number per pair of UINs** (derived from both identity keys), shown
-  on the management page.
+- **one safety number per pair of UINs**, derived from both account keys the
+  Signal way (numeric fingerprint version 0: 5200 rounds of SHA-512 over the key
+  and the UIN, 60 digits; `tools/icq-e2e/core/src/safety.rs`). Shown by
+  `/e2e safety` in the chat, verified with `/e2e verify` (bound to the key
+  verified); a change says so once and, for a verified contact, holds messages
+  until the user verifies again or types `/e2e accept` (CHECKLIST 10.10). The
+  management page may show it too.
 
 ---
 

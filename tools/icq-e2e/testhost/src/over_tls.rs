@@ -717,6 +717,9 @@ struct Ctx {
     client: TlsClient,
     plain_flap: u16,
     plain_http: u16,
+    /// The web sign-in's port that nothing listens on (5195 in production):
+    /// only the route makes it reach the server.
+    tls_only_http: u16,
     /// A port the route counts as the server's, with a listener the tests
     /// connect to past the hooks.
     unseen: TcpListener,
@@ -733,7 +736,7 @@ impl Ctx {
                 SERVER,
                 Ports {
                     flap: vec![self.plain_flap, self.server.port, unseen],
-                    http: vec![self.plain_http],
+                    http: vec![self.plain_http, self.tls_only_http],
                     tls: tls_port,
                 },
                 Box::new(|_| vec![Ipv4Addr::LOCALHOST]),
@@ -816,13 +819,14 @@ pub fn run() -> bool {
         client,
         plain_flap: free_port(),
         plain_http: free_port(),
+        tls_only_http: free_port(),
         unseen: TcpListener::bind("127.0.0.1:0").unwrap(),
         b,
         seq: 0,
     };
     hooks::set_tls(ctx.setup(ctx.server.port));
 
-    let scenarios: [(&str, Scenario); 16] = [
+    let scenarios: [(&str, Scenario); 18] = [
         (
             "6.5 sign-in: BUCP over TLS, server speaks first",
             bucp_sign_in,
@@ -830,6 +834,10 @@ pub fn run() -> bool {
         (
             "7.2 sign-in: clientLogin and startOSCARSession over HTTP/TLS",
             web_sign_in,
+        ),
+        (
+            "fail closed: the client set to the TLS ports signs in only through the add-on",
+            tls_ports_only,
         ),
         (
             "BOS: token, account key, E2E both ways, slow and coalesced records",
@@ -860,6 +868,11 @@ pub fn run() -> bool {
         ),
         ("tls=off: today's bytes", tls_off_bytes),
         ("tls=off: the note in the chat", tls_off_note),
+        // Last: it switches the policy for the rest of the process.
+        (
+            "e2e=off: TLS only, the plain client's bytes, no key directory",
+            e2e_off,
+        ),
     ];
     let mut ok = true;
     for (name, f) in scenarios {
@@ -1021,6 +1034,114 @@ fn web_sign_in(ctx: &mut Ctx) -> Check {
     })?;
     ensure(c.error.is_none() && c.take() == answer, || {
         "answer changed".into()
+    })?;
+    ctx.no_notices()
+}
+
+/// The client as the patch leaves it with the TLS row ticked: the BUCP
+/// sign-in on the TLS port itself (5194), the web sign-in on a port nothing
+/// listens on (5195). Through the hooks both reach the server over TLS, with
+/// the ALPN of their port, and the redirect to the plain host goes on to BOS.
+/// Past the hooks - the add-on missing - neither gets anywhere: the web
+/// sign-in is refused before a byte is sent, and a plain FLAP client on the
+/// TLS port hears no hello, and what it sends ends the handshake.
+fn tls_ports_only(ctx: &mut Ctx) -> Check {
+    // 6.5: BUCP straight to the TLS port.
+    let mut c = FakeClient::connect(ctx.server.port, 512)?;
+    let mut r = ctx.server.accept()?;
+    ensure(r.failed.is_none(), || format!("handshake: {:?}", r.failed))?;
+    ensure(r.alpn.as_deref() == Some(ALPN_OSCAR), || {
+        format!("ALPN {:?}", r.alpn)
+    })?;
+    c.pump("FD_CONNECT", |c| c.connected.is_some())?;
+    ensure(c.connected == Some(0), || {
+        format!("FD_CONNECT error {:?}", c.connected)
+    })?;
+    ensure(hooks::peer_port(c.s) == Some(ctx.server.port), || {
+        format!("getpeername said {:?}", hooks::peer_port(c.s))
+    })?;
+    r.send(&server_hello());
+    c.pump("the server's hello", |c| c.got.len() >= 10)?;
+    ensure(c.take() == server_hello(), || "hello changed".into())?;
+    let challenge_req = flap(2, 2, &snac(0x0017, 0x0006, &tlv(0x0001, b"100001")));
+    c.send(&[flap(1, 1, &[0, 0, 0, 1]), challenge_req.clone()].concat())?;
+    r.frame()?;
+    ensure(r.frame()? == challenge_req, || {
+        "challenge request changed".into()
+    })?;
+    r.close_notify();
+    c.pump("the end", |c| c.eof || c.error.is_some())?;
+    ensure(find(&r.raw(), b"100001").is_none(), || {
+        "plaintext on the wire".into()
+    })?;
+    drop(c);
+
+    // 7.2: getChallenge, then startOSCARSession, on the port nothing listens on.
+    for (path, answer) in [
+        (
+            "POST /auth/getChallenge HTTP/1.0",
+            http_response("<response><statusCode>200</statusCode></response>"),
+        ),
+        (
+            "GET /aim/startOSCARSession?a=t&f=json&useTLS=0 HTTP/1.0",
+            http_response(&format!(
+                "{{\"response\":{{\"statusCode\":200,\"data\":{{\"host\":\"127.0.0.1\",\"port\":{},\"cookie\":\"c\"}}}}}}",
+                ctx.plain_flap
+            )),
+        ),
+    ] {
+        let req = format!(
+            "{path}\r\nHost: {SERVER}:{}\r\nContent-Length: 0\r\n\r\n",
+            ctx.tls_only_http
+        );
+        let mut c = FakeClient::connect(ctx.tls_only_http, 256)?;
+        c.send(req.as_bytes())?;
+        let mut r = ctx.server.accept()?;
+        ensure(r.failed.is_none(), || format!("handshake: {:?}", r.failed))?;
+        ensure(r.alpn.as_deref() == Some(ALPN_HTTP), || {
+            format!("ALPN {:?}", r.alpn)
+        })?;
+        ensure(r.http_request()? == req.as_bytes(), || {
+            "request changed".into()
+        })?;
+        ensure(hooks::peer_port(c.s) == Some(ctx.tls_only_http), || {
+            format!("getpeername said {:?}", hooks::peer_port(c.s))
+        })?;
+        r.send(&answer);
+        r.close_notify();
+        c.pump("the answer", |c| c.eof || c.error.is_some())?;
+        ensure(c.error.is_none() && c.take() == answer, || {
+            "answer changed".into()
+        })?;
+    }
+    // The redirect names the plain host; it is mapped like any other.
+    let (c, mut r) = bos_sign_on(ctx)?;
+    r.close_notify();
+    drop(c);
+
+    // Without the add-on: the web sign-in's port refuses the connection.
+    ensure(
+        TcpStream::connect(("127.0.0.1", ctx.tls_only_http)).is_err(),
+        || "something listens on the web sign-in's TLS-only port".into(),
+    )?;
+    // A plain FLAP client on the TLS port: the server waits for a
+    // ClientHello, so no FLAP hello comes, and the client's own bytes end
+    // the handshake.
+    let mut plain =
+        TcpStream::connect(("127.0.0.1", ctx.server.port)).map_err(|e| e.to_string())?;
+    plain
+        .set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    let mut buf = [0u8; 64];
+    ensure(!matches!(plain.read(&mut buf), Ok(n) if n > 0), || {
+        "the TLS port spoke first to a plain client".into()
+    })?;
+    plain
+        .write_all(&flap(1, 1, &[0, 0, 0, 1]))
+        .map_err(|e| e.to_string())?;
+    let r = ctx.server.accept()?;
+    ensure(r.failed.is_some(), || {
+        "the TLS port took a plain FLAP client".into()
     })?;
     ctx.no_notices()
 }
@@ -1586,6 +1707,71 @@ fn tls_off_note(ctx: &mut Ctx) -> Check {
     })();
     hooks::set_tls(ctx.setup(ctx.server.port));
     result
+}
+
+/// `e2e=off`, the patch's "encrypted connection to the server" row on its
+/// own: the connection is TLS as before, and everything above it is the plain
+/// client's - SetInfo without the add-on's capability or key, messages both
+/// ways exactly as typed, not one call to the key directory - except that a
+/// `/e2e` command is answered in the chat and never reaches the server.
+fn e2e_off(ctx: &mut Ctx) -> Check {
+    hooks::set_policy(Policy::from_settings(Settings {
+        mode: Some("encrypt"),
+        e2e: Some("off"),
+        ..Default::default()
+    }));
+    let calls = ctx.dir.requests().len();
+    let (mut c, mut r) = bos_sign_on(ctx)?;
+
+    let info = flap(2, 2, &set_info());
+    c.send(&info)?;
+    ensure(r.frame_with(0x0002, 0x0004)? == info, || {
+        "SetInfo changed: the add-on announced itself".into()
+    })?;
+
+    let typed: &[u8] = b"hello in plain text, over TLS";
+    let msg = flap(2, 3, &to_host("100002", 0x0000, typed));
+    c.send(&msg)?;
+    ensure(r.frame_with(0x0004, 0x0006)? == msg, || {
+        "the message changed".into()
+    })?;
+    ensure(find(&r.raw(), typed).is_none(), || {
+        "the text is on the wire outside TLS".into()
+    })?;
+
+    // Whatever comes in is shown as it came, an armoured container too.
+    for text_ in [&b"a plain reply"[..], b"IQE1:not-for-this-install"] {
+        let s = ctx.next_seq();
+        let frame = flap(2, s, &to_client("100002", 0x0000, text_));
+        r.send(&frame);
+        c.pump("the reply, unchanged", |c| {
+            frames(&c.got).0.iter().any(|f| f[6..] == frame[6..])
+        })?;
+    }
+
+    // A command is answered in the chat and never sent; the next message
+    // takes its sequence number.
+    c.send(&flap(2, 4, &to_host("100002", 0x0000, b"/e2e on")))?;
+    let note: Vec<u8> = "encryption is off on this install"
+        .encode_utf16()
+        .flat_map(u16::to_be_bytes)
+        .collect();
+    c.pump("the answer to /e2e", |c| find(&c.got, &note).is_some())?;
+    let next = to_host("100002", 0x0000, b"after the command");
+    c.send(&flap(2, 5, &next))?;
+    let got = r.frame_with(0x0004, 0x0006)?;
+    ensure(got[6..] == next[..], || {
+        "the command reached the server".into()
+    })?;
+
+    ensure(ctx.dir.requests().len() == calls, || {
+        format!(
+            "the key directory was called: {:?}",
+            &ctx.dir.requests()[calls..]
+        )
+    })?;
+    drop(c);
+    ctx.no_notices()
 }
 
 // --- against a local Open OSCAR Server ----------------------------------------

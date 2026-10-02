@@ -658,6 +658,14 @@ namespace IcqRevival.Patch
                 }
             }
             catch { }
+            // The single E2E row of earlier builds stands for the two rows that
+            // replaced it: ticked or cleared, both are what it was.
+            if (Ps.Contains(known, E2eIni.OldJob))
+            {
+                known.Add(E2eIni.E2eJob);
+                known.Add(E2eIni.TlsJob);
+                if (Unchecked.Contains(E2eIni.OldJob)) { Unchecked.Add(E2eIni.E2eJob); Unchecked.Add(E2eIni.TlsJob); }
+            }
             foreach (string k in defaultOff) { if (!Ps.Contains(known, k)) Unchecked.Add(k); }
         }
 

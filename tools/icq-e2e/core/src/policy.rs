@@ -71,6 +71,15 @@ pub enum Command {
     /// Back to the automatic rule: the manual on or off is forgotten, whether
     /// the contact was seen encrypting is not.
     Auto,
+    /// Show the safety number with this contact (CHECKLIST 10.10).
+    Safety,
+    /// Mark the contact verified: the safety number was compared.
+    Verify,
+    /// Take the verification back.
+    Unverify,
+    /// Send on to a verified contact whose safety number changed, without
+    /// verifying the new number: the contact is unverified from then on.
+    Accept,
     /// `/e2e` with something it does not know: the list of commands.
     Help,
 }
@@ -98,6 +107,10 @@ pub fn parse_command(text: &str) -> Option<Command> {
         Some("off") => Command::Off,
         Some("plain") => Command::Plain,
         Some("auto") => Command::Auto,
+        Some("safety") => Command::Safety,
+        Some("verify") => Command::Verify,
+        Some("unverify") => Command::Unverify,
+        Some("accept") => Command::Accept,
         Some(_) => Command::Help,
     })
 }
@@ -141,7 +154,7 @@ pub fn plain_text(html: &str) -> String {
 pub const PREFIX: &str = "[ICQ E2E] ";
 
 /// The commands, for the end of a note.
-pub const COMMANDS: &str = "/e2e on, /e2e off, /e2e auto, /e2e status, /e2e plain";
+pub const COMMANDS: &str = "/e2e on, /e2e off, /e2e auto, /e2e status, /e2e plain, /e2e safety, /e2e verify, /e2e unverify, /e2e accept";
 
 /// The note for a status the chat is now in.
 pub fn status_note(peer: &str, status: Status) -> String {
@@ -167,6 +180,17 @@ pub fn publish_failed_note(why: &str) -> String {
 /// (`tls=off` in `icq-e2e.ini`, STAGE-TLS 3.5).
 pub fn tls_off_note(server: &str) -> String {
     format!("{PREFIX}The connection to the server ({server}) is not encrypted (tls=off in icq-e2e.ini): the contact list, presence and sign-in travel in clear. Messages to contacts with the add-on are still end-to-end encrypted.")
+}
+
+/// The same with `e2e=off` as well, where nothing at all is encrypted.
+pub fn tls_off_plain_note(server: &str) -> String {
+    format!("{PREFIX}The connection to the server ({server}) is not encrypted (tls=off in icq-e2e.ini), and end-to-end encryption is off on this install (e2e=off): nothing this client sends is encrypted.")
+}
+
+/// The answer to a `/e2e` command on an install with `e2e=off`. The command
+/// itself never leaves.
+pub fn e2e_off_note(peer: &str) -> String {
+    format!("{PREFIX}End-to-end encryption is off on this install (e2e=off in icq-e2e.ini), so /e2e commands do nothing. This command was not sent to {peer}.")
 }
 
 /// The note once encryption works after a failure.
@@ -198,6 +222,9 @@ pub enum Held {
     Unreachable(String),
     /// Our own keys are not in the directory yet.
     NotPublished,
+    /// The contact was verified and their safety number has changed since:
+    /// nothing goes to the new key until the user says so (CHECKLIST 10.10).
+    SafetyChanged,
 }
 
 /// The note for a message that was held.
@@ -215,7 +242,37 @@ pub fn held_note(peer: &str, why: &Held) -> String {
         Held::NotPublished => format!(
             "{PREFIX}The message to {peer} was NOT sent: this add-on's keys are not in the key directory yet, and messages to {peer} must not go unencrypted. Send it again in a moment."
         ),
+        Held::SafetyChanged => format!(
+            "{PREFIX}The message to {peer} was NOT sent: you had verified {peer}, and your safety number with them has changed. Type /e2e safety and compare the new number with {peer} in person or by phone - not through this chat - then /e2e verify, and send the message again. To send without verifying, type /e2e accept."
+        ),
     }
+}
+
+/// The note when a contact's safety number changed (CHECKLIST 10.10), once
+/// per change. Nothing is said the first time a contact is seen: like Signal,
+/// the first key is trusted on first use.
+pub fn safety_changed_note(peer: &str, was_verified: bool) -> String {
+    let base = format!(
+        "{PREFIX}Your safety number with {peer} has changed. This can mean that {peer} reinstalled the add-on or reset its keys, or that someone is trying to intercept the conversation."
+    );
+    if was_verified {
+        format!("{base} You had verified {peer}, so that verification is cleared, and messages to {peer} are held until you type /e2e safety, compare the new number with them and type /e2e verify (or /e2e accept to send without verifying).")
+    } else {
+        format!("{base} Messages are still encrypted, to the new key. Type /e2e safety to compare the new number with {peer}.")
+    }
+}
+
+/// The answer to `/e2e safety`: the 60 digits as Signal groups them, whether
+/// the contact is verified, and how to compare.
+pub fn safety_note(peer: &str, grouped: &str, verified: bool) -> String {
+    let state = if verified {
+        format!("{peer} is verified (with this number).")
+    } else {
+        format!("{peer} is not verified.")
+    };
+    format!("{PREFIX}Your safety number with {peer}:
+{grouped}
+{state} Compare it with the number {peer} sees in their chat with you (/e2e safety there), in person or by phone - not through this chat, which the server carries. If it matches, type /e2e verify; /e2e unverify takes it back.")
 }
 
 /// Whether `/e2e plain` may open a message held for this reason. A contact
@@ -236,6 +293,10 @@ mod tests {
         assert_eq!(parse_command("/e2e"), Some(Command::Status));
         assert_eq!(parse_command("/e2e plain"), Some(Command::Plain));
         assert_eq!(parse_command("/e2e AUTO"), Some(Command::Auto));
+        assert_eq!(parse_command("/e2e safety"), Some(Command::Safety));
+        assert_eq!(parse_command("/e2e verify"), Some(Command::Verify));
+        assert_eq!(parse_command("/e2e unverify"), Some(Command::Unverify));
+        assert_eq!(parse_command("/e2e accept"), Some(Command::Accept));
         assert_eq!(parse_command("/e2e what"), Some(Command::Help));
         assert_eq!(parse_command("/e2e on now"), Some(Command::Help));
         // ICQ 7.2 and 6.5 send HTML.
@@ -305,6 +366,11 @@ mod tests {
             held_note("100002", &Held::Downgrade),
             held_note("100002", &Held::Unreachable("x".into())),
             held_note("100002", &Held::NotPublished),
+            held_note("100002", &Held::SafetyChanged),
+            safety_changed_note("100002", true),
+            safety_changed_note("100002", false),
+            safety_note("100002", "12345 12345", true),
+            safety_note("100002", "12345 12345", false),
             publish_failed_note("the key directory could not be reached: timeout."),
             ready_note(),
         ] {

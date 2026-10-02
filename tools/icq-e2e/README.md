@@ -34,8 +34,81 @@ The plan is `docs/e2e/STAGE-3-CLIENT-CRYPTO.md`, the design is
   directory unreachable, token refused): one note with the reason, once per
   sign-on for each kind; after it, one "Encryption is ready" once it works.
   Nothing when publishing simply works.
+- A contact whose safety number changed (they reset their keys - or someone
+  is in the middle): "Your safety number with <uin> has changed", once per
+  change. Messages go on, encrypted to the new key - unless the contact was
+  verified; then the verification is cleared and messages are held until the
+  user confirms (see "Safety numbers"). Nothing is said the first time a
+  contact is seen: like Signal, the first key is trusted on first use.
 - Notes from the add-on itself are marked `[ICQ E2E]` and arrive as messages
   from the contact the chat is with.
+
+## Two jobs, two rows
+
+The patches offer the add-on as two rows, each with its own tick; either puts
+the DLL in, and `icq-e2e.ini` says which of the two it does:
+
+| Row (job key) | `icq-e2e.ini` |
+|---------------|---------------|
+| End-to-end encryption of messages (`e2e`) | `e2e = on` |
+| Encrypted connection to the server (TLS) (`e2e-tls`) | `tls = on` |
+
+With only the TLS row (`e2e = off`) the add-on is the plain client plus TLS:
+no message is encrypted, no key is published, the key directory is never
+called, the add-on is not announced to contacts (no capability, no account key
+in `SetInfo`), and the message bytes both ways are the client's own - a
+container from a contact with the add-on shows as the armoured text it is.
+Only a `/e2e` command is still taken out of the chat and answered with
+"End-to-end encryption is off on this install", so a command typed by mistake
+never reaches the contact as text. With only the encryption row (`tls = off`)
+the connection to the server is plain and the chat says so at every sign-on.
+
+**Fail closed when the add-on is missing.** With the TLS row ticked (and
+"automatic connection and voice calls use your server" too), the patch also
+points the client's own sign-in at ports that do not work in plaintext, so a
+client whose add-on is gone - the DLL deleted, renamed, or not loaded - cannot
+sign in at all instead of signing in unencrypted:
+
+| Client | Setting | TLS row off | TLS row on | Add-on maps it to |
+|--------|---------|-------------|------------|-------------------|
+| 6.5 | `MCore.dll`: the default of `ServerPort` (an immediate next to `login.icq.com`) | 5190 | 5194 | 5194, ALPN `oscar` |
+| 7.2 | `AppConfig.xml`: `aimcc.connect.host.port` (getChallenge, clientLogin) | 8082 | 5195 | 5194, ALPN `http/1.1` |
+| 7.2 | `AppConfig.xml`: `aimcc.connect.bossRedirect.port` (startOSCARSession) | 8082 | 5195 | 5194, ALPN `http/1.1` |
+| 7.2 | `AppConfig.xml`: `aimcc.connect.skipSources` (new line) | absent | 4063266 (0x3E0022) | - |
+
+On 7.2 the ports alone do not hold on a client that has signed in before: ACC
+(`acccore.dll`) first tries the last connection that worked, which the client
+keeps per Windows user in `%APPDATA%\ICQ\Application.qdb` (SQLite, `Records`,
+section `ConnectionSettings`, `AccCachedSettings` =
+`aimcc.connect.settings.OpenAuth1.0`/`OpenAuth2.0` with `domain:8082`), and
+after the configured port it retries the same host on port 80.
+`aimcc.connect.skipSources` (a bit per source, read while `autoConnect` is 1)
+leaves out the cache (0x2) and the port-80 retries (0x20, 0x20000, 0x40000,
+0x80000, 0x100000, 0x200000). The cache itself is not touched.
+
+5194 speaks TLS 1.3 only: a plain FLAP client there hears no hello and is cut
+off at its first bytes. The web sign-in cannot share it, because the add-on
+picks the ALPN by the port before the client has said anything, so it gets
+5195, where the server never listens: without the add-on the connect is
+refused. The BOS host the server hands out after a sign-in over its TLS
+listener is `domain:5194`, with SSL state 0 and no `tlsCertName` (the add-on
+asks for no SSL, so the client keeps speaking plain FLAP and the add-on maps
+5194 to TLS); the client's Settings > Connection then shows port 5194. The
+add-on also maps 5190 and 8082 to TLS as before, which keeps installs patched
+earlier working. Unticking the
+row puts 5190/8082 back; Restore gives the original files byte for byte. The
+domain, the pages (8101, 8102), the key directory and the STUN server are not
+touched by this. A server typed by hand in the client's connection settings
+stays the user's, and is not fail-closed. The way out is the row:
+`tls = off` typed into the ini by hand (or `ICQE2E_TLS=off`) leaves the
+sign-in on 5194/5195, so such a client does not sign in either; untick the
+row and apply, and the message box says so.
+
+The patch owns the `directory`, `server`, `e2e` and `tls` lines of the ini and
+keeps every other line (`tls_pin`, comments, anything added by hand). An ini
+from before the two rows has no `e2e` line, which reads as on: such an install
+shows both rows applied. `-Skip`/`-Include e2e-probe`, the key of the single
+row of earlier builds, still means both.
 
 ## Commands (CHECKLIST section 10)
 
@@ -49,6 +122,10 @@ stream, so the contact never gets it, and answers with a note in that chat.
 | `/e2e auto` | Back to the default: the manual on/off is forgotten; whether the contact was seen encrypting is kept, so downgrade protection stays. |
 | `/e2e status` | The setting (auto/on/off), whether the contact was seen encrypting, their signed devices in the key directory, and what the next message will do. |
 | `/e2e plain` | The next message goes in clear, once - for a contact that encrypted before and now shows no keys. Refused when encryption is on by hand. |
+| `/e2e safety` | The safety number with this contact - 60 digits in twelve groups of five, as Signal shows it - whether the contact is verified, and how to compare. |
+| `/e2e verify` | Marks the contact verified, for the number `/e2e safety` showed last in this sign-on (the key behind it, not the contact). Refused if the number was not shown, or changed since. |
+| `/e2e unverify` | Takes the verification back. |
+| `/e2e accept` | After a verified contact's safety number changed: send on, encrypted to the new key, without verifying it. The contact is unverified from then on. |
 
 The setting is kept per contact in the state file, with whether the contact was
 ever seen encrypting. Without a setting a contact is encrypted whenever the key
@@ -56,6 +133,29 @@ directory has a signed device of theirs; the OSCAR capability is only a hint.
 Once a contact has encrypted, the add-on never falls back to clear text by
 itself: if the server later shows no keys for them, the message is held and the
 chat says so (downgrade protection).
+
+## Safety numbers (CHECKLIST 4.2, 4.3, 10.10)
+
+Signal's safety number, computed exactly as libsignal does it
+(`NumericFingerprintGenerator`, fingerprint version 0, 5200 rounds of SHA-512;
+`safety.rs`, tested against Signal's own test vector). The inputs are each
+side's **account key** - the one key per UIN that signs every device - and the
+UIN. So there is one number per pair of accounts, and a new device of the
+contact does not change it; only a new account key does, which is a key reset.
+
+- `/e2e safety` in a chat shows the number. The contact types `/e2e safety` in
+  their chat with you and sees the same 60 digits. Compare them in person or by
+  phone - not through the chat, which the server carries.
+- `/e2e verify` once they match. It is kept in the state file, bound to that
+  key; `/e2e status` says "verified: yes".
+- When the contact's key changes, the chat says "Your safety number with <uin>
+  has changed", once. For an unverified contact that is all: messages go on,
+  encrypted to the new key.
+- For a **verified** contact the verification is cleared and every message is
+  held ("was NOT sent") until the user either verifies the new number
+  (`/e2e safety`, compare, `/e2e verify`) or types `/e2e accept` to send on
+  without verifying. The hold survives a restart. `/e2e plain` stays what it
+  always is - one message in clear - and is not the way past this hold.
 
 ## No lock in the window (CHECKLIST 10.4, 10.9)
 
@@ -85,7 +185,7 @@ earlier build kept a file per contact for the button under
 | `core` | `icqe2e_core` (lib) | The engine: FLAP stream rewriting, the Olm keys and container, the key directory client, the state file, and the Winsock IAT hook. Everything but `hook`/`log`/`store`/`winhttp` is plain Rust and unit-tested. |
 | `loader-tbdiag` | `tbdiag.dll` | ICQ 7.2 loader. ICQ.exe loads `tbdiag.dll` from its own folder at startup; this replacement pins itself, starts the add-on, and answers the `FC*` telemetry probe harmlessly. |
 | `loader-msimg32` | `msimg32.dll` | ICQ 6.5 loader. A proxy for `msimg32.dll` (a non-KnownDLL that `MUtils.dll` imports at process init); it forwards the real exports to `system32\msimg32.dll` and starts the add-on. |
-| `testhost` | `icqe2e_testhost.exe` | Plays two clients in-process with the add-on on encrypt: a message goes out as a container and comes back exactly as typed. Then the same path through the real Winsock hooks over TLS 1.3 (`over_tls.rs`): sign-in, BOS, E2E, slow delivery, resets and every fail-closed case. `--go` runs a sign-in against a local Open OSCAR Server's TLS listener. |
+| `testhost` | `icqe2e_testhost.exe` | Plays two clients in-process with the add-on on encrypt: a message goes out as a container and comes back exactly as typed. Then the same path through the real Winsock hooks over TLS 1.3 (`over_tls.rs`): sign-in, BOS, E2E, slow delivery, resets and every fail-closed case, including a client set to the TLS-only ports (5194, 5195) with and without the add-on. `--go` runs a sign-in against a local Open OSCAR Server's TLS listener. |
 
 `core/src`, roughly in the order a message travels:
 
@@ -99,6 +199,7 @@ earlier build kept a file per contact for the button under
 | `directory.rs` | The key directory API, over WinHTTP or in memory for tests. |
 | `store.rs` | The state file, protected with DPAPI. |
 | `policy.rs` | The user's control (CHECKLIST 10): the `/e2e` commands, the per-contact setting, downgrade protection, the words of the notes. |
+| `safety.rs` | Signal's safety number (numeric fingerprint, version 0) over the account keys and UINs. |
 | `rewrite.rs` | Which SNACs are messages, and what happens to each one. |
 | `icbm.rs`, `snac.rs`, `text.rs`, `caps.rs` | Decoding, and the add-on's capability and account-key announcement. |
 | `hook.rs`, `log.rs` | Winsock, and the log. |
@@ -153,7 +254,8 @@ Environment variables, read when ICQ starts:
 
 | Variable | Effect |
 |----------|--------|
-| `ICQE2E_MODE` | `encrypt` (the default), `harness` (stage 2's reversible transform), or `observe` (bytes untouched, log only). |
+| `ICQE2E_MODE` | `encrypt` (the default), `harness` (stage 2's reversible transform), or `observe` (bytes untouched, log only, never TLS). Debugging only. |
+| `ICQE2E_E2E` | Overrides `e2e =` of the ini: `off` is the TLS-only add-on above (log: `mode=plain`). Absent, empty or anything but `off`/`0`/`false`/`no`: on. |
 | `ICQE2E_DIRECTORY` | The key directory's base URL. Without one there is nothing to publish to and encryption stays off, said out loud in the log. |
 | `ICQE2E_HOME` | Where the state files go. Default: `%APPDATA%\ICQ E2E\`. |
 | `ICQE2E_INI` | A different `icq-e2e.ini` to read. Only an override: the add-on finds `icq-e2e.ini` next to the client executable on its own, because the patch writes it there and never tells the add-on where it went. |
@@ -259,12 +361,12 @@ byte for byte.
 
 > Run this yourself — do not start the clients from here.
 
-1. Apply the patch with the **"E2E encryption (stage 3 test build)"** row (job
-   key `e2e-probe`, off by default) on both clients, or:
+1. Apply the patch with both E2E rows (job keys `e2e` and `e2e-tls`, off by
+   default) on both clients, or:
 
    ```
-   ICQ-7.2-Patch.exe -Apply -Root <copy> -Server icq.example.org -Include e2e-probe
-   ICQ-6.5-Patch.exe -Apply -Root <copy> -Server icq.example.org -Include e2e-probe
+   ICQ-7.2-Patch.exe -Apply -Root <copy> -Server icq.example.org -Include e2e,e2e-tls
+   ICQ-6.5-Patch.exe -Apply -Root <copy> -Server icq.example.org -Include e2e,e2e-tls
    ```
 
 2. Sign both on **without** `-uin` — the account has to come from the server's
@@ -310,6 +412,40 @@ byte for byte.
    (the next message is held, not sent). None of the commands reaches the
    contact.
 
-9. "Restore original" (or `-Restore`) removes the add-on and the `icq-e2e.ini`,
+9. Safety numbers, in a chat between the two clients (100001 and 100002 here):
+   - `/e2e safety` on both: the same 60 digits, "is not verified". Nothing
+     about safety numbers was said before this - not at the first message.
+   - `/e2e verify` on 100001: "100002 is marked verified"; `/e2e status` says
+     "verified: yes", also after a restart of 100001.
+   - Simulate a key change of 100002: close 100002's client; move
+     `%APPDATA%\ICQ E2E\100002.state` aside (keep it - it is the device's
+     identity); revoke 100002's device in the management API on the server
+     (`GET /user/100002/e2e/devices` for the id, then
+     `DELETE /user/100002/e2e/devices/<id>` - without that the directory
+     refuses the new key with `active_devices`); start 100002 again. It makes
+     and publishes a new account key.
+   - 100002 writes to 100001: 100001 reads it and gets "Your safety number with
+     100002 has changed ... You had verified 100002, so that verification is
+     cleared". 100001's reply is NOT sent, with a note naming `/e2e safety`,
+     `/e2e verify` and `/e2e accept`; it stays held after a restart.
+   - On 100001: `/e2e safety` (new digits, the same as on 100002), then
+     `/e2e verify` - the next message goes out encrypted. Or, instead,
+     `/e2e accept` - it goes out encrypted and 100002 is unverified.
+   - Unverified case: repeat the reset without verifying first - the change
+     note appears once, "still encrypted", and nothing is held.
+
+10. "Restore original" (or `-Restore`) removes the add-on and the `icq-e2e.ini`,
    and puts the client back. The state file is left alone on purpose — it is the
    device's identity, and deleting it would make every contact see a new device.
+
+11. Fail closed (TLS row on). With ICQ closed, rename the add-on in the ICQ
+   folder (6.5: `msimg32.dll`, 7.2: `tbdiag.dll`, e.g. to `*.off`) and start
+   the client: it must **not** sign in (6.5: cannot connect to `domain:5194`;
+   7.2: the connection to `domain:5195` is refused), and a capture shows no
+   FLAP or HTTP in plaintext to the server - at most a refused SYN to 5195 and
+   a TCP connection to 5194 that brings no FLAP hello and is closed by the
+   server at the client's first bytes (no UIN, no password digest in
+   plaintext: the BUCP challenge request needs the server's hello first). Close ICQ, rename the DLL back, start again: it signs in, over TLS.
+   Then untick the TLS row and apply: `AppConfig.xml` has 8082 again (6.5:
+   `MCore.dll` is 5190 again) and the client signs in in plaintext with the
+   "not encrypted" note.

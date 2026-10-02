@@ -244,8 +244,11 @@ static CAPTURE: Mutex<Option<Vec<String>>> = Mutex::new(None);
 /// The text of the message box (STAGE-TLS 3.5).
 fn notice_text(server: &str, why: &Why) -> String {
     let way_out = match why {
-        Why::Proxy => "Turn the proxy off in the client's connection settings, or set tls=off in icq-e2e.ini to allow it anyway.",
-        _ => "To allow it anyway, set tls=off in icq-e2e.ini.",
+        Why::Proxy => "Turn the proxy off in the client's connection settings, or untick \"Encrypted connection to the server (TLS)\" in the patch and apply it (tls=off) to allow it anyway.",
+        // The patch's row, not the ini line alone: with the row ticked the
+        // patch has also moved the client's sign-in to ports only the add-on
+        // reaches (STAGE-TLS 3.5.1), and unticking it puts the plain ports back.
+        _ => "To allow it anyway, untick \"Encrypted connection to the server (TLS)\" in the patch and apply it (tls=off).",
     };
     format!(
         "ICQ E2E: the connection to {server} could not be secured ({}). \
@@ -940,18 +943,23 @@ pub(super) fn say_if_opted_out(sock: &Sock) {
     let Setup::OptedOut { server } = &*setup else {
         return;
     };
-    let Some(sess) = lock(&sock.session).clone() else {
+    let sess = lock(&sock.session).clone();
+    let plain = policy().mode == Mode::Plain;
+    if sess.is_none() && !plain {
         return;
-    };
+    }
     if sock.tls_off_said.swap(true, Ordering::AcqRel) {
         return;
     }
     log::line(&format!(
         "[ICQ E2E] The connection to the server ({server}) is not encrypted (tls=off)"
     ));
-    lock(&sess)
-        .engine()
-        .say(crate::policy::tls_off_note(server));
+    match sess {
+        Some(sess) => lock(&sess)
+            .engine()
+            .say(crate::policy::tls_off_note(server)),
+        None => lock(disabled()).say(crate::policy::tls_off_plain_note(server)),
+    }
 }
 
 // --- the pump thread --------------------------------------------------------

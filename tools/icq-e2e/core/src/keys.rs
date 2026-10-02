@@ -164,11 +164,38 @@ pub struct OwnKeys {
     pub contacts: HashMap<String, crate::policy::Remembered>,
 }
 
-/// A contact's account key as we pinned it, and when.
+/// A contact's account key as we pinned it, and when, and whether the user
+/// verified it by comparing safety numbers (CHECKLIST 10.10).
 #[derive(Serialize, Deserialize, PartialEq, Eq, Debug, Clone)]
 pub struct PinnedKey {
     pub key: String,
     pub at: u64,
+    /// The account key the user verified with `/e2e verify`. The contact is
+    /// verified only while this is the pinned key: verification belongs to
+    /// one key, never to the contact as such. Cleared when the key changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verified: Option<String>,
+    /// The key changed while the contact was verified: messages to them are
+    /// held until the user verifies the new safety number (`/e2e verify`) or
+    /// sends on without verifying (`/e2e accept`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub held: bool,
+}
+
+impl PinnedKey {
+    fn new(key: &str, at: u64) -> PinnedKey {
+        PinnedKey {
+            key: key.to_string(),
+            at,
+            verified: None,
+            held: false,
+        }
+    }
+
+    /// Whether the user verified the key that is pinned now.
+    pub fn is_verified(&self) -> bool {
+        self.verified.as_deref() == Some(self.key.as_str())
+    }
 }
 
 /// A message on its way out, as the caller found it on the wire.
@@ -410,40 +437,71 @@ impl OwnKeys {
 
     // --- trust -------------------------------------------------------------
 
-    /// Pins a contact's account key on first use. A key that differs from the
-    /// pin is a change: the caller is told once and the new key is pinned
-    /// anyway, the non-blocking warning the plan asks for (CHECKLIST 4.3).
+    /// Pins a contact's account key on first use, silently, as Signal does.
+    /// A key that differs from the pin is a change of the safety number: the
+    /// caller is told once and the new key is pinned (CHECKLIST 4.3, 10.10).
+    /// For an unverified contact that is all - messages go on, to the new key.
+    /// For a verified one the verification is cleared and the contact is
+    /// marked [`PinnedKey::held`], so the next message waits for the user.
     /// Returns the note, if there is one.
     pub fn pin(&mut self, peer: &str, account_key: &str, now: u64) -> Option<String> {
         let peer = sign::ident(peer);
         match self.pins.get(&peer) {
             None => {
-                self.pins.insert(
-                    peer,
-                    PinnedKey {
-                        key: account_key.to_string(),
-                        at: now,
-                    },
-                );
+                self.pins.insert(peer, PinnedKey::new(account_key, now));
                 None
             }
             Some(p) if p.key == account_key => None,
             Some(p) => {
-                let was = p.key.clone();
-                self.pins.insert(
-                    peer.clone(),
-                    PinnedKey {
-                        key: account_key.to_string(),
-                        at: now,
-                    },
-                );
-                Some(format!(
-                    "[ICQ E2E] The key of {peer} has changed (it was {}) - check it with them. \
-                     Messages are still encrypted, to the new key.",
-                    short_key(&was)
-                ))
+                let was_verified = p.is_verified() || p.held;
+                let mut next = PinnedKey::new(account_key, now);
+                next.held = was_verified;
+                self.pins.insert(peer.clone(), next);
+                Some(crate::policy::safety_changed_note(&peer, was_verified))
             }
         }
+    }
+
+    /// The pinned key of `peer`, if any.
+    pub fn pinned(&self, peer: &str) -> Option<&PinnedKey> {
+        self.pins.get(&sign::ident(peer))
+    }
+
+    /// The safety number with `peer` for the account key pinned for them:
+    /// the 60 digits both sides compare ([`crate::safety`]). `None` without a
+    /// pin, or with one that is not an Ed25519 key.
+    pub fn safety_number(&self, peer: &str) -> Option<String> {
+        let theirs = Ed25519PublicKey::from_base64(&self.pinned(peer)?.key).ok()?;
+        Some(crate::safety::safety_number(
+            &self.screen_name,
+            &self.account_key_bytes(),
+            peer,
+            theirs.as_bytes(),
+        ))
+    }
+
+    /// Marks the key pinned for `peer` as verified - that key, not the
+    /// contact - and releases a message hold after a change. `false` without
+    /// a pin.
+    pub fn verify(&mut self, peer: &str) -> bool {
+        let Some(p) = self.pins.get_mut(&sign::ident(peer)) else {
+            return false;
+        };
+        p.verified = Some(p.key.clone());
+        p.held = false;
+        true
+    }
+
+    /// Takes a verification back, and releases a hold after a change: an
+    /// unverified contact is never held. Whether there was anything to clear.
+    pub fn unverify(&mut self, peer: &str) -> bool {
+        let Some(p) = self.pins.get_mut(&sign::ident(peer)) else {
+            return false;
+        };
+        let was = p.verified.is_some() || p.held;
+        p.verified = None;
+        p.held = false;
+        was
     }
 
     /// Reads a contact's devices from the directory and checks the chain: the
@@ -862,10 +920,6 @@ fn pickle_json<T: Serialize>(pickle: &T) -> String {
 fn curve_key(b64: &str) -> Result<Curve25519PublicKey, String> {
     let raw = raw32(b64).ok_or(format!("{b64} is not a 32-byte key"))?;
     Curve25519PublicKey::from_slice(&raw).map_err(|e| format!("{b64} is not a curve key: {e}"))
-}
-
-fn short_key(b64: &str) -> String {
-    b64.chars().take(8).collect()
 }
 
 fn lossy(bytes: &[u8]) -> String {
@@ -1321,9 +1375,57 @@ mod tests {
         assert!(k.pin("100002", "AAAA", NOW).is_none());
         assert!(k.pin("100002", "AAAA", NOW + 1).is_none());
         let note = k.pin("100002", "BBBB", NOW + 2).unwrap();
-        assert!(note.contains("has changed"), "{note}");
+        assert!(
+            note.contains("Your safety number with 100002 has changed"),
+            "{note}"
+        );
+        assert!(note.contains("still encrypted"), "{note}");
         // Pinned to the new one now, so it is not reported twice.
         assert!(k.pin("100002", "BBBB", NOW + 3).is_none());
+        // An unverified contact is never held for a change.
+        assert!(!k.pinned("100002").unwrap().held);
+    }
+
+    #[test]
+    fn verification_belongs_to_the_key_and_a_change_clears_it_and_holds() {
+        let mut k = OwnKeys::create("100001");
+        assert!(!k.verify("100002"), "nothing pinned, nothing to verify");
+        assert!(
+            k.pin("100002", "AAAA", NOW).is_none(),
+            "first contact is silent"
+        );
+        assert!(k.verify("100002"));
+        let p = k.pinned("100002").unwrap();
+        assert!(p.is_verified() && !p.held);
+        assert_eq!(p.verified.as_deref(), Some("AAAA"));
+
+        let note = k.pin("100002", "BBBB", NOW + 1).unwrap();
+        assert!(note.contains("verification is cleared"), "{note}");
+        let p = k.pinned("100002").unwrap();
+        assert!(!p.is_verified() && p.held);
+        // A second change before the user answered keeps the hold.
+        k.pin("100002", "CCCC", NOW + 2).unwrap();
+        assert!(k.pinned("100002").unwrap().held);
+        // Verifying releases it and binds to the key verified now.
+        assert!(k.verify("100002"));
+        let p = k.pinned("100002").unwrap();
+        assert!(p.is_verified() && !p.held);
+        assert_eq!(p.verified.as_deref(), Some("CCCC"));
+        assert!(k.unverify("100002"));
+        assert!(!k.pinned("100002").unwrap().is_verified());
+        assert!(!k.unverify("100002"));
+    }
+
+    #[test]
+    fn both_sides_compute_the_same_safety_number() {
+        let mut a = OwnKeys::create("100001");
+        let mut b = OwnKeys::create("100002");
+        assert_eq!(a.safety_number("100002"), None, "no pin, no number");
+        a.pin("100002", &b.account_key_b64(), NOW);
+        b.pin("100001", &a.account_key_b64(), NOW);
+        let n = a.safety_number("100002").unwrap();
+        assert_eq!(n.len(), 60);
+        assert_eq!(Some(n), b.safety_number("100001"));
     }
 
     #[test]

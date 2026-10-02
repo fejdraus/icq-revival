@@ -126,29 +126,53 @@ gives the server neither the exporter for channel binding nor the TLS version.
 A second container with its own certificate wiring is also more to operate
 than a listener in the binary that already holds the sessions.
 
-### 2.2 Redirects and TLS: the add-on maps, the server does not advertise
+### 2.2 Redirects and TLS: the add-on maps, the client is told the TLS port
 
-The client must never learn about TLS: a stock client given `domain:5194` would
-just connect there and speak plain FLAP. So:
+The client must never negotiate TLS itself: it speaks plain FLAP and plain
+HTTP, and the add-on wraps them. A stock client never reaches the TLS listener
+(it cannot speak TLS), so whatever the TLS listener hands out is read only by a
+client that has TLS from somewhere: the add-on, or a native TLS client.
 
 - **For the add-on's clients, the add-on maps destinations itself.** A
-  `connect` from coolcore to the server's address on port 5190, 8082 or 5194 is
-  sent to 5194 and wrapped in TLS. The server keeps advertising the plain host
-  (`domain:5190`) to a client that did not ask for SSL. Every redirect (the
-  BUCP `ReconnectHere`, `startOSCARSession` without `useTLS`, every
-  `OServiceServiceRequest` without TLV `0x8C`) therefore lands on the mapping
-  again. No capability flag and no server-side knowledge of the add-on is
-  needed, and a server that has not been upgraded is detected at once (the
-  TLS port does not answer, and the add-on fails closed, see 3.5).
-- **For natively TLS-capable clients (Miranda, later), the server advertises
-  the TLS host.** If the client asks for SSL (TLV `0x8C` at login, or in
-  `ServiceRequest`, or `useTLS=1`), the TLS-native endpoint answers with
-  `OSCAR_ADVERTISED_LISTENERS_TLS` and SSL state `Resume`, as the 5191 group
-  does today. Otherwise it answers with the plain sibling and state `NotUsed`.
-  One small change in `foodgroup/auth.go` (`loginSuccessResponse` uses
-  `endpointCfg.IsSSL` today, not what the client asked for), `oservice.go`
-  (already looks at `0x8C`) and `webapi/aim_handler.go` (already looks at
-  `useTLS`).
+  `connect` from coolcore to the server's address on port 5190, 8082, 5194 or
+  5195 is sent to 5194 and wrapped in TLS (5190 and 5194 with ALPN `oscar`,
+  8082 and 5195 with `http/1.1`; 5194 and 5195 are the sign-in ports the patch
+  writes with the TLS row ticked, see 3.5.1). No capability flag and no
+  server-side knowledge of the add-on is needed, and a server that has not
+  been upgraded is detected at once (the TLS port does not answer, and the
+  add-on fails closed, see 3.5).
+- **Every redirect over the TLS listener names the TLS host** (changed
+  2026-10-02, owner's wish): the BUCP/FLAP login reply (`ReconnectHere`),
+  every `OServiceServiceRequest` (BART, ChatNav, Chat, ODir, MDir, Admin,
+  Alert) and `startOSCARSession` when the HTTP request itself came over the
+  TLS listener (ALPN `http/1.1`, `r.TLS` set) all give
+  `OSCAR_ADVERTISED_LISTENERS_TLS` (`domain:5194`). So ICQ 6.5/7.2 show
+  "Active settings: Port: 5194" in Settings > Connection (the port of the last
+  good BOS connection as the client saw it), which tells the user the
+  connection is encrypted; before, they showed 5190 and the add-on mapped it
+  silently. The add-on needs no change: `route.rs` already maps
+  `domain:5194` to TLS with ALPN `oscar` (`FLAP_PORTS`), so the redirect
+  lands on the mapping as 5190 did.
+- **The SSL state tells the client whether to negotiate TLS itself, not which
+  host it is.** Only a client that asked for SSL (TLV `0x8C` at login or in
+  `ServiceRequest`, `useTLS=1` on `startOSCARSession`) gets state `Resume`
+  (2) or the `tlsCertName`; that is a native TLS client (Miranda sends `0x8C`
+  when its SSL is on and calls `Netlib_StartSsl` on a state other than 0).
+  The add-on asks for nothing, so 6.5/7.2 get state `NotUsed` (0) and no
+  `tlsCertName`, keep speaking plain FLAP/HTTP into the add-on, and never
+  start their own NSS TLS. `Endpoint.LoginRedirect` and `ServiceRedirect`
+  return `(host, clientSSL)` for this.
+- **The plain and nginx SSL listeners answer exactly as before**: the plain
+  host to a client that did not ask, the SSL host (3143) on the SSL
+  terminator endpoint and to a client that asked elsewhere. Covered by the
+  unchanged cases and by `TestAuthService_BUCPLogin_RedirectByListener`,
+  `TestOServiceService_ServiceRequest_RedirectByListener`,
+  `TestEndpoint_Redirects`, `TestAimHandler_StartOSCARSession`.
+- Caveat: a native TLS client that reaches 5194 but does not send `0x8C`
+  would be sent to 5194 with state 0 and speak plain FLAP there, which the
+  TLS listener refuses. No known client does that (Miranda sends `0x8C`
+  whenever its SSL is on); before this change it would have been sent to
+  5190 in the clear.
 
 The add-on knows the server's name from `icq-e2e.ini`. Today the patch writes
 only `directory=https://<domain>:8102/e2e/v1/`. The domain can be taken from
@@ -296,8 +320,11 @@ add-on never saw `connect` for, while its peer is the server, is reset
   shows one `MessageBoxW` (from a worker thread, never the client's UI thread),
   once per run per reason: "ICQ E2E: the connection to icq.example.org could not
   be secured (certificate is not valid for this name). The client was not
-  allowed to connect without encryption. To allow it anyway, set tls=off in
-  icq-e2e.ini." The reason also goes to the log.
+  allowed to connect without encryption. To allow it anyway, untick
+  "Encrypted connection to the server (TLS)" in the patch and apply it
+  (tls=off)." The reason also goes to the log. (Before 3.5.1 the way out named
+  was `tls=off` in the ini; with the sign-in moved to the TLS ports that line
+  alone no longer lets the client sign in, the patch's row does.)
 - **Opt-out per install**: `tls=off` in `icq-e2e.ini` (or `ICQE2E_TLS=off`).
   Then the add-on does no mapping, and at every sign-on says once in the first
   chat, and in the log: "[ICQ E2E] The connection to the server is not
@@ -307,6 +334,66 @@ add-on never saw `connect` for, while its peer is the server, is reset
   not a new row.
 - `server=` absent (an old ini): TLS stays off, said once in the log, not a
   failure. The patch always writes it from this stage on.
+
+### 3.5.1 Fail closed when the add-on is missing (the owner's call, 2026-10-02)
+
+Everything above holds while the add-on runs. If it does not - the DLL
+deleted, renamed or not loaded - a client patched for plain ports would sign in
+to `domain:5190` / `domain:8082` in plaintext without a word. So with the TLS
+row ticked (and the sign-in row, which puts the domain in), the patch points
+the client's own sign-in at ports that do not work in plaintext:
+
+| Client | Setting | Row off | Row on | Without the add-on |
+|--------|---------|---------|--------|--------------------|
+| 6.5 | `MCore.dll`, the default of `ServerPort` (`mov dword [esp+44h], 5190` in the function that registers `ServerHostName`/`login.icq.com`; file offset 0x464E) | 5190 | 5194 | TLS 1.3 only: no FLAP hello, the first plain bytes end the handshake |
+| 7.2 | `AppConfig.xml`, `aimcc.connect.host.port` (getChallenge, clientLogin) | 8082 | 5195 | nothing listens: refused |
+| 7.2 | `AppConfig.xml`, `aimcc.connect.bossRedirect.port` (startOSCARSession) | 8082 | 5195 | nothing listens: refused |
+| 7.2 | `AppConfig.xml`, `aimcc.connect.skipSources` (added) | absent | 4063266 | the cached last good connection and the port-80 retries are not tried |
+
+On 7.2 the ports alone do not hold on a client that has signed in before: ACC
+(`acccore.dll`) first tries the last connection that worked, which the client
+keeps per Windows user in `%APPDATA%\ICQ\Application.qdb` (SQLite, `Records`,
+section `ConnectionSettings`, `AccCachedSettings` =
+`aimcc.connect.settings.OpenAuth1.0`/`OpenAuth2.0` with `domain:8082`), and
+after the configured port it retries the same host on port 80.
+`aimcc.connect.skipSources` (a bit per source, read while `autoConnect` is 1)
+leaves out the cache (0x2) and the port-80 retries (0x20, 0x20000, 0x40000,
+0x80000, 0x100000, 0x200000). The cache itself is not touched.
+
+- The web sign-in cannot share 5194 with OSCAR: the add-on chooses the ALPN by
+  the port at `connect`, before the client has sent a byte. 5195 is free in
+  `deploy/docker-compose.yaml`, the nginx configuration and the server's
+  configuration, and the server must never listen on it; `route.rs` maps it to
+  5194 with ALPN `http/1.1` (`TLS_ONLY_HTTP_PORT`).
+- The BOS host handed out after sign-in needs nothing: the sign-in came over
+  the TLS listener, so `LoginRedirect` (BUCP `ReconnectHere`),
+  `ServiceRedirect` and `startOSCARSession` give `domain:5194` with SSL state
+  0 and no `tlsCertName` (2.2), which the add-on maps to TLS. A client
+  without the add-on never gets that far. An install whose sign-in still goes
+  to 5190 or 8082 reaches the TLS listener through the add-on's mapping too,
+  so it is also told 5194.
+- The other 5190 in 6.5's `MCore.dll` is the port of `ars.oscar.aol.com` and
+  stays. The pages (8101, 8102), the key directory (8102), STUN (3478) are not
+  touched.
+- Unticking the TLS row puts 5190 / 8082 back (each file is rebuilt from its
+  original); Restore gives byte-identical originals; an Apply that changes
+  nothing reports nothing. An install with `tls = off` keeps the plain ports.
+  The opt-out is therefore the row: `tls = off` typed into the ini by hand (or
+  `ICQE2E_TLS=off`) on an install with the row applied leaves the sign-in on
+  5194/5195, where the plain client gets nowhere - closed as well, not open.
+  An install whose TLS row was applied before this change has the plain ports
+  and shows the row as "partly" until the next Apply.
+- Not covered: a server typed by hand in the client's connection settings (6.5
+  manual connection, 7.2 connection preferences) stays the user's and keeps its
+  port.
+- Checked: `route.rs` unit tests (5194, 5195 mapped with their ALPN, peers on
+  them left alone, unresolved name refused); the test host scenario "fail
+  closed: the client set to the TLS ports signs in only through the add-on"
+  (BUCP straight to the TLS port, getChallenge and startOSCARSession on the
+  TLS-only HTTP port, then BOS on the plain host; past the hooks the HTTP port
+  refuses and the TLS port gives a plain FLAP client nothing and ends the
+  handshake); both patches on copies (tick, re-Apply 0 changes, untick, sign-in
+  skipped, domain change, Restore byte-identical). The owner's live check: T5.
 
 ### 3.6 What TLS also fixes
 
@@ -440,8 +527,10 @@ notification, the classifier.
   add that where they need it.
 - Redirects: `foodgroup/auth.go` (TLV `0x8C` at sign-in, `LoginTLVTagsUseSSL`),
   `foodgroup/oservice.go` (`ServiceRequest` now takes the `config.Endpoint`),
-  `webapi/aim_handler.go` (`useTLS` over the TLS port gives the TLS host). The
-  existing plain and nginx SSL endpoints answer as before.
+  `webapi/aim_handler.go` (a request over the TLS port gives the TLS host).
+  Since 2026-10-02 every redirect over the TLS listener names the TLS host,
+  with SSL state `Resume` or `tlsCertName` only for a client that asked for
+  SSL (2.2). The existing plain and nginx SSL endpoints answer as before.
 - Deploy files: `deploy/docker-compose.yaml` (env, `./certs:/certs:ro`, the
   certbot hook gives the key to group 1000), `deploy/VM-SPEC.md`,
   `deploy/docker/README.md` (one-time `chgrp 1000`/`chmod 640` of
@@ -457,12 +546,15 @@ notification, the classifier.
 - `OSCAR_LISTENERS_TLS`, `OSCAR_ADVERTISED_LISTENERS_TLS`, `TLS_CERT_FILE`,
   `TLS_KEY_FILE`; Go-native TLS 1.3, ALPN dispatch (OSCAR / WebAPI),
   certificate reload, handshake deadline, `Endpoint` transport marker; redirects
-  advertise the TLS host only to a client that asked for SSL (2.2). Run
+  over the TLS listener advertise the TLS host, and tell only a client that
+  asked for SSL to negotiate it (2.2). Run
   `make config`.
 - **Accept** (Go, table-driven, testify): a TLS 1.2 client is refused. ALPN
   `oscar` gets the FLAP hello, `http/1.1` gets `GET /` from WebAPI, no ALPN gets
-  OSCAR. A sign-in without `0x8C` is told `domain:5190` and SSL state 0, one
-  with `0x8C` is told the TLS host and state 2. A replaced certificate file is
+  OSCAR. Over the TLS listener a sign-in without `0x8C` is told the TLS host
+  and SSL state 0, one with `0x8C` the TLS host and state 2; the same for
+  every service redirect and `startOSCARSession`; the plain and SSL listeners
+  as before. A replaced certificate file is
   served without a restart. `go test -race ./...`, `gofmt -s -l .`,
   `go vet ./...` clean.
 - **Owner**: deploy, open the one new port in the firewall (approval per
@@ -534,7 +626,8 @@ the platform verifier grows by ~830 KB (1.29 -> 2.14 MB).
   reason, for what the user can act on (not for offline or a cut mid-session):
   "ICQ E2E: the connection to icq.example.org could not be secured (...). The
   client was not allowed to connect without encryption. To allow it anyway,
-  set tls=off in icq-e2e.ini."
+  set tls=off in icq-e2e.ini." (Since 3.5.1 the way out named is the patch's
+  TLS row.)
 - Settings (`config.rs`, `TlsPolicy`): `server=`, `tls=on|off`, `tls_pin=`
   from `icq-e2e.ini`, with `ICQE2E_SERVER`/`ICQE2E_TLS`/`ICQE2E_TLS_PIN` as
   overrides. No `server=`: off, one log line. A value that cannot be read
@@ -564,7 +657,12 @@ the platform verifier grows by ~830 KB (1.29 -> 2.14 MB).
   plain host advertised as `127.0.0.1:5190`, then `icqe2e_testhost --go
   <tls-port> <dir>\ca.pem localhost`): FLAP hello over `oscar`, BUCP sign-in,
   the redirect to the plain host lands on TLS again, BOS `HostOnline`, and
-  the WebAPI answers over `http/1.1`. All green on 2026-10-02.
+  the WebAPI answers over `http/1.1`. All green on 2026-10-02. Since the TLS
+  listener hands out the TLS host (2.2), the server for this run needs
+  `OSCAR_ADVERTISED_LISTENERS_TLS=LOCAL://127.0.0.1:<tls-port>` (the scenario
+  parses the redirect host as an IP address); the redirect then names the TLS
+  port, which the scenario's route maps like 5190. Not re-run after that
+  change.
 - Size: the loaders are 2.31 MB (1.29 MB before; rustls, ring and the
   platform verifier).
 - Open: a pin (`tls_pin`) is parsed and enforced, but the patch does not write
@@ -599,6 +697,25 @@ The finish message says what TLS does and how to turn it off. On copies
 survives re-Apply and a domain change, and Restore leaves no ini. No tick of
 its own (one row per job). Whether `tls=off` gets one is the owner's call.
 
+**Two rows (2026-10-02, the owner's call).** The single E2E row is now two:
+"End-to-end encryption of messages" (`e2e`, writes `e2e = on|off`) and
+"Encrypted connection to the server (TLS)" (`e2e-tls`, writes `tls = on|off`).
+Either puts the DLL in; it stays while one of them is ticked. TLS no longer
+needs E2E: with `e2e = off` (or `ICQE2E_E2E=off`) the add-on runs in
+`mode=plain` - TLS as above, and otherwise the plain client's bytes: no
+encryption, no key publishing, no key-directory call, no capability or key
+announced; a `/e2e` command is still swallowed and answered "end-to-end
+encryption is off on this install". Observe mode stays log-only without TLS.
+The patch sets only its own four lines (`directory`, `server`, `e2e`, `tls`)
+and keeps the rest of the ini (`tls_pin`, comments); a `tls = off` set by
+hand is now simply the TLS row unticked. An ini of the single row (no `e2e=`)
+shows both rows applied, and `e2e-probe` on the command line means both.
+Checked by the test host (`e2e=off: TLS only ...`: sign-in and messages both
+ways unchanged over TLS, SetInfo unchanged, `/e2e` answered and not sent, no
+key-directory request) and on copies of 6.5 and 7.2: each row alone, both,
+re-Apply with 0 changes, row 1 unticked with row 2 kept (DLL stays, `e2e =
+off`), hand-set lines kept, Restore byte-identical.
+
 - `Icq65Client.cs`/`Icq72Client.cs`: `icq-e2e.ini` gets `server=<domain>` and
   `tls=on`. Only the domain is asked for, as always; the port is the add-on's
   constant.
@@ -621,6 +738,10 @@ With 6.5 and 7.2 on two machines against the production machine:
 - Fail-closed checks: point `server=` at a name the certificate does not carry,
   then close the port. In both cases no sign-in, one message, nothing in
   plaintext. Then `tls=off`: sign-in works and the note says so.
+- Add-on missing (3.5.1): with ICQ closed, rename the add-on (6.5
+  `msimg32.dll`, 7.2 `tbdiag.dll`) and start the client: no sign-in, and the
+  capture shows no FLAP or HTTP in plaintext (a refused SYN to 5195, a 5194
+  connection closed by the server). Rename it back: sign-in works over TLS.
 - File transfer between the two clients still works (peers untouched).
 - After the next certbot renewal: clients keep connecting, the server picks up
   the new certificate without a restart.

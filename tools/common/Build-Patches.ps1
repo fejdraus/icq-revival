@@ -89,7 +89,7 @@ if (-not $NoPlayer) {
 # Icqe2eProbe-msimg32.dll, gitignored like the player and deliberately NOT put
 # into the public download zips (make-downloads.py lists its files by hand).
 # -NoPlayer skips these too; without cargo they are left out with a warning and
-# the "E2E" row shows as not available.
+# the two E2E rows show as not available.
 if (-not $NoPlayer) {
     $e2e = Join-Path $tools 'icq-e2e'
     $e2eOut = Join-Path $e2e 'target\i686-pc-windows-msvc\release'

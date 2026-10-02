@@ -2,7 +2,16 @@
 //!
 //! - `ICQE2E_MODE=observe` - Phase 0 behaviour: bytes pass untouched, messages
 //!   are only logged. `harness` keeps the Phase 1 transform for transport
-//!   checks. Anything else, or nothing, is stage 3: real encryption.
+//!   checks. Anything else, or nothing, is stage 3: real encryption, unless
+//!   `e2e=off` says otherwise. Both are for debugging; the patch never sets
+//!   them.
+//! - `ICQE2E_E2E` - overrides the `e2e=` line of `icq-e2e.ini`. `off` is an
+//!   install that only wants TLS to the server: no message is encrypted, no
+//!   key is published, the key directory is never called, the add-on is not
+//!   announced to contacts, and the message bytes are the client's own. A
+//!   `/e2e` command typed in a chat is still taken out and answered with "end-
+//!   to-end encryption is off on this install", so a command typed by mistake
+//!   never reaches the contact. Absent, empty or anything but off means on.
 //! - `ICQE2E_PEERS=uin1,uin2` - encrypt outbound messages only to these
 //!   contacts; inbound containers are always decrypted, whoever sent them.
 //! - `ICQE2E_DIRECTORY` - the key directory's base URL. Overrides
@@ -39,6 +48,10 @@ pub enum Mode {
     Harness,
     /// Stage 3: encrypt message text end to end.
     Encrypt,
+    /// `e2e=off`: no message encryption, no key directory, no announcement;
+    /// message bytes pass as the client wrote them, and only `/e2e` commands
+    /// are taken out and answered. TLS works as in encrypt mode.
+    Plain,
 }
 
 /// The add-on's settings.
@@ -159,8 +172,10 @@ pub struct Settings<'a> {
     pub directory: Option<&'a str>,
     pub home: Option<&'a str>,
     pub no_inject: Option<&'a str>,
-    /// Path of the `icq-e2e.ini` to read the `directory=`, `server=`, `tls=`
-    /// and `tls_pin=` lines from.
+    /// `on` or `off`; the `e2e=` line of the ini.
+    pub e2e: Option<&'a str>,
+    /// Path of the `icq-e2e.ini` to read the `directory=`, `e2e=`, `server=`,
+    /// `tls=` and `tls_pin=` lines from.
     pub ini_path: Option<&'a str>,
     pub server: Option<&'a str>,
     pub tls: Option<&'a str>,
@@ -291,6 +306,7 @@ impl Policy {
             }),
             home: pick(s.home, env("ICQE2E_HOME")),
             no_inject: pick(s.no_inject, env("ICQE2E_NO_INJECT")),
+            e2e: pick(s.e2e, env("ICQE2E_E2E")),
             ini_path: pick(s.ini_path, env("ICQE2E_INI")),
             server: pick(s.server, env("ICQE2E_SERVER")),
             tls: pick(s.tls, env("ICQE2E_TLS")),
@@ -302,9 +318,11 @@ impl Policy {
     /// A value the arguments and the environment leave out is read from the
     /// ini file.
     fn build(raw: Raw) -> Self {
+        let ini = |key: &str| raw.ini_path.as_deref().and_then(|p| read_ini_value(p, key));
         let mode = match raw.mode.as_deref().map(str::trim) {
             Some(m) if m.eq_ignore_ascii_case("observe") => Mode::Observe,
             Some(m) if m.eq_ignore_ascii_case("harness") => Mode::Harness,
+            _ if !e2e_on(raw.e2e.clone().or_else(|| ini("e2e")).as_deref()) => Mode::Plain,
             _ => Mode::Encrypt,
         };
         let peers: Vec<String> = raw
@@ -315,7 +333,6 @@ impl Policy {
             .map(normalise)
             .filter(|p| !p.is_empty())
             .collect();
-        let ini = |key: &str| raw.ini_path.as_deref().and_then(|p| read_ini_value(p, key));
         let directory = raw.directory.clone().or_else(|| ini("directory"));
         let home = raw
             .home
@@ -350,10 +367,11 @@ impl Policy {
     }
 
     /// Whether frames may be added and removed on the connection. Only
-    /// encryption adds control messages and notes, so only encryption mode is
-    /// ever allowed to; observe mode is the log-only kill switch.
+    /// encryption adds control messages and notes, and `e2e=off` takes out a
+    /// `/e2e` command and answers it, so only those two modes are ever allowed
+    /// to; observe mode is the log-only kill switch.
     pub fn may_inject(&self) -> bool {
-        self.inject && self.mode == Mode::Encrypt
+        self.inject && matches!(self.mode, Mode::Encrypt | Mode::Plain)
     }
 
     /// One line for the log.
@@ -362,6 +380,7 @@ impl Policy {
             Mode::Observe => "mode=observe (log only, bytes unchanged)",
             Mode::Harness => "mode=harness (rewriting message text)",
             Mode::Encrypt => "mode=encrypt (end-to-end encryption)",
+            Mode::Plain => "mode=plain (e2e=off: no message encryption, no key directory)",
         };
         let peers = match &self.peers {
             None => String::new(),
@@ -398,10 +417,20 @@ struct Raw {
     directory: Option<String>,
     home: Option<String>,
     no_inject: Option<String>,
+    e2e: Option<String>,
     ini_path: Option<String>,
     server: Option<String>,
     tls: Option<String>,
     tls_pin: Option<String>,
+}
+
+/// Whether `e2e=` asks for end-to-end encryption. Only a clear "off" turns it
+/// off: a missing line (an ini from before the setting) or a value that cannot
+/// be read keeps the stricter behaviour.
+fn e2e_on(v: Option<&str>) -> bool {
+    !matches!(v.map(str::trim), Some(t) if ["off", "0", "false", "no"]
+        .iter()
+        .any(|o| t.eq_ignore_ascii_case(o)))
 }
 
 /// The `key=` line of `icq-e2e.ini`, which the patch writes next to the
@@ -449,6 +478,7 @@ mod tests {
             directory: own(s.directory),
             home: own(s.home),
             no_inject: own(s.no_inject),
+            e2e: own(s.e2e),
             ini_path: own(s.ini_path),
             server: own(s.server),
             tls: own(s.tls),
@@ -670,6 +700,101 @@ mod tests {
             ..Default::default()
         });
         assert!(matches!(p.tls, TlsPolicy::On { .. }), "{:?}", p.tls);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `e2e=off` (the patch's "TLS only" install) turns encryption off and
+    /// nothing else; observe and harness stay what they were.
+    #[test]
+    fn e2e_off_is_plain_mode_with_tls() {
+        let dir = std::env::temp_dir().join("icqe2e-ini-e2e-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ini = dir.join("icq-e2e.ini");
+        let path = ini.to_str().unwrap();
+        let read = |text: &str, e2e: Option<&str>| {
+            std::fs::write(&ini, text).unwrap();
+            policy(Settings {
+                ini_path: Some(path),
+                e2e,
+                ..Default::default()
+            })
+        };
+        let base = "directory = https://icq.example.org:8102/e2e/v1/
+server = icq.example.org
+";
+        // The patch's two rows.
+        let p = read(
+            &format!(
+                "{base}e2e = off
+tls = on
+"
+            ),
+            None,
+        );
+        assert_eq!(p.mode, Mode::Plain);
+        assert!(matches!(p.tls, TlsPolicy::On { .. }), "{:?}", p.tls);
+        assert!(p.may_inject(), "a /e2e command is still taken out");
+        assert!(p.describe().contains("mode=plain"));
+        assert_eq!(
+            read(
+                &format!(
+                    "{base}e2e = on
+tls = off
+"
+                ),
+                None
+            )
+            .mode,
+            Mode::Encrypt
+        );
+        // An ini from before the setting, an empty value or one that cannot be
+        // read keeps encryption on.
+        for text in [
+            "",
+            "e2e =
+",
+            "e2e = maybe
+",
+        ] {
+            assert_eq!(
+                read(&format!("{base}{text}"), None).mode,
+                Mode::Encrypt,
+                "{text:?}"
+            );
+        }
+        for off in ["OFF", " 0 ", "false", "no"] {
+            assert_eq!(read(base, Some(off)).mode, Mode::Plain, "{off:?}");
+        }
+        // The environment (here the settings) wins over the file.
+        assert_eq!(
+            read(
+                &format!(
+                    "{base}e2e = off
+"
+                ),
+                Some("on")
+            )
+            .mode,
+            Mode::Encrypt
+        );
+        // Observe and harness are debugging switches and stay as they are.
+        std::fs::write(
+            &ini,
+            format!(
+                "{base}e2e = off
+"
+            ),
+        )
+        .unwrap();
+        for (m, want) in [("observe", Mode::Observe), ("harness", Mode::Harness)] {
+            let p = policy(Settings {
+                mode: Some(m),
+                ini_path: Some(path),
+                ..Default::default()
+            });
+            assert_eq!(p.mode, want);
+            assert!(!p.may_inject());
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -52,6 +52,11 @@
 //! and removed (a container this device cannot read, and the server's ack for
 //! it), so the add-on keeps its own FLAP sequence numbering per direction.
 //!
+//! With `e2e=off` ([`Mode::Plain`], TLS only) the bytes take the same path
+//! with no session and a [`crate::crypto::Disabled`] engine in its place:
+//! nothing is encrypted, announced or published, the key directory is never
+//! called, and only a `/e2e` command is taken out and answered.
+//!
 //! With `server=` in `icq-e2e.ini` (STAGE-TLS), a `connect` to the server on
 //! one of its plain ports goes to its TLS 1.3 port instead, and TLS runs at the
 //! bottom of that socket, under the rewriter: the rewriter and the session see
@@ -67,7 +72,7 @@
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use windows_sys::Win32::Foundation::{GetLastError, SetLastError, HMODULE, HWND};
@@ -120,10 +125,61 @@ static INSTALLED: AtomicBool = AtomicBool::new(false);
 static FIRST_SEND: AtomicBool = AtomicBool::new(false);
 static FIRST_RECV: AtomicBool = AtomicBool::new(false);
 
-static POLICY: OnceLock<Policy> = OnceLock::new();
+/// The policy, set once at start. A pointer to a leaked box rather than a
+/// `OnceLock` only so the test host can switch it between runs
+/// ([`testing::set_policy`]); a replaced policy is never freed, because a hook
+/// on another thread may still be reading it.
+static POLICY: AtomicPtr<Policy> = AtomicPtr::new(ptr::null_mut());
 
 fn policy() -> &'static Policy {
-    POLICY.get_or_init(Policy::observe)
+    let p = POLICY.load(Ordering::Acquire);
+    if !p.is_null() {
+        // SAFETY: only ever a leaked box, never freed.
+        return unsafe { &*p };
+    }
+    set_policy_once(Policy::observe());
+    // SAFETY: as above; set by now, by this call or another thread's.
+    unsafe { &*POLICY.load(Ordering::Acquire) }
+}
+
+/// Sets the policy unless one is set already; whether this call set it.
+fn set_policy_once(p: Policy) -> bool {
+    let b = Box::into_raw(Box::new(p));
+    match POLICY.compare_exchange(ptr::null_mut(), b, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => true,
+        Err(_) => {
+            // SAFETY: never shared; this call made it.
+            drop(unsafe { Box::from_raw(b) });
+            false
+        }
+    }
+}
+
+/// The engine of `e2e=off` ([`Mode::Plain`]): it encrypts nothing and only
+/// answers `/e2e` commands. One for the process; it holds nothing but notes.
+fn disabled() -> &'static Mutex<crate::crypto::Disabled> {
+    static D: std::sync::LazyLock<Mutex<crate::crypto::Disabled>> =
+        std::sync::LazyLock::new(Default::default);
+    &D
+}
+
+/// Feeds bytes through a direction that has no session: the harness or
+/// passive path, or with `e2e=off` the path that only takes out `/e2e`
+/// commands. Nothing reads what that path finds about contacts or the account
+/// key, so it is dropped here rather than piling up.
+fn push_sessionless(rw: &mut StreamRewriter, bytes: &[u8], out: &mut Vec<u8>) -> Vec<String> {
+    if policy().mode != Mode::Plain {
+        return rw.push(bytes, policy(), out);
+    }
+    let lines = rw.push_crypto(
+        bytes,
+        &mut *lock(disabled()),
+        crate::crypto::unix_now(),
+        policy(),
+        out,
+    );
+    let _ = (rw.take_contacts(), rw.take_announce());
+    lines
 }
 
 // --- per-socket state -------------------------------------------------------
@@ -868,7 +924,7 @@ fn harness_send(s: Socket, data: &[u8], flags: i32) -> i32 {
             policy(),
             pending,
         ),
-        None => rw.push(data, policy(), pending),
+        None => push_sessionless(rw, data, pending),
     };
     log_lines(&sock, lines);
     if rw.carries_messages() {
@@ -903,12 +959,14 @@ fn harness_send(s: Socket, data: &[u8], flags: i32) -> i32 {
 fn deliver_notes(sock: &Sock, s: Socket) {
     // Only the connection the chats are on: the one that got the token or
     // carried a message. A service connection's client would not show it.
-    if policy().mode != Mode::Encrypt || !sock.messages.load(Ordering::Acquire) {
+    let plain = policy().mode == Mode::Plain;
+    if !(plain || policy().mode == Mode::Encrypt) || !sock.messages.load(Ordering::Acquire) {
         return;
     }
-    let Some(sess) = lock(&sock.session).clone() else {
+    let sess = lock(&sock.session).clone();
+    if sess.is_none() && !plain {
         return;
-    };
+    }
     let Ok(mut side) = sock.inb.try_lock() else {
         return;
     };
@@ -917,9 +975,12 @@ fn deliver_notes(sock: &Sock, s: Socket) {
         return;
     }
     let mut lines = Vec::new();
-    let put = {
-        let mut g = lock(&sess);
-        rw.put_notes(g.engine(), policy(), ready, &mut lines)
+    let put = match &sess {
+        Some(sess) => {
+            let mut g = lock(sess);
+            rw.put_notes(g.engine(), policy(), ready, &mut lines)
+        }
+        None => rw.put_notes(&mut *lock(disabled()), policy(), ready, &mut lines),
     };
     drop(side);
     log_lines(sock, lines);
@@ -1075,7 +1136,7 @@ fn harness_recv(s: Socket, buf: *mut u8, len: usize, flags: i32) -> i32 {
                         policy(),
                         ready,
                     ),
-                    None => rw.push(&tmp[..n as usize], policy(), ready),
+                    None => push_sessionless(rw, &tmp[..n as usize], ready),
                 };
                 // The stream read the token and our own account out of the
                 // OService SNACs whether or not a session exists yet; without
@@ -1083,7 +1144,7 @@ fn harness_recv(s: Socket, buf: *mut u8, len: usize, flags: i32) -> i32 {
                 if let Some(uin) = rw.take_sign_on_uin() {
                     remember_signed_on_uin(uin);
                 }
-                if let Some(token) = rw.take_token() {
+                if let Some(token) = rw.take_token().filter(|_| policy().mode == Mode::Encrypt) {
                     let mut slot = lock(&sock.pending_token);
                     if slot.is_none() {
                         log::line(&format!(
@@ -1180,6 +1241,11 @@ fn poll_worker() {
     loop {
         // SAFETY: sleeping the calling thread; this is our own worker.
         unsafe { Sleep(2_000) };
+        // Only encryption has keys to refill and a directory to call; the
+        // test host may switch the policy away from it.
+        if policy().mode != Mode::Encrypt {
+            continue;
+        }
         let now = crate::crypto::unix_now();
         // A connection that was handed a token before the account was known, and
         // has not sent anything since, would hold that token until its next
@@ -1233,7 +1299,7 @@ fn poll_worker() {
 ///    registered or fires before the imports are bound.
 pub fn start(p: Policy) {
     let encrypting = p.mode == Mode::Encrypt;
-    let _ = POLICY.set(p);
+    set_policy_once(p);
     install_now_if_loaded();
     register_dll_notification();
     if encrypting {
@@ -1814,7 +1880,7 @@ pub mod testing {
     /// encrypt mode, as `start` does.
     pub fn init(p: Policy) {
         let encrypting = p.mode == Mode::Encrypt;
-        let first = POLICY.set(p).is_ok();
+        let first = set_policy_once(p);
         ORIG_SEND.store(WinSock::send as *const () as usize, Ordering::Release);
         ORIG_RECV.store(WinSock::recv as *const () as usize, Ordering::Release);
         ORIG_CONNECT.store(WinSock::connect as *const () as usize, Ordering::Release);
@@ -1837,6 +1903,12 @@ pub mod testing {
         if first && encrypting {
             spawn(poll_thread);
         }
+    }
+
+    /// Replaces the policy [`init`] set, for a run in another mode in the
+    /// same process. The old one is leaked: a hook may still be reading it.
+    pub fn set_policy(p: Policy) {
+        POLICY.store(Box::into_raw(Box::new(p)), Ordering::Release);
     }
 
     /// Replaces what the add-on does about TLS.
@@ -2382,7 +2454,7 @@ mod socket_tests {
     use windows_sys::Win32::Networking::WinSock;
 
     fn setup() -> (TcpStream, TcpStream, Socket) {
-        let _ = POLICY.set(Policy::harness());
+        let _ = set_policy_once(Policy::harness());
         ORIG_SEND.store(WinSock::send as *const () as usize, Ordering::Release);
         ORIG_RECV.store(WinSock::recv as *const () as usize, Ordering::Release);
         ORIG_IOCTL.store(

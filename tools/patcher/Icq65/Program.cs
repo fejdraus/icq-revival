@@ -9,9 +9,9 @@
 //   ICQ-6.5-Patch.exe -Apply   [-Root <folder>] [-Server <domain>] [-Skip <keys>] [-Include tzers-player] [-Player <dll>]
 //   ICQ-6.5-Patch.exe -Restore [-Root <folder>]
 // -Skip takes job keys (xtraz, tzers, sms, zlango, ads, fix, links, sign-in,
-// tzers-player, e2e-probe), separated by commas; they are left out, or taken
+// tzers-player, e2e, e2e-tls), separated by commas; they are left out, or taken
 // out if in place. -Include takes the jobs that are off unless asked for:
-// tzers-player (which then wins over tzers), e2e-probe. -Player is our FlashPlayerControl-Ruffle.dll for it,
+// tzers-player (which then wins over tzers), e2e, e2e-tls. -Player is our FlashPlayerControl-Ruffle.dll for it,
 // when not next to this exe. The run reports on the standard output
 // ("applied: ...", "changes made: N", "files restored: N") and exits with 0,
 // or with 1 and the reason on the standard error.
@@ -99,8 +99,8 @@ namespace IcqRevival.Patch
             try
             {
                 var skip = new HashSet<string>();
-                foreach (string k in a.List("Skip")) skip.Add(k);
-                string[] include = a.List("Include");
+                foreach (string k in E2eIni.Expand(a.List("Skip"))) skip.Add(k);
+                string[] include = E2eIni.Expand(a.List("Include"));
                 foreach (string k in Icq65Client.Jobs.Keys)
                 {
                     if (Icq65Client.Jobs[k].Off && !Ps.Contains(include, k)) skip.Add(k);
@@ -220,7 +220,9 @@ namespace IcqRevival.Patch
             // elevated with another account's password, that is not the one
             // who starts ICQ.
             if (ui.IsSelected("tzers-player")) msg += "\n\ntZers play for the Windows user " + Environment.UserName + ", who has to be the one starting ICQ.";
-            if (ui.IsSelected("e2e-probe")) msg += "\n\nEnd-to-end encryption is in place: the text of a message is encrypted to the recipient's device with keys from " + server + ", and only that device can read it. " + Icq65Client.E2eIniFile + " in the ICQ folder names that key directory and the server: every connection the client makes to " + server + " goes over TLS 1.3 (port 5194, which the server must have open), and if it cannot be secured the client is not let through in plaintext - it says why. tls = off in that file turns TLS off on purpose; the chat then says so at every sign-on. A contact without the add-on still gets the message in clear, and the add-on says so once per sign-on. Set ICQE2E_LOG to a file path before starting ICQ to log each message; ICQE2E_PEERS=uin1,uin2 limits encryption to those contacts, ICQE2E_MODE=observe turns it off. Whether a chat is encrypted is said in the chat; type /e2e status there to ask.";
+            string e2e = E2eIni.Summary(server, ui.IsSelected(E2eIni.E2eJob), ui.IsSelected(E2eIni.TlsJob),
+                ui.IsSelected("sign-in") ? server + ":" + E2eIni.TlsPort + " (the BUCP sign-in)" : null, Icq65Client.E2eProbeFile);
+            if (e2e.Length > 0) msg += "\n\n" + e2e;
             msg += "\n\nYou can start ICQ now.";
             MessageBox.Show(msg, "Done", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }

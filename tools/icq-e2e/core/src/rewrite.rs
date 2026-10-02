@@ -204,7 +204,7 @@ pub fn process(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
         // the add-on - which is what made 6.5 answer "they do not have the
         // add-on" about a 7.2 that was publishing keys the whole time.
         (Direction::Outbound, snac::FOOD_LOCATE, snac::LOCATE_SET_INFO)
-            if policy.mode != Mode::Observe =>
+            if matches!(policy.mode, Mode::Harness | Mode::Encrypt) =>
         {
             match caps::announce(s.body) {
                 Announce::Added(body) => {
@@ -228,7 +228,11 @@ pub fn process(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
     let Some(msg) = decode(kind, s.body) else {
         return p;
     };
-    if policy.mode == Mode::Observe {
+    // Only the harness rewrites messages here. In encrypt mode this path is
+    // reached only by a connection without a session (no directory set, or
+    // the session could not open), and the test transform must never reach
+    // a contact from it.
+    if policy.mode != Mode::Harness {
         p.lines.push(msg.log_line());
         return p;
     }
@@ -353,6 +357,8 @@ pub fn process_crypto(
             p.lines
                 .push(format!("{} /e2e command (not sent)", msg.log_line()));
         }
+        // `e2e=off`: everything else is the client's own bytes, both ways.
+        _ if !crypto.encrypts() => {}
         Direction::Outbound => {
             // The raw bytes, not the decoded string: the recipient's client is
             // what renders this, so it must get back exactly what the sender

@@ -40,6 +40,7 @@ pub mod keys;
 pub mod policy;
 pub mod rewrite;
 pub mod route;
+pub mod safety;
 pub mod session;
 pub mod sign;
 pub mod snac;

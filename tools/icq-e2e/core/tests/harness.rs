@@ -183,6 +183,32 @@ fn contacts_outside_the_peer_list_are_not_rewritten() {
     );
 }
 
+/// Encrypt mode on a connection without a session (no directory, or the
+/// session could not open) reaches the plain rewrite path. Only the harness
+/// may transform text there: before, anything not observe applied it, so a
+/// message to a contact in `ICQE2E_PEERS` went out as the harness's test
+/// transform instead of the user's words.
+#[test]
+fn encrypt_mode_without_a_session_never_applies_the_harness() {
+    let mut e = Engine::with_policy(Policy::from_settings(Settings {
+        mode: Some("encrypt"),
+        peers: Some("100002"),
+        ..Settings::default()
+    }));
+    let mut frames = out_ch1(10, "100002", 0, b"for the listed peer");
+    frames.extend(out_ch1(11, "100002", 2, &ucs2be("unicode text")));
+    frames.extend(out_ch2(12, "100002", b"channel two"));
+    let (wire, _) = send_all(&mut e, &frames);
+    assert_eq!(wire, frames, "every outgoing message passes unchanged");
+    let marker = MARKER.as_bytes();
+    assert!(!wire.windows(marker.len()).any(|w| w == marker));
+
+    // And nothing coming in is undone as if it had been transformed.
+    let incoming = in_ch1(13, "100002", 0, b"a reply");
+    let (got, _) = recv_all(&mut e, &incoming);
+    assert_eq!(got, incoming);
+}
+
 #[test]
 fn a_message_too_long_to_grow_is_sent_unchanged() {
     let text = vec![b'a'; icqe2e_core::rewrite::MAX_TEXT];

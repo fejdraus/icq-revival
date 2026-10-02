@@ -2,11 +2,24 @@
 //! instead (STAGE-TLS 2.2, 3.3).
 //!
 //! The client never learns about TLS. A `connect` from the networking module to
-//! one of the server's addresses on a port the server speaks in plaintext
-//! (5190 FLAP, 8082 HTTP for the 7.2 web sign-in) is sent to the server's TLS
-//! port instead, with the ALPN the original port stands for. Every redirect the
-//! server hands out (the BUCP `ReconnectHere`, `startOSCARSession`, every
-//! service redirect) names the same plain host, so it lands on this map again.
+//! one of the server's addresses on one of its ports is sent to the server's
+//! TLS port instead, with the ALPN the original port stands for:
+//!
+//! - 5190 (FLAP) and 5194 (the TLS port itself): ALPN `oscar`;
+//! - 8082 (HTTP, the 7.2 web sign-in) and 5195: ALPN `http/1.1`.
+//!
+//! 5194 and 5195 are what the patch writes into the client's own settings when
+//! the TLS row is ticked (fail closed, STAGE-TLS 3.5): the sign-in goes there,
+//! and without the add-on nothing on those ports speaks the client's plain
+//! protocol - 5194 is TLS only, nothing listens on 5195 - so a client whose
+//! add-on is missing cannot sign in at all instead of signing in in plaintext.
+//! The web sign-in needs a port of its own because the ALPN is picked by the
+//! port, before the client has said anything. A client that came in over the
+//! TLS port is handed `domain:5194` in every redirect (the BUCP
+//! `ReconnectHere`, `startOSCARSession`, every service redirect), so it lands
+//! on this map again and its connection settings show the TLS port. 5190 and
+//! 8082 stay mapped for installs patched before and for an older server that
+//! still hands out the plain host.
 //!
 //! The server is known only by the name in `icq-e2e.ini` (`server=`): `connect`
 //! sees nothing but an IP address, so the name is resolved here, cached, and
@@ -26,8 +39,12 @@ use crate::tls::{ALPN_HTTP, ALPN_OSCAR};
 pub const TLS_PORT: u16 = 5194;
 /// Ports where the server speaks FLAP (in plaintext, or TLS on [`TLS_PORT`]).
 pub const FLAP_PORTS: [u16; 2] = [5190, TLS_PORT];
-/// Ports where the server speaks HTTP: the WebAPI of the 7.2 web sign-in.
-pub const HTTP_PORTS: [u16; 1] = [8082];
+/// The port the patch gives the 7.2 web sign-in when the TLS row is ticked.
+/// The server never listens on it: only the add-on's mapping makes it work.
+pub const TLS_ONLY_HTTP_PORT: u16 = 5195;
+/// Ports that stand for the server's WebAPI (the 7.2 web sign-in): its plain
+/// port, and the one only the add-on can reach it on.
+pub const HTTP_PORTS: [u16; 2] = [8082, TLS_ONLY_HTTP_PORT];
 
 /// How long a resolution is trusted before it is made again.
 const CACHE_FOR: Duration = Duration::from_secs(300);
@@ -384,9 +401,27 @@ mod tests {
                 alpn: ALPN_HTTP
             })
         );
-        assert!(matches!(r.target(SERVER, 5194), Target::Server(m) if m.alpn == ALPN_OSCAR));
+        // The ports the patch writes with the TLS row ticked (fail closed):
+        // the TLS port for OSCAR, 5195 for the web sign-in.
+        assert_eq!(
+            r.target(SERVER, 5194),
+            Target::Server(Mapping {
+                original_port: 5194,
+                tls_port: 5194,
+                alpn: ALPN_OSCAR
+            })
+        );
+        assert_eq!(
+            r.target(SERVER, 5195),
+            Target::Server(Mapping {
+                original_port: 5195,
+                tls_port: 5194,
+                alpn: ALPN_HTTP
+            })
+        );
         // Peers, on any port, are left alone.
         assert_eq!(r.target(PEER, 5190), Target::Elsewhere);
+        assert_eq!(r.target(PEER, 5195), Target::Elsewhere);
         assert_eq!(r.target(PEER, 40000), Target::Elsewhere);
         // The server on a port the add-on cannot secure is refused.
         assert_eq!(r.target(SERVER, 443), Target::ServerOtherPort);
@@ -422,6 +457,8 @@ mod tests {
         );
         assert_eq!(r.target(SERVER, 5190), Target::Unresolved);
         assert_eq!(r.target(SERVER, 8082), Target::Unresolved);
+        assert_eq!(r.target(SERVER, 5194), Target::Unresolved);
+        assert_eq!(r.target(SERVER, 5195), Target::Unresolved);
         assert_eq!(r.target(PEER, 40000), Target::Elsewhere);
     }
 

@@ -30,7 +30,14 @@ use crate::keys::OwnKeys;
 const MAGIC: &[u8; 8] = b"IQE2E\0S\0";
 
 /// The state format this build writes and reads up to.
-pub const STATE_VERSION: u32 = 1;
+///
+/// - 1: the first recorded version.
+/// - 2: a pin can carry the key the user verified and a hold after a change
+///   of a verified contact's key (`keys::PinnedKey::verified`, `held`;
+///   CHECKLIST 10.10). A version-1 build would read such a file but drop both
+///   when it saves it back - a verification silently lost, and a held
+///   conversation released - so it must refuse it instead.
+pub const STATE_VERSION: u32 = 2;
 
 /// Brings a state read from disk up to [`STATE_VERSION`], one version at a
 /// time. A new version adds its step here.
@@ -39,6 +46,11 @@ fn migrate(mut keys: OwnKeys) -> OwnKeys {
     // is version 1's.
     if keys.version == 0 {
         keys.version = 1;
+    }
+    // Version 1 has no verifications: every pin reads as unverified and not
+    // held, which is what the field defaults give.
+    if keys.version == 1 {
+        keys.version = 2;
     }
     keys
 }
@@ -303,6 +315,30 @@ mod tests {
         assert_eq!(loaded.version, STATE_VERSION);
         assert_eq!(loaded.account_key_b64(), keys.account_key_b64());
         assert_eq!(loaded.device_id, keys.device_id);
+    }
+
+    #[test]
+    fn a_version_one_state_keeps_its_pins_unverified_and_a_verification_survives() {
+        let home = Home::new("v1");
+        let mut keys = OwnKeys::create("100001");
+        keys.pin("100002", "AAAA", 100);
+        let mut json = serde_json::to_value(&keys).unwrap();
+        json["version"] = 1.into();
+        // A version-1 pin is just the key and the time.
+        json["pins"]["100002"] = serde_json::json!({"key": "AAAA", "at": 100});
+        write_json(&home, &json.to_string());
+
+        let store = Store::new(&home.0, "100001");
+        let mut loaded = store.load().unwrap().unwrap();
+        assert_eq!(loaded.version, STATE_VERSION);
+        let pin = loaded.pinned("100002").unwrap();
+        assert_eq!(pin.key, "AAAA");
+        assert!(!pin.is_verified() && !pin.held);
+
+        assert!(loaded.verify("100002"));
+        store.save(&loaded).unwrap();
+        let again = store.load().unwrap().unwrap();
+        assert!(again.pinned("100002").unwrap().is_verified());
     }
 
     #[test]

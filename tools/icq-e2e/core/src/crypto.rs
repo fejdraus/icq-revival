@@ -20,6 +20,7 @@ use crate::keys::{
     self, Inbound, Outbound, OwnKeys, FALLBACK_KEY_LIFETIME, ONE_TIME_REFILL_BELOW, ONE_TIME_TARGET,
 };
 use crate::policy::{self, Command, Held, Remembered, Setting, Status};
+use crate::safety;
 use crate::sign;
 
 /// How long to keep asking after `403 not_announced`: the account key goes out
@@ -71,6 +72,13 @@ pub trait Crypto {
         false
     }
 
+    /// Whether messages go through [`Self::outbound`] and [`Self::inbound`] at
+    /// all. `false` for [`Disabled`]: the message bytes are then the client's
+    /// own both ways, and only [`Self::command`] is asked.
+    fn encrypts(&self) -> bool {
+        true
+    }
+
     /// A control message to send, if one is due: after an incoming key
     /// exchange, or after [`HEARTBEAT`] messages without one going out.
     fn take_control(&mut self, peer: &str) -> Option<Vec<u8>>;
@@ -78,6 +86,81 @@ pub trait Crypto {
     /// How many messages have gone to `peer` since we last sent a control
     /// message, which is what the heartbeat counts.
     fn since_control(&self, peer: &str) -> u32;
+}
+
+/// The engine of an install with `e2e=off` (the patch's "encrypted connection
+/// to the server" row on its own): it encrypts nothing, has no keys and never
+/// calls the key directory. It only takes a `/e2e` command out of the chat and
+/// answers it, so a command typed by mistake never reaches the contact as
+/// text.
+#[derive(Debug, Default)]
+pub struct Disabled {
+    notes: Vec<Note>,
+}
+
+impl Disabled {
+    /// A note about the add-on itself, for the chat last used.
+    pub fn say(&mut self, text: String) {
+        self.notes.push(Note { peer: None, text });
+    }
+}
+
+impl Crypto for Disabled {
+    fn bearer(&self) -> Option<String> {
+        None
+    }
+
+    fn ready(&self) -> bool {
+        false
+    }
+
+    /// None, so nothing is announced in `SetInfo`.
+    fn account_key(&self) -> Option<[u8; 32]> {
+        None
+    }
+
+    fn encrypts(&self) -> bool {
+        false
+    }
+
+    /// Never asked ([`Self::encrypts`] is false); the text would go as typed.
+    fn outbound(&mut self, _peer: &str, _form: Form, text: &[u8], _now: u64) -> Outbound {
+        Outbound::Clear {
+            text: String::from_utf8_lossy(text).into_owned(),
+            note: "e2e=off: sent as typed".to_string(),
+        }
+    }
+
+    /// Never asked ([`Self::encrypts`] is false): a container from a contact
+    /// with the add-on is shown as the armoured text it is, as a client
+    /// without the add-on would show it.
+    fn inbound(&mut self, _peer: &str, _c: &container::Container, _now: u64) -> Inbound {
+        Inbound::Unreadable("e2e=off: not decrypted".to_string())
+    }
+
+    fn unsupported(&mut self, _peer: &str, _version: u8, _scheme: u8) -> Inbound {
+        Inbound::Unreadable("e2e=off: not decrypted".to_string())
+    }
+
+    fn take_note(&mut self) -> Option<Note> {
+        (!self.notes.is_empty()).then(|| self.notes.remove(0))
+    }
+
+    fn command(&mut self, peer: &str, text: &str, _now: u64) -> bool {
+        if policy::parse_command(text).is_none() {
+            return false;
+        }
+        self.notes.push(Note::to(peer, policy::e2e_off_note(peer)));
+        true
+    }
+
+    fn take_control(&mut self, _peer: &str) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn since_control(&self, _peer: &str) -> u32 {
+        0
+    }
 }
 
 /// After this many messages to one contact without a control message of our
@@ -464,6 +547,10 @@ pub struct Engine {
     said: HashSet<String>,
     /// Contacts whose next message goes in clear, once (`/e2e plain`).
     plain_once: HashSet<String>,
+    /// The contact's account key behind the safety number last shown with
+    /// `/e2e safety` this sign-on. `/e2e verify` verifies only that key, so
+    /// the user never verifies a number they were not shown.
+    safety_shown: HashMap<String, String>,
     /// Whether the keys or a contact's setting changed since the state file
     /// was last written.
     changed: bool,
@@ -490,6 +577,7 @@ impl Engine {
             shown: HashMap::new(),
             said: HashSet::new(),
             plain_once: HashSet::new(),
+            safety_shown: HashMap::new(),
             changed: false,
             publish_failed: false,
         }
@@ -737,6 +825,11 @@ impl Engine {
             return Decision::Clear(ClearWhy::NoKeys);
         }
         match self.contact(peer, now) {
+            // A verified contact whose safety number changed: nothing goes to
+            // the new key until the user says so (CHECKLIST 10.10).
+            Ok(_) if self.keys.pinned(peer).is_some_and(|p| p.held) => {
+                Decision::Hold(Held::SafetyChanged)
+            }
             Ok(c) => Decision::Encrypt(c),
             Err(Lookup::NoKeys) => {
                 if rem.setting == Setting::On {
@@ -822,6 +915,14 @@ impl Engine {
                 Err(e) => format!("the key directory could not be reached ({e})"),
             }
         };
+        let verified = match self.keys.pinned(peer) {
+            Some(p) if p.is_verified() => "; verified: yes (safety number compared)",
+            Some(p) if p.held => {
+                "; verified: no - the safety number changed after you verified it (/e2e safety, then /e2e verify or /e2e accept)"
+            }
+            Some(_) => "; verified: no (/e2e safety to compare)",
+            None => "",
+        };
         let next = match self.decide(peer, now, false) {
             Decision::Encrypt(_) => "encrypted",
             Decision::Clear(ClearWhy::Plain) => "unencrypted, once (/e2e plain)",
@@ -835,10 +936,74 @@ impl Engine {
             "; seen encrypting: no"
         };
         format!(
-            "{}Encryption with {peer}: {setting}; {keys}{seen}. The next message goes {next}. Commands: {}.",
+            "{}Encryption with {peer}: {setting}; {keys}{verified}{seen}. The next message goes {next}. Commands: {}.",
             policy::PREFIX,
             policy::COMMANDS
         )
+    }
+
+    /// The answer to `/e2e safety`: the safety number for the contact's key as
+    /// the directory has it now (CHECKLIST 10.10). The key behind it is kept,
+    /// so `/e2e verify` verifies what was shown.
+    fn safety(&mut self, peer: &str, now: u64) -> String {
+        let pre = policy::PREFIX;
+        let looked = self.contact(peer, now);
+        let p = sign::ident(peer);
+        let Some(digits) = self.keys.safety_number(peer) else {
+            self.safety_shown.remove(&p);
+            return match looked {
+                Err(Lookup::Transient(e)) => format!(
+                    "{pre}There is no safety number with {peer} yet: the key directory could not be reached ({e})."
+                ),
+                _ => format!(
+                    "{pre}There is no safety number with {peer}: they have no encryption keys in the key directory."
+                ),
+            };
+        };
+        let pin = self.keys.pinned(peer).expect("a number comes from a pin");
+        let (key, verified) = (pin.key.clone(), pin.is_verified());
+        self.safety_shown.insert(p, key);
+        let mut note = policy::safety_note(peer, &safety::grouped(&digits, "\n"), verified);
+        if let Err(Lookup::Transient(e)) = looked {
+            note.push_str(&format!(
+                " (The key directory could not be reached to look for a newer key: {e}.)"
+            ));
+        }
+        note
+    }
+
+    /// The answer to `/e2e verify`: the key behind the number shown last is
+    /// marked verified, if it is still the contact's key.
+    fn verify(&mut self, peer: &str, now: u64) -> String {
+        let pre = policy::PREFIX;
+        let p = sign::ident(peer);
+        // A fresh look, so a key that changed since the number was shown is
+        // caught here rather than verified unseen.
+        let _ = self.contact(peer, now);
+        let current = self.keys.pinned(peer).map(|k| k.key.clone());
+        match (self.safety_shown.get(&p), current) {
+            (_, None) => format!(
+                "{pre}There is nothing to verify: {peer} has no encryption keys in the key directory."
+            ),
+            (Some(shown), Some(key)) if *shown == key => {
+                self.keys.verify(peer);
+                self.changed = true;
+                let digits = self.keys.safety_number(peer).unwrap_or_default();
+                format!(
+                    "{pre}{peer} is marked verified, for the safety number {}. If it changes, you are told and messages to {peer} are held until you check it again.",
+                    safety::grouped(&digits, " ")
+                )
+            }
+            (Some(_), Some(_)) => {
+                self.safety_shown.remove(&p);
+                format!(
+                    "{pre}Nothing was verified: {peer}'s safety number changed after it was shown. Type /e2e safety to see the new number and compare it again."
+                )
+            }
+            (None, Some(_)) => format!(
+                "{pre}Nothing was verified: type /e2e safety first, compare the number with {peer} in person or by phone, then /e2e verify."
+            ),
+        }
     }
 
     /// Moves a note a pinned-key change made into the queue for the stream,
@@ -926,11 +1091,40 @@ impl Crypto for Engine {
                     )
                 }
             }
+            Command::Safety => self.safety(peer, now),
+            Command::Verify => self.verify(peer, now),
+            Command::Unverify => {
+                self.safety_shown.remove(&p);
+                if self.keys.unverify(peer) {
+                    self.changed = true;
+                    format!(
+                        "{pre}{peer} is no longer marked verified. Messages to {peer} are still encrypted."
+                    )
+                } else {
+                    format!("{pre}{peer} was not marked verified.")
+                }
+            }
+            Command::Accept => {
+                if self.keys.pinned(peer).is_some_and(|k| k.held) {
+                    self.keys.unverify(peer);
+                    self.changed = true;
+                    format!(
+                        "{pre}Messages to {peer} go on, encrypted to their new key, without verifying it: {peer} is not verified now. Type /e2e safety to compare the number when you can."
+                    )
+                } else {
+                    format!(
+                        "{pre}/e2e accept does nothing here: no message to {peer} is held for a changed safety number."
+                    )
+                }
+            }
             Command::Help => format!(
                 "{pre}Unknown command. The commands are: {}.",
                 policy::COMMANDS
             ),
         };
+        // A command that looked the contact up may have found their safety
+        // number changed; that is said first.
+        self.drain_pin_notes(peer);
         self.queue(Note::to(peer, note));
         true
     }
@@ -938,7 +1132,12 @@ impl Crypto for Engine {
     fn outbound(&mut self, peer: &str, form: Form, text: &[u8], now: u64) -> Outbound {
         let contact = match self.decide(peer, now, true) {
             Decision::Encrypt(c) => c,
-            Decision::Hold(why) => return self.hold(peer, why),
+            Decision::Hold(why) => {
+                // A change of the safety number found by this lookup is said
+                // before the hold that follows from it.
+                self.drain_pin_notes(peer);
+                return self.hold(peer, why);
+            }
             Decision::Clear(why) => {
                 let note = match why {
                     ClearWhy::Off => {
@@ -1071,6 +1270,11 @@ impl Crypto for Engine {
 
         let bearer = self.bearer()?;
         let contact = self.contact(peer, unix_now()).ok()?;
+        // Nothing, not even an empty control message, goes to a changed key
+        // of a verified contact before the user accepts it.
+        if self.keys.pinned(peer).is_some_and(|k| k.held) {
+            return None;
+        }
         // A control message is an empty container: it carries no text, only the
         // ratchet step, and it never gets stored offline.
         let out = keys::Outgoing {
@@ -2150,5 +2354,212 @@ mod tests {
         dir.set_offline(true);
         e.publish(NOW);
         assert!(notes(&mut e).is_empty());
+    }
+
+    // --- safety numbers (CHECKLIST 10.10) ------------------------------------
+
+    /// The 60 digits out of a `/e2e safety` note.
+    fn digits_of(note: &str) -> String {
+        let (_, rest) = note.split_once('\n').expect("the number starts a line");
+        let block: String = rest.lines().take(3).collect::<Vec<_>>().join(" ");
+        let d: String = block.chars().filter(char::is_ascii_digit).collect();
+        assert_eq!(d.len(), 60, "{note}");
+        d
+    }
+
+    fn safety_of(e: &mut Engine, peer: &str) -> String {
+        assert!(e.command(peer, "/e2e safety", NOW));
+        let n = notes(e);
+        let last = n.last().expect("an answer");
+        assert!(last.text.contains("Your safety number with"), "{n:?}");
+        last.text.clone()
+    }
+
+    /// The contact 100002 starts again with a new account key: its old device
+    /// revoked, a fresh state published - what resetting its state file does.
+    fn reset_contact(dir: &MemoryDirectory, old: &OwnKeys) -> OwnKeys {
+        dir.revoke("100002", old.device_id);
+        let mut fresh = OwnKeys::create("100002");
+        publish_keys(dir, &mut fresh);
+        fresh
+    }
+
+    #[test]
+    fn both_sides_see_the_same_safety_number_and_nothing_is_said_at_first_contact() {
+        let (dir, a, b) = two_published();
+        let mut ea = running(&dir, a);
+        let mut eb = running(&dir, b);
+        ea.outbound("100002", form(), b"hi", NOW);
+        let n = notes(&mut ea);
+        assert!(
+            n.iter().all(|n| !n.text.contains("safety")),
+            "first contact is silent: {n:?}"
+        );
+        let from_a = safety_of(&mut ea, "100002");
+        let from_b = safety_of(&mut eb, "100001");
+        assert_eq!(digits_of(&from_a), digits_of(&from_b));
+        assert!(from_a.contains("100002 is not verified"), "{from_a}");
+        assert!(from_a.contains("in person or by phone"), "{from_a}");
+        // Grouped like Signal: three lines of four groups of five.
+        let lines: Vec<&str> = from_a.lines().skip(1).take(3).collect();
+        for l in &lines {
+            assert_eq!(l.split(' ').count(), 4, "{from_a}");
+            assert!(l.split(' ').all(|g| g.len() == 5), "{from_a}");
+        }
+    }
+
+    #[test]
+    fn verify_takes_the_number_shown_and_survives_a_restart() {
+        let (dir, a, _) = two_published();
+        let mut e = running(&dir, a);
+        assert!(e.command("100002", "/e2e verify", NOW));
+        assert!(notes(&mut e)[0].text.contains("type /e2e safety first"));
+        assert!(!e.keys().pinned("100002").unwrap().is_verified());
+
+        safety_of(&mut e, "100002");
+        assert!(e.command("100002", "/e2e verify", NOW));
+        assert!(notes(&mut e)[0].text.contains("100002 is marked verified"));
+        assert!(e.take_changed());
+
+        let mut again = restarted(&dir, &e);
+        assert!(again.keys().pinned("100002").unwrap().is_verified());
+        assert!(again.command("100002", "/e2e status", NOW));
+        assert!(notes(&mut again)[0].text.contains("verified: yes"));
+        assert!(safety_of(&mut again, "100002").contains("100002 is verified"));
+
+        assert!(again.command("100002", "/e2e unverify", NOW));
+        assert!(notes(&mut again)[0]
+            .text
+            .contains("no longer marked verified"));
+        assert!(!again.keys().pinned("100002").unwrap().is_verified());
+    }
+
+    #[test]
+    fn a_changed_number_of_an_unverified_contact_is_said_once_and_sending_goes_on() {
+        let (dir, a, b) = two_published();
+        let mut e = running(&dir, a);
+        e.outbound("100002", form(), b"hi", NOW);
+        let before = digits_of(&safety_of(&mut e, "100002"));
+        notes(&mut e);
+
+        reset_contact(&dir, &b);
+        assert!(matches!(
+            e.outbound("100002", form(), b"after", NOW),
+            Outbound::Encrypted(_)
+        ));
+        let n = notes(&mut e);
+        let changed: Vec<_> = n
+            .iter()
+            .filter(|n| {
+                n.text
+                    .contains("Your safety number with 100002 has changed")
+            })
+            .collect();
+        assert_eq!(changed.len(), 1, "{n:?}");
+        assert!(changed[0].text.contains("still encrypted"), "{n:?}");
+
+        assert!(matches!(
+            e.outbound("100002", form(), b"again", NOW),
+            Outbound::Encrypted(_)
+        ));
+        assert!(notes(&mut e).is_empty(), "said once per change");
+        assert_ne!(before, digits_of(&safety_of(&mut e, "100002")));
+    }
+
+    #[test]
+    fn a_changed_number_of_a_verified_contact_holds_until_verified_or_accepted() {
+        for confirm in ["/e2e verify", "/e2e accept"] {
+            let (dir, a, b) = two_published();
+            let mut e = running(&dir, a);
+            safety_of(&mut e, "100002");
+            assert!(e.command("100002", "/e2e verify", NOW));
+            notes(&mut e);
+
+            reset_contact(&dir, &b);
+            assert!(matches!(
+                e.outbound("100002", form(), b"after", NOW),
+                Outbound::Refused(_)
+            ));
+            let n = notes(&mut e);
+            assert_eq!(n.len(), 2, "{n:?}");
+            assert!(n[0].text.contains("has changed"), "{n:?}");
+            assert!(n[0].text.contains("verification is cleared"), "{n:?}");
+            assert!(n[1].text.contains("was NOT sent"), "{n:?}");
+            assert!(n[1].text.contains("/e2e accept"), "{n:?}");
+            assert!(!e.keys().pinned("100002").unwrap().is_verified());
+
+            // Held on every try, the change said only once.
+            assert!(matches!(
+                e.outbound("100002", form(), b"again", NOW),
+                Outbound::Refused(_)
+            ));
+            let n = notes(&mut e);
+            assert_eq!(n.len(), 1, "{n:?}");
+            assert!(
+                e.take_control("100002").is_none(),
+                "no control message either"
+            );
+            // The hold is in the state file, so a restart does not release it.
+            let mut e = restarted(&dir, &e);
+            assert!(matches!(
+                e.outbound("100002", form(), b"restarted", NOW),
+                Outbound::Refused(_)
+            ));
+            notes(&mut e);
+
+            if confirm == "/e2e verify" {
+                // Verifying needs the new number shown first.
+                safety_of(&mut e, "100002");
+            }
+            assert!(e.command("100002", confirm, NOW));
+            notes(&mut e);
+            assert!(matches!(
+                e.outbound("100002", form(), b"released", NOW),
+                Outbound::Encrypted(_)
+            ));
+            assert_eq!(
+                e.keys().pinned("100002").unwrap().is_verified(),
+                confirm == "/e2e verify",
+                "{confirm}"
+            );
+        }
+    }
+
+    #[test]
+    fn accept_does_nothing_without_a_hold() {
+        let (dir, a, _) = two_published();
+        let mut e = running(&dir, a);
+        assert!(e.command("100002", "/e2e accept", NOW));
+        assert!(notes(&mut e)[0].text.contains("does nothing here"));
+    }
+
+    #[test]
+    fn a_changed_number_found_by_an_incoming_message_is_said_and_holds_the_reply() {
+        let (dir, a, b) = two_published();
+        let mut ea = running(&dir, a);
+        safety_of(&mut ea, "100002");
+        assert!(ea.command("100002", "/e2e verify", NOW));
+        notes(&mut ea);
+
+        // 100002 starts again and writes first: the message is read, the
+        // change is said with it, and the reply is held.
+        let mut eb = running(&dir, reset_contact(&dir, &b));
+        let c = container_of(eb.outbound("100001", form(), b"new phone", NOW));
+        match ea.inbound("100002", &c, NOW) {
+            Inbound::Text { text, .. } => assert_eq!(text, b"new phone"),
+            other => panic!("{other:?}"),
+        }
+        let n = notes(&mut ea);
+        assert!(
+            n.iter().any(|n| n
+                .text
+                .contains("Your safety number with 100002 has changed")
+                && n.text.contains("verification is cleared")),
+            "{n:?}"
+        );
+        assert!(matches!(
+            ea.outbound("100002", form(), b"reply", NOW),
+            Outbound::Refused(_)
+        ));
     }
 }
