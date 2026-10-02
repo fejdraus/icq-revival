@@ -1363,6 +1363,117 @@ func TestAuthService_FLAPLogin(t *testing.T) {
 			},
 		},
 		{
+			name: "login over the TLS 1.3 listener without asking for SSL, sent to the plain host",
+			endpointCfg: config.Endpoint{
+				Group: config.ListenerGroup{
+					BOSAdvertisedHostPlain: "icq.example.org:5190",
+					BOSAdvertisedHostSSL:   "icq.example.org:3143",
+					BOSListenAddressTLS:    "0.0.0.0:5194",
+					BOSAdvertisedHostTLS:   "icq.example.org:5194",
+				},
+				Transport: config.TransportTLS13,
+			},
+			inputSNAC: wire.FLAPSignonFrame{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.LoginTLVTagsRoastedPassword, wire.RoastOSCARPassword([]byte("the_password"))),
+						wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+					},
+				},
+			},
+			mockParams: mockParams{
+				userManagerParams: userManagerParams{
+					getUserParams: getUserParams{
+						{
+							screenName: user.IdentScreenName,
+							result:     &user,
+						},
+					},
+				},
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							ttlIn: state.DefaultCookieTTL,
+							dataIn: func() []byte {
+								loginCookie := state.ServerCookie{
+									TokenTTL:   uint32((state.DefaultCookieTTL).Seconds()),
+									ScreenName: user.DisplayScreenName,
+								}
+								buf := &bytes.Buffer{}
+								assert.NoError(t, wire.MarshalBE(loginCookie, buf))
+								return buf.Bytes()
+							}(),
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
+			expectOutput: wire.TLVRestBlock{
+				TLVList: wire.TLVList{
+					wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+					wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, "icq.example.org:5190"),
+					wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, []byte("the-cookie")),
+					wire.NewTLVBE(wire.OServiceTLVTagsSSLState, wire.OServiceServiceResponseSSLStateNotUsed),
+				},
+			},
+		},
+		{
+			name: "login over the TLS 1.3 listener asking for SSL, sent to the TLS host",
+			endpointCfg: config.Endpoint{
+				Group: config.ListenerGroup{
+					BOSAdvertisedHostPlain: "icq.example.org:5190",
+					BOSAdvertisedHostSSL:   "icq.example.org:3143",
+					BOSListenAddressTLS:    "0.0.0.0:5194",
+					BOSAdvertisedHostTLS:   "icq.example.org:5194",
+				},
+				Transport: config.TransportTLS13,
+			},
+			inputSNAC: wire.FLAPSignonFrame{
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.LoginTLVTagsRoastedPassword, wire.RoastOSCARPassword([]byte("the_password"))),
+						wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+						wire.NewTLVBE(wire.LoginTLVTagsUseSSL, []byte{}),
+					},
+				},
+			},
+			mockParams: mockParams{
+				userManagerParams: userManagerParams{
+					getUserParams: getUserParams{
+						{
+							screenName: user.IdentScreenName,
+							result:     &user,
+						},
+					},
+				},
+				cookieBakerParams: cookieBakerParams{
+					cookieIssueParams: cookieIssueParams{
+						{
+							ttlIn: state.DefaultCookieTTL,
+							dataIn: func() []byte {
+								loginCookie := state.ServerCookie{
+									TokenTTL:   uint32((state.DefaultCookieTTL).Seconds()),
+									ScreenName: user.DisplayScreenName,
+								}
+								buf := &bytes.Buffer{}
+								assert.NoError(t, wire.MarshalBE(loginCookie, buf))
+								return buf.Bytes()
+							}(),
+							cookieOut: []byte("the-cookie"),
+						},
+					},
+				},
+			},
+			expectOutput: wire.TLVRestBlock{
+				TLVList: wire.TLVList{
+					wire.NewTLVBE(wire.LoginTLVTagsScreenName, user.DisplayScreenName),
+					wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, "icq.example.org:5194"),
+					wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, []byte("the-cookie")),
+					wire.NewTLVBE(wire.OServiceTLVTagsSSLState, wire.OServiceServiceResponseSSLStateResume),
+				},
+			},
+		},
+		{
 			name:        "ICQ account exists, correct password, login OK",
 			endpointCfg: config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:5190"}},
 			inputSNAC: wire.FLAPSignonFrame{

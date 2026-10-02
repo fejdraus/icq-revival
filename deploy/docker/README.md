@@ -26,6 +26,9 @@ All commands run in `deploy/`.
    pointing at the machine,
    `docker compose --profile certs run --rm certbot` gets a Let's Encrypt
    certificate and puts it at `certs/ts-cert.pem` and `certs/ts-key.pem`.
+   The IM server serves it too, on its own TLS 1.3 port 5194, and runs as uid
+   1000, so the hook also gives the key to group 1000 (`chmod 640`). The
+   server does not start without a readable pair.
 5. **Start.** `docker compose up -d --build`. The first build takes a few
    minutes: nginx compiles OpenSSL 1.0.2 from source.
 
@@ -39,7 +42,15 @@ example in root's crontab:
 ```
 
 `renew` does nothing until a certificate is close to expiry; the copy into
-`certs/` happens through the hook remembered from step 4.
+`certs/` happens through the hook remembered from step 4. nginx needs the
+reload above; the IM server notices the new files on the next TLS 1.3
+connection by itself.
+
+An installation whose certificate was first fetched before port 5194 existed
+remembers the older hook, which leaves `certs/ts-key.pem` readable by root
+only. Once, on the host: `chgrp 1000 certs/ts-key.pem && chmod 640
+certs/ts-key.pem`. `cp` keeps the owner and mode of a file it copies over, so
+renewals keep it readable.
 
 ## Where things are
 

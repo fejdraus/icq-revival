@@ -114,6 +114,9 @@ const (
 	// uint32 count of seconds. Absent, the server picks its own default.
 	LoginTLVTagsTokenTTL   uint16 = 0x133A
 	LoginTLVTagsUseBigTime uint16 = 0x2038
+	// LoginTLVTagsUseSSL, empty, asks for the BOS host to be an SSL one: the
+	// same tag as OserviceTLVTagsSSLUseSSL in a service request.
+	LoginTLVTagsUseSSL uint16 = 0x8C
 )
 
 const (

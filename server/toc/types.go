@@ -43,7 +43,7 @@ type OServiceService interface {
 	ClientOnline(ctx context.Context, service uint16, inBody wire.SNAC_0x01_0x02_OServiceClientOnline, instance *state.SessionInstance) error
 	IdleNotification(ctx context.Context, instance *state.SessionInstance, inBody wire.SNAC_0x01_0x11_OServiceIdleNotification) error
 	MonitorRateLimits(ctx context.Context, session *state.Session)
-	ServiceRequest(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, listenerGroup config.ListenerGroup) (wire.SNACMessage, error)
+	ServiceRequest(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, endpoint config.Endpoint) (wire.SNACMessage, error)
 }
 
 type AuthService interface {

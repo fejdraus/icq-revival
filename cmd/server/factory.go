@@ -26,6 +26,7 @@ import (
 	"github.com/mk6i/open-oscar-server/server/oscar"
 	oscarmiddleware "github.com/mk6i/open-oscar-server/server/oscar/middleware"
 	"github.com/mk6i/open-oscar-server/server/stun"
+	"github.com/mk6i/open-oscar-server/server/tlsfront"
 	"github.com/mk6i/open-oscar-server/server/toc"
 	"github.com/mk6i/open-oscar-server/server/webapi"
 	"github.com/mk6i/open-oscar-server/state"
@@ -389,6 +390,39 @@ func OSCAR(deps Container) *oscar.Server {
 		deps.icbmSvc.RestoreWarningLevel,
 		deps.icbmSvc.UpdateWarnLevel,
 	)
+}
+
+// EnableTLS sets up the server's own TLS 1.3 listeners (OSCAR_LISTENERS_TLS):
+// the certificate from TLS_CERT_FILE and TLS_KEY_FILE, reloaded when the files
+// change, and ALPN that hands "oscar" (or no ALPN) to the OSCAR server and
+// "http/1.1" to the WebAPI. webAPI is nil when the WebAPI is off, and then
+// http/1.1 is not offered. Without TLS listeners it does nothing.
+func EnableTLS(deps Container, oscarServer *oscar.Server, webAPI *webapi.Server) error {
+	if !deps.cfg.HasTLSListeners() {
+		return nil
+	}
+	certs, err := tlsfront.NewCertReloader(deps.cfg.TLSCertFile, deps.cfg.TLSKeyFile, deps.logger.With("svc", "tls"))
+	if err != nil {
+		return err
+	}
+
+	var httpConns *tlsfront.ConnListener
+	if webAPI != nil {
+		var addr net.Addr = &net.TCPAddr{}
+		for _, g := range deps.Listeners {
+			if ep, ok := g.TLSEndpoint(); ok {
+				if a, err := net.ResolveTCPAddr("tcp", ep.ListenAddress); err == nil {
+					addr = a
+				}
+				break
+			}
+		}
+		httpConns = tlsfront.NewConnListener(addr)
+		webAPI.ServeListener(httpConns)
+	}
+
+	oscarServer.EnableTLS(tlsfront.NewServerConfig(certs.GetCertificate, webAPI != nil), httpConns)
+	return nil
 }
 
 // KerberosAPI creates an HTTP server for the Kerberos server.

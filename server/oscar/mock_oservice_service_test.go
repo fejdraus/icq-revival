@@ -482,8 +482,8 @@ func (_c *mockOServiceService_RateParamsSubAdd_Call) RunAndReturn(run func(ctx c
 }
 
 // ServiceRequest provides a mock function for the type mockOServiceService
-func (_mock *mockOServiceService) ServiceRequest(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, listenerGroup config.ListenerGroup) (wire.SNACMessage, error) {
-	ret := _mock.Called(ctx, service, instance, inFrame, inBody, listenerGroup)
+func (_mock *mockOServiceService) ServiceRequest(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, endpoint config.Endpoint) (wire.SNACMessage, error) {
+	ret := _mock.Called(ctx, service, instance, inFrame, inBody, endpoint)
 
 	if len(ret) == 0 {
 		panic("no return value specified for ServiceRequest")
@@ -491,16 +491,16 @@ func (_mock *mockOServiceService) ServiceRequest(ctx context.Context, service ui
 
 	var r0 wire.SNACMessage
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint16, *state.SessionInstance, wire.SNACFrame, wire.SNAC_0x01_0x04_OServiceServiceRequest, config.ListenerGroup) (wire.SNACMessage, error)); ok {
-		return returnFunc(ctx, service, instance, inFrame, inBody, listenerGroup)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint16, *state.SessionInstance, wire.SNACFrame, wire.SNAC_0x01_0x04_OServiceServiceRequest, config.Endpoint) (wire.SNACMessage, error)); ok {
+		return returnFunc(ctx, service, instance, inFrame, inBody, endpoint)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, uint16, *state.SessionInstance, wire.SNACFrame, wire.SNAC_0x01_0x04_OServiceServiceRequest, config.ListenerGroup) wire.SNACMessage); ok {
-		r0 = returnFunc(ctx, service, instance, inFrame, inBody, listenerGroup)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint16, *state.SessionInstance, wire.SNACFrame, wire.SNAC_0x01_0x04_OServiceServiceRequest, config.Endpoint) wire.SNACMessage); ok {
+		r0 = returnFunc(ctx, service, instance, inFrame, inBody, endpoint)
 	} else {
 		r0 = ret.Get(0).(wire.SNACMessage)
 	}
-	if returnFunc, ok := ret.Get(1).(func(context.Context, uint16, *state.SessionInstance, wire.SNACFrame, wire.SNAC_0x01_0x04_OServiceServiceRequest, config.ListenerGroup) error); ok {
-		r1 = returnFunc(ctx, service, instance, inFrame, inBody, listenerGroup)
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint16, *state.SessionInstance, wire.SNACFrame, wire.SNAC_0x01_0x04_OServiceServiceRequest, config.Endpoint) error); ok {
+		r1 = returnFunc(ctx, service, instance, inFrame, inBody, endpoint)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -518,12 +518,12 @@ type mockOServiceService_ServiceRequest_Call struct {
 //   - instance *state.SessionInstance
 //   - inFrame wire.SNACFrame
 //   - inBody wire.SNAC_0x01_0x04_OServiceServiceRequest
-//   - listenerGroup config.ListenerGroup
-func (_e *mockOServiceService_Expecter) ServiceRequest(ctx any, service any, instance any, inFrame any, inBody any, listenerGroup any) *mockOServiceService_ServiceRequest_Call {
-	return &mockOServiceService_ServiceRequest_Call{Call: _e.mock.On("ServiceRequest", ctx, service, instance, inFrame, inBody, listenerGroup)}
+//   - endpoint config.Endpoint
+func (_e *mockOServiceService_Expecter) ServiceRequest(ctx any, service any, instance any, inFrame any, inBody any, endpoint any) *mockOServiceService_ServiceRequest_Call {
+	return &mockOServiceService_ServiceRequest_Call{Call: _e.mock.On("ServiceRequest", ctx, service, instance, inFrame, inBody, endpoint)}
 }
 
-func (_c *mockOServiceService_ServiceRequest_Call) Run(run func(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, listenerGroup config.ListenerGroup)) *mockOServiceService_ServiceRequest_Call {
+func (_c *mockOServiceService_ServiceRequest_Call) Run(run func(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, endpoint config.Endpoint)) *mockOServiceService_ServiceRequest_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -545,9 +545,9 @@ func (_c *mockOServiceService_ServiceRequest_Call) Run(run func(ctx context.Cont
 		if args[4] != nil {
 			arg4 = args[4].(wire.SNAC_0x01_0x04_OServiceServiceRequest)
 		}
-		var arg5 config.ListenerGroup
+		var arg5 config.Endpoint
 		if args[5] != nil {
-			arg5 = args[5].(config.ListenerGroup)
+			arg5 = args[5].(config.Endpoint)
 		}
 		run(
 			arg0,
@@ -566,7 +566,7 @@ func (_c *mockOServiceService_ServiceRequest_Call) Return(sNACMessage wire.SNACM
 	return _c
 }
 
-func (_c *mockOServiceService_ServiceRequest_Call) RunAndReturn(run func(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, listenerGroup config.ListenerGroup) (wire.SNACMessage, error)) *mockOServiceService_ServiceRequest_Call {
+func (_c *mockOServiceService_ServiceRequest_Call) RunAndReturn(run func(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, endpoint config.Endpoint) (wire.SNACMessage, error)) *mockOServiceService_ServiceRequest_Call {
 	_c.Call.Return(run)
 	return _c
 }

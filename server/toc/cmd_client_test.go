@@ -33,7 +33,7 @@ func (nopOServiceService) IdleNotification(context.Context, *state.SessionInstan
 
 func (nopOServiceService) MonitorRateLimits(context.Context, *state.Session) {}
 
-func (nopOServiceService) ServiceRequest(context.Context, uint16, *state.SessionInstance, wire.SNACFrame, wire.SNAC_0x01_0x04_OServiceServiceRequest, config.ListenerGroup) (wire.SNACMessage, error) {
+func (nopOServiceService) ServiceRequest(context.Context, uint16, *state.SessionInstance, wire.SNACFrame, wire.SNAC_0x01_0x04_OServiceServiceRequest, config.Endpoint) (wire.SNACMessage, error) {
 	return wire.SNACMessage{}, nil
 }
 
@@ -958,7 +958,7 @@ func TestOSCARProxy_RecvClientCmd_ChatAccept(t *testing.T) {
 			oServiceSvc := newMockOServiceService(t)
 			for _, params := range tc.mockParams.serviceRequestParams {
 				oServiceSvc.EXPECT().
-					ServiceRequest(ctx, wire.BOS, matchSession(params.me), wire.SNACFrame{}, params.bodyIn, config.ListenerGroup{}).
+					ServiceRequest(ctx, wire.BOS, matchSession(params.me), wire.SNACFrame{}, params.bodyIn, config.Endpoint{}).
 					Return(params.msg, params.err)
 			}
 			for _, params := range tc.mockParams.clientOnlineParams {
@@ -1490,7 +1490,7 @@ func TestOSCARProxy_RecvClientCmd_ChatJoin(t *testing.T) {
 			bosOServiceSvc := newMockOServiceService(t)
 			for _, params := range tc.mockParams.serviceRequestParams {
 				bosOServiceSvc.EXPECT().
-					ServiceRequest(ctx, wire.BOS, matchSession(params.me), wire.SNACFrame{}, params.bodyIn, config.ListenerGroup{}).
+					ServiceRequest(ctx, wire.BOS, matchSession(params.me), wire.SNACFrame{}, params.bodyIn, config.Endpoint{}).
 					Return(params.msg, params.err)
 			}
 			for _, params := range tc.mockParams.clientOnlineParams {

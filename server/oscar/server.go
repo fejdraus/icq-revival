@@ -3,6 +3,7 @@ package oscar
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/mk6i/open-oscar-server/config"
 	"github.com/mk6i/open-oscar-server/server/oscar/middleware"
+	"github.com/mk6i/open-oscar-server/server/tlsfront"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -82,11 +84,33 @@ type Server struct {
 	closed         chan struct{}
 
 	handler func(ctx context.Context, conn net.Conn, endpointCfg config.Endpoint) error
+
+	// tlsConfig is the TLS configuration of the TLS 1.3 endpoints. Set by
+	// EnableTLS; nil when no group has such an endpoint.
+	tlsConfig *tls.Config
+	// httpConns receives the TLS connections that negotiate ALPN http/1.1,
+	// for the WebAPI to serve. nil when the WebAPI is off, and then the TLS
+	// configuration does not offer http/1.1.
+	httpConns *tlsfront.ConnListener
+}
+
+// EnableTLS gives the server the TLS configuration of its TLS 1.3 endpoints
+// (config.TransportTLS13), and httpConns, the listener that the connections
+// negotiating ALPN http/1.1 are handed to, or nil without the WebAPI. Call it
+// before ListenAndServe.
+func (s *Server) EnableTLS(cfg *tls.Config, httpConns *tlsfront.ConnListener) {
+	s.tlsConfig = cfg
+	s.httpConns = httpConns
 }
 
 func (s *Server) ListenAndServe() error {
 	for _, group := range s.listenerGroups {
 		for _, endpoint := range group.Endpoints() {
+			if endpoint.Transport == config.TransportTLS13 && s.tlsConfig == nil {
+				s.cleanupListeners()
+				s.shutdownCancel()
+				return fmt.Errorf("TLS listener %s has no TLS configuration", endpoint.ListenAddress)
+			}
 			ln, err := net.Listen("tcp", endpoint.ListenAddress)
 			if err != nil {
 				s.cleanupListeners()
@@ -98,7 +122,8 @@ func (s *Server) ListenAndServe() error {
 				"listener", group.Name,
 				"listen_address", endpoint.ListenAddress,
 				"advertised_host", endpoint.AdvertisedHost(),
-				"ssl", endpoint.IsSSL)
+				"ssl", endpoint.IsSSL,
+				"transport", endpoint.Transport)
 
 			s.listeners = append(s.listeners, ln)
 			s.listenWg.Add(1)
@@ -159,13 +184,17 @@ func (s *Server) acceptLoop(ln net.Listener, endpointCfg config.Endpoint) {
 }
 
 func (s *Server) handleConnection(ctx context.Context, conn net.Conn, endpointCfg config.Endpoint) {
+	tracked := conn
+	handedOver := false
 	defer func() {
 		// untrack connections
 		s.connMu.Lock()
-		delete(s.conns, conn)
+		delete(s.conns, tracked)
 		s.connMu.Unlock()
 
-		_ = conn.Close()
+		if !handedOver {
+			_ = conn.Close()
+		}
 		s.connWg.Done()
 	}()
 	if endpointCfg.IsSSL {
@@ -173,6 +202,28 @@ func (s *Server) handleConnection(ctx context.Context, conn net.Conn, endpointCf
 		conn = withProxyHeader(conn)
 	}
 	ctx = middleware.WithIP(ctx, conn.RemoteAddr().String())
+	if endpointCfg.Transport == config.TransportTLS13 {
+		tlsConn := tls.Server(conn, s.tlsConfig)
+		conn = tlsConn
+		if err := tlsfront.Handshake(ctx, tlsConn); err != nil {
+			s.logger.DebugContext(ctx, "TLS handshake failed", "err", err.Error())
+			return
+		}
+		cs := tlsConn.ConnectionState()
+		if cs.NegotiatedProtocol == tlsfront.ALPNHTTP {
+			// The WebAPI serves it from here on, and closes it.
+			if s.httpConns == nil {
+				return // not offered without the WebAPI
+			}
+			if err := s.httpConns.Deliver(tlsConn); err != nil {
+				s.logger.DebugContext(ctx, "TLS connection for the WebAPI dropped", "err", err.Error())
+				return
+			}
+			handedOver = true
+			return
+		}
+		ctx = tlsfront.WithConnectionState(ctx, cs)
+	}
 	if err := s.handler(ctx, conn, endpointCfg); err != nil {
 		s.logger.InfoContext(ctx, "user session failed", "err", err.Error())
 	}

@@ -466,6 +466,8 @@ type loginProperties struct {
 	roastedPass             []byte
 	screenName              state.DisplayScreenName
 	tokenTTL                time.Duration
+	// wantsSSL is whether the client asked for an SSL BOS host.
+	wantsSSL bool
 }
 
 // fromTLV creates an instance of loginProperties from a TLV list.
@@ -520,6 +522,8 @@ func (l *loginProperties) fromTLV(list wire.TLVList) error {
 	if multiConnFlags, found := list.Uint8(wire.LoginTLVTagsMultiConnFlags); found {
 		l.multiConnFlag = multiConnFlags
 	}
+
+	l.wantsSSL = list.HasTag(wire.LoginTLVTagsUseSSL)
 
 	l.tokenTTL = state.DefaultCookieTTL
 	if b, found := list.Bytes(wire.LoginTLVTagsTokenTTL); found {
@@ -826,19 +830,21 @@ func (s AuthService) loginSuccessResponse(ctx context.Context, props loginProper
 		return wire.TLVRestBlock{}, fmt.Errorf("failed to issue auth cookie: %w", err)
 	}
 
+	reconnectHost, secure := endpointCfg.LoginRedirect(props.wantsSSL)
 	sslState := wire.OServiceServiceResponseSSLStateNotUsed
-	if endpointCfg.IsSSL {
+	if secure {
 		sslState = wire.OServiceServiceResponseSSLStateResume
 	}
 
 	s.logger.Debug("loginSuccessResponse: returning login response",
 		"screen_name", props.screenName,
-		"reconnect_host", endpointCfg.AdvertisedHost(),
+		"reconnect_host", reconnectHost,
+		"transport", endpointCfg.Transport,
 		"ssl_state", sslState)
 
 	loginTLVTags := wire.TLVList{
 		wire.NewTLVBE(wire.LoginTLVTagsScreenName, props.screenName),
-		wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, endpointCfg.AdvertisedHost()),
+		wire.NewTLVBE(wire.LoginTLVTagsReconnectHere, reconnectHost),
 		wire.NewTLVBE(wire.LoginTLVTagsAuthorizationCookie, cookie),
 		wire.NewTLVBE(wire.OServiceTLVTagsSSLState, sslState),
 	}

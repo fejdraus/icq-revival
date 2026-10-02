@@ -4255,7 +4255,7 @@ func TestHandler_OServiceServiceServiceRequest(t *testing.T) {
 
 			svc := newMockOServiceService(t)
 			svc.EXPECT().
-				ServiceRequest(mock.Anything, wire.BOS, mock.Anything, input.Frame, input.Body, config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"}).
+				ServiceRequest(mock.Anything, wire.BOS, mock.Anything, input.Frame, input.Body, config.Endpoint{Group: config.ListenerGroup{BOSAdvertisedHostPlain: "127.0.0.1:1234"}}).
 				Return(output, tt.serviceError)
 
 			h := Handler{

@@ -49,7 +49,9 @@ services:
   # The IM server: OSCAR 5190, TOC 9898, Kerberos 1088, web API 8082, legacy
   # ICQ UDP 4000, STUN and TURN on UDP 3478 and 49160-49199 for ICQ 6 calls;
   # the management API stays on 127.0.0.1:8090 and must never be reachable
-  # from outside - it has no authentication.
+  # from outside - it has no authentication. 5194 is TLS 1.3 terminated by
+  # the server itself (OSCAR, or the web API by ALPN), with the Let's Encrypt
+  # certificate, which it reads again when certbot renews it.
   server:
     <<: *service
     build:
@@ -64,6 +66,13 @@ services:
       # What the server tells clients to connect to after sign-in.
       OSCAR_ADVERTISED_LISTENERS_PLAIN: LAN://${PUBLIC_HOST:?set PUBLIC_HOST in .env}:5190
       OSCAR_ADVERTISED_LISTENERS_SSL: LAN://${PUBLIC_HOST}:3143
+      # TLS 1.3 on 5194, for the E2E add-on of ICQ 6.5 and 7.2 and for native
+      # TLS clients that ask for SSL. The key must be readable by uid 1000
+      # (see docker/README.md, "The public certificate").
+      OSCAR_LISTENERS_TLS: LAN://0.0.0.0:5194
+      OSCAR_ADVERTISED_LISTENERS_TLS: LAN://${PUBLIC_HOST}:5194
+      TLS_CERT_FILE: /certs/ts-cert.pem
+      TLS_KEY_FILE: /certs/ts-key.pem
       ENABLE_WEBAPI: "1"
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # ICQ 6.5 calls that cannot go directly are relayed here: STUN on UDP
@@ -72,6 +81,9 @@ services:
       TURN_PUBLIC_IP: ${PUBLIC_HOST}
     volumes:
       - oscar-data:/var/lib/open-oscar-server
+      # The directory, not the two files: certbot's hook copies over them,
+      # and a file mount could keep showing the old one.
+      - ./certs:/certs:ro
     depends_on:
       volumes-init:
         condition: service_completed_successfully
@@ -204,10 +216,12 @@ services:
       - ./docker/make-private-ca.sh:/make-private-ca.sh:ro
     command: ["bash", "/make-private-ca.sh"]
 
-  # The public certificate from Let's Encrypt, for Miranda, browsers and the
-  # registration pages. Needs port 80 free while it runs. The deploy hook
-  # copies the result under the names nginx.conf expects; it is remembered, so
-  # "docker compose --profile certs run --rm certbot renew" reuses it.
+  # The public certificate from Let's Encrypt, for Miranda, browsers, the
+  # registration pages and the server's own TLS 1.3 port. Needs port 80 free
+  # while it runs. The deploy hook copies the result under the names
+  # nginx.conf expects and lets the server (uid 1000, group 1000) read the
+  # key; it is remembered, so "docker compose --profile certs run --rm certbot
+  # renew" reuses it.
   certbot:
     profiles: [certs]
     image: certbot/certbot:latest
@@ -227,7 +241,7 @@ services:
       - -d
       - ${PUBLIC_HOST}
       - --deploy-hook
-      - cp "$$RENEWED_LINEAGE/fullchain.pem" /certs/ts-cert.pem && cp "$$RENEWED_LINEAGE/privkey.pem" /certs/ts-key.pem
+      - cp "$$RENEWED_LINEAGE/fullchain.pem" /certs/ts-cert.pem && cp "$$RENEWED_LINEAGE/privkey.pem" /certs/ts-key.pem && chgrp 1000 /certs/ts-key.pem && chmod 640 /certs/ts-key.pem
 
 volumes:
   oscar-data:

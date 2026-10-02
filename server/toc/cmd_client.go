@@ -503,7 +503,7 @@ func (s OSCARProxy) ChatAccept(
 			},
 		},
 	}
-	svcReqReply, err := s.OServiceService.ServiceRequest(ctx, wire.BOS, me, wire.SNACFrame{}, svcReqSNAC, config.ListenerGroup{})
+	svcReqReply, err := s.OServiceService.ServiceRequest(ctx, wire.BOS, me, wire.SNACFrame{}, svcReqSNAC, config.Endpoint{})
 	if err != nil {
 		return 0, s.runtimeErr(ctx, fmt.Errorf("OServiceServiceBOS.ServiceRequest: %w", err))
 	}
@@ -699,7 +699,7 @@ func (s OSCARProxy) ChatJoin(
 			},
 		},
 	}
-	svcReqReply, err := s.OServiceService.ServiceRequest(ctx, wire.BOS, me, wire.SNACFrame{}, svcReqSNAC, config.ListenerGroup{})
+	svcReqReply, err := s.OServiceService.ServiceRequest(ctx, wire.BOS, me, wire.SNACFrame{}, svcReqSNAC, config.Endpoint{})
 	if err != nil {
 		return 0, s.runtimeErr(ctx, fmt.Errorf("OServiceServiceBOS.ServiceRequest: %w", err))
 	}

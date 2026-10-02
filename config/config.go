@@ -85,6 +85,9 @@ func cutOriginScheme(origin string) (scheme string, rest string, ok bool) {
 // terminates TLS and forwards decrypted traffic to the SSL endpoint. Pairing
 // them lets a redirect hand a client the sibling endpoint's advertised host,
 // so a session can upgrade to SSL or downgrade to plaintext on reconnect.
+//
+// A group may also have a TLS 1.3 endpoint that this server terminates itself
+// (see Endpoint.Transport).
 type ListenerGroup struct {
 	// Name is the URI scheme the group was parsed from, e.g. "LOCAL".
 	Name                   string
@@ -93,6 +96,12 @@ type ListenerGroup struct {
 	BOSAdvertisedHostPlain string
 	BOSAdvertisedHostSSL   string
 	KerberosListenAddress  string
+	// BOSListenAddressTLS is the socket on which this server terminates TLS
+	// 1.3 itself. Empty when the group has no such endpoint.
+	BOSListenAddressTLS string
+	// BOSAdvertisedHostTLS is the host a natively TLS-capable client is sent
+	// to when it connected over TLS 1.3 and asked for SSL.
+	BOSAdvertisedHostTLS string
 }
 
 // HasSSL reports whether clients can reach this group over SSL. Config
@@ -115,29 +124,118 @@ func (g ListenerGroup) SSLEndpoint() (ep Endpoint, ok bool) {
 	return Endpoint{Group: g, ListenAddress: g.BOSListenAddressSSL, IsSSL: true}, true
 }
 
+// HasTLS reports whether the group has a TLS 1.3 endpoint that this server
+// terminates itself. Config validation guarantees such a group also has an
+// advertised TLS host.
+func (g ListenerGroup) HasTLS() bool {
+	return g.BOSListenAddressTLS != ""
+}
+
+// TLSEndpoint returns the socket on which this server terminates TLS 1.3
+// itself. ok is false when the group has none.
+func (g ListenerGroup) TLSEndpoint() (ep Endpoint, ok bool) {
+	if !g.HasTLS() {
+		return Endpoint{}, false
+	}
+	return Endpoint{Group: g, ListenAddress: g.BOSListenAddressTLS, Transport: TransportTLS13}, true
+}
+
 // Endpoints returns every BOS socket the group binds.
 func (g ListenerGroup) Endpoints() []Endpoint {
 	eps := []Endpoint{g.PlainEndpoint()}
 	if ssl, ok := g.SSLEndpoint(); ok {
 		eps = append(eps, ssl)
 	}
+	if tls, ok := g.TLSEndpoint(); ok {
+		eps = append(eps, tls)
+	}
 	return eps
 }
 
+// Transport says how a connection reaches the server on an endpoint.
+type Transport uint8
+
+const (
+	// TransportPlain is a plain TCP socket. It also covers the decrypted
+	// traffic of an external SSL terminator (Endpoint.IsSSL), whose TLS the
+	// server never sees.
+	TransportPlain Transport = iota
+	// TransportTLS13 is TLS 1.3 terminated by this server itself, so the TLS
+	// version and the exporter (RFC 9266 tls-exporter) are known to it.
+	TransportTLS13
+)
+
+// String returns the name of the transport, for logs.
+func (t Transport) String() string {
+	if t == TransportTLS13 {
+		return "TLS13"
+	}
+	return "plain"
+}
+
 // Endpoint is a single BOS socket. IsSSL means traffic arrives from an SSL
-// terminator, so clients that connect here stay on the SSL path.
+// terminator, so clients that connect here stay on the SSL path. Transport is
+// TransportTLS13 on the endpoint where this server terminates TLS itself.
 type Endpoint struct {
 	Group         ListenerGroup
 	ListenAddress string
 	IsSSL         bool
+	Transport     Transport
 }
 
 // AdvertisedHost returns the BOS host clients on this endpoint reconnect to.
 func (e Endpoint) AdvertisedHost() string {
-	if e.IsSSL {
+	switch {
+	case e.Transport == TransportTLS13:
+		return e.Group.BOSAdvertisedHostTLS
+	case e.IsSSL:
 		return e.Group.BOSAdvertisedHostSSL
+	default:
+		return e.Group.BOSAdvertisedHostPlain
 	}
-	return e.Group.BOSAdvertisedHostPlain
+}
+
+// LoginRedirect returns the BOS host a client that signed in on this endpoint
+// is sent to, and whether that host is an encrypted one. wantsSSL is whether
+// the client asked for SSL.
+//
+// The SSL terminator's endpoint keeps its clients on the SSL host whatever
+// they asked. The TLS 1.3 endpoint sends only a client that asked for SSL to
+// the TLS host: a client whose TLS is added from outside (the E2E add-on)
+// asks for nothing, gets the plain host, and the add-on maps it back to TLS.
+func (e Endpoint) LoginRedirect(wantsSSL bool) (host string, secure bool) {
+	switch {
+	case e.Transport == TransportTLS13:
+		if wantsSSL {
+			return e.Group.BOSAdvertisedHostTLS, true
+		}
+		return e.Group.BOSAdvertisedHostPlain, false
+	case e.IsSSL:
+		return e.Group.BOSAdvertisedHostSSL, true
+	default:
+		return e.Group.BOSAdvertisedHostPlain, false
+	}
+}
+
+// ServiceRedirect returns the host a client on this endpoint is sent to for
+// another service, and whether that host is an encrypted one. wantsSSL is
+// whether the client asked for SSL in its service request.
+//
+// A client that did not ask gets the plain host. One that asked over the TLS
+// 1.3 endpoint gets the TLS host. One that asked elsewhere gets the SSL host,
+// or the plain host when the group has no SSL, for the client to decide
+// whether to go on without it.
+func (e Endpoint) ServiceRedirect(wantsSSL bool) (host string, secure bool) {
+	switch {
+	case !wantsSSL:
+		return e.Group.BOSAdvertisedHostPlain, false
+	case e.Transport == TransportTLS13:
+		return e.Group.BOSAdvertisedHostTLS, true
+	case e.Group.HasSSL():
+		return e.Group.BOSAdvertisedHostSSL, true
+	default:
+		return e.Group.BOSAdvertisedHostPlain, false
+	}
 }
 
 //go:generate go run ../cmd/config_generator unix settings.env basic
@@ -147,6 +245,10 @@ type Config struct {
 	BOSAdvertisedHostsPlain []string `envconfig:"OSCAR_ADVERTISED_LISTENERS_PLAIN" required:"true" basic:"LOCAL://127.0.0.1:5190" ssl:"LOCAL://ras.dev:5190" description:"Hostnames published by the server that clients connect to for accessing various OSCAR services. These hostnames are NOT the bind addresses. For multi-homed use servers, allows clients to connect using separate hostnames per network.\n\nFormat:\n\t- Comma-separated list of [NAME]://[HOSTNAME]:[PORT]\n\t- Each listener config must correspond to a config in OSCAR_LISTENERS\n\t- Clients MUST be able to connect to these hostnames\n\nExamples:\n\t// Local LAN config, server behind NAT\n\tLAN://192.168.1.10:5190\n\t// Separate Internet and LAN config\n\tWAN://aim.example.com:5190,LAN://192.168.1.10:5191"`
 	BOSListenersSSL         []string `envconfig:"OSCAR_LISTENERS_SSL" required:"false" basic:"" ssl:"LOCAL://0.0.0.0:5191" description:"Network listeners for core OSCAR services that receive decrypted traffic from an SSL terminator such as nginx. Clients that connect through these listeners are redirected to the hostnames in OSCAR_ADVERTISED_LISTENERS_SSL, keeping them on the SSL path for the rest of the session.\n\nFormat:\n\t- Comma-separated list of [NAME]://[HOSTNAME]:[PORT]\n\t- Listener names and ports must be unique\n\t- Each listener needs a listener in OSCAR_LISTENERS and OSCAR_ADVERTISED_LISTENERS_SSL\n\t- A listener without a matching OSCAR_ADVERTISED_LISTENERS_SSL entry is not started\n\nExamples:\n\t// Listen on all interfaces\n\tLAN://0.0.0.0:5191\n\t// Separate Internet and LAN config\n\tWAN://142.250.176.206:5191,LAN://192.168.1.10:5192"`
 	BOSAdvertisedHostsSSL   []string `envconfig:"OSCAR_ADVERTISED_LISTENERS_SSL" required:"false" basic:"" ssl:"LOCAL://ras.dev:5193" description:"Same as OSCAR_ADVERTISED_LISTENERS_PLAIN, except the hostname is for the server that terminates SSL. Each listener defined here must have a matching listener in OSCAR_LISTENERS_SSL for the terminator to forward decrypted traffic to."`
+	BOSListenersTLS         []string `envconfig:"OSCAR_LISTENERS_TLS" required:"false" basic:"" ssl:"LOCAL://0.0.0.0:5194" description:"Network listeners on which this server terminates TLS 1.3 itself, with the certificate in TLS_CERT_FILE and TLS_KEY_FILE. TLS 1.2 and older are refused. ALPN picks the protocol on the one port: 'oscar' or none is OSCAR, 'http/1.1' is the WebAPI (only when ENABLE_WEBAPI=1). The E2E add-on for ICQ 6.5 and 7.2 wraps the client's server connections in TLS to this port.\n\nFormat:\n\t- Comma-separated list of [NAME]://[HOSTNAME]:[PORT]\n\t- Listener names and ports must be unique\n\t- Each listener needs a listener in OSCAR_LISTENERS and OSCAR_ADVERTISED_LISTENERS_TLS\n\nExamples:\n\t// Listen on all interfaces\n\tLAN://0.0.0.0:5194"`
+	BOSAdvertisedHostsTLS   []string `envconfig:"OSCAR_ADVERTISED_LISTENERS_TLS" required:"false" basic:"" ssl:"LOCAL://ras.dev:5194" description:"Same as OSCAR_ADVERTISED_LISTENERS_PLAIN, for the listeners in OSCAR_LISTENERS_TLS. Only a client that connected over TLS 1.3 and asked for SSL is sent here; any other client on the TLS listener is sent to the plain host. The host name must be one the certificate is issued to.\n\nExamples:\n\tLAN://icq.example.com:5194"`
+	TLSCertFile             string   `envconfig:"TLS_CERT_FILE" required:"false" basic:"" ssl:"certs/server.pem" description:"PEM certificate chain served on OSCAR_LISTENERS_TLS, such as a Let's Encrypt fullchain.pem. The file is read again when it changes, so a renewed certificate is served without a restart. Required when OSCAR_LISTENERS_TLS is set.\n\nExamples:\n\t/certs/ts-cert.pem"`
+	TLSKeyFile              string   `envconfig:"TLS_KEY_FILE" required:"false" basic:"" ssl:"certs/server.pem" description:"PEM private key of TLS_CERT_FILE. Read again when it changes. Required when OSCAR_LISTENERS_TLS is set.\n\nExamples:\n\t/certs/ts-key.pem"`
 	KerberosListeners       []string `envconfig:"KERBEROS_LISTENERS" required:"false" basic:"" ssl:"LOCAL://0.0.0.0:1088" description:"Network listeners for Kerberos authentication. See OSCAR_LISTENERS doc for more details.\n\nExamples:\n\t// Listen on all interfaces\n\tLAN://0.0.0.0:1088\n\t// Separate Internet and LAN config\n\tWAN://142.250.176.206:1088,LAN://192.168.1.10:1087"`
 	TOCListeners            []string `envconfig:"TOC_LISTENERS" required:"true" basic:"0.0.0.0:9898" ssl:"0.0.0.0:9898" description:"Network listeners for TOC protocol service.\n\nFormat: Comma-separated list of hostname:port pairs.\n\nExamples:\n\t// All interfaces\n\t0.0.0.0:9898\n\t// Multiple listeners\n\t0.0.0.0:9898,192.168.1.10:9899"`
 	APIListener             string   `envconfig:"API_LISTENER" required:"true" basic:"127.0.0.1:8080" ssl:"127.0.0.1:8080" description:"Network listener for management API binds to. Only 1 listener can be specified. (Default 127.0.0.1 restricts to same machine only)."`
@@ -384,6 +486,44 @@ func (c *Config) ParseListenersCfg() ([]ListenerGroup, error) {
 		m[u.Scheme].BOSAdvertisedHostSSL = net.JoinHostPort(u.Hostname(), u.Port())
 	}
 
+	// Parse TLS BOS listeners
+	for _, uriStr := range c.BOSListenersTLS {
+		u, err := parseURI(uriStr)
+		if err != nil {
+			return nil, err
+		}
+		if u == nil {
+			continue
+		}
+
+		if _, ok := m[u.Scheme]; !ok {
+			m[u.Scheme] = &ListenerGroup{}
+		}
+		if m[u.Scheme].BOSListenAddressTLS != "" {
+			return nil, errDuplicateListener
+		}
+		m[u.Scheme].BOSListenAddressTLS = net.JoinHostPort(u.Hostname(), u.Port())
+	}
+
+	// Parse TLS BOS advertised listeners
+	for _, uriStr := range c.BOSAdvertisedHostsTLS {
+		u, err := parseURI(uriStr)
+		if err != nil {
+			return nil, err
+		}
+		if u == nil {
+			continue
+		}
+
+		if _, ok := m[u.Scheme]; !ok {
+			m[u.Scheme] = &ListenerGroup{}
+		}
+		if m[u.Scheme].BOSAdvertisedHostTLS != "" {
+			return nil, errDuplicateListener
+		}
+		m[u.Scheme].BOSAdvertisedHostTLS = net.JoinHostPort(u.Hostname(), u.Port())
+	}
+
 	// Parse Kerberos listeners
 	for _, uriStr := range c.KerberosListeners {
 		u, err := parseURI(uriStr)
@@ -413,6 +553,10 @@ func (c *Config) ParseListenersCfg() ([]ListenerGroup, error) {
 			return nil, fmt.Errorf("missing BOS listen address for listener `%s://`", k)
 		case v.HasSSL() && v.BOSListenAddressSSL == "":
 			return nil, fmt.Errorf("missing SSL BOS listen address for listener `%s://`", k)
+		case v.BOSAdvertisedHostTLS != "" && v.BOSListenAddressTLS == "":
+			return nil, fmt.Errorf("missing TLS BOS listen address (OSCAR_LISTENERS_TLS) for listener `%s://`", k)
+		case v.BOSListenAddressTLS != "" && v.BOSAdvertisedHostTLS == "":
+			return nil, fmt.Errorf("missing TLS BOS advertise address (OSCAR_ADVERTISED_LISTENERS_TLS) for listener `%s://`", k)
 		}
 		v.Name = k
 		ret = append(ret, *v)
@@ -436,6 +580,7 @@ func (c *Config) ParseListenersCfg() ([]ListenerGroup, error) {
 		for _, socket := range []struct{ envVar, addr string }{
 			{"OSCAR_LISTENERS", l.BOSListenAddress},
 			{"OSCAR_LISTENERS_SSL", l.BOSListenAddressSSL},
+			{"OSCAR_LISTENERS_TLS", l.BOSListenAddressTLS},
 			{"KERBEROS_LISTENERS", l.KerberosListenAddress},
 		} {
 			if socket.addr == "" {
@@ -526,5 +671,27 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if err := c.validateTLS(); err != nil {
+		return err
+	}
+
 	return c.TURN.validate(c.STUNListener)
+}
+
+// HasTLSListeners reports whether OSCAR_LISTENERS_TLS names a listener.
+func (c *Config) HasTLSListeners() bool {
+	return slices.ContainsFunc(c.BOSListenersTLS, func(s string) bool {
+		return strings.TrimSpace(s) != ""
+	})
+}
+
+// validateTLS checks that a TLS listener has a certificate to serve.
+func (c *Config) validateTLS() error {
+	if !c.HasTLSListeners() {
+		return nil
+	}
+	if strings.TrimSpace(c.TLSCertFile) == "" || strings.TrimSpace(c.TLSKeyFile) == "" {
+		return errors.New("OSCAR_LISTENERS_TLS needs TLS_CERT_FILE and TLS_KEY_FILE, the certificate the TLS listener serves")
+	}
+	return nil
 }

@@ -15,7 +15,7 @@ so that upstream changes still merge cleanly.
 
 | Component | Language | Listens on | Role |
 |---|---|---|---|
-| `open_oscar_server` | Go, one static binary | TCP 5190, 5191 (local), 9898, 1088, 8082, 8090 (local); UDP 4000 | The IM server: OSCAR, TOC, Kerberos, legacy ICQ v2-5 (UDP), web API, management API |
+| `open_oscar_server` | Go, one static binary | TCP 5190, 5191 (local), 5194, 9898, 1088, 8082, 8090 (local); UDP 4000 | The IM server: OSCAR, TOC, Kerberos, legacy ICQ v2-5 (UDP), web API, management API; TLS 1.3 of its own on 5194 |
 | `oscar-register` | Node.js | TCP 8099 | Registration, profile, password and e-mail pages; sends mail over SMTP; reads the server's SQLite file directly |
 | `oscar-admin` | Node.js | TCP 8100 | Admin panel over the management API |
 | `oscar-legacy-web` | Node.js (+ Python 3 with Pillow) | TCP 8101 | Pages that replace the dead ICQ.com services the clients still open; shrinks uploaded buddy pictures through `shrink-picture.py` |
@@ -65,6 +65,7 @@ Public:
 | 5190 | TCP | OSCAR, plain | every ICQ/AIM client |
 | 5193 | TCP | OSCAR over TLS (nginx -> 5191) | Miranda NG, QIP 2012, AIM 6 with SSL |
 | 3143 | TCP | OSCAR over TLS, the address the server hands out after sign-in (nginx -> 5191) | same |
+| 5194 | TCP | TLS 1.3 only, terminated by the server itself (not nginx), Let's Encrypt certificate; ALPN `oscar` (or none) is OSCAR, `http/1.1` the web API | the E2E add-on of ICQ 6.5 and 7.2 (`docs/e2e/STAGE-TLS.md`), later native TLS clients |
 | 9898 | TCP | TOC | TOC clients |
 | 1088 | TCP | Kerberos, plain | AIM 6 |
 | 1443 | TCP | Kerberos over TLS (nginx -> 1088) | AIM 6 |
@@ -105,6 +106,12 @@ both move to nginx with a Let's Encrypt certificate.
   - `ts-cert.pem` / `ts-key.pem` - Let's Encrypt, for the DNS name, on 5193,
     8102 and the registration pages: Miranda NG and browsers check it the
     ordinary way. The compose file gets and renews it with certbot.
+- Port 5194 is not nginx: the Go server terminates TLS 1.3 there itself
+  (`OSCAR_LISTENERS_TLS`), because it needs the TLS version and the channel
+  binding (RFC 9266 `tls-exporter`) for the later SCRAM sign-in. It serves the
+  same `ts-cert.pem` / `ts-key.pem` (`TLS_CERT_FILE`, `TLS_KEY_FILE`) and reads
+  them again when they change, so a renewal needs no restart. The server runs
+  as uid 1000, so the key must be readable by group 1000.
 - The DH parameters are generated into the nginx image when it is built.
 
 ## 5. Data and backups
@@ -197,6 +204,9 @@ Build: `CGO_ENABLED=0 go build -o open_oscar_server ./cmd/server`
 - `curl http://<host>:8090/` from outside the machine does **not** connect.
 - `openssl s_client -connect <host>:5193 -tls1` completes a handshake (use an
   OpenSSL build that still has TLS 1.0 enabled).
+- `openssl s_client -connect <host>:5194 -tls1_3 -alpn oscar` shows the Let's
+  Encrypt chain and then the FLAP hello (10 bytes, starting with `*`);
+  `-tls1_2` on the same port is refused.
 - `nc -u <host> 4000` reaches the server (the log shows the packet).
 - A client signs in on 5190 with a registered number, another one sees it
   online, and a message goes through both ways.

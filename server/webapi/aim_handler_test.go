@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -346,9 +347,57 @@ func TestAimHandler_StartOSCARSession(t *testing.T) {
 		name         string
 		query        string
 		sslAvailable bool
+		// tlsListener gives the group a TLS 1.3 listener of the server's own.
+		tlsListener bool
+		// overTLS is whether the request arrived over that listener.
+		overTLS      bool
 		expectedCode int
 		checkBody    func(t *testing.T, body string)
 	}{
+		{
+			name:         "Success_TLS_OverOwnTLSListener_SentToTLSHost",
+			query:        "a=" + validToken + "&useTLS=1",
+			sslAvailable: true,
+			tlsListener:  true,
+			overTLS:      true,
+			expectedCode: http.StatusOK,
+			checkBody: func(t *testing.T, body string) {
+				got := decodeBridgeData(t, body)
+				assert.Equal(t, "tls.example.com", got.Response.Data.Host)
+				assert.Equal(t, 5194, got.Response.Data.Port)
+				assert.Equal(t, "tls.example.com", got.Response.Data.TLSCertName)
+			},
+		},
+		{
+			// Through the external SSL terminator the request carries no TLS
+			// state, so the client stays on the SSL host as before.
+			name:         "Success_TLS_NotOverOwnTLSListener_SentToSSLHost",
+			query:        "a=" + validToken + "&useTLS=1",
+			sslAvailable: true,
+			tlsListener:  true,
+			expectedCode: http.StatusOK,
+			checkBody: func(t *testing.T, body string) {
+				got := decodeBridgeData(t, body)
+				assert.Equal(t, "ssl.example.com", got.Response.Data.Host)
+				assert.Equal(t, 5193, got.Response.Data.Port)
+			},
+		},
+		{
+			// The E2E add-on adds TLS from outside: the client asks for no TLS
+			// and is sent to the plain host, which the add-on maps back.
+			name:         "Success_NoTLSRequested_OverOwnTLSListener_SentToPlainHost",
+			query:        "a=" + validToken,
+			sslAvailable: true,
+			tlsListener:  true,
+			overTLS:      true,
+			expectedCode: http.StatusOK,
+			checkBody: func(t *testing.T, body string) {
+				got := decodeBridgeData(t, body)
+				assert.Equal(t, "bos.example.com", got.Response.Data.Host)
+				assert.Equal(t, 5190, got.Response.Data.Port)
+				assert.Empty(t, got.Response.Data.TLSCertName)
+			},
+		},
 		{
 			// No tlsCertName, which is how the client reads "connect in the clear".
 			name:         "Success_Plaintext",
@@ -418,14 +467,23 @@ func TestAimHandler_StartOSCARSession(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			listener := testListener(tt.sslAvailable)
+			if tt.tlsListener {
+				listener.BOSListenAddressTLS = "0.0.0.0:5194"
+				listener.BOSAdvertisedHostTLS = "tls.example.com:5194"
+			}
 			handler := &AimHandler{
 				AuthService: &testAuthService{crackCookie: crackSignedCookie},
-				BOSListener: testListener(tt.sslAvailable),
+				BOSListener: listener,
 				Logger:      slog.Default(),
 			}
 
+			req := bridgeRequest(tt.query)
+			if tt.overTLS {
+				req.TLS = &tls.ConnectionState{Version: tls.VersionTLS13, HandshakeComplete: true}
+			}
 			rr := httptest.NewRecorder()
-			handler.StartOSCARSession(rr, bridgeRequest(tt.query))
+			handler.StartOSCARSession(rr, req)
 
 			assert.Equal(t, tt.expectedCode, rr.Code)
 			tt.checkBody(t, rr.Body.String())

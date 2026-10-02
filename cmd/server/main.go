@@ -62,6 +62,19 @@ func main() {
 	g, ctx := errgroup.WithContext(ctx)
 
 	oscar := OSCAR(deps)
+
+	var webAPI *webapi.Server
+	if os.Getenv("ENABLE_WEBAPI") == "1" {
+		webAPI = WebAPI(deps)
+	}
+
+	// The TLS 1.3 listeners hand connections to both servers, so they are
+	// wired before either starts.
+	if err := EnableTLS(deps, oscar, webAPI); err != nil {
+		deps.logger.Error("TLS listener setup failed", "err", err.Error())
+		os.Exit(1)
+	}
+
 	g.Go(oscar.ListenAndServe)
 
 	kerb := KerberosAPI(deps)
@@ -73,9 +86,7 @@ func main() {
 	toc := TOC(deps)
 	g.Go(toc.ListenAndServe)
 
-	var webAPI *webapi.Server
-	if os.Getenv("ENABLE_WEBAPI") == "1" {
-		webAPI = WebAPI(deps)
+	if webAPI != nil {
 		g.Go(webAPI.ListenAndServe)
 	}
 
@@ -101,7 +112,7 @@ func main() {
 	_ = kerb.Shutdown(shutdownCtx)
 	_ = api.Shutdown(shutdownCtx)
 	_ = toc.Shutdown(shutdownCtx)
-	if os.Getenv("ENABLE_WEBAPI") == "1" {
+	if webAPI != nil {
 		_ = webAPI.Shutdown(shutdownCtx)
 	}
 	if deps.cfg.ICQLegacy.Enabled {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -111,7 +112,7 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, session
 
 	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
 
-	for _, l := range listeners {
+	newHandler := func() http.Handler {
 		mux := http.NewServeMux()
 
 		mux.HandleFunc("GET /{$}", handler.GetHelloWorldHandler)
@@ -193,9 +194,13 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, session
 			SendError(w, r, http.StatusNotFound, "not found")
 		})
 
+		return RequestLogger(logger, corsHandler.Handler(mux))
+	}
+
+	for _, l := range listeners {
 		servers = append(servers, &http.Server{
 			Addr:    l,
-			Handler: RequestLogger(logger, corsHandler.Handler(mux)),
+			Handler: newHandler(),
 		})
 	}
 
@@ -257,6 +262,7 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, session
 	}
 	return &Server{
 		servers:        servers,
+		handler:        newHandler(),
 		logger:         logger,
 		sessionManager: sessionManager,
 		shutdownCtx:    shutdownCtx,
@@ -270,15 +276,33 @@ func NewServer(listeners []string, logger *slog.Logger, handler Handler, session
 // shutdownCtx bounds the lifetime of the background session reaper: ListenAndServe
 // drives it, and Shutdown (or a failed listener) calls shutdownCancel to unwind.
 type Server struct {
-	servers        []*http.Server
+	servers []*http.Server
+	// handler serves the listeners added by ServeListener.
+	handler http.Handler
+	// extra are the servers of the listeners added by ServeListener.
+	extra          []extraServer
 	logger         *slog.Logger
 	sessionManager *SessionManager
 	shutdownCtx    context.Context
 	shutdownCancel context.CancelFunc
 }
 
+// extraServer serves the WebAPI on a listener it did not open itself.
+type extraServer struct {
+	srv *http.Server
+	ln  net.Listener
+}
+
+// ServeListener makes the WebAPI also serve the connections ln hands out,
+// such as the TLS 1.3 connections that negotiated ALPN http/1.1 on the OSCAR
+// TLS listener. The handler sees the connection's TLS state in r.TLS. Call it
+// before ListenAndServe; Shutdown closes ln.
+func (s *Server) ServeListener(ln net.Listener) {
+	s.extra = append(s.extra, extraServer{srv: &http.Server{Handler: s.handler}, ln: ln})
+}
+
 func (s *Server) ListenAndServe() error {
-	if len(s.servers) == 0 {
+	if len(s.servers) == 0 && len(s.extra) == 0 {
 		s.logger.Debug("no webapi listeners defined")
 		return nil
 	}
@@ -301,6 +325,17 @@ func (s *Server) ListenAndServe() error {
 		})
 	}
 
+	for _, extra := range s.extra {
+		g.Go(func() error {
+			s.logger.Info("serving webapi on listener", "addr", extra.ln.Addr().String())
+			if err := extra.srv.Serve(extra.ln); !errors.Is(err, http.ErrServerClosed) {
+				s.shutdownCancel()
+				return fmt.Errorf("unable to serve webapi listener: %w", err)
+			}
+			return nil
+		})
+	}
+
 	return g.Wait()
 }
 
@@ -316,6 +351,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	for _, srv := range s.servers {
 		if err := srv.Shutdown(ctx); err != nil {
 			errs = append(errs, fmt.Errorf("stopping webapi listener %s: %w", srv.Addr, err))
+		}
+	}
+	for _, extra := range s.extra {
+		if err := extra.srv.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("stopping webapi listener %s: %w", extra.ln.Addr().String(), err))
 		}
 	}
 

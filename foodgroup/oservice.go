@@ -679,8 +679,9 @@ func buildRateLimitUpdate(code uint16, curRate state.RateClassState, instance *s
 }
 
 // ServiceRequest handles service discovery, providing a host name and metadata
-// for connecting to the food group service specified in inFrame.
-func (s OServiceService) ServiceRequest(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, listenerGroup config.ListenerGroup) (wire.SNACMessage, error) {
+// for connecting to the food group service specified in inFrame. endpoint is
+// the BOS socket the request arrived on.
+func (s OServiceService) ServiceRequest(ctx context.Context, service uint16, instance *state.SessionInstance, inFrame wire.SNACFrame, inBody wire.SNAC_0x01_0x04_OServiceServiceRequest, endpoint config.Endpoint) (wire.SNACMessage, error) {
 	if service != wire.BOS {
 		return wire.SNACMessage{
 			Frame: wire.SNACFrame{
@@ -780,18 +781,15 @@ func (s OServiceService) ServiceRequest(ctx context.Context, service uint16, ins
 		}, nil
 	}
 
-	host := listenerGroup.BOSAdvertisedHostPlain
+	wantsSSL := inBody.HasTag(wire.OserviceTLVTagsSSLUseSSL)
+	host, secure := endpoint.ServiceRedirect(wantsSSL)
 	stateCode := wire.OServiceServiceResponseSSLStateNotUsed
-
-	if inBody.HasTag(wire.OserviceTLVTagsSSLUseSSL) {
-		if listenerGroup.HasSSL() {
-			host = listenerGroup.BOSAdvertisedHostSSL
-			stateCode = wire.OServiceServiceResponseSSLStateResume
-		} else {
-			// redirect to the plaintext host and let the client decide whether
-			// to downgrade or give up
-			s.logger.DebugContext(ctx, "service request for SSL but the listener doesn't support SSL")
-		}
+	if secure {
+		stateCode = wire.OServiceServiceResponseSSLStateResume
+	} else if wantsSSL {
+		// redirect to the plaintext host and let the client decide whether
+		// to downgrade or give up
+		s.logger.DebugContext(ctx, "service request for SSL but the listener doesn't support SSL")
 	}
 
 	return wire.SNACMessage{

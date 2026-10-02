@@ -926,7 +926,7 @@ func (rt Handler) OServiceServiceRequest(ctx context.Context, service uint16, in
 	if err := wire.UnmarshalBE(&inBody, r); err != nil {
 		return err
 	}
-	outSNAC, err := rt.ServiceRequest(ctx, service, instance, inFrame, inBody, endpointCfg.Group)
+	outSNAC, err := rt.ServiceRequest(ctx, service, instance, inFrame, inBody, endpointCfg)
 	if err != nil {
 		return err
 	}
