@@ -149,10 +149,12 @@ on the connection the token belongs to:
   Otherwise the answer is `403 not_announced`. Republishing the stored key and
   rotating (which the current key signs) need no announcement.
 - `DELETE /e2e/v1/devices/{device_id}` needs **some** key announced on that
-  instance, any one. A reader of the traffic therefore cannot strip an
-  account of its devices either. A user who lost every device announces the
-  new key they are about to reset to, and may then revoke the old devices and
-  reset.
+  instance, any one, and the stored account key's signature over the revoke
+  (section 6.5). Neither a reader of the traffic nor the server itself can
+  therefore strip an account of its devices (audit 2026-10, finding 7). A
+  user who lost the account key cannot sign a revoke: the owner revokes the
+  old devices through the management API (section 8), and the user then
+  announces the new key and resets.
 
 The add-on publishes after its `SetInfo` has gone out. If the directory
 answers `403 not_announced` because the HTTPS request overtook the `SetInfo`,
@@ -229,6 +231,7 @@ field(x) = u16be(len(x)) || x
 | `device`       | device id, Curve25519 key, Ed25519 key    | the account key                |
 | `one-time-key` | device id, key id, Curve25519 key         | the device's Ed25519 key       |
 | `fallback-key` | device id, key id, Curve25519 key         | the device's Ed25519 key       |
+| `revoke`       | device id, issued_at (8 bytes)            | the account key                |
 
 The functions that build them are in `server/e2e/sign.go`. Vectors that pin
 the bytes are in `sign_test.go`.
@@ -441,10 +444,24 @@ client when to upload more one-time keys. `404 no_device`.
 
 ### 6.5 `DELETE /e2e/v1/devices/{device_id}`
 
+```json
+{"issued_at": 1790000000, "signature": "u7Vd...Bw"}
+```
+
 Revokes one of the caller's devices: its one-time and fallback keys are
 deleted, and it stays in the device list with `revoked_at`. `204`. Revoking a
 revoked device is also `204`. The token's BOS connection must have announced
 an account key, any one (section 3.3); otherwise `403 not_announced`.
+
+`signature` is the `revoke` message signed by the **stored account key**:
+
+    "revoke" | screen name | device id | issued_at (8 bytes, big endian)
+
+`issued_at` is the client's clock, Unix seconds; the server takes it only
+within five minutes of its own, either way, and each signature only once.
+Errors: `400 bad_request` (no body), `400 invalid_signature` (missing, not by
+the account key, for another device or account or time, or outside the five
+minutes), `409 replayed` (the same signed revoke again), `404 no_account`,
 `404 no_device`.
 
 ### 6.6 `POST /e2e/v1/devices/{device_id}/one-time-keys`
@@ -625,6 +642,7 @@ requests.
 | 409  | `too_many_devices`    | `E2E_MAX_DEVICES` reached                               |
 | 409  | `pool_full`           | the upload would exceed `E2E_MAX_ONE_TIME_KEYS`         |
 | 409  | `link_replied`        | the link request already has a reply                    |
+| 409  | `replayed`            | a signed revoke that was used already                   |
 | 409  | `too_many_links`      | 4 pending link requests already                         |
 | 410  | `device_revoked`      | the device is revoked; its id is not reused             |
 | 413  | `too_large`           | body over 64 KiB, or a link blob over 16 KiB            |

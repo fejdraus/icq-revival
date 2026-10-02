@@ -313,7 +313,7 @@ func TestHandler_AccountReplace(t *testing.T) {
 	assert.NotNil(t, devices[1].(map[string]any)["revoked_at"], "the other is revoked")
 
 	// Every device gone: a reset needs no proof.
-	require.Equal(t, http.StatusNoContent, d.do(http.MethodDelete, "/e2e/v1/devices/1", token, nil).status)
+	require.Equal(t, http.StatusNoContent, d.do(http.MethodDelete, "/e2e/v1/devices/1", token, revokeBody(sn, 1, newPriv, time.Now())).status)
 	resetPub, resetPriv := newKey(t)
 	res = d.do(http.MethodPut, "/e2e/v1/account", token, accountBody(sn, resetPub, resetPriv))
 	assert.Equal(t, http.StatusForbidden, res.status, "the new key was not announced")
@@ -392,15 +392,85 @@ func TestHandler_Devices(t *testing.T) {
 	assert.Equal(t, "too_many_devices", res.body["error"])
 
 	instance.SetE2EAccountKey(nil)
-	res = d.do(http.MethodDelete, "/e2e/v1/devices/7", token, nil)
+	res = d.do(http.MethodDelete, "/e2e/v1/devices/7", token, revokeBody(sn, 7, priv, time.Now()))
 	assert.Equal(t, http.StatusForbidden, res.status, "a token alone does not revoke")
 	assert.Equal(t, "not_announced", res.body["error"])
 	instance.SetE2EAccountKey(pub)
 
-	assert.Equal(t, http.StatusNoContent, d.do(http.MethodDelete, "/e2e/v1/devices/7", token, nil).status)
-	assert.Equal(t, http.StatusNotFound, d.do(http.MethodDelete, "/e2e/v1/devices/77", token, nil).status)
+	assert.Equal(t, http.StatusNoContent, d.do(http.MethodDelete, "/e2e/v1/devices/7", token, revokeBody(sn, 7, priv, time.Now())).status)
+	assert.Equal(t, http.StatusNotFound, d.do(http.MethodDelete, "/e2e/v1/devices/77", token, revokeBody(sn, 77, priv, time.Now())).status)
 	res = d.do(http.MethodPut, "/e2e/v1/devices/7", token, deviceBody(sn, dev, priv))
 	assert.Equal(t, http.StatusGone, res.status, "a revoked id is not reused")
+}
+
+// revokeBody is a revoke of device id, signed by the account key priv, issued
+// at at.
+func revokeBody(sn state.IdentScreenName, id uint32, priv ed25519.PrivateKey, at time.Time) map[string]any {
+	return map[string]any{
+		"issued_at": at.Unix(),
+		"signature": enc(ed25519.Sign(priv, RevokeMessage(sn, id, at.Unix()))),
+	}
+}
+
+// Audit 2026-10, finding 7: a revoke used to need only the bearer token and
+// some announced key, so the server - or anyone who could make it issue a
+// token - could strip an account of its devices. It now needs the account
+// key's signature over the revoke, the device and a fresh time, used once.
+func TestHandler_RevokeNeedsTheAccountKeysSignature(t *testing.T) {
+	d := newTestDirectory(t)
+	token, instance := d.signOn("100001")
+	sn := state.NewIdentScreenName("100001")
+	pub, priv := newKey(t)
+	instance.SetE2EAccountKey(pub)
+	_, stranger := newKey(t)
+	now := time.Unix(1_790_000_000, 0)
+	d.handler.now = func() time.Time { return now }
+	require.Equal(t, http.StatusCreated, d.do(http.MethodPut, "/e2e/v1/account", token, accountBody(sn, pub, priv)).status)
+	for _, id := range []uint32{1, 2} {
+		require.Equal(t, http.StatusCreated, d.do(http.MethodPut, fmt.Sprintf("/e2e/v1/devices/%d", id), token, deviceBody(sn, newTestDevice(t, id), priv)).status)
+	}
+	good := revokeBody(sn, 1, priv, now)
+
+	cases := []struct {
+		name string
+		path string
+		body any
+		want int
+		code string
+	}{
+		{name: "no body", path: "/e2e/v1/devices/1", body: nil, want: http.StatusBadRequest, code: "bad_request"},
+		{name: "no signature", path: "/e2e/v1/devices/1", body: map[string]any{"issued_at": now.Unix()}, want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "signed by a stranger", path: "/e2e/v1/devices/1", body: revokeBody(sn, 1, stranger, now), want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "signed for another device", path: "/e2e/v1/devices/2", body: good, want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "signed for another account", path: "/e2e/v1/devices/1", body: revokeBody(state.NewIdentScreenName("100002"), 1, priv, now), want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "another time than signed", path: "/e2e/v1/devices/1", body: map[string]any{"issued_at": now.Unix() + 1, "signature": good["signature"]}, want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "too old", path: "/e2e/v1/devices/1", body: revokeBody(sn, 1, priv, now.Add(-revokeWindow-time.Second)), want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "from the future", path: "/e2e/v1/devices/1", body: revokeBody(sn, 1, priv, now.Add(revokeWindow+time.Second)), want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "good", path: "/e2e/v1/devices/1", body: good, want: http.StatusNoContent},
+		{name: "replayed", path: "/e2e/v1/devices/1", body: good, want: http.StatusConflict, code: "replayed"},
+		{name: "good, within the window", path: "/e2e/v1/devices/2", body: revokeBody(sn, 2, priv, now.Add(-revokeWindow)), want: http.StatusNoContent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := d.do(http.MethodDelete, tc.path, token, tc.body)
+			assert.Equal(t, tc.want, res.status, res.body)
+			if tc.code != "" {
+				assert.Equal(t, tc.code, res.body["error"])
+			}
+		})
+	}
+
+	res := d.do(http.MethodGet, "/e2e/v1/users/100001/devices", "", nil)
+	require.Equal(t, http.StatusOK, res.status)
+	for _, dev := range res.body["devices"].([]any) {
+		assert.NotNil(t, dev.(map[string]any)["revoked_at"], "both revoked, each by a good request")
+	}
+
+	// A replay after the window is refused too: as too old.
+	now = now.Add(2 * revokeWindow)
+	res = d.do(http.MethodDelete, "/e2e/v1/devices/1", token, good)
+	assert.Equal(t, http.StatusBadRequest, res.status)
+	assert.Equal(t, "invalid_signature", res.body["error"])
 }
 
 func TestHandler_KeysAndClaim(t *testing.T) {

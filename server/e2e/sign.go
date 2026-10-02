@@ -80,6 +80,15 @@ func FallbackKeyMessage(screenName state.IdentScreenName, deviceID uint32, keyID
 	return signedMessage("fallback-key", screenName, deviceIDBytes(deviceID), []byte(keyID), key)
 }
 
+// RevokeMessage is what the account key signs to revoke one of its devices,
+// with the time the request was made (Unix seconds): the server takes it
+// only within revokeWindow of its own clock, and only once.
+//
+//	"revoke" | screen name | device id | issued at (8 bytes big endian)
+func RevokeMessage(screenName state.IdentScreenName, deviceID uint32, issuedAt int64) []byte {
+	return signedMessage("revoke", screenName, deviceIDBytes(deviceID), binary.BigEndian.AppendUint64(nil, uint64(issuedAt)))
+}
+
 // verify reports whether sig is publicKey's signature over msg. A key or
 // signature of the wrong size does not verify.
 func verify(publicKey, msg, sig []byte) bool {

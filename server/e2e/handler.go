@@ -35,6 +35,9 @@ const (
 	maxPendingLinks = 4
 	// maxScreenNameLen bounds the {uin} path segment.
 	maxScreenNameLen = 64
+	// revokeWindow is how far a revoke's issued_at may sit from the server's
+	// clock, either way; a signed revoke is accepted once within it.
+	revokeWindow = 5 * time.Minute
 )
 
 // Rate limit of the requests that need a token, per account.
@@ -60,6 +63,9 @@ type Handler struct {
 	limiter  *accountLimiter
 	keys     logKeys
 	now      func() time.Time
+	// revokes are the revoke signatures already accepted, so none is
+	// accepted twice while its issued_at is inside revokeWindow.
+	revokes *usedSignatures
 }
 
 // NewHandler returns the key directory handler. baker is the key the BOS
@@ -73,6 +79,7 @@ func NewHandler(cfg config.E2EConfig, store Store, baker CookieBaker, sessions S
 		logger:   logger,
 		limiter:  newAccountLimiter(accountRate, accountBurst),
 		now:      time.Now,
+		revokes:  newUsedSignatures(),
 	}
 }
 
@@ -388,10 +395,18 @@ func (h *Handler) writeOwnDevice(w http.ResponseWriter, r *http.Request, sn stat
 	writeJSON(w, status, ownDeviceJSON{Device: newDeviceJSON(*dev), OneTimeKeyCount: count, HasFallbackKey: hasFallback})
 }
 
-// revokeDevice revokes one of the caller's devices. Revoking needs an
-// account key announced on the token's BOS connection, any one: the add-on
-// announces its key at every sign-in, while someone holding only a sniffed
-// token cannot, so they cannot strip an account of its devices.
+type revokeRequest struct {
+	IssuedAt  int64 `json:"issued_at"`
+	Signature b64   `json:"signature"`
+}
+
+// revokeDevice revokes one of the caller's devices. Revoking needs, besides
+// the token, an account key announced on the token's BOS connection, any
+// one, and the account's stored account key's signature over the revoke
+// message (RevokeMessage) for this device and a time within revokeWindow,
+// accepted once. A token or a session alone - a sniffed token, or the server
+// itself - cannot strip an account of its devices; a user who lost the
+// account key has the owner revoke them through the management API.
 func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request, c caller) {
 	deviceID, ok := deviceIDParam(w, r)
 	if !ok {
@@ -402,7 +417,31 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request, c caller)
 			"revoking needs an account key announced on the BOS connection of this token (LocateSetInfo TLV 0x0E2E)")
 		return
 	}
-	if err := h.store.E2ERevokeDevice(r.Context(), c.screenName, deviceID, h.now()); err != nil {
+	var req revokeRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	acc, ok := h.account(w, r, c.screenName)
+	if !ok {
+		return
+	}
+	now := h.now()
+	issued := time.Unix(req.IssuedAt, 0)
+	if issued.Before(now.Add(-revokeWindow)) || issued.After(now.Add(revokeWindow)) {
+		writeError(w, http.StatusBadRequest, "invalid_signature",
+			"the revoke's issued_at is not within five minutes of the server's clock")
+		return
+	}
+	if !verify(acc.Key, RevokeMessage(c.screenName, deviceID, req.IssuedAt), req.Signature) {
+		writeError(w, http.StatusBadRequest, "invalid_signature",
+			"the revoke is not signed by the account key")
+		return
+	}
+	if !h.revokes.use(string(req.Signature), issued.Add(revokeWindow), now) {
+		writeError(w, http.StatusConflict, "replayed", "this signed revoke was used already")
+		return
+	}
+	if err := h.store.E2ERevokeDevice(r.Context(), c.screenName, deviceID, now); err != nil {
 		h.storeError(w, r, err)
 		return
 	}
