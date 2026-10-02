@@ -94,6 +94,9 @@ use crate::stream::StreamRewriter;
 #[path = "hook_tls.rs"]
 mod tlsio;
 
+#[path = "hook_calls.rs"]
+mod calls_io;
+
 type Socket = usize;
 
 const SOCKET_ERROR: i32 = -1;
@@ -1301,6 +1304,7 @@ pub fn start(p: Policy) {
     let encrypting = p.mode == Mode::Encrypt;
     set_policy_once(p);
     install_now_if_loaded();
+    calls_io::start();
     register_dll_notification();
     if encrypting {
         spawn(poll_thread);
@@ -1374,7 +1378,9 @@ type LdrRegisterDllNotificationFn = unsafe extern "system" fn(
 /// on. `LdrRegisterDllNotification` is not in any import library, so it is
 /// looked up in ntdll by name.
 fn register_dll_notification() {
-    if INSTALLED.load(Ordering::Acquire) {
+    // With `calls_log=on` the call modules, loaded only when a call starts,
+    // are patched from the notification too.
+    if INSTALLED.load(Ordering::Acquire) && !policy().calls_log {
         return;
     }
     let ntdll: Vec<u16> = "ntdll.dll"
@@ -1409,17 +1415,15 @@ fn register_dll_notification() {
 }
 
 /// Runs inside the loader (under its lock) for each DLL that gets loaded. Does
-/// nothing but patch a networking module, and never waits for the install
-/// lock: whoever holds it is installing already.
+/// nothing but patch a networking module (or, with `calls_log=on`, a call
+/// module), and never waits for the install lock: whoever holds it is
+/// installing already.
 unsafe extern "system" fn dll_notification(
     reason: u32,
     data: *const LdrDllNotificationData,
     _context: *mut core::ffi::c_void,
 ) {
-    if reason != LDR_DLL_NOTIFICATION_REASON_LOADED
-        || data.is_null()
-        || INSTALLED.load(Ordering::Acquire)
-    {
+    if reason != LDR_DLL_NOTIFICATION_REASON_LOADED || data.is_null() {
         return;
     }
     let _ = panic::catch_unwind(AssertUnwindSafe(|| {
@@ -1434,7 +1438,11 @@ unsafe extern "system" fn dll_notification(
         let name =
             String::from_utf16_lossy(std::slice::from_raw_parts(u.buffer, u.length as usize / 2));
         if name.to_ascii_lowercase().starts_with("coolcore") {
-            install_into(&name, d.dll_base as usize, "on load", false);
+            if !INSTALLED.load(Ordering::Acquire) {
+                install_into(&name, d.dll_base as usize, "on load", false);
+            }
+        } else {
+            calls_io::on_load(&name, d.dll_base as usize, "on load", true);
         }
     }));
 }

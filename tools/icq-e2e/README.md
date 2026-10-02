@@ -203,6 +203,7 @@ earlier build kept a file per contact for the button under
 | `rewrite.rs` | Which SNACs are messages, and what happens to each one. |
 | `icbm.rs`, `snac.rs`, `text.rs`, `caps.rs` | Decoding, and the add-on's capability and account-key announcement. |
 | `hook.rs`, `log.rs` | Winsock, and the log. |
+| `calls.rs`, `hook_calls.rs` | Call observation (`calls_log=on`, stage C0 of `docs/e2e/CALLS-RESEARCH.md`): the media sockets of `sipXtapi.dll` / `sipXmediaLib.dll`, each datagram classified (STUN, TURN, RTP, RTCP, other) without content, and the SIP of a call (ICBM channel 6) reduced to its media fields. Nothing is changed. |
 | `route.rs` | Which connections go to our server (`server=` in `icq-e2e.ini`), and the TLS port and ALPN they go to instead (docs/e2e/STAGE-TLS.md). |
 | `tls.rs`, `hook_tls.rs` | TLS 1.3 as byte buffers (rustls), and TLS at the bottom of the hooked sockets: the pump thread, `recv`/`send`/`FIONREAD`/`closesocket`/`getpeername`, fail closed with a message box; `tls=off` is the opt-out. |
 
@@ -261,6 +262,7 @@ Environment variables, read when ICQ starts:
 | `ICQE2E_INI` | A different `icq-e2e.ini` to read. Only an override: the add-on finds `icq-e2e.ini` next to the client executable on its own, because the patch writes it there and never tells the add-on where it went. |
 | `ICQE2E_PEERS` | `uin1,uin2`: encrypt outbound messages only to these contacts. Unset: to everybody. |
 | `ICQE2E_NO_INJECT` | `1`: never add or remove a frame. |
+| `ICQE2E_CALLS_LOG` | Overrides `calls_log =` of the ini (see "Call observation" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is off. |
 | `ICQE2E_LOG` | File to append the log to (local-time stamps). Lines also go to `OutputDebugString`. Unset: `%LOCALAPPDATA%\icqe2e\icqe2e.log`. |
 
 At start-up the log says where it looked for the ini and whether it was there:
@@ -333,6 +335,60 @@ Then one line per message:
 A  OUT peer=100002 ch1/html text="<font sml="default">Привет</font>" encrypted 538 bytes
 B  IN  peer=100001 ch1/html text="<font sml="default">Привет</font>" decrypted 80 bytes
 ```
+
+## Call observation (`calls_log`)
+
+Stage C0 of `docs/e2e/CALLS-RESEARCH.md`: a spike that only looks at voice
+and video calls, so the encryption of calls can be designed on what the client
+really sends. Off by default; turned on by a line typed by hand into
+`icq-e2e.ini` next to `ICQ.exe` (the patch keeps lines it does not own):
+
+```
+calls_log = on
+```
+
+or `ICQE2E_CALLS_LOG=on`. The start-up line then ends in `calls_log=on (call
+media observed, nothing changed)`.
+
+What it does, and nothing more - **no byte of a call is changed, held or
+dropped**:
+
+- When `sipXtapi.dll` (6.5, 7.2) or `sipXmediaLib.dll` (7.2) is loaded - at the
+  start of a call - its Winsock imports `sendto`, `recvfrom`, `send`, `recv`,
+  `WSASendTo`, `WSARecvFrom`, `bind` and `closesocket` are hooked the way the
+  networking module's are (by name, ordinals resolved per DLL). Each hook calls
+  the original first and returns its answer and last error unchanged.
+- Each datagram that went through is classified: STUN (RFC 3489/5389), the
+  TURN of ICQ 6.5 (Allocate, Send, Data Indication, Set Active Destination...),
+  with the class of what a Send or Data Indication carries, ChannelData, RTP
+  (payload type, SSRC, sequence number, payload size), RTCP (packet types) or
+  other. The first 8 packets of each flow (socket, remote address, direction)
+  get a line each, a new stream (another class, payload type or SSRC) one line,
+  and then every 5 seconds a summary per flow: packets, packets/s, kbit/s and
+  the largest size per class. A closed socket gives its totals.
+- The SIP of a call (ICBM channel 6, TLV 0x0005, on the BOS connection) gives
+  one line per message: method or status, CSeq, an 8-digit hash of the
+  Call-ID, the user parts of From and To, and per SDP media line the media,
+  port, profile (`RTP/AVP` or `RTP/SAVP`), payload types with their `rtpmap`
+  names, the `c=` address class, the number of `a=crypto` lines, the ICE
+  candidates by type, and the names of the other attributes.
+- Never logged: a payload byte, a key, a request URI, a Call-ID, an IP
+  address. An address shows as `server`, `private`, `loopback` or `public`
+  with its port (`server` is the address `server=` resolves to, where the TURN
+  relay is).
+
+```
+calls_log=on: call media and signalling are observed (classes, sizes, ports; never content); nothing is changed
+call hooks installed in sipXtapi.dll at 0x10000000 (on load): patched [sendto#20, recvfrom#17, ...]; observation only, nothing is changed
+call SIP OUT peer=100002 INVITE cseq=1 INVITE call=5d41402a from=100001 to=100002 1834 B sdp: audio port=16384 RTP/AVP pt=[103,0,8] rtpmap=[103=ISAC/16000,...] c=private crypto=0 candidates=3 (host 1, relay 1, srflx 1) attrs=[sendrecv]
+call media: sipXtapi.dll bind sock=1234 -> L:16384 (udp)
+call media: sipXtapi.dll sock=1234 L:16384 OUT -> server:3478 #1 28 B: TURN/aol Allocate Request (0x0003)
+call media: sipXtapi.dll sock=1234 L:16384 OUT -> server:3478 #5 116 B: TURN/aol Send Request (0x0004) carrying 72 B: RTP v2 pt=103 m=0 seq=812 ssrc=0x1a2b3c4d payload=60 B
+call media: sipXtapi.dll sock=1234 L:16384 OUT -> server:3478 5.0s: turn-send/rtp 167 pkt (33.4/s, 32.1 kbit/s) max 168 B
+```
+
+`docs/e2e/CALLS-RESEARCH.md` section 8 says how the owner runs the test and
+what each line answers.
 
 ## Build
 

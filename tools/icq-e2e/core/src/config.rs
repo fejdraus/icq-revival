@@ -29,6 +29,11 @@
 //!   `tls=` and `tls_pin=` lines of `icq-e2e.ini` (STAGE-TLS 2.2, 3.4, 3.5):
 //!   the server's DNS name, whose connections are wrapped in TLS 1.3, the
 //!   deliberate opt-out `tls=off`, and an optional key pin.
+//! - `ICQE2E_CALLS_LOG` - overrides the `calls_log=` line of `icq-e2e.ini`.
+//!   `on` hooks the call modules (`sipXtapi.dll`, `sipXmediaLib.dll`) when
+//!   they load and logs what kind each media datagram is and what the SIP of
+//!   a call says about its media, never content (stage C0 of
+//!   `docs/e2e/CALLS-RESEARCH.md`, observation only). Off by default.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -70,6 +75,8 @@ pub struct Policy {
     pub inject: bool,
     /// TLS 1.3 on the client's connections to the server.
     pub tls: TlsPolicy,
+    /// `calls_log=on`: observe the call media and signalling (stage C0).
+    pub calls_log: bool,
 }
 
 /// What `server=`, `tls=` and `tls_pin=` say (STAGE-TLS 3.5).
@@ -241,6 +248,7 @@ impl Policy {
             home: default_home(),
             inject: false,
             tls: TlsPolicy::NoServer,
+            calls_log: false,
         }
     }
 
@@ -253,6 +261,7 @@ impl Policy {
             home: default_home(),
             inject: false,
             tls: TlsPolicy::NoServer,
+            calls_log: false,
         }
     }
 
@@ -311,6 +320,7 @@ impl Policy {
             server: pick(s.server, env("ICQE2E_SERVER")),
             tls: pick(s.tls, env("ICQE2E_TLS")),
             tls_pin: pick(s.tls_pin, env("ICQE2E_TLS_PIN")),
+            calls_log: env("ICQE2E_CALLS_LOG"),
         })
     }
 
@@ -342,6 +352,7 @@ impl Policy {
         let server = raw.server.clone().or_else(|| ini("server"));
         let tls = raw.tls.clone().or_else(|| ini("tls"));
         let tls_pin = raw.tls_pin.clone().or_else(|| ini("tls_pin"));
+        let calls_log = raw.calls_log.clone().or_else(|| ini("calls_log"));
         Policy {
             mode,
             peers: (!peers.is_empty()).then_some(peers),
@@ -352,6 +363,7 @@ impl Policy {
                 Some("1") | Some("true")
             ),
             tls: TlsPolicy::parse(server.as_deref(), tls.as_deref(), tls_pin.as_deref()),
+            calls_log: switched_on(calls_log.as_deref()),
         }
     }
 
@@ -387,7 +399,7 @@ impl Policy {
             Some(p) => format!(", peers={}", p.join(",")),
         };
         format!(
-            "{what}{peers}, directory={}, frames={}, {}, home={}",
+            "{what}{peers}, directory={}, frames={}, {}, home={}{}",
             self.directory.as_deref().unwrap_or("unset"),
             if self.inject {
                 "may be added"
@@ -395,7 +407,12 @@ impl Policy {
                 "never added"
             },
             self.tls.describe(),
-            self.home.display()
+            self.home.display(),
+            if self.calls_log {
+                ", calls_log=on (call media observed, nothing changed)"
+            } else {
+                ""
+            }
         )
     }
 }
@@ -422,6 +439,15 @@ struct Raw {
     server: Option<String>,
     tls: Option<String>,
     tls_pin: Option<String>,
+    calls_log: Option<String>,
+}
+
+/// Whether a switch that is off unless asked for (`calls_log=`) is on: only a
+/// clear yes.
+fn switched_on(v: Option<&str>) -> bool {
+    matches!(v.map(str::trim), Some(t) if ["on", "1", "true", "yes"]
+        .iter()
+        .any(|o| t.eq_ignore_ascii_case(o)))
 }
 
 /// Whether `e2e=` asks for end-to-end encryption. Only a clear "off" turns it
@@ -483,6 +509,7 @@ mod tests {
             server: own(s.server),
             tls: own(s.tls),
             tls_pin: own(s.tls_pin),
+            calls_log: None,
         })
     }
 
@@ -700,6 +727,38 @@ mod tests {
             ..Default::default()
         });
         assert!(matches!(p.tls, TlsPolicy::On { .. }), "{:?}", p.tls);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `calls_log=` is off unless it says on, whatever else the ini says.
+    #[test]
+    fn calls_log_is_off_unless_switched_on() {
+        let dir = std::env::temp_dir().join("icqe2e-ini-calls-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ini = dir.join("icq-e2e.ini");
+        let path = ini.to_str().unwrap();
+        let read = |text: &str| {
+            std::fs::write(&ini, text).unwrap();
+            policy(Settings {
+                ini_path: Some(path),
+                ..Default::default()
+            })
+        };
+        for (text, on) in [
+            ("", false),
+            ("calls_log = off\n", false),
+            ("calls_log =\n", false),
+            ("calls_log = maybe\n", false),
+            ("calls_log = on\n", true),
+            ("CALLS_LOG=On\n", true),
+            ("e2e = off\ncalls_log = 1\n", true),
+        ] {
+            let p = read(text);
+            assert_eq!(p.calls_log, on, "{text:?}");
+            assert_eq!(p.describe().contains("calls_log=on"), on, "{text:?}");
+        }
+        assert_eq!(read("calls_log = on\n").mode, Mode::Encrypt);
+        assert!(!Policy::observe().calls_log);
         std::fs::remove_dir_all(&dir).ok();
     }
 

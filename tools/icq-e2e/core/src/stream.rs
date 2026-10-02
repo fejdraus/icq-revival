@@ -449,6 +449,14 @@ impl StreamRewriter {
             return;
         }
         let payload = &frame[HEADER_LEN..];
+        // The SIP of a call (ICBM channel 6), with `calls_log=on`: its fields
+        // are logged, and the frame goes on as it was (stage C0).
+        if policy.calls_log {
+            if let Some(l) = crate::calls::sip_line(self.dir, payload, crate::calls::server_addrs())
+            {
+                lines.push(l);
+            }
+        }
         // The contact a message is about, so a note or a control message goes
         // into the conversation it belongs to.
         // Only on the crypto path, the one that puts notes in.
@@ -1735,5 +1743,38 @@ next"]);
             lines.iter().any(|l| l.contains("nothing on the wire")),
             "{lines:?}"
         );
+    }
+
+    /// With `calls_log=on` the SIP of a call is logged and its frame goes on
+    /// byte for byte, in both directions; with it off nothing is said.
+    #[test]
+    fn call_signalling_is_logged_and_passed_through() {
+        let sip = b"INVITE sip:100002@h SIP/2.0\r\nCall-ID: x\r\nCSeq: 1 INVITE\r\n\r\n";
+        let mut body = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        body.extend_from_slice(&crate::calls::CHANNEL_SIP.to_be_bytes());
+        body.push(6);
+        body.extend_from_slice(b"100002");
+        snac::put_tlv(&mut body, crate::calls::TLV_SIP, sip);
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&snac::FOOD_ICBM.to_be_bytes());
+        payload.extend_from_slice(&snac::ICBM_MSG_TO_HOST.to_be_bytes());
+        payload.extend_from_slice(&[0, 0, 0, 0, 0, 9]);
+        payload.extend_from_slice(&body);
+        let f = frame(2, 101, &payload);
+        for on in [true, false] {
+            let mut policy = encrypt();
+            policy.calls_log = on;
+            let (mut r, _) = opened(Direction::Outbound);
+            let mut out = Vec::new();
+            let lines = r.push_crypto(&f, &mut Fake::new(), 1, &policy, &mut out);
+            assert_eq!(out, f, "the frame goes on unchanged");
+            assert_eq!(
+                lines
+                    .iter()
+                    .any(|l| l.starts_with("call SIP OUT peer=100002 INVITE")),
+                on,
+                "{lines:?}"
+            );
+        }
     }
 }

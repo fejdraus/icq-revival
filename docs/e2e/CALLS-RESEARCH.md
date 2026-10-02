@@ -1,9 +1,11 @@
 # Encrypted voice and video calls - research
 
-Status: research only (2026-10-02). No code was changed for it. Static
-analysis of the import, export and string tables of the shipped DLLs and of
-their configuration; native code paths were not reversed. Nothing here was
-seen on a live call yet - section 7 says what a live test must confirm.
+Status: research (2026-10-02); stage C0, the observation spike, is built
+(section 8) and its live test is the owner's next step. Sections 1-6 are
+static analysis of the import, export and string tables of the shipped DLLs
+and of their configuration; native code paths were not reversed. Nothing here
+was seen on a live call yet - sections 7 and 8 say what a live test must
+confirm.
 
 Files examined: ICQ 7.2 as installed (read only), ICQ 6.5 from the pristine
 copy in the scratchpad. Offsets below are file offsets of strings, IAT
@@ -274,6 +276,9 @@ already authenticated by Olm.
 
 ## 7. What a live test needs
 
+For the stages that change the media (C2 on). The C0 observation test, which
+changes nothing, is in section 8.1 and can run against the production server.
+
 - Two Windows machines or VMs, each with ICQ 6.5 + the add-on, two accounts
   on a **local** Open OSCAR Server (`STUN_LISTENER`, `TURN_ENABLED`, not the
   production machine). VMs need a virtual audio device (and a virtual
@@ -292,3 +297,144 @@ already authenticated by Olm.
 - One side without the add-on: under `/e2e on` the call is blocked with the
   note; otherwise plain with the note.
 - Long call or a unit test past 65536 packets (index rollover).
+
+## 8. C0 status
+
+**Built, not yet run on a live call.** The add-on (`tools/icq-e2e`) has an
+observation mode for calls, `calls_log = on`, off by default. It changes no
+byte of a call: every hook calls the original Winsock function first, with the
+client's own arguments, and returns its result and last error as they are;
+only afterwards are the bytes looked at. The server is not touched.
+
+What it does (`core/src/calls.rs`, `core/src/hook_calls.rs`; README "Call
+observation"):
+
+- The `LdrRegisterDllNotification` watcher in `hook.rs` now also patches
+  `sipXtapi.dll` and `sipXmediaLib.dll` the moment either is mapped (a module
+  unloaded after a call and loaded for the next is patched again; one whose
+  imports are not bound yet is patched from a thread once the load is done).
+  Hooked by name, ordinals resolved per DLL as for coolcore: `sendto`,
+  `recvfrom`, `send`/`recv` (classified only on a UDP socket), `WSASendTo`/
+  `WSARecvFrom` (where present - section 2 found none), `bind`,
+  `closesocket`. Each module keeps its own originals.
+- Per datagram: STUN (RFC 3489 / 5389, by message type), the TURN of ICQ 6.5
+  (Allocate, Send, Data Indication, Set Active Destination, Close Binding;
+  for Send and Data Indication also the class of the datagram in `DATA`),
+  RFC 5766 ChannelData, RTP (PT, SSRC, seq, marker, payload size), RTCP
+  (packet types of the compound packet), other. Per flow (socket, remote,
+  direction): the first 8 packets one line each, a new stream (class, PT or
+  SSRC) once, a summary every 5 s (packets, packets/s, kbit/s, max size per
+  class), totals at `closesocket`.
+- Per SIP message (ICBM channel 6, TLV `0x0005`, read where the BOS stream is
+  reassembled; the frame passes unchanged): method or status, CSeq, an 8-hex
+  hash of the Call-ID, From/To user parts, and per `m=` line: media, port,
+  profile, payload types, `rtpmap` names, the class of `c=`, the number of
+  `a=crypto` lines, ICE candidates by type, the other attribute names.
+- Addresses are logged only as `server`, `private`, `loopback` or `public`
+  plus port, so the log can be shared; no payload, key, URI or Call-ID.
+- Tests: the classifiers on STUN/TURN/ChannelData/RTP/RTCP samples, the
+  tracker, SIP/SDP extraction from a channel-6 ICBM in both directions
+  (including that no address, key or Call-ID reaches the line), the frame
+  passing a `StreamRewriter` byte for byte, and the hooks over real loopback
+  UDP sockets (datagram unchanged, Winsock's error and last error unchanged).
+
+### 8.1 Live test (owner)
+
+> Run it yourself; nothing here starts a client.
+
+**Where.** The production server is the simplest safe choice for C0: it
+already answers STUN and TURN (UDP 3478, relay ports 49160-49199,
+`TURN_ENABLED`), the add-on changes nothing on the wire, and nothing is
+deployed or changed on the server. Use two test accounts (e.g. 100001 and
+100002), not real users'. The server logs each SIP message's first line and
+SDP as it always does (`call signalling` in its log): that is the server-side
+cross-check. A local server is needed only from stage C2 on, where the media
+is changed. A TURN allocation is given only to a client signed in to the
+server from the same public address it asks from.
+
+**Machines.** Two ICQ 6.5 installs on two machines with different local
+addresses: two VMs, or one VM and a 6.5 copy on this PC (this PC's installed
+client is 7.2). Each needs a working audio device (in a VM a virtual sound
+card, or the host's passed through), and for the video call a camera (a
+virtual one, e.g. OBS Virtual Camera, will do).
+
+**Set-up, on each machine:**
+
+1. Apply the 6.5 patch (rebuilt for this change by
+   `tools\common\Build-Patches.ps1`, so `Icqe2eProbe-msimg32.dll` next to it
+   is the new add-on) with the encryption rows to the client copy - either
+   row puts the add-on in:
+   `ICQ-6.5-Patch.exe -Apply -Root <ICQ 6.5 folder> -Server <domain> -Include e2e,e2e-tls`.
+2. With ICQ closed, add one line to `icq-e2e.ini` next to `ICQ.exe` (the patch
+   keeps it on a later Apply):
+
+   ```
+   calls_log = on
+   ```
+
+3. Point the log at a known file: `mkdir C:\IcqLogs` and
+   `setx ICQE2E_LOG C:\IcqLogs\icqe2e.log` (then sign out of Windows and in
+   again, so ICQ inherits it). Without it the log is
+   `%LOCALAPPDATA%\icqe2e\icqe2e.log`.
+4. Optional packet capture, in an **elevated** prompt, started before the
+   call:
+
+   ```
+   pktmon filter remove
+   pktmon filter add C0udp -t UDP
+   pktmon start --capture --pkt-size 0 --file-name C:\IcqLogs\call.etl
+   ```
+
+   and after the call:
+
+   ```
+   pktmon stop
+   pktmon etl2pcap C:\IcqLogs\call.etl --out C:\IcqLogs\call.pcapng
+   ```
+
+   The capture holds the call's audio and video: keep it private.
+
+**The calls:**
+
+1. Start both clients and sign in; each log has
+   `calls_log=on: call media and signalling are observed ...`.
+2. From A, a **voice** call to B; B answers; talk for about 30 s; hang up.
+3. From B, a **video** call to A; A answers; about 30 s; hang up.
+4. Optional, the relayed path: on one machine block the direct path,
+   `New-NetFirewallRule -DisplayName C0-block -Direction Outbound -Protocol UDP -RemoteAddress <other machine's IP> -Action Block`
+   (and the same with `-Direction Inbound`), call again, then
+   `Remove-NetFirewallRule -DisplayName C0-block`.
+5. Close both clients, so the sockets close and the totals are written.
+
+**What to collect:** the log from **both** machines
+(`C:\IcqLogs\icqe2e.log`), with the time of each call; optionally both
+`call.pcapng`. The log holds no address beyond the classes above and can be
+sent as it is.
+
+### 8.2 What each line tells
+
+| Line | Answers |
+|---|---|
+| `call hooks installed in sipXtapi.dll ... patched [sendto#20, recvfrom#17, ...]` | The module was loaded at call start, and which imports it really has (the names after `patched`). On 7.2 a second line for `sipXmediaLib.dll`. `could not patch` and a reason means nothing of that module is seen. |
+| `call SIP OUT/IN peer=... INVITE`, `180 Ringing`, `200 OK`, `ACK`, `BYE` | The signalling goes over ICBM channel 6 as section 1.1 says, in this order; `call=` ties the messages of one call together. |
+| `... sdp: audio port=16384 RTP/AVP pt=[...] rtpmap=[...]` | The offered and answered codecs (`103=ISAC/16000` and so on) and ports. `RTP/AVP` with `crypto=0`: **no SRTP** is negotiated; `RTP/SAVP` or `crypto>0` would contradict section 1.2. |
+| `candidates=N (host a, relay b, srflx c)`, `c=server` | Whether ICE is used and whether a relayed (TURN) address is offered. |
+| `call media: <module> bind sock=N -> L:P (udp)` | The local ports (SIP 5061, RTP/RTCP from 16384) and which module opens them. |
+| `STUN/3489 Binding Request` to `server:3478` | The STUN query for the public address; to `public:`/`private:` ports: ICE connectivity checks. |
+| `TURN/aol Allocate Request` / `Allocate Response` | A relay was asked for, and given. |
+| `TURN/aol Send Request carrying N B: RTP ...` (OUT), `Data Indication carrying N B: RTP ...` (IN) | Media **through TURN, with framing** (the Send/Data Indication case of section 5a). |
+| `TURN/aol Set Active Destination ...`, then plain `RTP ...` to `server:3478` | Media through TURN **without framing**, after Set Active Destination. |
+| `RTP ...` to or from `public:P` / `private:P` | The **direct path**, no relay. |
+| `RTP v2 pt=.. seq=.. ssrc=.. payload=N B` | Plain RTP v2 with a readable header; the PT matches an `rtpmap` of the SDP (the codec); one SSRC per media line expected. The `<module>` of the RTP lines answers which module sends RTP (on 7.2 `sipXtapi.dll` or `sipXmediaLib.dll`). |
+| `5.0s: rtp 167 pkt (33.4/s, 32.1 kbit/s) max 168 B` | Packet rate and the **largest packet** per class: the budget for the +16 to +20 bytes of C2 (video near 1400 B would need its packet size lowered). `turn-send/rtp` maxima include the TURN framing. |
+| `closed; total: ...` | Totals per flow at the end of the call. |
+
+The capture, if taken, cross-checks it: in Wireshark, Decode As RTP on the
+ports from the log (or turn on the `rtp_udp` heuristic); Telephony > RTP >
+RTP Streams lists the streams, and a G.711 (PCMU/PCMA) stream plays back.
+iSAC and iLBC do not play in Wireshark; there, an unencrypted header with the
+SDP's PT and clean sequence numbers is what "plain RTP" means.
+
+C0 is done when the two logs answer: which module carries RTP; direct or TURN
+(and which TURN framing); codecs and payload types; packet sizes (audio and
+video maxima); and that the SDP says `RTP/AVP` with no `a=crypto`.
