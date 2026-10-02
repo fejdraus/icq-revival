@@ -62,6 +62,38 @@ const CONFIG_PATH = process.env.CONFIG || path.join(__dirname, 'services.json');
 // copy is older get the new list, everyone else a 304; xtraz-list.test.js
 // fails until it is moved.
 const XTRAZ_LIST_CHANGED = 'Wed, 30 Sep 2026 00:00:00 GMT';
+// The same for the empty list of the xtrazempty route.
+const XTRAZ_EMPTY_CHANGED = 'Fri, 02 Oct 2026 00:00:00 GMT';
+
+// An Xtraz list with the date of its last change. The client asks again
+// every ReloadTimeout whether the list changed (If-Modified-Since, the time
+// it saved its copy). Saying "changed" when it has not is not only wasted:
+// ICQ 6.5 drops the entries it has loaded before it asks, refills them from
+// its copy on a 304, but on a 200 finds the list already parsed and leaves
+// them empty - "Change my picture" and "Welcome" then open the Xtraz error
+// page until it restarts (the ICQ 6.5 patch also fixes that in MISB.dll). So
+// the list carries the date of its last change and an ETag, and a client
+// that has it gets a 304. nginx, which caches the list, answers most of these
+// itself (if_modified_since before).
+function sendXtrazList(ctx, body, changed) {
+  const etag = `"${crypto.createHash('sha1').update(body).digest('hex').slice(0, 16)}"`;
+  const headers = {
+    'content-type': 'text/xml; charset=utf-8',
+    'last-modified': changed,
+    'etag': etag,
+    'cache-control': 'no-cache',
+  };
+  const since = Date.parse(ctx.req.headers['if-modified-since'] || '');
+  const match = ctx.req.headers['if-none-match'];
+  if (match ? match === etag : since >= Date.parse(changed)) {
+    ctx.res.writeHead(304, headers);
+    ctx.res.end();
+    return;
+  }
+  headers['content-length'] = body.length;
+  ctx.res.writeHead(200, headers);
+  ctx.res.end(body);
+}
 
 const TZER_DIR = path.join(__dirname, 'tzers');
 const TZER_TYPES = {
@@ -3674,33 +3706,22 @@ const ACTIONS = {
   </xtraz>
 </xtrazList>
 `, 'utf8');
-    // The client asks again every ReloadTimeout whether the list changed
-    // (If-Modified-Since, the time it saved its copy). Saying "changed" when
-    // it has not is not only wasted: ICQ 6.5 drops the entries it has loaded
-    // before it asks, refills them from its copy on a 304, but on a 200 finds
-    // the list already parsed and leaves them empty - "Change my picture" and
-    // "Welcome" then open the Xtraz error page until it restarts (the ICQ 6.5
-    // patch also fixes that in MISB.dll). So the list carries the date of its
-    // last change and an ETag, and a client that has it gets a 304. nginx,
-    // which caches the list, answers most of these itself
-    // (if_modified_since before).
-    const etag = `"${crypto.createHash('sha1').update(body).digest('hex').slice(0, 16)}"`;
-    const headers = {
-      'content-type': 'text/xml; charset=utf-8',
-      'last-modified': XTRAZ_LIST_CHANGED,
-      'etag': etag,
-      'cache-control': 'no-cache',
-    };
-    const since = Date.parse(ctx.req.headers['if-modified-since'] || '');
-    const match = ctx.req.headers['if-none-match'];
-    if (match ? match === etag : since >= Date.parse(XTRAZ_LIST_CHANGED)) {
-      ctx.res.writeHead(304, headers);
-      ctx.res.end();
-      return;
-    }
-    headers['content-length'] = body.length;
-    ctx.res.writeHead(200, headers);
-    ctx.res.end(body);
+    sendXtrazList(ctx, body, XTRAZ_LIST_CHANGED);
+  },
+
+  // The Xtraz list of ICQ 7.2's Zlango add-on (packages\zlango7, which the
+  // patch points here): empty. The client keeps the list it came with until
+  // it is given another, and goes on trying to download that list's entries
+  // from c.icq.com in plain HTTP; an empty one ends that, and Zlango is gone
+  // with its service.
+  xtrazempty: (ctx) => {
+    const body = Buffer.from(`<?xml version="1.0" encoding="UTF-8"?>
+<xtrazList majorVer="1" minorVer="0" date="02-10-26">
+  <groups/>
+  <xtraz/>
+</xtrazList>
+`, 'utf8');
+    sendXtrazList(ctx, body, XTRAZ_EMPTY_CHANGED);
   },
 
   // A tZer movie or thumbnail, by its exact file name: /icq/tzers/kisses.swf.

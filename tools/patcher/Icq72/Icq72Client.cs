@@ -20,8 +20,12 @@
 //      the list the main window builds its tabs from.
 //   2. Links. The pages the client opens on ICQ.com - help, search, "My
 //      page", About, the legal notice, registration and password, the add-on
-//      galleries, the Xtraz pages - are pointed at our server, which is also
-//      let in by the client's content whitelists; the Xtraz list with them.
+//      galleries, the Xtraz pages - are pointed at our server over HTTPS,
+//      which is also let in by the client's content whitelists; the Xtraz
+//      lists and what the client fetches itself with them. What it fetched
+//      from the old ICQ hosts and the server has no stand-in for - updates,
+//      package lists, statistics - goes nowhere instead of in plain HTTP to
+//      names someone else may answer.
 //   3. Sign-in. The default ACC connection settings (AppConfig.xml) are
 //      pointed at our server's web API: the web login, the BOS redirect and
 //      the STUN server of calls. With the TLS row of the E2E add-on as well,
@@ -61,8 +65,9 @@ namespace IcqRevival.Patch
         // Only the server's domain is asked for. Ports and paths are the same on
         // every ICQ Revival server (deploy/VM-SPEC.md, section 3), so the patch
         // fills them in itself.
-        const int PagesPortHttps = 8102;  // pages the client opens in a window or the browser
-        const int PagesPortHttp = 8101;   // what the client fetches with its own loader
+        // Every page and file the client gets from the server, over HTTPS (see
+        // "links"); the plain HTTP port of the same pages is never written.
+        const int PagesPortHttps = 8102;
         const int WebApiPort = 8082;      // the web API ICQ 7 signs in through; no TLS in its ACC
         public const string SettingsKey = @"Software\OpenOSCAR\Icq72Patch";
 
@@ -131,6 +136,9 @@ namespace IcqRevival.Patch
                 "33EA75F797723F893FAA5FF04C0E8605716B41098A3DE366CCDE95BCB8421B10",
                 "6D879322E28560AC663A7D9F9A0370AB7526683932AE219103B9D41A65CB1F50" } },
             { @"packages\ICQ\ConfigFiles\UIOwnerPanelConfig.xml", new[] { "01F398318EBE909419B66A4F36E7BF834F9168A734E54FE0C682C041E2C763BE" } },
+            { @"packages\ICQ\ConfigFiles\Packages.xml", new[] { "6052B39E314631A1DEDF9CEFDE2833644727AF43E96F5F3FFF7419AECB56D093" } },
+            { @"packages\ICQ\ConfigFiles\Master.xml", new[] { "4CBE00CAACEE58DF0945517E1EC8F6CBEA65FCEB63CCFF6E37C3F2CCE398E3C7" } },
+            { @"packages\zlango7\Xtraz\XtraConfig.xml", new[] { "F800FCB6D36A34FC47B00AEA818FDAECFCCBC852A518B49386CF04E1E6A47707" } },
             { @"imApp\resources\en-US\AboutDlg.dtd", new[] {
                 "4C1227E5F07C1A8D77005AC88440743BBC0210A9EC9C6290EF89F96561DE085A",
                 "A801CF979BABD80AF5CA9DEDEA96DDBBC2DF8FF999C597F213A595261BAA1F5F" } },
@@ -335,6 +343,18 @@ namespace IcqRevival.Patch
             Linked(Config + @"\SMSConfig.xml", "links", RetargetByPath),
             Linked(Config + @"\XtraConfig.xml", "whitelist", (t, d) => AddWhitelisted("XtraConfig.xml", t, d)),
             Linked(Config + @"\tzer.xml", "whitelist", (t, d) => AddWhitelisted("tzer.xml", t, d)),
+            Linked(ZlangoXtraConfig, "links", RetargetByPath),
+            Linked(ZlangoXtraConfig, "whitelist", (t, d) => AddWhitelisted("XtraConfig.xml", t, d)),
+            // Nothing to the old ICQ hosts (see "the old ICQ hosts"): the
+            // statistics, the configuration bundles, the package lists, the
+            // tZer lists while the player does not take them, and the two
+            // update addresses of the code.
+            On(Config + @"\System.xml", "no old ICQ hosts", NoDeadHosts),
+            On(Config + @"\Master.xml", "no old ICQ hosts", NoDeadHosts),
+            On(Config + @"\Packages.xml", "no old ICQ hosts", NoDeadHosts),
+            On(TzerList, "no old ICQ hosts", NoDeadHosts),
+            On(TzerListDe, "no old ICQ hosts", NoDeadHosts),
+            On(AppConfig, "no old ICQ hosts", SetCodeDefaults),
             // The tZer lists, with the player only (see "tZers without Flash").
             Linked(TzerList, "the tZers list", BuildTzerList),
             Linked(TzerListDe, "the tZers list", BuildTzerList),
@@ -404,33 +424,88 @@ namespace IcqRevival.Patch
         }
 
         // The other configuration files hold addresses of ICQ.com services the
-        // client fetches or opens by path, as in ICQ 6.5, whose table this is:
-        // what it opens in a window works over HTTPS, what it fetches with its
-        // own loader stays on plain HTTP. Any host in front of those paths is
+        // client fetches or opens by path. All of them go to the server over
+        // HTTPS: what the client fetches itself - the Xtraz list, the country
+        // lookup, the e-mail activation, the SMS number check - goes through
+        // its HTTP service (MCore.dll, URL monikers over WinINet), the same
+        // one that has fetched the Xtraz list over HTTPS all along. The only
+        // loader that takes plain http:// alone is the one that fetches a
+        // buddy picture by its address (MCore.dll, next to the BART code), and
+        // no address here goes to it. Any host in front of those paths is
         // taken, so moving to another server is applying again.
-        static readonly KeyValuePair<string, bool>[] PathLinkList =
+        static readonly string[] PathLinkList =
         {
-            new KeyValuePair<string, bool>("/xtraz2/global/", true),              // the Xtraz list and its strings
-            new KeyValuePair<string, bool>("/download/icq6/", true),              // the emoticon download page
-            new KeyValuePair<string, bool>("/xtraz/srv/", false),                 // country lookup the client fetches itself
-            new KeyValuePair<string, bool>("/register/email_activation/", false), // the client posts the activation itself
-            new KeyValuePair<string, bool>("/sms", false),                        // SMS carriers (their entries are removed)
-            new KeyValuePair<string, bool>("/ibs/icq6/", false),                  // SMS number check
+            "/xtraz2/global/",             // the Xtraz list and its strings
+            "/download/icq6/",             // the emoticon download page
+            "/xtraz/srv/",                 // the country lookup
+            "/register/email_activation/", // the e-mail activation the client posts
+            "/sms",                        // SMS carriers (their entries are removed)
+            "/ibs/icq6/",                  // the SMS number check
         };
-        static readonly Dictionary<string, bool> PathLinks = PathLinkList.ToDictionary(p => p.Key, p => p.Value, Ps.Keys);
 
         static readonly string PathLinkPattern = "https?://[A-Za-z0-9.-]+(?::\\d+)?" +
-            "(?=(?<path>" + string.Join("|", PathLinkList.Select(p => Regex.Escape(p.Key))) + "))";
+            "(?=" + string.Join("|", PathLinkList.Select(Regex.Escape)) + ")";
 
         static string RetargetByPath(string text, string domain)
         {
-            return Regex.Replace(text, PathLinkPattern, m =>
-            {
-                bool https;
-                if (PathLinks.TryGetValue(m.Groups["path"].Value, out https) && https) return "https://" + domain + ":" + PagesPortHttps;
-                return "http://" + domain + ":" + PagesPortHttp;
-            }, RegexOptions.IgnoreCase);
+            return Regex.Replace(text, PathLinkPattern, m => "https://" + domain + ":" + PagesPortHttps, RegexOptions.IgnoreCase);
         }
+
+        // --- the old ICQ hosts -----------------------------------------------------------
+        //
+        // What the client fetches from ICQ.com for itself - its update
+        // manifests, the package lists, the statistics it reports, the
+        // configuration bundles, the Xtraz lists of its add-ons - went to
+        // update.icq.com, df.icq.com, c.icq.com and cb.icq.com in plain HTTP,
+        // and the names still resolve: whoever answers there would be handed
+        // those requests. The server has nothing to give for them, and a
+        // quick answer, even a 404, can make the client take a list for empty
+        // and drop part of its interface; a failed connection is what it has
+        // been getting all along. So they go to a port of the client's own
+        // machine where nothing listens - the connection is refused at once,
+        // as ICQ itself does with ConfigFilesUrlFormat in System.xml - and
+        // nothing leaves the machine.
+        const string Nowhere = "http://127.0.0.1:9";
+
+        static readonly string DeadHostPattern =
+            "https?://(?:(?:update|df|c|cb)\\.icq\\.com|a?openxtraz\\.icq\\.com|a?icq\\.openxtraz\\.com)(?::\\d+)?(?=[/\"])";
+
+        static string NoDeadHosts(string text)
+        {
+            return Regex.Replace(text, DeadHostPattern, Nowhere, RegexOptions.IgnoreCase);
+        }
+
+        // Two addresses are not in a file but in the code, as the defaults of
+        // properties: where the client looks for a newer version of itself
+        // (MUICore.dll) and for newer configuration files (MCore.dll), both on
+        // update.icq.com. A property's default is taken from the propDefaults
+        // of AppConfig.xml first, by the name of the object that owns it - as
+        // App's ClientId is - so those two are given one there.
+        static readonly KeyValuePair<string, string>[] CodeDefaults =
+        {
+            new KeyValuePair<string, string>("MCUpdateController", "<p name=\"ManifestUrl\" default=\"" + Nowhere + "/cb/icq6/%DistId%/%PartnerId%/updates.xml\"/>"),
+            new KeyValuePair<string, string>("MCConfigFilesService", "<p name=\"UpdateUrl\" default=\"" + Nowhere + "/cb/icq6/%DistId%/ConfigFiles/updates.xml\"/>"),
+        };
+
+        static string SetCodeDefaults(string text)
+        {
+            Match end = Regex.Match(text, "([ \\t]*)</propDefaults>");
+            if (!end.Success) return text;
+            var lines = new StringBuilder();
+            foreach (var d in CodeDefaults)
+            {
+                if (Regex.IsMatch(text, "<c\\s+name=\"" + Regex.Escape(d.Key) + "\"")) continue;
+                lines.Append("    <c name=\"" + d.Key + "\">\r\n      " + d.Value + "\r\n    </c>\r\n");
+            }
+            return lines.Length == 0 ? text : text.Insert(end.Index, lines.ToString());
+        }
+
+        // The Zlango add-on (packages\zlango7) has an Xtraz list of its own on
+        // df.icq.com, under the same path as the client's. The server answers
+        // that one with an empty list (oscar-legacy-web, xtrazempty), which
+        // the client keeps in place of the one it came with - whose entries it
+        // otherwise goes on trying to download from c.icq.com.
+        const string ZlangoXtraConfig = @"packages\zlango7\Xtraz\XtraConfig.xml";
 
         // An address inside one entity of a DTD: the whole value, or what the
         // pattern finds in it.
@@ -627,8 +702,10 @@ namespace IcqRevival.Patch
         //   3. tzer.xml - and tzerDe.xml, which the client reads instead in
         //      Germany (ConfigRedirect.xml) - pointed at the tZers the server
         //      has (/icq/tzers/), with only those listed, and the server let
-        //      in by the list's whitelist. Plain HTTP: the list has one base
-        //      for thumbnails and movies, and our DLL fetches the movie.
+        //      in by the list's whitelist. Over HTTPS: the list has one base
+        //      for thumbnails and movies, our DLL fetches the movie with
+        //      WinINet, and a receiving client plays the address the sender's
+        //      list gave.
         //
         // Unlike ICQ 6.5, ICQ 7.2 keeps no still pictures of Flash avatars
         // (its MCore.dll does not load the player), so there is no such cache
@@ -657,7 +734,7 @@ namespace IcqRevival.Patch
 
         static string TzerBase(string domain)
         {
-            return "http://" + domain + ":" + PagesPortHttp + TzersPath;
+            return "https://" + domain + ":" + PagesPortHttps + TzersPath;
         }
 
         const string BaseUrlPattern = "(<R\\b[^>]*\\bbaseurl=\")([^\"]*)(\")";
@@ -1131,7 +1208,7 @@ namespace IcqRevival.Patch
             j.Add("tabs", "Services that are gone", "the tab strip of the main window, with the Lifestream and \"My box\" mail tabs: only the contact list stays");
             j.Add("ads", "Advertising", "advertising: the ad slots, boxes and the empty bands they leave");
             j.Add("fix", "Fixes", "the AOL Diagnostics module that crashes ICQ 7 (tbdiag.dll)");
-            j.Add("links", "Your server", "the pages the client opens point at your server");
+            j.Add("links", "Your server", "the pages the client opens point at your server, over HTTPS; nothing goes to the old ICQ hosts");
             j.Add("sign-in", "Your server", "automatic connection and voice calls use your server");
             // Off until chosen: it needs our DLL next to the patch, and the
             // registration it makes is the user's, not the folder's.
@@ -1178,6 +1255,7 @@ namespace IcqRevival.Patch
             j.Assign("links", "links");
             j.Assign("page links", "links");
             j.Assign("whitelist", "links");
+            j.Assign("no old ICQ hosts", "links");
             j.Assign("sign-in", "sign-in");
             j.Assign("the tZers player", "tzers-player");
             j.Assign("the Flash registration", "tzers-player");

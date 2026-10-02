@@ -9,10 +9,12 @@
 //      which is built in code, out of MUICore.dll.
 //   2. Links. The pages the client opens on ICQ.com - help, search, "My page",
 //      the About box and the legal notice, the add-on galleries, e-mail
-//      confirmation, the Xtraz list - are pointed at our server, which is also
-//      added to the client's content whitelists. They live in the
-//      configuration files, in the DTDs of the interface and its translations,
-//      and one in MUIMessage.dll.
+//      confirmation, the Xtraz list - are pointed at our server over HTTPS,
+//      which is also added to the client's content whitelists. They live in
+//      the configuration files, in the DTDs of the interface and its
+//      translations, and one in MUIMessage.dll. What the client fetched for
+//      itself from the old ICQ hosts - package lists, statistics - goes
+//      nowhere instead of in plain HTTP to names someone else may answer.
 //   3. Advertising and teasers. Their local descriptors are emptied, which is
 //      what makes the client stop drawing them at all.
 //
@@ -58,8 +60,10 @@ namespace IcqRevival.Patch
         // Only the server's domain is asked for. Ports and paths are the same on
         // every ICQ Revival server (deploy/VM-SPEC.md, section 3), so the patch
         // fills them in itself; nobody has to know which port serves what.
-        const int PagesPortHttps = 8102;  // pages the client opens in a window or the browser
-        const int PagesPortHttp = 8101;   // what the client fetches with its own loader
+        // Every page and file the client gets from the server, over HTTPS (see
+        // "links, whitelists, advertising"); the plain HTTP port of the same
+        // pages is never written.
+        const int PagesPortHttps = 8102;
         public const string SettingsKey = @"Software\OpenOSCAR\Icq6Patch";
 
         public const string Content = @"services\icqApp\ver1\content";
@@ -239,43 +243,61 @@ namespace IcqRevival.Patch
 
         // --- links, whitelists, advertising -----------------------------------------
         //
-        // Only the addresses the client opens as a page are moved. The ones it
-        // parses itself - package lists, search providers, ad configuration - must
-        // keep timing out on the dead hosts: any quick reply, even a 404, makes the
-        // client treat the list as empty and drop part of its interface.
-        //
-        // Every page path, and whether the client can reach it over HTTPS. Tried
-        // on a real client: whatever it opens in a window or hands to the browser
-        // - the Xtraz list and its DTD, the welcome and picture windows, help and
-        // registration - works over HTTPS. What it fetches with its own loader
-        // does not: that loader drops an https:// address without even
-        // connecting. Those stay on plain HTTP.
-        static readonly KeyValuePair<string, bool>[] PageLinkList =
+        // Every page path the client has on ICQ.com, all of them on the server
+        // over HTTPS. Tried on a real client: whatever it opens in a window or
+        // hands to the browser - the Xtraz list and its DTD, the welcome and
+        // picture windows, help and registration - works over HTTPS. What it
+        // fetches itself - the Xtraz list, the country lookup, the e-mail
+        // activation, the SMS number check - goes through its HTTP service
+        // (MCore.dll, URL monikers over WinINet), the one the Xtraz list has
+        // come through over HTTPS all along. The only loader that drops an
+        // https:// address without even connecting is the one that fetches a
+        // buddy picture by its address (MCore.dll, next to the BART code), and
+        // no address here goes to it; the picture page hands it a plain one.
+        static readonly string[] PageLinkList =
         {
-            new KeyValuePair<string, bool>("/xtraz2/global/", true),              // the Xtraz list and its DTD
-            new KeyValuePair<string, bool>("/compad/", true),                     // help, registration, password, report
-            new KeyValuePair<string, bool>("/legal", true),                       // the legal notice
-            new KeyValuePair<string, bool>("/download/icq6/", true),              // the emoticon download page
-            new KeyValuePair<string, bool>("/xtraz/srv/", false),                 // country lookup the client fetches itself
-            new KeyValuePair<string, bool>("/register/email_activation/", false), // the client posts the activation itself
-            new KeyValuePair<string, bool>("/sms", false),                        // SMS carriers (their entries are removed)
-            new KeyValuePair<string, bool>("/ibs/icq6/", false),                  // SMS number check
+            "/xtraz2/global/",             // the Xtraz list and its DTD
+            "/compad/",                    // help, registration, password, report
+            "/legal",                      // the legal notice
+            "/download/icq6/",             // the emoticon download page
+            "/xtraz/srv/",                 // the country lookup
+            "/register/email_activation/", // the e-mail activation the client posts
+            "/sms",                        // SMS carriers (their entries are removed)
+            "/ibs/icq6/",                  // the SMS number check
         };
-        static readonly Dictionary<string, bool> PageLinks = PageLinkList.ToDictionary(p => p.Key, p => p.Value, Ps.Keys);
 
         // Any host in front of those paths, not only the dead ICQ.com ones: the
         // paths belong to ICQ.com services and nothing else, so a match is either
         // still ICQ.com or a server this patch pointed them at before. Moving to
         // another server is then just applying again with the new domain.
         static readonly string LinkPattern = "https?://[A-Za-z0-9.-]+(?::\\d+)?" +
-            "(?=(?<path>" + string.Join("|", PageLinkList.Select(p => Regex.Escape(p.Key))) + "))";
+            "(?=" + string.Join("|", PageLinkList.Select(Regex.Escape)) + ")";
 
-        // What a link is pointed at, for a given domain and the path that follows it.
-        static string PagesBase(string domain, string path)
+        // What a link is pointed at, for a given domain.
+        static string PagesBase(string domain)
         {
-            bool https;
-            if (PageLinks.TryGetValue(path, out https) && https) return "https://" + domain + ":" + PagesPortHttps;
-            return "http://" + domain + ":" + PagesPortHttp;
+            return "https://" + domain + ":" + PagesPortHttps;
+        }
+
+        // The addresses the client parses itself on the old ICQ hosts - the
+        // package lists, the statistics it reports, the configuration bundles,
+        // the teaser list - are not pages, and the server has nothing to give
+        // for them: any quick reply, even a 404, makes the client treat a list
+        // as empty and drop part of its interface. They used to be left to
+        // time out on update.icq.com, cb.icq.com and c.icq.com - in plain
+        // HTTP, to names that still resolve, and whoever answers there would
+        // be handed those requests. They go to a port of the client's own
+        // machine where nothing listens instead: the connection is refused at
+        // once, as on a dead host, and nothing leaves the machine. ICQ does
+        // the same with ConfigFilesUrlFormat in System.xml.
+        const string Nowhere = "http://127.0.0.1:9";
+
+        static readonly string DeadHostPattern =
+            "https?://(?:(?:update|df|c|cb)\\.icq\\.com|a?openxtraz\\.icq\\.com|a?icq\\.openxtraz\\.com)(?::\\d+)?(?=[/\"])";
+
+        static string NoDeadHosts(string text)
+        {
+            return Regex.Replace(text, DeadHostPattern, Nowhere, RegexOptions.IgnoreCase);
         }
 
         // --- links in the interface ------------------------------------------------
@@ -585,7 +607,8 @@ namespace IcqRevival.Patch
         static int CountStrayLinks(string text, string domain)
         {
             return Regex.Matches(text, LinkPattern, RegexOptions.IgnoreCase).Cast<Match>()
-                .Count(m => !Ps.Eq(m.Value, PagesBase(domain, m.Groups["path"].Value)));
+                .Count(m => !Ps.Eq(m.Value, PagesBase(domain)))
+                + Regex.Matches(text, DeadHostPattern, RegexOptions.IgnoreCase).Count;
         }
 
         // The client draws the ad slots and the teaser strip only while these
@@ -627,10 +650,9 @@ namespace IcqRevival.Patch
         //      deploy/oscar-legacy-web/tzers), with only those listed, and the
         //      server let in by the list's whitelist. The buttons show the
         //      thumbnails the client comes with (theme\IMAGES\tzer); it fetches
-        //      baseurl + thumb, with its own loader, which drops https:// (see
-        //      the page links above), only for one missing there. The list has
-        //      one base for thumbnails and movies, so it is plain HTTP; our DLL
-        //      fetches the movie from there. A receiving client plays the
+        //      baseurl + thumb only for one missing there. The list has one
+        //      base for thumbnails and movies, over HTTPS; our DLL fetches the
+        //      movie from there with WinINet. A receiving client plays the
         //      address the sender's list gave.
         //
         // It is the rival of the "tzers" job, which takes the tZers out of the
@@ -754,7 +776,7 @@ namespace IcqRevival.Patch
 
         static string TzerBase(string domain)
         {
-            return "http://" + domain + ":" + PagesPortHttp + TzersPath;
+            return "https://" + domain + ":" + PagesPortHttps + TzersPath;
         }
 
         const string BaseUrlPattern = "(<R\\b[^>]*\\bbaseurl=\")([^\"]*)(\")";
@@ -1453,7 +1475,7 @@ namespace IcqRevival.Patch
             j.Add("zlango", "Services that are gone", "the Zlango add-on and its message window buttons");
             j.Add("ads", "Advertising", "advertising: the ad slots and boxes, the banner and its frame");
             j.Add("fix", "Fixes", "the cut-off \"Advanced\" preferences group; \"Change my picture\" lost after the Xtraz list reloads");
-            j.Add("links", "Your server", "the pages the client opens point at your server");
+            j.Add("links", "Your server", "the pages the client opens point at your server, over HTTPS; nothing goes to the old ICQ hosts");
             j.Add("sign-in", "Your server", "automatic connection and voice calls use your server");
             // Off until chosen: it needs our DLL next to the patch, and the
             // type library it registers is the user's, not the folder's.
@@ -1722,7 +1744,8 @@ namespace IcqRevival.Patch
                 if (player && Ps.Eq(name, PatchFiles.Leaf(TzerList))) text = BuildTzerList(text, domain);
                 if (links)
                 {
-                    text = Regex.Replace(text, LinkPattern, m => PagesBase(domain, m.Groups["path"].Value), RegexOptions.IgnoreCase);
+                    text = Regex.Replace(text, LinkPattern, m => PagesBase(domain), RegexOptions.IgnoreCase);
+                    text = NoDeadHosts(text);
                 }
                 if (white) text = AddWhitelisted(name, text, domain);
                 foreach (Strip s in Strips)

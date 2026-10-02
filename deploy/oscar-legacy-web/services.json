@@ -80,6 +80,11 @@
       "note": "the DTD ICQ 6 fetches before parsing the Xtraz list"
     },
     {
+      "path": "^/xtraz2/global/.*/zlango7/xtrazlist\\.xml$",
+      "action": "xtrazempty",
+      "note": "the Xtraz list of ICQ 7.2's Zlango add-on: empty, so the client stops fetching the Zlango files from c.icq.com"
+    },
+    {
       "path": "^/xtraz2/global/.*xtrazlist\\.xml$",
       "action": "xtrazlist",
       "note": "the Xtraz list: answered with an empty list so the client drops every Xtraz button it had cached"

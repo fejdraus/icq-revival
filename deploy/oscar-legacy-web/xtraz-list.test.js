@@ -53,3 +53,26 @@ test('Xtraz list: 304 while unchanged, 200 when the copy is older', async (t) =>
     assert.equal(await res.text(), body);
   });
 });
+
+// ICQ 7.2's Zlango add-on has a list of its own under the same path: it gets
+// an empty one, so the client stops fetching the Zlango files from c.icq.com.
+test('Xtraz list of the Zlango add-on: empty, with its own date', async (t) => {
+  const srv = await start(false);
+  t.after(() => srv.stop());
+
+  const res = await fetch(srv.base + '/xtraz2/global/10/7/zlango7/xtrazlist.xml');
+  const body = await res.text();
+  assert.equal(res.status, 200);
+  assert.match(body, /<xtraz\/>/);
+  assert.doesNotMatch(body, /<xtra\s/);
+  const modified = res.headers.get('last-modified');
+  assert.ok(modified);
+
+  const saved = new Date(Date.parse(modified) + 3600e3).toUTCString();
+  const again = await fetch(srv.base + '/xtraz2/global/10/7/zlango7/xtrazlist.xml', { headers: { 'if-modified-since': saved } });
+  assert.equal(again.status, 304);
+
+  const older = new Date(Date.UTC(2011, 2, 20)).toUTCString();
+  const fresh = await fetch(srv.base + '/xtraz2/global/10/7/zlango7/xtrazlist.xml', { headers: { 'if-modified-since': older } });
+  assert.equal(fresh.status, 200);
+});
