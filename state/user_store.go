@@ -2352,7 +2352,12 @@ func (f SQLiteUserStore) RetrieveMessages(ctx context.Context, recip IdentScreen
 		    sent
 		FROM offlineMessage
 		WHERE recipient = ?
+		ORDER BY rowid
 	`
+	// Stored messages go back in the order they were sent: an encrypted
+	// conversation depends on it, since a session's key-exchange message has
+	// to arrive before the messages that use it. Without ORDER BY, SQLite
+	// guarantees no order at all.
 	rows, err := f.db.QueryContext(ctx, q, recip.String())
 	if err != nil {
 		return nil, err
