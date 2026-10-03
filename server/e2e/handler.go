@@ -36,8 +36,9 @@ const (
 	// maxScreenNameLen bounds the {uin} path segment.
 	maxScreenNameLen = 64
 	// revokeWindow is how far a revoke's issued_at may sit from the server's
-	// clock, either way; a signed revoke is accepted once within it.
-	revokeWindow = 5 * time.Minute
+	// clock, either way; a signed revoke is accepted once within it. The
+	// auditor holds the log's owner-* entries to the same window.
+	revokeWindow = OwnerSignatureWindow
 )
 
 // Rate limit of the requests that need a token, per account.

@@ -428,6 +428,10 @@ var sharedKTVectors = []string{
 	"T1NDQVItRTJFLUtULXYxAAZkZWxldGUABjEwMDAwMQAIAAAAAGVT8QA=",
 	"T1NDQVItRTJFLUtULXYxAAdhY2NvdW50AAYxMDAwMDEACAAAAABlU/EAAAdwdWJsaXNoACBuehzdKbC3j9E69MVZj+/07yqXFm48pvLk+/zNgFBb8Q==",
 	"T1NDQVItRTJFLUtULXYxAAxvd25lci1kZWxldGUABjEwMDAwMQAIAAAAAGVT8QAACAAAAABlU/EAAEBOWgjh6PMWip+xhnXoAOk4Xy37Uwfp719ulO0e2KzgtRoi7KlikRgHbJXAw/v+U10Ta1Q3fw3En5cZFIcZ5cAA",
+	"T1NDQVItRTJFLUtULXYxAAxvd25lci1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEACAAAAABlU+/TAEDzK2qDdMmqjlPnylAriHgqp1MhzH+nTB2wo2j74mLVuzORo4v1TJTvqa1Ora0u/e/ilq2KjznWoHa7hBumsRQI",
+	"T1NDQVItRTJFLUtULXYxAAxvd25lci1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEACAAAAABlU+/UAEDoGt15N4n57HDAddKMpD/A+keAdWo1itoNsNSQD4lSuPL5hipM2ri0qTPv5c1vzfO4T7t1U86J9A21jUNjXWML",
+	"T1NDQVItRTJFLUtULXYxAAxvd25lci1kZWxldGUABjEwMDAwMQAIAAAAAGVT8QAACAAAAABlU/ItAEAwWehLkufry/UqI8Pk9DV82XOVZGYg2V+dXmmwn2HGNzR4ls/lLDovT4JMJ5qxrXjymwRMWUBEKn5W65re8SsN",
+	"T1NDQVItRTJFLUtULXYxAAxvd25lci1kZWxldGUABjEwMDAwMQAIAAAAAGVT8QAACAAAAABlU/EBAEDgsblczgScbu5K/oS4gwBxO4YHZ6/9ZKSaR0KrJPdbJuUv2YlL0DUHvqqGehSN+Zlqt4QPTibjzc9w2N7zcwgI",
 }
 
 // sharedKTSequences are the sequences of sharedKTVectors and their verdict:
@@ -445,6 +449,13 @@ var sharedKTSequences = []struct {
 	{leaves: []int{0, 8}, violation: true},
 	{leaves: []int{0, 10, 8}},
 	{leaves: []int{0, 10, 9}, violation: true},
+	// Third audit of 2026-10, finding 3: an owner's signature must be issued
+	// within OwnerSignatureWindow of its entry, and is taken once.
+	{leaves: []int{0, 1, 11, 3}, violation: true},
+	{leaves: []int{0, 1, 12, 3}},
+	{leaves: []int{0, 13, 8}, violation: true},
+	{leaves: []int{0, 10, 8, 0, 14, 8}},
+	{leaves: []int{0, 10, 8, 0, 10, 8}, violation: true},
 }
 
 func TestAuditState_SharedVectors(t *testing.T) {
@@ -454,6 +465,7 @@ func TestAuditState_SharedVectors(t *testing.T) {
 	curve, ed := bytes.Repeat([]byte{3}, 32), bytes.Repeat([]byte{2}, 32)
 	at := time.Unix(1_700_000_000, 0)
 	be := binary.BigEndian.AppendUint64(nil, uint64(at.Unix()))
+	beAt := func(d int64) []byte { return binary.BigEndian.AppendUint64(nil, uint64(at.Unix()+d)) }
 	built := [][]byte{
 		state.E2EKTLeaf("account", sn, at, []byte("publish"), k1.Public().(ed25519.PublicKey)),
 		state.E2EKTLeaf("device", sn, at, []byte{0, 0, 0, 1}, curve, ed, ed25519.Sign(k1, DeviceMessage(sn, 1, curve, ed))),
@@ -466,6 +478,13 @@ func TestAuditState_SharedVectors(t *testing.T) {
 		state.E2EKTLeaf("delete", sn, at),
 		state.E2EKTLeaf("account", sn, at, []byte("publish"), k2.Public().(ed25519.PublicKey)),
 		state.E2EKTLeaf("owner-delete", sn, at, be, ed25519.Sign(k1, DeleteMessage(sn, at.Unix()))),
+		// Third audit of 2026-10, finding 3: an owner's signature issued
+		// further from its entry than OwnerSignatureWindow, and one just
+		// within it.
+		state.E2EKTLeaf("owner-revoke", sn, at, []byte{0, 0, 0, 1}, beAt(-301), ed25519.Sign(k1, RevokeMessage(sn, 1, at.Unix()-301))),
+		state.E2EKTLeaf("owner-revoke", sn, at, []byte{0, 0, 0, 1}, beAt(-300), ed25519.Sign(k1, RevokeMessage(sn, 1, at.Unix()-300))),
+		state.E2EKTLeaf("owner-delete", sn, at, beAt(301), ed25519.Sign(k1, DeleteMessage(sn, at.Unix()+301))),
+		state.E2EKTLeaf("owner-delete", sn, at, beAt(1), ed25519.Sign(k1, DeleteMessage(sn, at.Unix()+1))),
 	}
 	require.Len(t, sharedKTVectors, len(built))
 	for i, l := range built {

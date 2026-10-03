@@ -32,6 +32,7 @@ package e2e
 import (
 	"crypto/ed25519"
 	"encoding/binary"
+	"time"
 
 	"github.com/mk6i/open-oscar-server/state"
 )
@@ -79,6 +80,15 @@ func OneTimeKeyMessage(screenName state.IdentScreenName, deviceID uint32, keyID 
 func FallbackKeyMessage(screenName state.IdentScreenName, deviceID uint32, keyID string, key []byte) []byte {
 	return signedMessage("fallback-key", screenName, deviceIDBytes(deviceID), []byte(keyID), key)
 }
+
+// OwnerSignatureWindow is how far the issued_at of an owner's signed revoke
+// or delete may sit from the time it is committed, either way: the handler
+// takes the request only that close to its own clock, and the auditor (and
+// the add-on's replay, kt::OWNER_SIGNATURE_WINDOW) refuse an owner-revoke or
+// owner-delete leaf whose issued_at is further from the leaf's own time - a
+// server cannot log an old signature it kept (third audit of 2026-10,
+// finding 3).
+const OwnerSignatureWindow = 5 * time.Minute
 
 // RevokeMessage is what the account key signs to revoke one of its devices,
 // with the time the request was made (Unix seconds): the server takes it

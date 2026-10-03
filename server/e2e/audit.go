@@ -42,6 +42,9 @@ import (
 //     the new key, which the rotation (signed by the old key) cut off anyway;
 //   - owner-delete: the account key's signature over the delete message; the
 //     delete comes next;
+//   - owner-revoke and owner-delete alike: issued within OwnerSignatureWindow
+//     of the entry's own time, and an owner's signed action at most once in
+//     the log (third audit of 2026-10, finding 3);
 //   - recovery-delete: an account that has a key; the delete comes next;
 //   - delete: right after its owner-delete or recovery-delete.
 //
@@ -68,6 +71,9 @@ type AuditState struct {
 	// Deleted are the accounts the operator deleted without the owner's key,
 	// with why, until a new key is published for them.
 	Deleted map[string]string `json:"deleted,omitempty"`
+	// OwnerUsed are the owner's signed actions the log has carried
+	// (ownerActionID): none is taken twice.
+	OwnerUsed map[string]bool `json:"owner_used,omitempty"`
 	// Violation, once set, is why the auditor no longer cosigns.
 	Violation string `json:"violation,omitempty"`
 }
@@ -171,6 +177,7 @@ func (s *AuditState) apply(index int64, leaf []byte) (string, error) {
 		return "", violation("entry %d is not a log entry", index)
 	}
 	kind, sn, args := string(f[0]), state.NewIdentScreenName(string(f[1])), f[3:]
+	leafTime := int64(binary.BigEndian.Uint64(f[2]))
 	if s.Accounts == nil {
 		s.Accounts = map[string]*auditAccount{}
 	}
@@ -276,8 +283,12 @@ func (s *AuditState) apply(index int64, leaf []byte) (string, error) {
 		if acc.Devices[d] == nil {
 			return "", bad("no such active device")
 		}
-		if !verify(acc.Key, RevokeMessage(sn, d, int64(binary.BigEndian.Uint64(args[1]))), args[2]) {
+		issued := int64(binary.BigEndian.Uint64(args[1]))
+		if !verify(acc.Key, RevokeMessage(sn, d, issued), args[2]) {
 			return "", bad("the revoke is not signed by the account key")
+		}
+		if why := s.ownerAction(kind, sn.String(), d, issued, leafTime); why != "" {
+			return "", bad(why)
 		}
 		s.Pending = &auditPending{Kind: state.E2EKTRevoke, Account: sn.String(), Device: d, From: kind}
 	case state.E2EKTRecoveryRevoke:
@@ -307,8 +318,12 @@ func (s *AuditState) apply(index int64, leaf []byte) (string, error) {
 		if acc == nil || len(args) != 2 || len(args[0]) != 8 {
 			return "", bad("not an owner's delete")
 		}
-		if !verify(acc.Key, DeleteMessage(sn, int64(binary.BigEndian.Uint64(args[0]))), args[1]) {
+		issued := int64(binary.BigEndian.Uint64(args[0]))
+		if !verify(acc.Key, DeleteMessage(sn, issued), args[1]) {
 			return "", bad("the delete is not signed by the account key")
+		}
+		if why := s.ownerAction(kind, sn.String(), 0, issued, leafTime); why != "" {
+			return "", bad(why)
 		}
 		s.Pending = &auditPending{Kind: state.E2EKTDelete, Account: sn.String(), From: kind}
 	case state.E2EKTRecoveryDelete:
@@ -333,6 +348,32 @@ func (s *AuditState) apply(index int64, leaf []byte) (string, error) {
 		return "", bad("unknown kind")
 	}
 	return recovered, nil
+}
+
+// ownerActionID names one owner's signed action by the message it signs: the
+// kind, the account, the device (0 for a delete) and when it was issued. The
+// add-on's replay names it the same way (kt::owner_action_id).
+func ownerActionID(kind, account string, device uint32, issuedAt int64) string {
+	return fmt.Sprintf("%s|%s|%d|%d", kind, account, device, issuedAt)
+}
+
+// ownerAction holds an owner's signed action to what the handler asked of
+// the request: issued within OwnerSignatureWindow of the entry's own time,
+// and never carried by the log before. It records the action as used.
+func (s *AuditState) ownerAction(kind, account string, device uint32, issuedAt, leafTime int64) string {
+	window := int64(OwnerSignatureWindow / time.Second)
+	if issuedAt < leafTime-window || issuedAt > leafTime+window {
+		return fmt.Sprintf("the %s was issued at %d, not within %d s of its entry (%d)", kind, issuedAt, window, leafTime)
+	}
+	id := ownerActionID(kind, account, device, issuedAt)
+	if s.OwnerUsed[id] {
+		return fmt.Sprintf("the %s signed at %d is in the log a second time", kind, issuedAt)
+	}
+	if s.OwnerUsed == nil {
+		s.OwnerUsed = map[string]bool{}
+	}
+	s.OwnerUsed[id] = true
+	return ""
 }
 
 func firstArg(args [][]byte) []byte {
