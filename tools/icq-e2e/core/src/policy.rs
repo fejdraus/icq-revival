@@ -497,11 +497,12 @@ pub fn unauthenticated_action_note(peer: &str, what: &str, why: &str) -> String 
     let why = why.trim_end_matches('.');
     let (a, done) = match what {
         "call" => ("A call", "was not put through"),
+        "call answer" => ("An answer to your call", "was not put through"),
         "file transfer" => ("A file transfer", "was not shown"),
         _ => ("A tZer", "was not shown"),
     };
     format!(
-        "{PREFIX}WARNING: {a} in {peer}'s name {done}: it came without the announcement {peer}'s add-on sends over the encrypted session first, so it is not end-to-end authenticated ({why}). The server or the network can make such a {what}. If {peer} really sent it, their add-on is missing, older, or has this switched off; typing /e2e off here lets such things through again."
+        "{PREFIX}WARNING: {a} in {peer}'s name {done}: it came without the announcement {peer}'s add-on sends over the encrypted session first, or not as announced, or too late, so it is not end-to-end authenticated ({why}). The server or the network can make such a {what}. If {peer} really sent it, their add-on is missing, older, or has this switched off; typing /e2e off here lets such things through again."
     )
 }
 

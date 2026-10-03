@@ -1364,18 +1364,18 @@ mod tests {
         let ok = sdp_msg("SIP/2.0 200 OK", call, pb);
         let (mut a, mut b) = (lock(a), lock(b));
         for p in a.sip(Direction::Outbound, "100002", &inv, info, &mut ga, 0) {
-            b.control("100001", 1, Msg::decode(&p).unwrap(), 0);
+            b.control("100001", 1, Msg::decode(&p).unwrap(), 0, 0);
         }
         b.sip(Direction::Inbound, "100001", &inv, info, &mut gb, 0);
         for p in b.sip(Direction::Outbound, "100001", &ok, info, &mut gb, 0) {
-            a.control("100002", 2, Msg::decode(&p).unwrap(), 0);
+            a.control("100002", 2, Msg::decode(&p).unwrap(), 0, 0);
         }
         a.sip(Direction::Inbound, "100002", &ok, info, &mut ga, 0);
         let ack = sip(format!(
             "ACK sip:x SIP/2.0\r\nCall-ID: {call}\r\nCSeq: 1 ACK\r\n\r\n"
         ));
         for p in a.sip(Direction::Outbound, "100002", &ack, info, &mut ga, 0) {
-            b.control("100001", 1, Msg::decode(&p).unwrap(), 0);
+            b.control("100001", 1, Msg::decode(&p).unwrap(), 0, 0);
         }
         assert_eq!(a.state_of(call), Some("agreed"));
         assert_eq!(b.state_of(call), Some("agreed"));

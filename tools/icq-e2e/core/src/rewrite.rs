@@ -811,9 +811,9 @@ fn plain_in(
 ) -> Processed {
     // A tZer, in either form: shown in a protected contact's name only when
     // their add-on announced it (sixth audit of 2026-10, finding 4).
-    if let Some((peer, doc)) = tzer_of(kind, body) {
+    if let Some((peer, doc, exact)) = tzer_form_of(kind, body) {
         return tzer_in(
-            kind, payload, header_len, body, &peer, &doc, crypto, now, server, p,
+            kind, payload, header_len, body, &peer, &doc, exact, crypto, now, server, p,
         );
     }
     // An authorization event carries the contact's text too (finding 2).
@@ -996,6 +996,13 @@ fn auth_in(
 /// message with the tZer mark, or a channel-2 tZer plugin message
 /// ([`crate::tzer`]). Both directions.
 fn tzer_of(kind: Kind, body: &[u8]) -> Option<(String, String)> {
+    tzer_form_of(kind, body).map(|(peer, doc, _)| (peer, doc))
+}
+
+/// [`tzer_of`], and whether the tZer carries nothing but its document
+/// ([`crate::tzer::ch1_exact`], [`crate::tzer::plugin_exact`]; seventh audit
+/// of 2026-10).
+fn tzer_form_of(kind: Kind, body: &[u8]) -> Option<(String, String, bool)> {
     if !matches!(kind, Kind::ToClient | Kind::ToHost) {
         return None;
     }
@@ -1004,14 +1011,21 @@ fn tzer_of(kind: Kind, body: &[u8]) -> Option<(String, String)> {
     let n = *body.get(10)? as usize;
     let peer = String::from_utf8_lossy(body.get(11..11 + n)?).into_owned();
     let tlvs = snac::read_tlvs(&body[head..]);
-    let doc = match channel {
-        icbm::CHANNEL_IM => crate::tzer::ch1_doc(snac::find_tlv(&tlvs, icbm::TLV_AOL_IM_DATA)?)?,
+    let (doc, exact) = match channel {
+        icbm::CHANNEL_IM => {
+            let frags = snac::find_tlv(&tlvs, icbm::TLV_AOL_IM_DATA)?;
+            (crate::tzer::ch1_doc(frags)?, crate::tzer::ch1_exact(frags))
+        }
         icbm::CHANNEL_RENDEZVOUS => {
-            crate::tzer::plugin_doc(snac::find_tlv(&tlvs, icbm::TLV_RENDEZVOUS_DATA)?)?
+            let data = snac::find_tlv(&tlvs, icbm::TLV_RENDEZVOUS_DATA)?;
+            (
+                crate::tzer::plugin_doc(data)?,
+                crate::tzer::plugin_exact(data),
+            )
         }
         _ => return None,
     };
-    (!peer.is_empty()).then_some((peer, doc))
+    (!peer.is_empty()).then_some((peer, doc, exact))
 }
 
 /// An inbound tZer (sixth audit of 2026-10, finding 4). From a contact who
@@ -1028,6 +1042,7 @@ fn tzer_in(
     body: &[u8],
     peer: &str,
     doc: &str,
+    exact: bool,
     crypto: &mut dyn Crypto,
     now: u64,
     server: Option<&str>,
@@ -1042,7 +1057,9 @@ fn tzer_in(
         peer: peer.to_string(),
         hash: crate::tzer::doc_hash(doc),
     };
-    let known = server.is_some_and(|srv| crate::tzer::served_doc(doc, srv));
+    // The notice vouches for the document only, so the tZer must carry
+    // nothing else (seventh audit of 2026-10).
+    let known = exact && server.is_some_and(|srv| crate::tzer::served_doc(doc, srv));
     if known && crypto.authenticated(&action, true, now) {
         p.lines.push(format!(
             "IN  peer={peer} tZer: announced by the contact's add-on, shown"

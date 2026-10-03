@@ -70,6 +70,19 @@ The plan is `docs/e2e/STAGE-3-CLIENT-CRYPTO.md`, the design is
   name keeps its place but shows the add-on's words instead of its text. A
   profile, away message or status text that starts like a note is shown
   with `(from <uin>)` in front.
+- An announcement vouches for exactly what it names, once and only while
+  it is fresh (seventh audit): a call's key offer for the INVITE with that
+  Call-ID and that SDP, a re-INVITE only with an SDP the caller's add-on
+  announced, the 200 OK of an encrypted call only with the SDP the callee's
+  key answer bound; a file offer for the proposal with that cookie and that
+  digest (address, port, proxy, stage, file count, size, name, invitation),
+  a counter-proposal only as announced; a tZer only with nothing beside its
+  document. Each is good for 2 minutes from when the sender's add-on wrote
+  it, by the sender's clock (the authenticated time of its Olm envelope),
+  not from when it arrived. A Call-ID or cookie that ended, or whose
+  action was refused, vouches for nothing again. A BYE, CANCEL or error
+  answer from the network never turns an encrypted call plain: its keys
+  stay while its media goes on.
 
 ## Two jobs, two rows
 
@@ -721,7 +734,11 @@ never touched.
   of a file (ICBM channel 2, `CapFileTransfer`) to a contact with E2E keys,
   the add-on first puts a hidden control message in the E2E session: `IQF1
   offer {cookie, device, device key, ephemeral X25519 key, a random 32-byte
-  transfer secret, suites}`. The receiver's add-on, at that proposal, derives
+  transfer secret, suites, proposal digest}` (the digest since the seventh
+  audit: SHA-256 over the proposal's type, cookie, capability and TLVs but the
+  requester and verified addresses the server rewrites, `files::rdv_digest`).
+  Every later proposal of the transfer, either side's, is announced first as
+  `IQF1 proposal {cookie, digest}`. The receiver's add-on, at that proposal, derives
   the keys and puts its answer (device, device key, ephemeral key, suite)
   before its next ICBM to the sender (its accept, or its counter-proposal);
   or a decline (`/e2e off` for that chat, no keys). An add-on without file

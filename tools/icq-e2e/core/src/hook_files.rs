@@ -1060,12 +1060,19 @@ mod tests {
         let ra = rdv(Direction::Outbound, B, cookie, 1, a_port, false);
         a.observe(&ra, 0);
         let offer = a.icbm(&ra, PeerInfo::default(), &mut || Ok(me(A, 1, 1)), 0);
+        let rb = rdv(Direction::Inbound, A, cookie, 1, b_port, false);
         if agree {
             for p in offer {
-                b.control(A, 1, Msg::decode(&p).unwrap(), 0);
+                // B's copy names another port (the relay of these tests
+                // stands in for the network); the offer binds the proposal
+                // B is meant to see, as A's real one would.
+                let mut m = Msg::decode(&p).unwrap();
+                if let Msg::Offer { digest, .. } = &mut m {
+                    *digest = Some(rb.digest);
+                }
+                b.control(A, 1, m, 0, 0);
             }
         }
-        let rb = rdv(Direction::Inbound, A, cookie, 1, b_port, false);
         b.observe(&rb, 0);
         b.icbm(&rb, PeerInfo::default(), &mut || Ok(me(B, 2, 2)), 0);
         if agree && answered {
@@ -1075,7 +1082,7 @@ mod tests {
             )
             .unwrap();
             for p in b.icbm(&acc, PeerInfo::default(), &mut || Ok(me(B, 2, 2)), 0) {
-                a.control(B, 2, Msg::decode(&p).unwrap(), 0);
+                a.control(B, 2, Msg::decode(&p).unwrap(), 0, 0);
             }
         }
     }

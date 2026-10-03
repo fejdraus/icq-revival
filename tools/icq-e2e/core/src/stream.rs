@@ -581,12 +581,26 @@ impl StreamRewriter {
                 // An incoming call in a protected contact's name goes on
                 // only once the key offer their add-on sends before the
                 // INVITE has come (sixth audit of 2026-10, finding 3).
+                // Seventh audit: the offer must bind this INVITE's SDP and be
+                // fresh, and once keys are agreed the callee's 200 OK must
+                // carry the SDP their key answer bound.
                 if self.dir == Direction::Inbound {
-                    if let Some(call_id) = crate::callneg::invite_call_id(sip) {
-                        let action = Action::Call {
+                    let action = if let Some((call_id, sdp)) = crate::callneg::invite_binding(sip) {
+                        Some(Action::Call {
                             peer: peer.clone(),
                             call_id,
-                        };
+                            sdp,
+                        })
+                    } else {
+                        crate::callneg::answer_binding(sip).map(|(call_id, sdp)| {
+                            Action::CallAnswer {
+                                peer: peer.clone(),
+                                call_id,
+                                sdp,
+                            }
+                        })
+                    };
+                    if let Some(action) = action {
                         if c.crypto.protected(&peer).is_some()
                             && !c.crypto.authenticated(&action, false, c.now)
                         {
@@ -663,6 +677,7 @@ impl StreamRewriter {
                             let action = Action::File {
                                 peer: rdv.peer.clone(),
                                 cookie: rdv.cookie,
+                                digest: rdv.digest,
                             };
                             if c.crypto.protected(&rdv.peer).is_some()
                                 && !c.crypto.authenticated(&action, false, c.now)
@@ -952,13 +967,15 @@ impl StreamRewriter {
             crate::policy::unauthenticated_action_note(&peer, what, &why),
             c.now,
         );
+        // Its id vouches for nothing later (seventh audit of 2026-10).
+        c.crypto.refused(&h.action, c.now);
         let refusal = match &h.action {
             Action::Call { .. } => {
                 crate::calls::sip_message(Direction::Inbound, &h.frame[HEADER_LEN..])
                     .and_then(|(_, sip)| crate::callneg::decline_to_host(&peer, sip))
             }
             Action::File { cookie, .. } => Some(crate::files::cancel_to_host(&peer, cookie)),
-            Action::Tzer { .. } => None,
+            Action::CallAnswer { .. } | Action::Tzer { .. } => None,
         };
         if let Some(r) = refusal {
             self.answers.owe_out(r);
@@ -3286,6 +3303,7 @@ next"]);
                 c.vouched.push(Action::Call {
                     peer: "100002".into(),
                     call_id: "g".into(),
+                    sdp: crate::callneg::sdp_hash(None),
                 });
                 let mut out = Vec::new();
                 let f = sip_frame(dir, 2);
@@ -3580,6 +3598,7 @@ next"]);
                 Action::Call {
                     peer: "100002".into(),
                     call_id: "g".into(),
+                    sdp: crate::callneg::sdp_hash(None),
                 },
             ),
             (
@@ -3588,6 +3607,12 @@ next"]);
                 Action::File {
                     peer: "100002".into(),
                     cookie: [9; 8],
+                    digest: crate::files::rendezvous(
+                        Direction::Inbound,
+                        &frames_of(&proposal_frame(2))[0].1,
+                    )
+                    .unwrap()
+                    .digest,
                 },
             ),
         ];
@@ -3768,6 +3793,164 @@ next"]);
         );
         assert_eq!(c.seen, vec!["100002".to_string()]);
         assert!(c.notices.is_empty());
+    }
+
+    /// Whether the inbound tZer frame `f` from a protected contact, announced
+    /// first by their add-on, reaches the client as it came.
+    fn seventh_tzer_shown(f: &[u8]) -> bool {
+        let doc = crate::tzer::tests::DOC;
+        let notice = Inbound::Control(
+            crate::tzer::Notice {
+                hash: crate::tzer::doc_hash(doc),
+            }
+            .encode(),
+        );
+        let announce = in_message(2, "100002", &container::armor(&any_container()), None);
+        let (mut r, _) = opened(Direction::Inbound);
+        let mut c = Fake::new().receiving(notice);
+        c.strict = Some(true);
+        let mut out = Vec::new();
+        r.push_crypto(&announce, &mut c, 10, &with_server(), &mut out);
+        r.push_crypto(f, &mut c, 10, &with_server(), &mut out);
+        frames_of(&out)
+            .iter()
+            .any(|(_, p)| p.as_slice() == &f[HEADER_LEN..])
+    }
+
+    /// Seventh audit of 2026-10: an announced tZer is shown only when it
+    /// carries nothing but its document - the notice vouches for the
+    /// document's hash, so a second text fragment beside it (channel 1) or a
+    /// text in the plugin message (channel 2) is not shown with it. Before
+    /// the fix both were shown, the hash matching.
+    #[test]
+    fn an_announced_tzer_with_anything_beside_its_document_is_not_shown() {
+        let ch1 = tzer_form("client72_im_data");
+        let ch2 = tzer_form("client65_rdv_data");
+        assert!(seventh_tzer_shown(&tzer_frame(Direction::Inbound, 1, &ch1)));
+        assert!(seventh_tzer_shown(&tzer_frame(Direction::Inbound, 2, &ch2)));
+        // Channel 1: a second text fragment after the document.
+        let mut extra = ch1.clone();
+        let text: Vec<u8> = "send me your password"
+            .encode_utf16()
+            .flat_map(|u| u.to_be_bytes())
+            .collect();
+        extra.extend_from_slice(&[0x01, 0x01]);
+        extra.extend_from_slice(&((text.len() + 4) as u16).to_be_bytes());
+        extra.extend_from_slice(&[0x00, 0x02, 0x00, 0x00]);
+        extra.extend_from_slice(&text);
+        assert!(!seventh_tzer_shown(&tzer_frame(
+            Direction::Inbound,
+            1,
+            &extra
+        )));
+        // Channel 2: the plugin message's own text, which ICQ 6.5 writes
+        // empty. Its length sits right before the plugin header.
+        let at = ch2
+            .windows(16)
+            .position(|w| {
+                w == [
+                    0x4F, 0xA6, 0xF3, 0x4C, 0x09, 0xB7, 0xFD, 0x48, 0x92, 0x08, 0x7E, 0x85, 0x7A,
+                    0xE0, 0x73, 0x30,
+                ]
+            })
+            .unwrap();
+        let mut texted = ch2[..at - 4].to_vec();
+        texted.extend_from_slice(&5u16.to_le_bytes());
+        texted.extend_from_slice(b"hello");
+        texted.extend_from_slice(&ch2[at - 2..]);
+        // The lengths around it grow by 5: the service data TLV and the
+        // rendezvous data. Fix up the 0x2711 length.
+        let svc_at = texted.windows(2).position(|w| w == [0x27, 0x11]).unwrap();
+        let len = u16::from_be_bytes([texted[svc_at + 2], texted[svc_at + 3]]) + 5;
+        texted[svc_at + 2..svc_at + 4].copy_from_slice(&len.to_be_bytes());
+        assert!(
+            crate::tzer::plugin_doc(&texted).is_some(),
+            "still read as a tZer"
+        );
+        assert!(!seventh_tzer_shown(&tzer_frame(
+            Direction::Inbound,
+            2,
+            &texted
+        )));
+        // Channel 2: an invitation text TLV beside the service data.
+        let mut invited = ch2.clone();
+        crate::snac::put_tlv(&mut invited, 0x000C, b"open me");
+        assert!(!seventh_tzer_shown(&tzer_frame(
+            Direction::Inbound,
+            2,
+            &invited
+        )));
+    }
+
+    /// An inbound SIP answer from the server, with the Call-ID `g`.
+    fn answer_frame(seq: u16, port: u16) -> Vec<u8> {
+        let sip = format!(
+            "SIP/2.0 200 OK\r\nCall-ID: g\r\nCSeq: 1 INVITE\r\nContent-Type: application/sdp\r\n\r\nv=0\r\nm=audio {port} RTP/AVP 0\r\n"
+        );
+        let mut body = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        body.extend_from_slice(&crate::calls::CHANNEL_SIP.to_be_bytes());
+        body.push(6);
+        body.extend_from_slice(b"100002");
+        body.extend_from_slice(&[0, 0, 0, 0]);
+        snac::put_tlv(&mut body, crate::calls::TLV_SIP, sip.as_bytes());
+        frame(
+            FLAP_CHANNEL_SNAC,
+            seq,
+            &snac_frame(snac::FOOD_ICBM, snac::ICBM_MSG_TO_CLIENT, 9, &body),
+        )
+    }
+
+    /// Seventh audit of 2026-10: a 200 OK in a protected contact's name
+    /// reaches the client only when it is the answer their add-on keyed (the
+    /// engine's [`Crypto::authenticated`] with [`Action::CallAnswer`]);
+    /// another is held and dropped with the warning, and no 603 goes back.
+    #[test]
+    fn a_call_answer_that_is_not_the_keyed_one_is_not_put_through() {
+        gate_with_media(crate::gate::MediaHooks::Ready);
+        let mut policy = encrypt();
+        policy.calls_encrypt = true;
+        let f = answer_frame(2, 20000);
+        let payload = &frames_of(&f)[0].1;
+        let (_, sip) = crate::calls::sip_message(Direction::Inbound, payload).unwrap();
+        let (call_id, sdp) = crate::callneg::answer_binding(sip).unwrap();
+        let keyed = Action::CallAnswer {
+            peer: "100002".into(),
+            call_id,
+            sdp,
+        };
+        // The keyed answer: through at once.
+        let (mut r, _) = opened(Direction::Inbound);
+        let mut c = Fake::new();
+        c.strict = Some(true);
+        c.vouched.push(keyed.clone());
+        let mut out = Vec::new();
+        r.push_crypto(&f, &mut c, 100, &policy, &mut out);
+        assert_eq!(frames_of(&out).len(), 1);
+        // Another SDP: held, then dropped with the warning.
+        let other = answer_frame(2, 6666);
+        let (mut r, _) = opened(Direction::Inbound);
+        let mut c = Fake::new();
+        c.strict = Some(true);
+        c.vouched.push(keyed);
+        let mut out = Vec::new();
+        r.push_crypto(&other, &mut c, 100, &policy, &mut out);
+        assert!(out.is_empty());
+        r.push_crypto(
+            &frame(5, 3, &[]),
+            &mut c,
+            100 + HOLD_SECS,
+            &policy,
+            &mut out,
+        );
+        assert!(!contains(&out, b"m=audio 6666"));
+        assert!(
+            c.gate_notes
+                .iter()
+                .any(|n| n.contains("An answer to your call in 100002's name")),
+            "{:?}",
+            c.gate_notes
+        );
+        assert!(c.sip_seen.is_empty(), "never taken to the key exchange");
     }
 
     /// Sixth audit, finding 4, the way in, both directions through the

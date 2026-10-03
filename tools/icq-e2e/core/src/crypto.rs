@@ -134,6 +134,13 @@ pub trait Crypto {
         false
     }
 
+    /// `action` was held for its announcement and given up: nothing may
+    /// vouch for its id later - not a late offer, not a delayed one (seventh
+    /// audit of 2026-10). Nothing by default.
+    fn refused(&mut self, action: &Action, now: u64) {
+        let _ = (action, now);
+    }
+
     /// The control container that announces a tZer with document hash
     /// `hash` to `peer` (`IQT1`, [`crate::tzer::Notice`]), sent just before
     /// the tZer itself; `None` when there is no session to send it over.
@@ -181,15 +188,53 @@ pub trait Crypto {
     }
 }
 
+/// How old an announcement (`IQC1`, `IQF1`, `IQT1`) may be, by its sender's
+/// clock, and still vouch for an action (seventh audit of 2026-10), in
+/// seconds. The sender's time is the authenticated `time` of the Olm
+/// envelope the announcement came in, which the server cannot change; the
+/// envelope check alone lets a message be up to
+/// [`crate::keys::TIME_SKEW_PAST`] (14 days) old, for offline messages.
+pub const ANNOUNCE_MAX_AGE: u64 = 120;
+/// How far an announcement's sender's clock may be ahead of ours.
+pub const ANNOUNCE_MAX_AHEAD: u64 = 60;
+
+/// Whether an announcement written at `sent` by its sender's clock is fresh
+/// at `now` by ours (both seconds): less than [`ANNOUNCE_MAX_AGE`] old and at
+/// most [`ANNOUNCE_MAX_AHEAD`] in the future. A server that holds a genuine
+/// announcement back can present it later only within this window.
+pub fn announcement_fresh(sent: u64, now: u64) -> bool {
+    sent <= now.saturating_add(ANNOUNCE_MAX_AHEAD) && now.saturating_sub(sent) < ANNOUNCE_MAX_AGE
+}
+
 /// Something a contact does that is not a message, which the client shows as
 /// theirs and which their add-on announces over the Olm session before it
-/// happens (sixth audit of 2026-10, findings 3 and 4).
+/// happens (sixth audit of 2026-10, findings 3 and 4). Since the seventh
+/// audit each one names everything its announcement binds: the contact,
+/// the action's id, and a digest of the signalling as the client will act
+/// on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
-    /// An incoming call: the INVITE with this Call-ID.
-    Call { peer: String, call_id: String },
-    /// A file proposal with this rendezvous cookie.
-    File { peer: String, cookie: [u8; 8] },
+    /// An incoming call: the INVITE with this Call-ID and an SDP hashing to
+    /// `sdp` ([`crate::callneg::sdp_hash`]).
+    Call {
+        peer: String,
+        call_id: String,
+        sdp: [u8; 16],
+    },
+    /// A success answer to our INVITE with this Call-ID and SDP hash: the
+    /// one the callee's key answer bound, once keys are agreed.
+    CallAnswer {
+        peer: String,
+        call_id: String,
+        sdp: [u8; 16],
+    },
+    /// A file proposal with this rendezvous cookie and canonical digest
+    /// ([`crate::files::Rendezvous::digest`]).
+    File {
+        peer: String,
+        cookie: [u8; 8],
+        digest: [u8; 16],
+    },
     /// A tZer whose document hashes to this ([`crate::tzer::doc_hash`]).
     Tzer { peer: String, hash: [u8; 16] },
 }
@@ -198,9 +243,10 @@ impl Action {
     /// Whose action it is said to be.
     pub fn peer(&self) -> &str {
         match self {
-            Action::Call { peer, .. } | Action::File { peer, .. } | Action::Tzer { peer, .. } => {
-                peer
-            }
+            Action::Call { peer, .. }
+            | Action::CallAnswer { peer, .. }
+            | Action::File { peer, .. }
+            | Action::Tzer { peer, .. } => peer,
         }
     }
 
@@ -208,6 +254,7 @@ impl Action {
     pub fn what(&self) -> &'static str {
         match self {
             Action::Call { .. } => "call",
+            Action::CallAnswer { .. } => "call answer",
             Action::File { .. } => "file transfer",
             Action::Tzer { .. } => "tZer",
         }
@@ -804,7 +851,9 @@ pub struct Engine {
     /// other things kept from the client ([`unauthenticated_note`]).
     plain_said: HashMap<String, u64>,
     /// tZers announced by their senders' add-ons (`IQT1`), not yet seen:
-    /// the contact, the document's hash, when ([`crate::tzer::Notice`]).
+    /// the contact, the document's hash, and when the sender wrote it by
+    /// its own clock ([`crate::tzer::Notice`]); each vouches for one tZer
+    /// while [`announcement_fresh`] (seventh audit of 2026-10).
     tzer_notices: Vec<(String, [u8; 16], u64)>,
 }
 
@@ -2296,17 +2345,22 @@ impl Crypto for Engine {
                 return Inbound::Unreadable(self.not_saved(peer, &why, false));
             }
         }
+        // When the sender wrote it, by the sender's clock: an announcement
+        // vouches only while that is fresh (seventh audit of 2026-10).
+        let sent = self.keys.last_sent_at;
         // A tZer's announcement (sixth audit of 2026-10, finding 4): kept
         // for the tZer that follows it, whatever calls and files do.
         if let Inbound::Control(payload) = &got {
             if let Some(n) = crate::tzer::Notice::decode(payload) {
                 let p = sign::ident(peer);
                 self.tzer_notices
-                    .retain(|(_, _, at)| now.saturating_sub(*at) < crate::tzer::NOTICE_TTL);
-                if self.tzer_notices.len() >= crate::tzer::MAX_NOTICES {
-                    self.tzer_notices.remove(0);
+                    .retain(|(_, _, at)| announcement_fresh(*at, now));
+                if announcement_fresh(sent, now) {
+                    if self.tzer_notices.len() >= crate::tzer::MAX_NOTICES {
+                        self.tzer_notices.remove(0);
+                    }
+                    self.tzer_notices.push((p, n.hash, sent));
                 }
-                self.tzer_notices.push((p, n.hash, now));
                 self.remember(peer, |r| r.seen_encrypting = true);
                 return got;
             }
@@ -2319,7 +2373,13 @@ impl Crypto for Engine {
             if let Inbound::Control(payload) = &got {
                 if let Some(msg) = crate::callneg::Msg::decode(payload) {
                     let table = self.calls.clone();
-                    lock_calls(&table).control(peer, container.sender_device, msg, now * 1000);
+                    lock_calls(&table).control(
+                        peer,
+                        container.sender_device,
+                        msg,
+                        sent,
+                        now * 1000,
+                    );
                     self.remember(peer, |r| r.seen_encrypting = true);
                     return got;
                 }
@@ -2334,7 +2394,8 @@ impl Crypto for Engine {
                         peer,
                         container.sender_device,
                         msg,
-                        crate::filesneg::now_ms(),
+                        sent,
+                        now * 1000,
                     );
                     self.remember(peer, |r| r.seen_encrypting = true);
                     return got;
@@ -2511,17 +2572,29 @@ impl Crypto for Engine {
         if self.locked_out.is_some() {
             return false;
         }
+        // Seventh audit of 2026-10: the contact, the action's id, the digest
+        // of its signalling and a fresh sender's time - never "the id is in
+        // a table".
         match action {
-            Action::Call { peer, call_id } => {
-                self.calls_encrypt && lock_calls(&self.calls).vouched(peer, call_id)
+            Action::Call { peer, call_id, sdp } => {
+                self.calls_encrypt
+                    && lock_calls(&self.calls).vouched(peer, call_id, sdp, now * 1000)
             }
-            Action::File { peer, cookie } => {
-                self.files_encrypt && crate::filesneg::lock(&self.files).vouched(peer, cookie)
+            Action::CallAnswer { peer, call_id, sdp } => {
+                !self.calls_encrypt || lock_calls(&self.calls).answer_vouched(peer, call_id, sdp)
+            }
+            Action::File {
+                peer,
+                cookie,
+                digest,
+            } => {
+                self.files_encrypt
+                    && crate::filesneg::lock(&self.files).vouched(peer, cookie, digest, now * 1000)
             }
             Action::Tzer { peer, hash } => {
                 let p = sign::ident(peer);
-                let at = self.tzer_notices.iter().position(|(who, h, at)| {
-                    *who == p && h == hash && now.saturating_sub(*at) < crate::tzer::NOTICE_TTL
+                let at = self.tzer_notices.iter().position(|(who, h, sent)| {
+                    *who == p && h == hash && announcement_fresh(*sent, now)
                 });
                 match at {
                     Some(i) => {
@@ -2533,6 +2606,16 @@ impl Crypto for Engine {
                     None => false,
                 }
             }
+        }
+    }
+
+    fn refused(&mut self, action: &Action, now: u64) {
+        match action {
+            Action::Call { call_id, .. } => lock_calls(&self.calls).refuse(call_id, now * 1000),
+            Action::File { cookie, .. } => {
+                crate::filesneg::lock(&self.files).refuse(cookie, now * 1000)
+            }
+            Action::CallAnswer { .. } | Action::Tzer { .. } => {}
         }
     }
 
@@ -2595,7 +2678,7 @@ impl Crypto for Engine {
         let payloads = {
             let mut t = crate::filesneg::lock(&table);
             let mut me = || self.call_me(&peer, now);
-            t.icbm(rdv, info, &mut me, crate::filesneg::now_ms())
+            t.icbm(rdv, info, &mut me, now * 1000)
         };
         let mut out = Vec::new();
         for p in payloads {
@@ -5484,10 +5567,12 @@ mod tests {
         let call = Action::Call {
             peer: "100001".into(),
             call_id: "six-call".into(),
+            sdp: crate::callneg::sdp_hash(None),
         };
         let file = Action::File {
             peer: "100001".into(),
             cookie: FILE_COOKIE,
+            digest: file_rdv(Direction::Inbound, "100001", crate::files::RDV_PROPOSE).digest,
         };
         let hash = crate::tzer::doc_hash(crate::tzer::tests::DOC);
         let tzer = Action::Tzer {
@@ -5513,6 +5598,7 @@ mod tests {
         let other_call = Action::Call {
             peer: "100001".into(),
             call_id: "another".into(),
+            sdp: crate::callneg::sdp_hash(None),
         };
         assert!(!eb.authenticated(&other_call, false, NOW));
 
@@ -5549,5 +5635,304 @@ mod tests {
         let notice = ea.tzer_notice("100002", hash, NOW).expect("a session");
         hand(&mut eb, "100001", vec![notice]);
         assert!(!eb.authenticated(&tzer, true, NOW + crate::tzer::NOTICE_TTL));
+    }
+
+    // ---- seventh audit of 2026-10: binding, freshness, replay ----
+
+    /// [`hand`] at another time than `NOW`: what the server can do by
+    /// holding a container back.
+    fn hand_at(to: &mut Engine, from: &str, containers: Vec<Vec<u8>>, now: u64) -> Vec<Inbound> {
+        containers
+            .iter()
+            .map(|c| to.inbound(from, &container::Container::from_bytes(c).unwrap(), now))
+            .collect()
+    }
+
+    /// Two engines with calls and files on, each with a table of its own;
+    /// B's tables are returned to look into.
+    #[allow(clippy::type_complexity)]
+    fn seventh_pair() -> (
+        Engine,
+        Engine,
+        Arc<std::sync::Mutex<crate::callneg::CallTable>>,
+        Arc<std::sync::Mutex<crate::filesneg::FileTable>>,
+    ) {
+        let (dir, a, b) = two_published();
+        let mut ea = running(&dir, a);
+        let mut eb = running(&dir, b);
+        let (tb, fb): (
+            Arc<std::sync::Mutex<crate::callneg::CallTable>>,
+            Arc<std::sync::Mutex<crate::filesneg::FileTable>>,
+        ) = Default::default();
+        ea.use_call_table(Default::default());
+        ea.use_file_table(Default::default());
+        eb.use_call_table(tb.clone());
+        eb.use_file_table(fb.clone());
+        for e in [&mut ea, &mut eb] {
+            e.set_calls_encrypt(true);
+            e.set_files_encrypt(true);
+        }
+        (ea, eb, tb, fb)
+    }
+
+    const SDP_H1: &[u8] = b"INVITE sip:100002@h SIP/2.0\r\nCall-ID: X\r\nCSeq: 1 INVITE\r\nContent-Type: application/sdp\r\n\r\nv=0\r\nc=IN IP4 10.0.0.1\r\nm=audio 4000 RTP/AVP 0\r\n";
+    const SDP_H2: &[u8] = b"INVITE sip:100002@h SIP/2.0\r\nCall-ID: X\r\nCSeq: 1 INVITE\r\nContent-Type: application/sdp\r\n\r\nv=0\r\nc=IN IP4 203.0.113.66\r\nm=audio 6666 RTP/AVP 0\r\n";
+
+    fn call_action(invite: &[u8]) -> Action {
+        let (call_id, sdp) = crate::callneg::invite_binding(invite).unwrap();
+        Action::Call {
+            peer: "100001".into(),
+            call_id,
+            sdp,
+        }
+    }
+
+    /// The owner's case: an authenticated `IQC1` Offer for Call-ID X binds
+    /// SDP hash H1; a legacy INVITE with Call-ID X and SDP H2 is not vouched
+    /// for, and does not take the offer. Before the fix the INVITE was
+    /// vouched for (`vouched(peer, call_id)` looked at the Call-ID only), it
+    /// took the offer ("INVITE in, with a key offer") and B answered with
+    /// keys for it ("answered; key answer sent first").
+    #[test]
+    fn a_key_offer_vouches_only_for_the_invite_whose_sdp_it_bound() {
+        use crate::icbm::Direction;
+        let (mut ea, mut eb, tb, _) = seventh_pair();
+        let mut lines = Vec::new();
+        let offer = ea.call_sip(Direction::Outbound, "100002", SDP_H1, NOW, &mut lines);
+        hand(&mut eb, "100001", offer);
+        assert!(
+            !eb.authenticated(&call_action(SDP_H2), false, NOW),
+            "H2 is not what the offer bound"
+        );
+        assert!(eb.authenticated(&call_action(SDP_H1), false, NOW), "H1 is");
+        // Even where nothing holds it (an automatic contact), the INVITE
+        // with H2 does not take the offer and gets no keys.
+        eb.call_sip(Direction::Inbound, "100001", SDP_H2, NOW, &mut lines);
+        let answer = eb.call_sip(
+            Direction::Outbound,
+            "100001",
+            b"SIP/2.0 200 OK\r\nCall-ID: X\r\nCSeq: 1 INVITE\r\n\r\n",
+            NOW,
+            &mut lines,
+        );
+        assert!(answer.is_empty(), "no key answer: {lines:?}");
+        assert_eq!(tb.lock().unwrap().state_of("X"), Some("plain"), "{lines:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("another SDP than this INVITE carries")),
+            "{lines:?}"
+        );
+    }
+
+    /// A genuine `IQC1`, `IQF1` or `IQT1` the server held back is no
+    /// announcement any more once it is [`ANNOUNCE_MAX_AGE`] old by its
+    /// sender's clock: delivered late, or delivered in time and its action
+    /// presented late. Before the fix the time it arrived counted (the
+    /// envelope's own limit is 14 days).
+    #[test]
+    fn a_delayed_announcement_vouches_for_nothing() {
+        use crate::icbm::Direction;
+        let late = NOW + ANNOUNCE_MAX_AGE;
+        let mut lines = Vec::new();
+        // Call: the offer delivered late.
+        let (mut ea, mut eb, _, _) = seventh_pair();
+        let offer = ea.call_sip(Direction::Outbound, "100002", SDP_H1, NOW, &mut lines);
+        hand_at(&mut eb, "100001", offer, late);
+        assert!(!eb.authenticated(&call_action(SDP_H1), false, late));
+        // Call: the offer in time, the INVITE late.
+        let (mut ea, mut eb, _, _) = seventh_pair();
+        let offer = ea.call_sip(Direction::Outbound, "100002", SDP_H1, NOW, &mut lines);
+        hand_at(&mut eb, "100001", offer, NOW + 1);
+        assert!(eb.authenticated(&call_action(SDP_H1), false, NOW + 1));
+        assert!(!eb.authenticated(&call_action(SDP_H1), false, late));
+        // File: the offer delivered late.
+        let (mut ea, mut eb, _, _) = seventh_pair();
+        let prop = file_rdv(Direction::Outbound, "100002", crate::files::RDV_PROPOSE);
+        let offer = ea.file_icbm(&prop, NOW, &mut lines);
+        hand_at(&mut eb, "100001", offer, late);
+        let file = Action::File {
+            peer: "100001".into(),
+            cookie: FILE_COOKIE,
+            digest: prop.digest,
+        };
+        assert!(!eb.authenticated(&file, false, late));
+        // File: in time, then the proposal late.
+        let (mut ea, mut eb, _, _) = seventh_pair();
+        let offer = ea.file_icbm(&prop, NOW, &mut lines);
+        hand_at(&mut eb, "100001", offer, NOW + 1);
+        assert!(eb.authenticated(&file, false, NOW + 1));
+        assert!(!eb.authenticated(&file, false, late));
+        // tZer: the notice delivered late, with a matching tZer.
+        let hash = crate::tzer::doc_hash(crate::tzer::tests::DOC);
+        let tzer = Action::Tzer {
+            peer: "100001".into(),
+            hash,
+        };
+        let (mut ea, mut eb, _, _) = seventh_pair();
+        let notice = ea.tzer_notice("100002", hash, NOW).unwrap();
+        hand_at(&mut eb, "100001", vec![notice], late);
+        assert!(!eb.authenticated(&tzer, true, late));
+        // A clock too far ahead is not fresh either.
+        let (mut ea, mut eb, _, _) = seventh_pair();
+        let notice = ea
+            .tzer_notice("100002", hash, NOW + ANNOUNCE_MAX_AHEAD + 1)
+            .unwrap();
+        hand_at(&mut eb, "100001", vec![notice], NOW);
+        assert!(!eb.authenticated(&tzer, true, NOW));
+        // In time: one tZer.
+        let (mut ea, mut eb, _, _) = seventh_pair();
+        let notice = ea.tzer_notice("100002", hash, NOW).unwrap();
+        hand_at(&mut eb, "100001", vec![notice], NOW + 5);
+        assert!(eb.authenticated(&tzer, true, NOW + 5));
+        assert!(!eb.authenticated(&tzer, true, NOW + 5));
+    }
+
+    /// The same `IQT1` container delivered twice opens once (its message key
+    /// is spent), so it vouches for one tZer. A guard: true before the fix
+    /// too.
+    #[test]
+    fn a_duplicated_tzer_notice_vouches_for_one_tzer() {
+        let (mut ea, mut eb, _, _) = seventh_pair();
+        let hash = crate::tzer::doc_hash(crate::tzer::tests::DOC);
+        let notice = ea.tzer_notice("100002", hash, NOW).unwrap();
+        let got = hand(&mut eb, "100001", vec![notice.clone(), notice]);
+        assert!(matches!(got[0], Inbound::Control(_)), "{got:?}");
+        assert!(matches!(got[1], Inbound::Unreadable(_)), "{got:?}");
+        let tzer = Action::Tzer {
+            peer: "100001".into(),
+            hash,
+        };
+        assert!(eb.authenticated(&tzer, true, NOW));
+        assert!(!eb.authenticated(&tzer, true, NOW));
+    }
+
+    /// A genuine `IQF1` binds its proposal: the same cookie with another
+    /// port, address, proxy flag, stage, file count, size, name or
+    /// invitation is not vouched for; the requester address the server
+    /// rewrites and the verified address it adds are not part of it. Before
+    /// the fix every one of them was vouched for (the cookie alone).
+    #[test]
+    fn a_file_offer_vouches_only_for_the_proposal_it_bound() {
+        use crate::files::{self, tests::rdv_payload, RDV_PROPOSE};
+        use crate::icbm::Direction;
+        let svc = |n: u16, size: u32, name: &[u8]| {
+            let mut v = vec![0, 1];
+            v.extend_from_slice(&n.to_be_bytes());
+            v.extend_from_slice(&size.to_be_bytes());
+            v.extend_from_slice(name);
+            v
+        };
+        let base = || -> Vec<(u16, Vec<u8>)> {
+            vec![
+                (files::RDV_TLV_SEQ, 1u16.to_be_bytes().to_vec()),
+                (files::RDV_TLV_RDV_IP, vec![192, 168, 1, 20]),
+                (files::RDV_TLV_REQUESTER_IP, vec![192, 168, 1, 20]),
+                (files::RDV_TLV_PORT, 5190u16.to_be_bytes().to_vec()),
+                (crate::icbm::RDV_TLV_SVC_DATA, svc(1, 5000, b"plans.pdf\0")),
+            ]
+        };
+        let rdv = |dir, tlvs: &[(u16, Vec<u8>)]| {
+            files::rendezvous(
+                dir,
+                &rdv_payload(dir, "100002", RDV_PROPOSE, FILE_COOKIE, tlvs),
+            )
+            .unwrap()
+        };
+        let (mut ea, mut eb, _, _) = seventh_pair();
+        let mut lines = Vec::new();
+        let sent = rdv(Direction::Outbound, &base());
+        let offer = ea.file_icbm(&sent, NOW, &mut lines);
+        hand(&mut eb, "100001", offer);
+        let vouched = |eb: &mut Engine, tlvs: &[(u16, Vec<u8>)]| {
+            let r = rdv(Direction::Inbound, tlvs);
+            eb.authenticated(
+                &Action::File {
+                    peer: "100001".into(),
+                    cookie: FILE_COOKIE,
+                    digest: r.digest,
+                },
+                false,
+                NOW,
+            )
+        };
+        assert!(vouched(&mut eb, &base()), "the proposal as sent");
+        // What the server does to it on the way (addExternalIP): still it.
+        let mut served = base();
+        served[2].1 = vec![203, 0, 113, 9];
+        served.push((files::RDV_TLV_VERIFIED_IP, vec![203, 0, 113, 9]));
+        assert!(vouched(&mut eb, &served), "requester and verified address");
+        let changed: Vec<(&str, Vec<(u16, Vec<u8>)>)> = vec![
+            ("port", {
+                let mut t = base();
+                t[3].1 = 6666u16.to_be_bytes().to_vec();
+                t
+            }),
+            ("proposed address", {
+                let mut t = base();
+                t[1].1 = vec![198, 51, 100, 66];
+                t
+            }),
+            ("proxy", {
+                let mut t = base();
+                t.push((files::RDV_TLV_USE_ARS, Vec::new()));
+                t
+            }),
+            ("stage", {
+                let mut t = base();
+                t[0].1 = 3u16.to_be_bytes().to_vec();
+                t
+            }),
+            ("file count", {
+                let mut t = base();
+                t[4].1 = svc(2, 5000, b"plans.pdf\0");
+                t
+            }),
+            ("size", {
+                let mut t = base();
+                t[4].1 = svc(1, 9_999_999, b"plans.pdf\0");
+                t
+            }),
+            ("name", {
+                let mut t = base();
+                t[4].1 = svc(1, 5000, b"plans.pdf.exe\0");
+                t
+            }),
+            ("invitation text", {
+                let mut t = base();
+                t.push((0x000C, b"open this now".to_vec()));
+                t
+            }),
+        ];
+        for (what, t) in changed {
+            assert!(!vouched(&mut eb, &t), "{what} changed");
+        }
+    }
+
+    /// A genuine offer for a proposal that is not let through (held and
+    /// given up) is no use later: the cookie is burned. And a call's
+    /// Call-ID likewise.
+    #[test]
+    fn a_refused_action_cannot_be_vouched_for_later() {
+        use crate::icbm::Direction;
+        let (mut ea, mut eb, _, _) = seventh_pair();
+        let mut lines = Vec::new();
+        let call = call_action(SDP_H1);
+        let prop = file_rdv(Direction::Outbound, "100002", crate::files::RDV_PROPOSE);
+        let file = Action::File {
+            peer: "100001".into(),
+            cookie: FILE_COOKIE,
+            digest: prop.digest,
+        };
+        // The INVITE and the proposal came first, were held and given up.
+        eb.refused(&call, NOW);
+        eb.refused(&file, NOW);
+        // Then the server lets the offers through, and repeats the frames.
+        let offer = ea.call_sip(Direction::Outbound, "100002", SDP_H1, NOW, &mut lines);
+        hand(&mut eb, "100001", offer);
+        let offer = ea.file_icbm(&prop, NOW, &mut lines);
+        hand(&mut eb, "100001", offer);
+        assert!(!eb.authenticated(&call, false, NOW + 1));
+        assert!(!eb.authenticated(&file, false, NOW + 1));
     }
 }

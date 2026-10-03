@@ -71,6 +71,10 @@ pub const SUITES: [u8; 1] = [SUITE_CHACHA20POLY1305];
 const T_OFFER: u8 = 1;
 const T_ANSWER: u8 = 2;
 const T_DECLINE: u8 = 3;
+/// A later proposal of a transfer (a counter-proposal, the proxy stage) and
+/// its canonical digest, announced before it (seventh audit of 2026-10). An
+/// add-on without it takes it as an ordinary control message.
+const T_PROPOSAL: u8 = 4;
 
 /// Decline reasons.
 pub const DECLINE_REFUSED: u8 = 1;
@@ -86,6 +90,12 @@ pub const ENDED_GRACE_MS: u64 = 30_000;
 /// Offers and rendezvous facts kept at most.
 const MAX_OFFERS: usize = 16;
 const MAX_FACTS: usize = 64;
+/// How long the cookie of a transfer that ended, or of a proposal that was
+/// not let through, vouches for nothing (seventh audit of 2026-10).
+pub const BURN_KEEP_MS: u64 = 10 * 60 * 1000;
+const MAX_BURNED: usize = 256;
+/// Proposal announcements kept per transfer.
+const MAX_ANNOUNCED: usize = 8;
 
 // --- the control payloads -------------------------------------------------------------
 
@@ -99,6 +109,11 @@ pub enum Msg {
         eph: [u8; 32],
         secret: [u8; 32],
         suites: Vec<u8>,
+        /// The canonical digest of the proposal this offer is for
+        /// ([`files::rdv_digest`]), after the suites (seventh audit of
+        /// 2026-10). An add-on from before reads the offer without it (bytes
+        /// after the known fields are left alone) and sends none: `None`.
+        digest: Option<[u8; 16]>,
     },
     Answer {
         cookie: [u8; 8],
@@ -110,6 +125,11 @@ pub enum Msg {
     Decline {
         cookie: [u8; 8],
         reason: u8,
+    },
+    /// A later proposal of the transfer with this digest is ours.
+    Proposal {
+        cookie: [u8; 8],
+        digest: [u8; 16],
     },
 }
 
@@ -130,6 +150,7 @@ impl Msg {
                 eph,
                 secret,
                 suites,
+                digest,
             } => {
                 b.push(T_OFFER);
                 b.extend_from_slice(cookie);
@@ -139,6 +160,9 @@ impl Msg {
                 b.extend_from_slice(secret);
                 b.push(suites.len() as u8);
                 b.extend_from_slice(suites);
+                if let Some(d) = digest {
+                    b.extend_from_slice(d);
+                }
             }
             Msg::Answer {
                 cookie,
@@ -159,6 +183,11 @@ impl Msg {
                 b.extend_from_slice(cookie);
                 b.push(*reason);
             }
+            Msg::Proposal { cookie, digest } => {
+                b.push(T_PROPOSAL);
+                b.extend_from_slice(cookie);
+                b.extend_from_slice(digest);
+            }
         }
         b
     }
@@ -178,13 +207,15 @@ impl Msg {
                 let eph = arr::<32>(&mut r)?;
                 let secret = arr::<32>(&mut r)?;
                 let n = r.u8()? as usize;
+                let suites = r.bytes(n)?.to_vec();
                 Msg::Offer {
                     cookie,
                     device,
                     device_key,
                     eph,
                     secret,
-                    suites: r.bytes(n)?.to_vec(),
+                    suites,
+                    digest: arr::<16>(&mut r),
                 }
             }
             T_ANSWER => Msg::Answer {
@@ -198,6 +229,10 @@ impl Msg {
                 cookie,
                 reason: r.u8()?,
             },
+            T_PROPOSAL => Msg::Proposal {
+                cookie,
+                digest: arr::<16>(&mut r)?,
+            },
             _ => return None,
         })
     }
@@ -206,7 +241,8 @@ impl Msg {
         match self {
             Msg::Offer { cookie, .. }
             | Msg::Answer { cookie, .. }
-            | Msg::Decline { cookie, .. } => *cookie,
+            | Msg::Decline { cookie, .. }
+            | Msg::Proposal { cookie, .. } => *cookie,
         }
     }
 
@@ -215,6 +251,7 @@ impl Msg {
             Msg::Offer { .. } => "offer",
             Msg::Answer { .. } => "answer",
             Msg::Decline { .. } => "decline",
+            Msg::Proposal { .. } => "proposal announcement",
         }
     }
 }
@@ -350,6 +387,9 @@ struct Transfer {
     outbox: Vec<Vec<u8>>,
     touched: u64,
     ended_at: Option<u64>,
+    /// The peer's announcements of later proposals: digest and its
+    /// sender's time (seconds), each good while fresh (seventh audit).
+    announced: Vec<([u8; 16], u64)>,
 }
 
 impl Drop for Transfer {
@@ -377,6 +417,23 @@ struct PendingOffer {
     secret: [u8; 32],
     suites: Vec<u8>,
     at: u64,
+    /// When its sender wrote it, by the sender's clock (seconds).
+    sent: u64,
+    /// The proposal it binds; `None` from an add-on before the seventh
+    /// audit.
+    digest: Option<[u8; 16]>,
+}
+
+impl PendingOffer {
+    /// Whether this offer vouches for a proposal from `peer` (normalised)
+    /// with canonical digest `digest` at `now_ms`: the same contact, the
+    /// proposal it bound, fresh by its sender's clock. An offer that binds
+    /// no proposal (an older add-on) vouches for none.
+    fn vouches(&self, peer: &str, digest: &[u8; 16], now_ms: u64) -> bool {
+        self.peer == peer
+            && self.digest == Some(*digest)
+            && crate::crypto::announcement_fresh(self.sent, now_ms / 1000)
+    }
 }
 
 impl Drop for PendingOffer {
@@ -404,6 +461,9 @@ pub struct FileTable {
     facts: HashMap<[u8; 8], Facts>,
     transfers: HashMap<[u8; 8], Transfer>,
     offers: HashMap<[u8; 8], PendingOffer>,
+    /// Cookies of transfers that ended and of proposals that were not let
+    /// through, with when: nothing vouches for them again (seventh audit).
+    burned: HashMap<[u8; 8], u64>,
     notes: Vec<Note>,
     log: Vec<String>,
     /// `files_encrypt = required`: every contact is strict - a transfer that
@@ -417,6 +477,7 @@ impl Default for FileTable {
             facts: HashMap::new(),
             transfers: HashMap::new(),
             offers: HashMap::new(),
+            burned: HashMap::new(),
             notes: Vec::new(),
             log: Vec::new(),
             required: false,
@@ -546,6 +607,28 @@ impl FileTable {
             (Direction::Outbound, RDV_PROPOSE) if new && we_send != Some(false) => {
                 self.offer(rdv, info, me, now, &mut out);
             }
+            // A later proposal of ours (a counter-proposal, the proxy
+            // stage): announced first with its digest, so the other add-on
+            // lets exactly it through (seventh audit of 2026-10).
+            (Direction::Outbound, RDV_PROPOSE) if !new => {
+                if let Some(t) = self.transfers.get(&c) {
+                    if t.ended_at.is_none() {
+                        out.push(
+                            Msg::Proposal {
+                                cookie: c,
+                                digest: rdv.digest,
+                            }
+                            .encode(),
+                        );
+                        let l = format!(
+                            "{}: proposal out ({} stage), announced first",
+                            t.label(),
+                            rdv.stage()
+                        );
+                        self.log.push(l);
+                    }
+                }
+            }
             (Direction::Inbound, RDV_PROPOSE) if new && we_send != Some(true) => {
                 self.answer(rdv, info, me, now);
             }
@@ -587,6 +670,7 @@ impl FileTable {
             outbox: Vec::new(),
             touched: now,
             ended_at: None,
+            announced: Vec::new(),
         };
         match me() {
             Err(why) => {
@@ -610,6 +694,7 @@ impl FileTable {
                             eph: t.my_eph,
                             secret: t.secret,
                             suites: SUITES.to_vec(),
+                            digest: Some(rdv.digest),
                         }
                         .encode(),
                     );
@@ -633,7 +718,36 @@ impl FileTable {
         now: u64,
     ) {
         let peer = sign::ident(&rdv.peer);
+        // The waiting offer is taken only when it vouches for this very
+        // proposal (seventh audit of 2026-10): fresh, of a cookie not
+        // burned, and binding this proposal's digest - or binding none, from
+        // an add-on before the audit, which only an automatic contact's
+        // proposal gets here with (a protected contact's is let through
+        // only when [`Self::vouched`] says so).
+        let burned = self.burned.contains_key(&rdv.cookie);
         let offer = self.offers.remove(&rdv.cookie).filter(|o| o.peer == peer);
+        let unfit = offer.as_ref().and_then(|o| {
+            if burned {
+                Some("its key offer is for a cookie that already ended".to_string())
+            } else if o.digest.is_some_and(|d| d != rdv.digest) {
+                Some("its key offer is for another proposal than this one".to_string())
+            } else if !crate::crypto::announcement_fresh(o.sent, now / 1000) {
+                Some(format!(
+                    "its key offer is stale (written {} s ago by its sender's clock)",
+                    (now / 1000).saturating_sub(o.sent)
+                ))
+            } else {
+                None
+            }
+        });
+        if let Some(why) = &unfit {
+            self.log.push(format!(
+                "file transfer {} with {}: {why}: not taken",
+                files::cookie_tag(&rdv.cookie),
+                rdv.peer
+            ));
+        }
+        let offer = offer.filter(|_| unfit.is_none());
         let mut t = Transfer {
             cookie: rdv.cookie,
             peer_name: rdv.peer.clone(),
@@ -652,6 +766,7 @@ impl FileTable {
             outbox: Vec::new(),
             touched: now,
             ended_at: None,
+            announced: Vec::new(),
         };
         let label = t.label();
         match offer {
@@ -744,23 +859,71 @@ impl FileTable {
         self.transfers.insert(rdv.cookie, t);
     }
 
-    /// Whether a file proposal with `cookie` in `peer`'s name is vouched for
-    /// end to end (sixth audit of 2026-10, finding 3): the key offer
-    /// `peer`'s add-on sends before its proposal has come over the Olm
-    /// session and waits for it, or the transfer is one already known with
-    /// `peer` (our own proposal, or one let through before). Nothing is
-    /// consumed: the proposal takes the offer itself ([`Self::icbm`]).
-    pub fn vouched(&self, peer: &str, cookie: &[u8; 8]) -> bool {
+    /// Whether a file proposal with `cookie` and canonical digest `digest`
+    /// ([`files::rdv_digest`]) in `peer`'s name is vouched for end to end at
+    /// `now` (ms). Sixth audit of 2026-10, finding 3, made exact by the
+    /// seventh: the contact, the cookie, the proposal's digest and a fresh
+    /// sender's time - not "the cookie is in a table". So:
+    ///
+    /// - a transfer not known yet: the key offer `peer`'s add-on sent before
+    ///   its proposal waits, binds this digest, and is fresh;
+    /// - a transfer known with `peer` and not ended (a counter-proposal, the
+    ///   proxy stage): `peer`'s add-on announced this digest
+    ///   ([`Msg::Proposal`]) and the announcement is fresh;
+    /// - a cookie that ended, or whose proposal was not let through
+    ///   ([`Self::refuse`]), never again.
+    ///
+    /// Nothing is consumed: the proposal takes the offer itself
+    /// ([`Self::icbm`]).
+    pub fn vouched(&self, peer: &str, cookie: &[u8; 8], digest: &[u8; 16], now: u64) -> bool {
         let p = sign::ident(peer);
-        self.transfers.get(cookie).is_some_and(|t| t.peer == p)
-            || self.offers.get(cookie).is_some_and(|o| o.peer == p)
+        if self.burned.contains_key(cookie) {
+            return false;
+        }
+        match self.transfers.get(cookie) {
+            Some(t) => {
+                t.peer == p
+                    && t.ended_at.is_none()
+                    && t.announced.iter().any(|(d, sent)| {
+                        d == digest && crate::crypto::announcement_fresh(*sent, now / 1000)
+                    })
+            }
+            None => self
+                .offers
+                .get(cookie)
+                .is_some_and(|o| o.vouches(&p, digest, now)),
+        }
     }
 
-    /// A file control message from `peer`, sent by its device `sender`.
-    pub fn control(&mut self, peer: &str, sender: u32, msg: Msg, now: u64) {
+    /// The proposal with `cookie` was not let through (held and given up):
+    /// the cookie is burned and a waiting offer for it dropped.
+    pub fn refuse(&mut self, cookie: &[u8; 8], now: u64) {
+        self.offers.remove(cookie);
+        self.burn(*cookie, now);
+    }
+
+    fn burn(&mut self, c: [u8; 8], now: u64) {
+        if !self.burned.contains_key(&c) && self.burned.len() >= MAX_BURNED {
+            if let Some(old) = self
+                .burned
+                .iter()
+                .min_by_key(|(_, at)| **at)
+                .map(|(k, _)| *k)
+            {
+                self.burned.remove(&old);
+            }
+        }
+        self.burned.insert(c, now);
+    }
+
+    /// A file control message from `peer`, sent by its device `sender`;
+    /// `sent` is when the sender's add-on wrote it, by its own clock
+    /// (seconds; the authenticated time of its Olm envelope).
+    pub fn control(&mut self, peer: &str, sender: u32, msg: Msg, sent: u64, now: u64) {
         let p = sign::ident(peer);
         let c = msg.cookie();
         let what = msg.name();
+        let fresh = crate::crypto::announcement_fresh(sent, now / 1000);
         let Some(mut t) = self.transfers.remove(&c) else {
             if let Msg::Offer {
                 device,
@@ -768,12 +931,26 @@ impl FileTable {
                 eph,
                 secret,
                 suites,
+                digest,
                 ..
             } = msg
             {
                 if device != sender {
                     self.log.push(format!(
                         "file key offer from {peer} ignored: it names another device"
+                    ));
+                    return;
+                }
+                if self.burned.contains_key(&c) {
+                    self.log.push(format!(
+                        "file key offer from {peer} ignored: its cookie already ended or was refused"
+                    ));
+                    return;
+                }
+                if !fresh {
+                    self.log.push(format!(
+                        "file key offer from {peer} ignored: stale (written {} s before now by its sender's clock)",
+                        (now / 1000) as i64 - sent as i64
                     ));
                     return;
                 }
@@ -797,6 +974,8 @@ impl FileTable {
                         secret,
                         suites,
                         at: now,
+                        sent,
+                        digest,
                     },
                 );
             } else {
@@ -859,6 +1038,20 @@ impl FileTable {
                 let why = why::declined(&t.peer_name, reason);
                 self.log.push(format!("{label}: declined: {why}"));
                 self.go_plain(&mut t, &why);
+            }
+            (Msg::Proposal { digest, .. }, _, _) if t.ended_at.is_none() => {
+                if fresh {
+                    if t.announced.len() >= MAX_ANNOUNCED {
+                        t.announced.remove(0);
+                    }
+                    t.announced.push((digest, sent));
+                    self.log.push(format!(
+                        "{label}: a later proposal announced by the peer's add-on"
+                    ));
+                } else {
+                    self.log
+                        .push(format!("{label}: proposal announcement is stale: ignored"));
+                }
             }
             (m, s, _) => {
                 self.log.push(format!(
@@ -938,6 +1131,7 @@ impl FileTable {
                 t.ended_at = Some(now);
                 let l = format!("{}: {what}; was {}", t.label(), t.state.name());
                 self.log.push(l);
+                self.burn(c, now);
             }
         }
     }
@@ -997,6 +1191,8 @@ impl FileTable {
     pub fn tick(&mut self, now: u64) {
         self.offers
             .retain(|_, o| now.saturating_sub(o.at) < OFFER_TTL_MS);
+        self.burned
+            .retain(|_, at| now.saturating_sub(*at) < BURN_KEEP_MS);
         let done: Vec<[u8; 8]> = self
             .transfers
             .iter()
@@ -1288,7 +1484,13 @@ mod tests {
 
     fn deliver(to: &mut FileTable, from: &str, dev: u32, payloads: Vec<Vec<u8>>) {
         for p in payloads {
-            to.control(from, dev, Msg::decode(&p).expect("a file payload"), T0);
+            to.control(
+                from,
+                dev,
+                Msg::decode(&p).expect("a file payload"),
+                T0 / 1000,
+                T0,
+            );
         }
     }
 
@@ -1339,6 +1541,7 @@ mod tests {
                 eph: [3; 32],
                 secret: [4; 32],
                 suites: vec![1, 9],
+                digest: Some([9; 16]),
             },
             Msg::Answer {
                 cookie: C,
@@ -1351,6 +1554,10 @@ mod tests {
                 cookie: C,
                 reason: 2,
             },
+            Msg::Proposal {
+                cookie: C,
+                digest: [7; 16],
+            },
         ];
         for m in msgs {
             let mut b = m.encode();
@@ -1358,6 +1565,18 @@ mod tests {
             b.extend_from_slice(b"later fields");
             assert_eq!(Msg::decode(&b), Some(m));
         }
+        // An offer from an add-on before the seventh audit binds no
+        // proposal: it reads, with no digest.
+        let old = Msg::Offer {
+            cookie: C,
+            device: 7,
+            device_key: [2; 32],
+            eph: [3; 32],
+            secret: [4; 32],
+            suites: vec![1],
+            digest: None,
+        };
+        assert_eq!(Msg::decode(&old.encode()), Some(old));
         assert_eq!(Msg::decode(b""), None);
         assert_eq!(Msg::decode(b"IQC1\x01"), None, "a call message");
         assert_eq!(Msg::decode(b"IQF1\x09"), None);
@@ -1818,7 +2037,7 @@ mod tests {
         if let Msg::Answer { cookie, .. } = &mut other {
             *cookie = [9; 8];
         }
-        a.control(B, 2, other, T0);
+        a.control(B, 2, other, T0 / 1000, T0);
         assert_eq!(a.state_of(&C), Some("offered"));
         assert_eq!(a.state_of(&[9; 8]), None);
         // The real one.
@@ -1863,6 +2082,118 @@ mod tests {
         assert!(a.agreement(&C).is_some());
         a.tick(T0 + ENDED_GRACE_MS);
         assert_eq!(a.state_of(&C), None);
+    }
+
+    // ---- seventh audit of 2026-10 ----
+
+    /// A later proposal of a known transfer (a counter-proposal, the proxy
+    /// stage) is vouched for only when the other add-on announced its
+    /// digest, freshly; and an ended transfer's cookie vouches for nothing -
+    /// not in its grace, not after, not with a fresh offer. Before the fix
+    /// any proposal with a known cookie was vouched for, also after a
+    /// cancel.
+    #[test]
+    fn later_proposals_need_their_announcement_and_an_ended_cookie_none() {
+        let (mut a, mut b) = agreed();
+        let counter_out = rdv(Direction::Outbound, A, 2, 6000);
+        let counter_in = rdv(Direction::Inbound, B, 2, 6000);
+        let forged = rdv(Direction::Inbound, B, 2, 6666);
+        assert!(!a.vouched(B, &C, &counter_in.digest, T0), "not announced");
+        b.observe(&counter_out, T0);
+        let ann = b.icbm(&counter_out, PeerInfo::default(), &mut go(me(B, 2, 2)), T0);
+        assert!(
+            ann.iter()
+                .any(|p| matches!(Msg::decode(p), Some(Msg::Proposal { .. }))),
+            "announced before it goes"
+        );
+        deliver(&mut a, B, 2, ann);
+        assert!(a.vouched(B, &C, &counter_in.digest, T0));
+        assert!(!a.vouched(B, &C, &forged.digest, T0), "another port");
+        assert!(
+            !a.vouched(
+                B,
+                &C,
+                &counter_in.digest,
+                T0 + crate::crypto::ANNOUNCE_MAX_AGE * 1000
+            ),
+            "no longer fresh"
+        );
+        // The first proposal is not vouched for again either: it was taken.
+        let first = rdv(Direction::Inbound, A, 1, 5190);
+        assert!(!b.vouched(A, &C, &first.digest, T0));
+        // A cancel: nothing vouched for, now or later.
+        let cancel = files::rendezvous(
+            Direction::Inbound,
+            &files::tests::rdv_payload(Direction::Inbound, B, RDV_CANCEL, C, &[]),
+        )
+        .unwrap();
+        a.icbm(&cancel, PeerInfo::default(), &mut go(me(A, 1, 1)), T0 + 1);
+        assert!(
+            !a.vouched(B, &C, &counter_in.digest, T0 + 2),
+            "in its grace"
+        );
+        a.tick(T0 + 1 + ENDED_GRACE_MS);
+        assert_eq!(a.state_of(&C), None);
+        assert!(!a.vouched(B, &C, &counter_in.digest, T0 + 1 + ENDED_GRACE_MS));
+        // A fresh offer for the same cookie is not taken.
+        let mut a2 = FileTable::default();
+        let offer = see(&mut a2, &rdv(Direction::Outbound, A, 1, 5190), me(B, 2, 2));
+        for p in offer {
+            a.control(
+                B,
+                2,
+                Msg::decode(&p).unwrap(),
+                (T0 + 20_000) / 1000,
+                T0 + 20_000,
+            );
+        }
+        assert!(a.offers.is_empty());
+        assert!(!a.vouched(
+            B,
+            &C,
+            &rdv(Direction::Inbound, B, 1, 5190).digest,
+            T0 + 20_000
+        ));
+    }
+
+    /// An offer without a digest - from an add-on before the seventh audit -
+    /// vouches for no proposal (a protected contact's is not shown), but an
+    /// automatic contact's proposal still takes it: the transfer is
+    /// encrypted as before.
+    #[test]
+    fn an_offer_from_an_older_add_on_vouches_for_nothing_and_still_keys() {
+        let mut a = FileTable::default();
+        let mut b = FileTable::default();
+        let offer = see(&mut a, &rdv(Direction::Outbound, B, 1, 5190), me(A, 1, 1));
+        let old: Vec<Vec<u8>> = offer
+            .iter()
+            .map(|p| match Msg::decode(p).unwrap() {
+                Msg::Offer {
+                    cookie,
+                    device,
+                    device_key,
+                    eph,
+                    secret,
+                    suites,
+                    ..
+                } => Msg::Offer {
+                    cookie,
+                    device,
+                    device_key,
+                    eph,
+                    secret,
+                    suites,
+                    digest: None,
+                }
+                .encode(),
+                m => m.encode(),
+            })
+            .collect();
+        deliver(&mut b, A, 1, old);
+        let seen = rdv(Direction::Inbound, A, 1, 5190);
+        assert!(!b.vouched(A, &C, &seen.digest, T0));
+        see(&mut b, &seen, me(B, 2, 2));
+        assert_eq!(b.state_of(&C), Some("keyed"));
     }
 
     /// A failure on an agreed connection says so in the chat, once.

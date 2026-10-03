@@ -114,6 +114,45 @@ pub struct Rendezvous {
     pub reason: Option<u16>,
     /// The tags of the TLVs, in order.
     pub tlvs: Vec<u16>,
+    /// The canonical digest of the rendezvous message ([`rdv_digest`]):
+    /// what a key offer or a proposal announcement binds (seventh audit of
+    /// 2026-10).
+    pub digest: [u8; 16],
+}
+
+/// The canonical digest of a rendezvous message: SHA-256, cut to 16 bytes,
+/// over its type, cookie, capability and every TLV of its data but the two
+/// the server legitimately rewrites (`foodgroup/icbm.go`, `addExternalIP`):
+/// the requester's address `0x0003`, replaced by the address the server
+/// sees, and the verified address `0x0004`, which only the server adds. The
+/// TLVs are taken sorted by tag (stable for repeats), each as tag, length,
+/// value. So the proposed address and port, the proxy flag, the sequence
+/// (stage), the file count, size and name, and the invitation text are all
+/// bound; what the server must change is not.
+pub fn rdv_digest(
+    kind: u16,
+    cookie: &[u8; 8],
+    capability: &[u8],
+    tlvs: &[snac::Tlv<'_>],
+) -> [u8; 16] {
+    let mut kept: Vec<&snac::Tlv<'_>> = tlvs
+        .iter()
+        .filter(|t| !matches!(t.tag, RDV_TLV_REQUESTER_IP | RDV_TLV_VERIFIED_IP))
+        .collect();
+    kept.sort_by_key(|t| t.tag);
+    let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+    ctx.update(b"icq-e2e rendezvous v1");
+    ctx.update(&kind.to_be_bytes());
+    ctx.update(cookie);
+    ctx.update(capability);
+    for t in kept {
+        ctx.update(&t.tag.to_be_bytes());
+        ctx.update(&(t.value.len() as u32).to_be_bytes());
+        ctx.update(t.value);
+    }
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&ctx.finish().as_ref()[..16]);
+    out
 }
 
 impl Rendezvous {
@@ -243,6 +282,7 @@ fn parse_data(dir: Direction, peer: String, data: &[u8]) -> Option<Rendezvous> {
         return None;
     }
     let tlvs = snac::read_tlvs(r.bytes(r.remaining())?);
+    let digest = rdv_digest(kind, &cookie, &CAP_FILE_TRANSFER, &tlvs);
     let u16_of = |tag| {
         snac::find_tlv(&tlvs, tag)
             .filter(|v| v.len() >= 2)
@@ -277,6 +317,7 @@ fn parse_data(dir: Direction, peer: String, data: &[u8]) -> Option<Rendezvous> {
         files,
         reason: u16_of(RDV_TLV_CANCEL_REASON),
         tlvs: tlvs.iter().map(|t| t.tag).collect(),
+        digest,
     })
 }
 

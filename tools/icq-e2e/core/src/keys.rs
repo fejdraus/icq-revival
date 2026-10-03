@@ -204,6 +204,12 @@ pub struct OwnKeys {
     /// worth saying (too many new sessions); taken by [`OwnKeys::decrypt`].
     #[serde(skip)]
     last_refusal: Option<String>,
+    /// When the sender wrote the last message [`OwnKeys::decrypt`] opened,
+    /// by the sender's clock (the envelope's authenticated `time`, seconds);
+    /// what an announcement's freshness is judged by (seventh audit of
+    /// 2026-10). Not kept in the state file.
+    #[serde(skip)]
+    pub last_sent_at: u64,
     /// The ids of the inbound sessions made from a pre-key message, by peer
     /// and device, with when: a pre-key message whose session was made once
     /// is never let make it again (audit 2026-10, finding 3). Kept for
@@ -383,6 +389,7 @@ impl OwnKeys {
             inbound_gate: InboundGate::Open,
             audit_configured: false,
             last_refusal: None,
+            last_sent_at: 0,
             inbound_ids: HashMap::new(),
             fallback_used: false,
             revoked: HashMap::new(),
@@ -1059,6 +1066,7 @@ impl OwnKeys {
         let Some(envelope) = readable else {
             return Inbound::Unreadable(unreadable(&peer));
         };
+        self.last_sent_at = envelope.time;
         // Only now does the session move on: a container we could not read
         // leaves no ratchet step behind (CHECKLIST 2.5).
         self.sessions

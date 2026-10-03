@@ -185,8 +185,10 @@ fn plain_name(name: &str) -> bool {
 pub const MAGIC: &[u8; 4] = b"IQT1";
 const T_NOTICE: u8 = 1;
 
-/// How long a notice waits for its tZer, in seconds.
-pub const NOTICE_TTL: u64 = 120;
+/// How long a notice vouches for its tZer, in seconds - counted from when
+/// its sender wrote it, by the sender's clock, not from when it arrived
+/// (seventh audit of 2026-10): [`crate::crypto::announcement_fresh`].
+pub const NOTICE_TTL: u64 = crate::crypto::ANNOUNCE_MAX_AGE;
 /// Notices kept at most; the oldest goes first.
 pub const MAX_NOTICES: usize = 32;
 
@@ -262,6 +264,82 @@ pub fn ch1_doc(frags: &[u8]) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Whether the fragment list `frags` of a channel-1 tZer carries nothing but
+/// the tZer (seventh audit of 2026-10): exactly the three fragments both the
+/// client and the server write - features, the tZer mark, one text fragment
+/// (the document) - in that order. A notice vouches for the document; a
+/// second text fragment or anything else beside it would be shown or acted
+/// on without being vouched for.
+pub fn ch1_exact(frags: &[u8]) -> bool {
+    let mut r = snac::Reader::new(frags);
+    let mut ids = Vec::new();
+    while r.remaining() > 0 {
+        let (Some(id), Some(_), Some(len)) = (r.u8(), r.u8(), r.u16()) else {
+            return false;
+        };
+        let Some(p) = r.bytes(len as usize) else {
+            return false;
+        };
+        if id == 0x10 && p != CAP_ICQ_TZERS {
+            return false;
+        }
+        ids.push(id);
+    }
+    ids == [0x05, 0x10, 0x01]
+}
+
+/// Whether the rendezvous data `data` of a channel-2 tZer carries nothing
+/// but the tZer (seventh audit of 2026-10): the proposal's TLVs are only the
+/// sequence number, the host-check flag and the service data, the plugin
+/// message's own text is empty, and nothing follows the document - the form
+/// ICQ 6.5 and the server write (`tzerPluginSvcData`). The two headers'
+/// contents (sequence numbers, flags, status) are not looked at: they are
+/// the sender client's, and not shown.
+pub fn plugin_exact(data: &[u8]) -> bool {
+    let mut r = snac::Reader::new(data);
+    let head = (|| {
+        if r.u16()? != 0 {
+            return None;
+        }
+        r.skip(8)?;
+        (r.bytes(16)? == crate::icbm::CAP_ICQ_SERVER_RELAY).then_some(())?;
+        r.bytes(r.remaining())
+    })();
+    let Some(rest) = head else {
+        return false;
+    };
+    let tlvs = snac::read_tlvs(rest);
+    if tlvs
+        .iter()
+        .any(|t| !matches!(t.tag, 0x000A | 0x000F | crate::icbm::RDV_TLV_SVC_DATA))
+    {
+        return false;
+    }
+    let Some(svc) = snac::find_tlv(&tlvs, crate::icbm::RDV_TLV_SVC_DATA) else {
+        return false;
+    };
+    let le16 = |o: usize| -> Option<usize> {
+        Some(u16::from_le_bytes([*svc.get(o)?, *svc.get(o + 1)?]) as usize)
+    };
+    let le32 = |o: usize| -> Option<usize> {
+        Some(u32::from_le_bytes(svc.get(o..o + 4)?.try_into().ok()?) as usize)
+    };
+    let shape = || -> Option<bool> {
+        let p2 = 2 + le16(0)?;
+        let p3 = p2 + 2 + le16(p2)?;
+        // type, flags, status, priority, then the message text: none.
+        let text_len = le16(p3 + 6)?;
+        let plugin = p3 + 8;
+        if text_len != 0 || svc.get(plugin + 2..plugin + 18)? != PLUGIN_GUID {
+            return Some(false);
+        }
+        let pos = plugin + 2 + le16(plugin)?;
+        let len = le32(pos + 4)?;
+        Some(le32(pos)? == len + 4 && pos + 8 + len == svc.len())
+    };
+    shape() == Some(true)
 }
 
 /// The document of a channel-2 tZer: the rendezvous data (TLV `0x0005`) of a

@@ -83,6 +83,10 @@ const T_OFFER: u8 = 1;
 const T_ANSWER: u8 = 2;
 const T_CONFIRM: u8 = 3;
 const T_DECLINE: u8 = 4;
+/// A later INVITE of a call already set up (a re-INVITE) and the hash of
+/// its SDP, announced before it (seventh audit of 2026-10). An add-on
+/// without it takes it as an ordinary control message and shows nothing.
+const T_UPDATE: u8 = 5;
 
 /// Decline reasons.
 pub const DECLINE_REFUSED: u8 = 1;
@@ -100,6 +104,15 @@ pub const ENDED_GRACE_MS: u64 = 10_000;
 pub const IDLE_TTL_MS: u64 = 4 * 3600 * 1000;
 /// Offers kept for INVITEs not seen yet.
 const MAX_OFFERS: usize = 16;
+/// How long the Call-ID of a call that ended, or of an INVITE that was not
+/// let through, vouches for nothing any more (seventh audit of 2026-10): an
+/// announcement is fresh for [`crate::crypto::ANNOUNCE_MAX_AGE`] at most, so
+/// this outlasts every one that could still name it.
+pub const BURN_KEEP_MS: u64 = 10 * 60 * 1000;
+/// Call-IDs kept burned at most; the oldest goes first.
+const MAX_BURNED: usize = 256;
+/// Re-INVITE announcements kept per call.
+const MAX_ANNOUNCED: usize = 8;
 
 // --- SIP ----------------------------------------------------------------------------
 
@@ -256,6 +269,11 @@ pub enum Msg {
         call: [u8; 16],
         reason: u8,
     },
+    /// A re-INVITE of the call with this SDP is ours (seventh audit).
+    Update {
+        call: [u8; 16],
+        sdp: [u8; 16],
+    },
 }
 
 fn arr<const N: usize>(r: &mut Reader) -> Option<[u8; N]> {
@@ -311,6 +329,11 @@ impl Msg {
                 b.extend_from_slice(call);
                 b.push(*reason);
             }
+            Msg::Update { call, sdp } => {
+                b.push(T_UPDATE);
+                b.extend_from_slice(call);
+                b.extend_from_slice(sdp);
+            }
         }
         b
     }
@@ -355,6 +378,10 @@ impl Msg {
                 call,
                 reason: r.u8()?,
             },
+            T_UPDATE => Msg::Update {
+                call,
+                sdp: arr::<16>(&mut r)?,
+            },
             _ => return None,
         })
     }
@@ -364,7 +391,8 @@ impl Msg {
             Msg::Offer { call, .. }
             | Msg::Answer { call, .. }
             | Msg::Confirm { call, .. }
-            | Msg::Decline { call, .. } => *call,
+            | Msg::Decline { call, .. }
+            | Msg::Update { call, .. } => *call,
         }
     }
 
@@ -374,6 +402,7 @@ impl Msg {
             Msg::Answer { .. } => "answer",
             Msg::Confirm { .. } => "confirm",
             Msg::Decline { .. } => "decline",
+            Msg::Update { .. } => "re-INVITE announcement",
         }
     }
 }
@@ -467,6 +496,23 @@ struct Call {
     outbox: Vec<Vec<u8>>,
     /// Whether the note for this call was given (true: encrypted).
     told: Option<bool>,
+    /// Callee: the SDP hash of the INVITE that came in.
+    invite_sdp: Option<[u8; 16]>,
+    /// Callee: the SDP hash the caller's key offer bound and the INVITE
+    /// matched - the one INVITE (and its retransmissions) the offer vouches
+    /// for (seventh audit of 2026-10).
+    bound_sdp: Option<[u8; 16]>,
+    /// The peer's re-INVITE announcements: SDP hash and its sender's time
+    /// (seconds), each good for a re-INVITE with that SDP while fresh.
+    announced: Vec<([u8; 16], u64)>,
+    /// The SDP hash we last announced for this call (offer or update).
+    my_sdp: Option<[u8; 16]>,
+    /// An inbound BYE, CANCEL or error answer - not authenticated - asked
+    /// to end a call with keys at this time: the keys stay while the call's
+    /// media goes on ([`CallTable::tick`]).
+    end_req: Option<u64>,
+    /// The last media datagram of this call, either way.
+    last_media: u64,
     logged_out: bool,
     logged_in: bool,
     logged_drop: bool,
@@ -494,6 +540,12 @@ impl Call {
             expect_confirm: None,
             outbox: Vec::new(),
             told: None,
+            invite_sdp: None,
+            bound_sdp: None,
+            announced: Vec::new(),
+            my_sdp: None,
+            end_req: None,
+            last_media: 0,
             logged_out: false,
             logged_in: false,
             logged_drop: false,
@@ -521,12 +573,32 @@ struct PendingOffer {
     peer: String,
     offered: Offered,
     at: u64,
+    /// When its sender's add-on wrote it, by the sender's clock (seconds):
+    /// the authenticated time of the Olm envelope it came in.
+    sent: u64,
+}
+
+impl PendingOffer {
+    /// Whether this offer vouches for an INVITE from `peer` (normalised)
+    /// whose SDP hashes to `sdp`, at `now_ms`: the same contact, the very
+    /// SDP the offer bound, and fresh by its sender's clock (seventh audit
+    /// of 2026-10).
+    fn vouches(&self, peer: &str, sdp: &[u8; 16], now_ms: u64) -> bool {
+        self.peer == peer
+            && self.offered.sdp == *sdp
+            && crate::crypto::announcement_fresh(self.sent, now_ms / 1000)
+    }
 }
 
 /// Every call the add-on knows of, its state and its media keys.
 pub struct CallTable {
     calls: HashMap<[u8; 16], Call>,
     offers: HashMap<[u8; 16], PendingOffer>,
+    /// Call-IDs (their hashes) of calls that ended and INVITEs that were
+    /// not let through, with when: nothing vouches for them again, so an
+    /// old announcement or a finished call cannot authorise a new INVITE
+    /// (seventh audit of 2026-10).
+    burned: HashMap<[u8; 16], u64>,
     notes: Vec<Note>,
     log: Vec<String>,
     rng: SystemRandom,
@@ -540,6 +612,7 @@ impl Default for CallTable {
         CallTable {
             calls: HashMap::new(),
             offers: HashMap::new(),
+            burned: HashMap::new(),
             notes: Vec::new(),
             log: Vec::new(),
             rng: SystemRandom::new(),
@@ -638,8 +711,25 @@ pub fn decline_to_host(peer: &str, invite: &[u8]) -> Option<Vec<u8>> {
 
 /// The Call-ID of an INVITE request, `None` for any other SIP message.
 pub fn invite_call_id(sip: &[u8]) -> Option<String> {
+    invite_binding(sip).map(|(id, _)| id)
+}
+
+/// What an INVITE request is bound by: its Call-ID and the hash of its SDP
+/// ([`sdp_hash`], what the caller's key offer carries). `None` for any other
+/// SIP message.
+pub fn invite_binding(sip: &[u8]) -> Option<(String, [u8; 16])> {
     let s = Sip::parse(sip)?;
-    matches!(&s.start, Start::Request(m) if m == "INVITE").then_some(s.call_id)
+    matches!(&s.start, Start::Request(m) if m == "INVITE")
+        .then(|| (s.call_id.clone(), sdp_hash(s.sdp.as_deref())))
+}
+
+/// The same for a success answer (2xx) to an INVITE: its Call-ID and the
+/// hash of its SDP (what the callee's key answer carries).
+pub fn answer_binding(sip: &[u8]) -> Option<(String, [u8; 16])> {
+    let s = Sip::parse(sip)?;
+    matches!(&s.start, Start::Response { code, method }
+        if (200..300).contains(code) && method.eq_ignore_ascii_case("INVITE"))
+    .then(|| (s.call_id.clone(), sdp_hash(s.sdp.as_deref())))
 }
 
 /// The words for why a call goes plain.
@@ -690,11 +780,20 @@ impl CallTable {
             c.info = info;
         }
         let invite_response = |code: u16| matches!(&sip.start, Start::Response { code: c, method } if *c == code && method.eq_ignore_ascii_case("INVITE"));
+        let sdp = sdp_hash(sip.sdp.as_deref());
         match (dir, &sip.start) {
             (Direction::Outbound, Start::Request(m)) if m == "INVITE" => {
                 if let Some(c) = self.calls.get_mut(&h) {
                     if let Some(s) = &sip.sdp {
                         c.ports.extend(local_ports(s));
+                    }
+                    // A re-INVITE of ours with another SDP: announced first,
+                    // so the other add-on lets it through (seventh audit).
+                    if !matches!(c.state, State::Ended { .. }) && c.my_sdp != Some(sdp) {
+                        c.my_sdp = Some(sdp);
+                        out.push(Msg::Update { call: h, sdp }.encode());
+                        self.log
+                            .push(format!("{}: re-INVITE out, announced first", c.label()));
                     }
                 } else {
                     self.caller_invites(peer, sip, info, me, now, &mut out);
@@ -702,40 +801,35 @@ impl CallTable {
             }
             (Direction::Inbound, Start::Request(m)) if m == "INVITE" => {
                 if !self.calls.contains_key(&h) {
-                    let mut c = Call::new(sip, peer, Role::Callee, info, now);
-                    let offer = self
-                        .offers
-                        .remove(&h)
-                        .filter(|o| o.peer == c.peer)
-                        .map(|o| o.offered);
-                    self.log.push(format!(
-                        "{}: INVITE in, {}",
-                        c.label(),
-                        if offer.is_some() {
-                            "with a key offer"
-                        } else {
-                            "without a key offer"
-                        }
-                    ));
-                    c.state = State::Invited(offer);
-                    self.calls.insert(h, c);
+                    self.callee_invited(h, peer, sip, info, sdp, now);
                 }
             }
             (Direction::Outbound, Start::Response { code, .. })
                 if (200..300).contains(code) && invite_response(*code) =>
             {
-                self.callee_answers(h, sip, me, now, &mut out);
+                self.callee_answers(h, peer, sip, info, me, now, &mut out);
             }
             (Direction::Inbound, Start::Response { code, .. })
                 if (200..300).contains(code) && invite_response(*code) =>
             {
-                self.caller_sees_ok(h, sip);
+                self.caller_sees_ok(h, peer, sip, info, now);
             }
-            (_, Start::Response { code, .. }) if *code >= 300 && invite_response(*code) => {
-                self.end(h, now, &format!("{code} to the INVITE"));
+            (Direction::Outbound, Start::Response { code, method })
+                if (200..300).contains(code)
+                    && (method.eq_ignore_ascii_case("BYE")
+                        || method.eq_ignore_ascii_case("CANCEL")) =>
+            {
+                // Our own client agrees that the call ends: a BYE or CANCEL
+                // of the peer's that it accepted.
+                if self.calls.get(&h).is_some_and(|c| c.end_req.is_some()) {
+                    self.end(h, now, &format!("{method} accepted by the client"));
+                }
             }
-            (_, Start::Request(m)) if m == "BYE" || m == "CANCEL" => {
-                self.end(h, now, m);
+            (dir, Start::Response { code, .. }) if *code >= 300 && invite_response(*code) => {
+                self.end_from(dir, h, now, &format!("{code} to the INVITE"));
+            }
+            (dir, Start::Request(m)) if m == "BYE" || m == "CANCEL" => {
+                self.end_from(dir, h, now, m);
             }
             _ => {}
         }
@@ -783,6 +877,7 @@ impl CallTable {
                         .encode(),
                     );
                     c.me = Some(m);
+                    c.my_sdp = Some(sdp_hash(sip.sdp.as_deref()));
                     c.state = State::OfferSent(Some(k));
                     self.log.push(format!(
                         "{}: INVITE out, key offer sent first (local media ports {:?})",
@@ -800,14 +895,98 @@ impl CallTable {
         self.calls.insert(c.hash, c);
     }
 
+    /// An INVITE for a call not known yet. The waiting key offer is taken
+    /// only when it vouches for this very INVITE: the same contact, the SDP
+    /// it bound, fresh by its sender's clock, and a Call-ID not burned
+    /// (seventh audit of 2026-10). Any other offer is spent and the call is
+    /// set up without keys: plain for an automatic contact, refused for a
+    /// strict one (an INVITE in a protected contact's name never gets here
+    /// unless [`Self::vouched`] said yes).
+    fn callee_invited(
+        &mut self,
+        h: [u8; 16],
+        peer: &str,
+        sip: &Sip,
+        info: PeerInfo,
+        sdp: [u8; 16],
+        now: u64,
+    ) {
+        let mut c = Call::new(sip, peer, Role::Callee, info, now);
+        c.invite_sdp = Some(sdp);
+        let burned = self.burned.contains_key(&h);
+        let offer = self.offers.remove(&h).filter(|o| o.peer == c.peer);
+        let how = match &offer {
+            None => "without a key offer".to_string(),
+            Some(_) if burned => {
+                "its key offer is for a Call-ID that already ended: not taken".to_string()
+            }
+            Some(o) if o.offered.sdp != sdp => {
+                "its key offer is for another SDP than this INVITE carries: not taken".to_string()
+            }
+            Some(o) if !o.vouches(&c.peer, &sdp, now) => format!(
+                "its key offer is stale (written {} s ago by its sender's clock): not taken",
+                (now / 1000).saturating_sub(o.sent)
+            ),
+            Some(_) => "with a key offer".to_string(),
+        };
+        let offer = offer
+            .filter(|o| !burned && o.vouches(&c.peer, &sdp, now))
+            .map(|o| o.offered);
+        if offer.is_some() {
+            c.bound_sdp = Some(sdp);
+        }
+        self.log.push(format!("{}: INVITE in, {how}", c.label()));
+        c.state = State::Invited(offer);
+        self.calls.insert(h, c);
+    }
+
+    /// A call that goes ahead although the add-on has no live record of its
+    /// set-up - never seen, or ended by an unauthenticated message the client
+    /// did not follow: it has no keys, so it is plain for an automatic
+    /// contact and its media is dropped for a strict one, never let through
+    /// as if nothing were known (seventh audit of 2026-10).
+    fn unseen_call(
+        &mut self,
+        h: [u8; 16],
+        peer: &str,
+        sip: &Sip,
+        role: Role,
+        info: PeerInfo,
+        now: u64,
+    ) {
+        let mut c = match self.calls.remove(&h) {
+            Some(c) => c,
+            None => Call::new(sip, peer, role, info, now),
+        };
+        c.touched = now;
+        let why = "the add-on did not see this call set up with keys".to_string();
+        self.log.push(format!(
+            "{}: answered, but no live key exchange is known for it: not encrypted",
+            c.label()
+        ));
+        self.go_plain(&mut c, &why);
+        self.calls.insert(h, c);
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn callee_answers(
         &mut self,
         h: [u8; 16],
+        peer: &str,
         sip: &Sip,
+        info: PeerInfo,
         me: &mut dyn FnMut() -> Result<Me, String>,
         now: u64,
         out: &mut Vec<Vec<u8>>,
     ) {
+        if self
+            .calls
+            .get(&h)
+            .is_none_or(|c| matches!(c.state, State::Ended { .. }) && c.media.is_none())
+        {
+            self.unseen_call(h, peer, sip, Role::Callee, info, now);
+            return;
+        }
         let Some(mut c) = self.calls.remove(&h) else {
             return;
         };
@@ -904,6 +1083,7 @@ impl CallTable {
                                 .encode(),
                             );
                             c.me = Some(m);
+                            c.my_sdp = Some(sdp_hash(sip.sdp.as_deref()));
                             c.state = State::Answered { since: now };
                             self.log.push(format!(
                                 "{label}: answered; key answer sent first; media keys in use, \
@@ -923,7 +1103,15 @@ impl CallTable {
         self.calls.insert(h, c);
     }
 
-    fn caller_sees_ok(&mut self, h: [u8; 16], sip: &Sip) {
+    fn caller_sees_ok(&mut self, h: [u8; 16], peer: &str, sip: &Sip, info: PeerInfo, now: u64) {
+        if self
+            .calls
+            .get(&h)
+            .is_none_or(|c| matches!(c.state, State::Ended { .. }) && c.media.is_none())
+        {
+            self.unseen_call(h, peer, sip, Role::Caller, info, now);
+            return;
+        }
         let Some(mut c) = self.calls.remove(&h) else {
             return;
         };
@@ -956,24 +1144,89 @@ impl CallTable {
         self.calls.insert(h, c);
     }
 
-    /// Whether an incoming INVITE with `call_id` in `peer`'s name is vouched
-    /// for end to end (sixth audit of 2026-10, finding 3): the key offer
-    /// `peer`'s add-on sends before its INVITE has come over the Olm session
-    /// and waits for it, or the call is one already set up with `peer` (a
-    /// re-INVITE). Nothing is consumed: the INVITE takes the offer itself
-    /// when it goes on ([`Self::sip`]).
-    pub fn vouched(&self, peer: &str, call_id: &str) -> bool {
+    /// Whether an incoming INVITE with `call_id` and an SDP hashing to `sdp`
+    /// in `peer`'s name is vouched for end to end at `now` (ms). Sixth audit
+    /// of 2026-10, finding 3, made exact by the seventh: an authenticated
+    /// action is the contact, the Call-ID, the SDP and a fresh sender's
+    /// time - not "the Call-ID is in a table". So:
+    ///
+    /// - a call not set up yet: the key offer `peer`'s add-on sent before
+    ///   its INVITE waits, bound this SDP, and is fresh by its sender's
+    ///   clock ([`crate::crypto::announcement_fresh`]);
+    /// - a call set up with `peer` and not ended: this SDP is the one its
+    ///   offer bound (a retransmission of that INVITE) or one `peer`'s
+    ///   add-on announced for a re-INVITE ([`Msg::Update`]) and fresh;
+    /// - a Call-ID that ended, or whose INVITE was not let through
+    ///   ([`Self::refuse`]), never again.
+    ///
+    /// Nothing is consumed: the INVITE takes the offer itself when it goes
+    /// on ([`Self::sip`]).
+    pub fn vouched(&self, peer: &str, call_id: &str, sdp: &[u8; 16], now: u64) -> bool {
         let h = short(&call_digest(call_id));
         let p = sign::ident(peer);
-        self.calls.get(&h).is_some_and(|c| c.peer == p)
-            || self.offers.get(&h).is_some_and(|o| o.peer == p)
+        if self.burned.contains_key(&h) {
+            return false;
+        }
+        match self.calls.get(&h) {
+            Some(c) => {
+                c.peer == p
+                    && !matches!(c.state, State::Ended { .. })
+                    && (c.bound_sdp == Some(*sdp)
+                        || c.announced.iter().any(|(s, sent)| {
+                            s == sdp && crate::crypto::announcement_fresh(*sent, now / 1000)
+                        }))
+            }
+            None => self.offers.get(&h).is_some_and(|o| o.vouches(&p, sdp, now)),
+        }
     }
 
-    /// A call control message from `peer`, sent by its device `sender`.
-    pub fn control(&mut self, peer: &str, sender: u32, msg: Msg, now: u64) {
+    /// Whether a success answer to our INVITE, in `peer`'s name, with an
+    /// SDP hashing to `sdp`, is the one the callee's add-on answered for
+    /// (seventh audit of 2026-10): once keys are agreed, the 200 OK must
+    /// carry the SDP their key answer bound; a call without agreed keys
+    /// binds nothing here (it is plain or refused by its own rule).
+    pub fn answer_vouched(&self, peer: &str, call_id: &str, sdp: &[u8; 16]) -> bool {
+        let h = short(&call_digest(call_id));
+        let p = sign::ident(peer);
+        match self.calls.get(&h) {
+            Some(c) if c.peer == p && c.role == Role::Caller && c.media.is_some() => {
+                c.peer_sdp.is_none_or(|s| s == *sdp)
+            }
+            _ => true,
+        }
+    }
+
+    /// The INVITE with `call_id` was not let through (held and given up):
+    /// its Call-ID is burned and a waiting offer for it dropped, so it can
+    /// never be vouched for later - by a late or a delayed offer.
+    pub fn refuse(&mut self, call_id: &str, now: u64) {
+        let h = short(&call_digest(call_id));
+        self.offers.remove(&h);
+        self.burn(h, now);
+    }
+
+    fn burn(&mut self, h: [u8; 16], now: u64) {
+        if !self.burned.contains_key(&h) && self.burned.len() >= MAX_BURNED {
+            if let Some(old) = self
+                .burned
+                .iter()
+                .min_by_key(|(_, at)| **at)
+                .map(|(k, _)| *k)
+            {
+                self.burned.remove(&old);
+            }
+        }
+        self.burned.insert(h, now);
+    }
+
+    /// A call control message from `peer`, sent by its device `sender`;
+    /// `sent` is when the sender's add-on wrote it, by its own clock
+    /// (seconds; the authenticated time of its Olm envelope).
+    pub fn control(&mut self, peer: &str, sender: u32, msg: Msg, sent: u64, now: u64) {
         let p = sign::ident(peer);
         let h = msg.call();
         let what = msg.name();
+        let fresh = crate::crypto::announcement_fresh(sent, now / 1000);
         let Some(mut c) = self.calls.remove(&h) else {
             if let Msg::Offer {
                 device,
@@ -987,6 +1240,19 @@ impl CallTable {
                 if device != sender {
                     self.log.push(format!(
                         "call key offer from {peer} ignored: it names another device"
+                    ));
+                    return;
+                }
+                if self.burned.contains_key(&h) {
+                    self.log.push(format!(
+                        "call key offer from {peer} ignored: its Call-ID already ended or was refused"
+                    ));
+                    return;
+                }
+                if !fresh {
+                    self.log.push(format!(
+                        "call key offer from {peer} ignored: stale (written {} s before now by its sender's clock)",
+                        (now / 1000) as i64 - sent as i64
                     ));
                     return;
                 }
@@ -1012,6 +1278,7 @@ impl CallTable {
                             suites,
                         },
                         at: now,
+                        sent,
                     },
                 );
             } else {
@@ -1043,15 +1310,41 @@ impl CallTable {
                 State::Invited(slot @ None),
                 Role::Callee,
             ) if device == sender => {
-                self.log
-                    .push(format!("{label}: key offer arrived after the INVITE"));
-                *slot = Some(Offered {
-                    device,
-                    device_key,
-                    eph,
-                    sdp,
-                    suites,
-                });
+                // Taken only when it binds the INVITE that came and is fresh
+                // (seventh audit of 2026-10).
+                if c.invite_sdp != Some(sdp) {
+                    self.log.push(format!(
+                        "{label}: key offer arrived after the INVITE, for another SDP: ignored"
+                    ));
+                } else if !fresh {
+                    self.log.push(format!(
+                        "{label}: key offer arrived after the INVITE, stale: ignored"
+                    ));
+                } else {
+                    self.log
+                        .push(format!("{label}: key offer arrived after the INVITE"));
+                    c.bound_sdp = Some(sdp);
+                    *slot = Some(Offered {
+                        device,
+                        device_key,
+                        eph,
+                        sdp,
+                        suites,
+                    });
+                }
+            }
+            (Msg::Update { sdp, .. }, state, _) if !matches!(state, State::Ended { .. }) => {
+                if fresh {
+                    if c.announced.len() >= MAX_ANNOUNCED {
+                        c.announced.remove(0);
+                    }
+                    c.announced.push((sdp, sent));
+                    self.log
+                        .push(format!("{label}: re-INVITE announced by the peer's add-on"));
+                } else {
+                    self.log
+                        .push(format!("{label}: re-INVITE announcement is stale: ignored"));
+                }
             }
             (
                 Msg::Answer {
@@ -1166,12 +1459,49 @@ impl CallTable {
             .map(|c| c.outbox.remove(0))
     }
 
-    /// The call is over: keys kept a moment for trailing packets, or the
-    /// call forgotten at once if it had none.
+    /// A BYE, CANCEL or error answer to the INVITE travelling in `dir`. Our
+    /// own client's ends the call at once. One from the network is not
+    /// authenticated (seventh audit of 2026-10): for a call with keys it
+    /// only asks for the end, and the keys stay while the call's media goes
+    /// on - a client that did not follow it (other tags, a stray answer)
+    /// keeps an encrypted call, never a plain one ([`Self::tick`]). A call
+    /// without keys ends, and is kept as ended for a while so that a strict
+    /// contact's media is still held back.
+    fn end_from(&mut self, dir: Direction, h: [u8; 16], now: u64, what: &str) {
+        if dir == Direction::Inbound {
+            if let Some(c) = self.calls.get_mut(&h) {
+                if c.media.is_some() && !matches!(c.state, State::Ended { .. }) {
+                    if c.end_req.is_none() {
+                        c.end_req = Some(now);
+                        let l = format!(
+                            "{}: {what} in; the keys stay while the call's media goes on \
+                             (an end from the network is not authenticated)",
+                            c.label()
+                        );
+                        self.log.push(l);
+                    }
+                    return;
+                }
+            }
+        }
+        self.end_as(h, now, what, dir == Direction::Inbound);
+    }
+
+    /// The call is over: with keys, kept as ended for [`ENDED_GRACE_MS`]
+    /// for packets on the way; without, forgotten at once. Its Call-ID is
+    /// burned either way.
     fn end(&mut self, h: [u8; 16], now: u64, what: &str) {
+        self.end_as(h, now, what, false);
+    }
+
+    /// [`Self::end`]; `keep` keeps a call without keys as ended for the
+    /// grace too, so a strict contact's media stays held back - for an end
+    /// from the network, which is not authenticated.
+    fn end_as(&mut self, h: [u8; 16], now: u64, what: &str, keep: bool) {
         let Some(mut c) = self.calls.remove(&h) else {
             return;
         };
+        self.burn(h, now);
         if matches!(c.state, State::Ended { .. }) {
             self.calls.insert(h, c);
             return;
@@ -1182,12 +1512,16 @@ impl CallTable {
                 "{label}: {what}; keys kept {} s for packets on the way",
                 ENDED_GRACE_MS / 1000
             ));
-            c.state = State::Ended { at: now };
-            self.calls.insert(h, c);
         } else {
             self.log
                 .push(format!("{label}: {what}; was {}", c.state.name()));
+            if !keep {
+                return;
+            }
         }
+        c.state = State::Ended { at: now };
+        c.end_req = None;
+        self.calls.insert(h, c);
     }
 
     /// Switches the strict level on or off (`calls_encrypt = required`).
@@ -1212,10 +1546,13 @@ impl CallTable {
     /// contact is set up or went without keys. The client makes one call at
     /// a time, so all such media is that call's.
     pub fn blocks_plain(&self) -> bool {
+        // An ended call without keys counts for its grace too: an end from
+        // the network is not authenticated (seventh audit of 2026-10).
         self.required
-            || self.calls.values().any(|c| {
-                c.info.strict && c.media.is_none() && !matches!(c.state, State::Ended { .. })
-            })
+            || self
+                .calls
+                .values()
+                .any(|c| c.info.strict && c.media.is_none())
     }
 
     /// A datagram no agreed call covers: passed as it is, or dropped when it
@@ -1283,7 +1620,24 @@ impl CallTable {
     pub fn tick(&mut self, now: u64) {
         self.offers
             .retain(|_, o| now.saturating_sub(o.at) < OFFER_TTL_MS);
+        self.burned
+            .retain(|_, at| now.saturating_sub(*at) < BURN_KEEP_MS);
         self.expire_confirm(now);
+        // An end the network asked for takes effect once the call's media
+        // has stopped for the grace (the client did end it), or when our
+        // own client says so ([`Self::sip`]).
+        let asked: Vec<[u8; 16]> = self
+            .calls
+            .iter()
+            .filter(|(_, c)| {
+                c.end_req
+                    .is_some_and(|r| now.saturating_sub(r.max(c.last_media)) >= ENDED_GRACE_MS)
+            })
+            .map(|(h, _)| *h)
+            .collect();
+        for h in asked {
+            self.end(h, now, "no media since the end the network asked for");
+        }
         let done: Vec<[u8; 16]> = self
             .calls
             .iter()
@@ -1365,6 +1719,7 @@ impl CallTable {
         };
         let c = self.calls.get_mut(&h).expect("found");
         c.touched = now;
+        c.last_media = now;
         let label = c.label();
         let m = c.media.as_mut().expect("keyed");
         let before = m.stats;
@@ -1405,6 +1760,7 @@ impl CallTable {
         };
         let mut c = self.calls.remove(&h).expect("found");
         c.touched = now;
+        c.last_media = now;
         let label = c.label();
         let m = c.media.as_mut().expect("keyed");
         let v = m.inbound(d);
@@ -1521,6 +1877,7 @@ mod tests {
                 from_peer,
                 dev,
                 Msg::decode(&p).expect("a call payload"),
+                now / 1000,
                 now,
             );
         }
@@ -2224,7 +2581,7 @@ mod tests {
             call: short(&call_digest("wrongtag@h")),
             tag: [0; 16],
         };
-        b2.control(A, 1, bad, T0);
+        b2.control(A, 1, bad, T0 / 1000, T0);
         assert_eq!(b2.state_of("wrongtag@h"), Some("plain"));
     }
 
@@ -2250,7 +2607,7 @@ mod tests {
             sdp: [0; 16],
             suites: vec![1],
         };
-        b.control(A, 1, o, T0);
+        b.control(A, 1, o, T0 / 1000, T0);
         assert_eq!(b.offers.len(), 1);
         b.tick(T0 + OFFER_TTL_MS);
         assert!(b.offers.is_empty());
@@ -2273,7 +2630,281 @@ mod tests {
             &mut go(me(A, 1, 1)),
             T0,
         );
+        // An end from the network is not authenticated (seventh audit): the
+        // call is kept as ended for the grace, then forgotten.
+        assert_eq!(a.state_of("y@h"), Some("ended"));
+        a.tick(T0 + ENDED_GRACE_MS);
         assert_eq!(a.state_of("y@h"), None);
+    }
+
+    // ---- seventh audit of 2026-10 ----
+
+    fn hash_of(s: &Sip) -> [u8; 16] {
+        sdp_hash(s.sdp.as_deref())
+    }
+
+    /// A Call-ID that ended vouches for no INVITE again: not in its grace,
+    /// not after it is forgotten, not with a fresh offer for it. Before the
+    /// fix an ended call within `ENDED_GRACE_MS` vouched for any INVITE with
+    /// its Call-ID (`vouched` looked for the Call-ID in the table).
+    #[test]
+    fn an_ended_call_id_vouches_for_no_new_invite() {
+        let call = "ended@h";
+        let (_, mut b) = agreed(call);
+        let sdp = hash_of(&invite(call, 16384));
+        assert!(b.vouched(A, call, &sdp, T0 + 100), "live: a retransmission");
+        b.sip(
+            Direction::Outbound,
+            A,
+            &req("BYE", call, 2),
+            PeerInfo::default(),
+            &mut go(me(B, 2, 2)),
+            T0 + 1000,
+        );
+        assert_eq!(b.state_of(call), Some("ended"));
+        assert!(!b.vouched(A, call, &sdp, T0 + 1001), "in its grace");
+        b.tick(T0 + 1000 + ENDED_GRACE_MS);
+        assert_eq!(b.state_of(call), None);
+        assert!(!b.vouched(A, call, &sdp, T0 + 1000 + ENDED_GRACE_MS));
+        // A genuine-looking fresh offer for the same Call-ID is not taken.
+        let mut a2 = CallTable::default();
+        let offer = a2.sip(
+            Direction::Outbound,
+            B,
+            &invite(call, 16384),
+            PeerInfo::default(),
+            &mut go(me(A, 1, 1)),
+            T0 + 20_000,
+        );
+        deliver(&mut b, A, 1, offer, T0 + 20_000);
+        assert!(!b.vouched(A, call, &sdp, T0 + 20_000));
+        assert!(b.offers.is_empty());
+        // The burn lasts BURN_KEEP_MS.
+        b.tick(T0 + 1000 + BURN_KEEP_MS);
+        assert!(b.burned.is_empty());
+    }
+
+    /// A BYE, CANCEL or error answer from the network is not authenticated:
+    /// it does not end a keyed call's encryption while the call's media
+    /// goes on (the client ignored it), and the media never goes plain.
+    /// Once the media stops for the grace, or our client accepts the BYE,
+    /// the call ends. Before the fix the keys were dropped `ENDED_GRACE_MS`
+    /// after any such message and the media of a call the client kept went
+    /// out plain.
+    #[test]
+    fn an_end_from_the_network_does_not_turn_a_keyed_call_plain() {
+        let strict = PeerInfo {
+            strict: true,
+            verified: true,
+        };
+        let busy = |call: &str| {
+            Sip::parse(
+                format!(
+                    "SIP/2.0 487 Request Terminated\r\nCall-ID: {call}\r\nCSeq: 1 INVITE\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .unwrap()
+        };
+        for (what, end) in [
+            ("BYE", req("BYE", "net@h", 9)),
+            ("CANCEL", req("CANCEL", "net@h", 1)),
+            ("487", busy("net@h")),
+        ] {
+            let call = "net@h";
+            let (mut a, _) = agreed(call);
+            a.sip(
+                Direction::Inbound,
+                B,
+                &end,
+                strict,
+                &mut go(me(A, 1, 1)),
+                T0 + 100,
+            );
+            assert_eq!(a.state_of(call), Some("agreed"), "{what}");
+            // The client goes on: its media stays encrypted, long past the
+            // grace.
+            let mut t = T0 + 100;
+            for s in 0..5u16 {
+                t += ENDED_GRACE_MS - 1;
+                a.tick(t);
+                assert!(
+                    matches!(
+                        a.media_out(16384, &rtp(100 + s, 0xA), t),
+                        Verdict::Replace(_)
+                    ),
+                    "{what}: still encrypted at +{} ms",
+                    t - T0
+                );
+            }
+            // The media stops: the end takes effect, then the grace.
+            a.tick(t + ENDED_GRACE_MS);
+            assert_eq!(a.state_of(call), Some("ended"), "{what}");
+            a.tick(t + 2 * ENDED_GRACE_MS);
+            assert_eq!(a.state_of(call), None, "{what}");
+        }
+        // Our client accepts the peer's BYE: ended at once.
+        let call = "acc@h";
+        let (mut a, _) = agreed(call);
+        a.sip(
+            Direction::Inbound,
+            B,
+            &req("BYE", call, 9),
+            strict,
+            &mut go(me(A, 1, 1)),
+            T0 + 100,
+        );
+        let ok_bye = Sip::parse(
+            format!("SIP/2.0 200 OK\r\nCall-ID: {call}\r\nCSeq: 9 BYE\r\n\r\n").as_bytes(),
+        )
+        .unwrap();
+        a.sip(
+            Direction::Outbound,
+            B,
+            &ok_bye,
+            strict,
+            &mut go(me(A, 1, 1)),
+            T0 + 101,
+        );
+        assert_eq!(a.state_of(call), Some("ended"));
+    }
+
+    /// A strict contact's call that the network "cancelled" before it had
+    /// keys, and that the client answers anyway (it ignored the CANCEL), is
+    /// not let through plain: kept as ended while in its grace, and an
+    /// answer for a call with no live set-up is a call without keys. Before
+    /// the fix the CANCEL forgot the call and its media passed plain.
+    #[test]
+    fn a_strict_call_the_network_ended_before_keys_stays_held_back() {
+        let strict = PeerInfo {
+            strict: true,
+            verified: true,
+        };
+        let p = rtp(1, 0xB);
+        for late in [0, ENDED_GRACE_MS] {
+            let call = "early@h";
+            let (mut a, mut b) = (CallTable::default(), CallTable::default());
+            let offer = a.sip(
+                Direction::Outbound,
+                B,
+                &invite(call, 16384),
+                strict,
+                &mut go(me(A, 1, 1)),
+                T0,
+            );
+            deliver(&mut b, A, 1, offer, T0);
+            b.sip(
+                Direction::Inbound,
+                A,
+                &invite(call, 16384),
+                strict,
+                &mut go(me(B, 2, 2)),
+                T0,
+            );
+            b.sip(
+                Direction::Inbound,
+                A,
+                &req("CANCEL", call, 1),
+                strict,
+                &mut go(me(B, 2, 2)),
+                T0 + 10,
+            );
+            assert!(b.blocks_plain(), "in its grace");
+            b.tick(T0 + 10 + late);
+            // The user answers.
+            let answer = b.sip(
+                Direction::Outbound,
+                A,
+                &ok(call, 20000),
+                strict,
+                &mut go(me(B, 2, 2)),
+                T0 + 20 + late,
+            );
+            assert!(answer.is_empty(), "no keys for it");
+            assert!(b.blocks_plain(), "+{late}");
+            assert!(matches!(
+                b.media_out(20000, &p, T0 + 30 + late),
+                Verdict::Drop(_)
+            ));
+            assert!(texts(&mut b).iter().any(|n| n.contains("not let through")));
+        }
+    }
+
+    /// A re-INVITE with another SDP is vouched for only when the peer's
+    /// add-on announced that SDP, freshly; the original INVITE's SDP (a
+    /// retransmission) stays vouched for while the call lives. Before the
+    /// fix any INVITE with a known Call-ID was.
+    #[test]
+    fn a_re_invite_is_vouched_for_only_as_announced() {
+        let call = "re@h";
+        let (mut a, mut b) = agreed(call);
+        let re = invite(call, 17000);
+        let other = invite(call, 18000);
+        assert!(!b.vouched(A, call, &hash_of(&re), T0 + 100));
+        let upd = a.sip(
+            Direction::Outbound,
+            B,
+            &re,
+            PeerInfo::default(),
+            &mut go(me(A, 1, 1)),
+            T0 + 100,
+        );
+        assert_eq!(upd.len(), 1, "announced before it goes");
+        assert!(matches!(Msg::decode(&upd[0]), Some(Msg::Update { .. })));
+        // A retransmission of the same re-INVITE announces nothing new.
+        assert!(a
+            .sip(
+                Direction::Outbound,
+                B,
+                &re,
+                PeerInfo::default(),
+                &mut go(me(A, 1, 1)),
+                T0 + 101
+            )
+            .is_empty());
+        deliver(&mut b, A, 1, upd.clone(), T0 + 100);
+        assert!(b.vouched(A, call, &hash_of(&re), T0 + 100));
+        assert!(
+            !b.vouched(A, call, &hash_of(&other), T0 + 100),
+            "another SDP"
+        );
+        assert!(b.vouched(A, call, &hash_of(&invite(call, 16384)), T0 + 100));
+        assert!(
+            !b.vouched(
+                A,
+                call,
+                &hash_of(&re),
+                T0 + 100 + crate::crypto::ANNOUNCE_MAX_AGE * 1000
+            ),
+            "no longer fresh"
+        );
+        // An announcement written long ago is not taken at all.
+        let (mut a2, mut b2) = agreed(call);
+        let upd = a2.sip(
+            Direction::Outbound,
+            B,
+            &re,
+            PeerInfo::default(),
+            &mut go(me(A, 1, 1)),
+            T0 + 100,
+        );
+        for p in upd {
+            b2.control(A, 1, Msg::decode(&p).unwrap(), T0 / 1000 - 600, T0 + 100);
+        }
+        assert!(!b2.vouched(A, call, &hash_of(&re), T0 + 100));
+    }
+
+    /// Once keys are agreed, the callee's 200 OK must carry the SDP their
+    /// key answer bound. Before the fix a different one was only logged,
+    /// after the 200 OK had gone to the client.
+    #[test]
+    fn the_answer_must_carry_the_sdp_the_key_answer_bound() {
+        let call = "ans@h";
+        let (a, _) = agreed(call);
+        assert!(a.answer_vouched(B, call, &hash_of(&ok(call, 20000))));
+        assert!(!a.answer_vouched(B, call, &hash_of(&ok(call, 6666))));
+        // A call without keys binds nothing here.
+        assert!(a.answer_vouched(B, "unknown@h", &hash_of(&ok("unknown@h", 6666))));
     }
 
     #[test]
