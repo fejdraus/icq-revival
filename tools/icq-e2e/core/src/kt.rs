@@ -89,8 +89,13 @@ impl Edge {
 /// What one leaf changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
-    /// The account key is now `key` (`change` is publish, rotate or reset).
-    Account { change: String, key: String },
+    /// The account key is now `key` (`change` is publish, rotate or reset);
+    /// a rotation carries the old key's proof.
+    Account {
+        change: String,
+        key: String,
+        proof: Option<String>,
+    },
     /// A device was added.
     Device { id: u32, device: LogDevice },
     /// A device has a new account signature.
@@ -99,6 +104,22 @@ pub enum Change {
     Revoke { id: u32 },
     /// The account was deleted, with its key and devices.
     Delete,
+    /// The owner's signed revoke of a device: the revoke leaf of that device
+    /// comes next (second audit of 2026-10, finding 1).
+    OwnerRevoke {
+        id: u32,
+        issued_at: u64,
+        signature: String,
+    },
+    /// The owner's signed delete of the account's keys: the delete comes
+    /// next.
+    OwnerDelete { issued_at: u64, signature: String },
+    /// The operator revoked a device without the owner's key: the revoke of
+    /// that device comes next, and the account's next key is a new identity.
+    RecoveryRevoke { id: u32, why: String },
+    /// The operator deleted the account without the owner's key: the delete
+    /// comes next, and a key published afterwards is a new identity.
+    RecoveryDelete { why: String },
     /// A kind this build does not know. It is part of the tree like any
     /// other leaf, and changes nothing here.
     Unknown,
@@ -162,6 +183,8 @@ pub fn parse_leaf(leaf: &[u8]) -> Option<Leaf> {
     }
     let screen_name = String::from_utf8(f[1].to_vec()).ok()?;
     let time = u64::from_be_bytes(f[2].try_into().ok()?);
+    let time8 = |b: &[u8]| -> Option<u64> { Some(u64::from_be_bytes(b.try_into().ok()?)) };
+    let text = |b: &[u8]| String::from_utf8(b.to_vec()).ok();
     let change = match (f[0], &f[3..]) {
         // A rotation carries the old key's proof, for the auditor.
         (b"account", [change, key, proof @ ..])
@@ -170,6 +193,7 @@ pub fn parse_leaf(leaf: &[u8]) -> Option<Leaf> {
             Change::Account {
                 change: String::from_utf8(change.to_vec()).ok()?,
                 key: b64_of(key, 32)?,
+                proof: proof.first().map(|p| vodozemac::base64_encode(p)),
             }
         }
         (b"device", [id, curve, ed, sig]) => Change::Device {
@@ -179,6 +203,7 @@ pub fn parse_leaf(leaf: &[u8]) -> Option<Leaf> {
                 ed25519_key: b64_of(ed, 32)?,
                 account_signature: b64_of(sig, 64)?,
                 added: time,
+                stale: false,
             },
         },
         (b"resign", [id, sig]) => Change::Resign {
@@ -187,7 +212,25 @@ pub fn parse_leaf(leaf: &[u8]) -> Option<Leaf> {
         },
         (b"revoke", [id]) => Change::Revoke { id: device_id(id)? },
         (b"delete", []) => Change::Delete,
-        (b"account" | b"device" | b"resign" | b"revoke" | b"delete", _) => return None,
+        (b"owner-revoke", [id, at, sig]) => Change::OwnerRevoke {
+            id: device_id(id)?,
+            issued_at: time8(at)?,
+            signature: b64_of(sig, 64)?,
+        },
+        (b"owner-delete", [at, sig]) => Change::OwnerDelete {
+            issued_at: time8(at)?,
+            signature: b64_of(sig, 64)?,
+        },
+        (b"recovery-revoke", [id, why]) => Change::RecoveryRevoke {
+            id: device_id(id)?,
+            why: text(why)?,
+        },
+        (b"recovery-delete", [why]) => Change::RecoveryDelete { why: text(why)? },
+        (
+            b"account" | b"device" | b"resign" | b"revoke" | b"delete" | b"owner-revoke"
+            | b"owner-delete" | b"recovery-revoke" | b"recovery-delete",
+            _,
+        ) => return None,
         _ => Change::Unknown,
     };
     Some(Leaf {
@@ -208,6 +251,11 @@ pub struct LogDevice {
     /// When it was added, Unix seconds, as the leaf says.
     #[serde(default)]
     pub added: u64,
+    /// Set by a rotation, cleared by a re-signature: no signature by the
+    /// current account key vouches for the device, so a rotation may revoke
+    /// it without a leaf of its own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 /// An account as the log has it: its key and its active devices.
@@ -216,6 +264,314 @@ pub struct LogAccount {
     pub key: String,
     #[serde(default)]
     pub devices: BTreeMap<u32, LogDevice>,
+    /// Every device id the account has had, revoked ones too: an id is never
+    /// used again. A copy from before this field holds only what it replayed
+    /// since.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub used: Vec<u32>,
+    /// The account keys the current one descends from by rotations, each
+    /// signed by the one before, oldest first, the current key last: a key
+    /// in here was handed over by its owner (second audit of 2026-10,
+    /// finding 1). Empty in a copy from before; the current key then counts
+    /// alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain: Vec<String>,
+    /// Why the chain started without the previous key's word: a reset, or a
+    /// key published after the operator deleted the account. `None` for an
+    /// account's first key and for one published after the owner's own
+    /// delete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_identity: Option<String>,
+    /// The operator revoked a device without the owner's key since the
+    /// last key change: the next key that is not a rotation is a new
+    /// identity, for this reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<String>,
+}
+
+impl LogAccount {
+    fn fresh(key: &str, new_identity: Option<String>) -> LogAccount {
+        LogAccount {
+            key: key.to_string(),
+            chain: vec![key.to_string()],
+            new_identity,
+            ..LogAccount::default()
+        }
+    }
+
+    /// Whether `old` was this account's key and handed over to the current
+    /// one by rotations alone.
+    pub fn continues(&self, old: &str) -> bool {
+        old == self.key || self.chain.iter().any(|k| k == old)
+    }
+}
+
+/// How many keys [`LogAccount::chain`] keeps; an older one counts as not
+/// continued, which only ever asks more of the user.
+pub const CHAIN_KEEP: usize = 32;
+
+/// A revoke or delete that the leaf before it authorised, which must be the
+/// next leaf.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pending {
+    pub kind: String,
+    pub account: String,
+    #[serde(default)]
+    pub device: u32,
+    pub from: String,
+}
+
+/// The accounts replayed from the log and what the rules need between
+/// leaves. [`LogState`] holds one for the whole copy; [`LogState::vouched`]
+/// another, for the part of it an auditor has cosigned.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Replay {
+    #[serde(default)]
+    pub accounts: BTreeMap<String, LogAccount>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<Pending>,
+    /// Accounts the operator deleted without the owner's key, with why,
+    /// until a key is published for them again.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub deleted: BTreeMap<String, String>,
+}
+
+fn verify_b64(key: &str, msg: &[u8], sig: &str) -> bool {
+    let (Ok(k), Ok(s)) = (
+        vodozemac::Ed25519PublicKey::from_base64(key),
+        vodozemac::Ed25519Signature::from_base64(sig),
+    ) else {
+        return false;
+    };
+    k.verify(msg, &s).is_ok()
+}
+
+fn raw32(b64: &str) -> [u8; 32] {
+    vodozemac::base64_decode(b64)
+        .ok()
+        .and_then(|v| v.try_into().ok())
+        .unwrap_or([0; 32])
+}
+
+impl Replay {
+    /// Checks one leaf against the directory's rules, as the auditor does
+    /// (`server/e2e/audit.go`, `AuditState.apply`), and replays it. `Err` is
+    /// a leaf that breaks a rule: the log is not to be trusted. `Ok(Some)`
+    /// says what the leaf did without the owner's key - the operator's
+    /// recovery, which keeps the rules and which the auditor logs.
+    ///
+    /// Unlike the auditor, a kind this build does not know changes nothing
+    /// and breaks nothing, so a newer server's log still reads.
+    pub fn apply(&mut self, leaf: &Leaf) -> Result<Option<String>, String> {
+        let sn = leaf.screen_name.clone();
+        let pending = self.pending.take();
+        if let Some(p) = &pending {
+            let ok = match &leaf.change {
+                Change::Revoke { id } => p.kind == "revoke" && p.account == sn && p.device == *id,
+                Change::Delete => p.kind == "delete" && p.account == sn,
+                _ => false,
+            };
+            if !ok {
+                return Err(format!(
+                    "the {} entry is not followed by its {}",
+                    p.from, p.kind
+                ));
+            }
+        }
+        let acc = self.accounts.get_mut(&sn);
+        let mut recovered = None;
+        match (&leaf.change, acc) {
+            (Change::Account { change, key, proof }, acc) => match (change.as_str(), acc) {
+                ("publish", None) if proof.is_none() => {
+                    let why = self.deleted.remove(&sn).map(|why| {
+                        format!("a key published after the operator deleted the account ({why})")
+                    });
+                    recovered = why.clone();
+                    self.accounts.insert(sn, LogAccount::fresh(key, why));
+                }
+                ("publish", Some(_)) => {
+                    return Err("a publish over an account that has a key".into())
+                }
+                ("rotate", Some(a)) => {
+                    let ok = proof.as_deref().is_some_and(|p| {
+                        verify_b64(
+                            &a.key,
+                            &crate::sign::rotate(&sn, &raw32(&a.key), &raw32(key)),
+                            p,
+                        )
+                    });
+                    if !ok {
+                        return Err("a rotation not signed by the old key".into());
+                    }
+                    if a.chain.is_empty() {
+                        a.chain.push(a.key.clone());
+                    }
+                    a.chain.push(key.clone());
+                    if a.chain.len() > CHAIN_KEEP {
+                        a.chain.remove(0);
+                    }
+                    a.key = key.clone();
+                    a.recovery = None;
+                    for d in a.devices.values_mut() {
+                        d.stale = true;
+                    }
+                }
+                ("reset", Some(a)) if proof.is_none() => {
+                    if !a.devices.is_empty() {
+                        return Err("a reset while the account has active devices".into());
+                    }
+                    let why = match a.recovery.take() {
+                        Some(r) => format!("a reset after {r}"),
+                        None => "a reset: a new key without the old key's proof".to_string(),
+                    };
+                    recovered = Some(why.clone());
+                    a.key = key.clone();
+                    a.chain = vec![key.clone()];
+                    a.new_identity = Some(why);
+                }
+                _ => {
+                    return Err(format!(
+                        "an account change ({change}) the rules do not allow"
+                    ))
+                }
+            },
+            (Change::Device { id, device }, Some(a)) => {
+                if a.used.contains(id) || a.devices.contains_key(id) {
+                    return Err(format!("device id {id} used again"));
+                }
+                let msg = crate::sign::device(
+                    &sn,
+                    *id,
+                    &raw32(&device.curve25519_key),
+                    &raw32(&device.ed25519_key),
+                );
+                if !verify_b64(&a.key, &msg, &device.account_signature) {
+                    return Err(format!("device {id} is not signed by the account key"));
+                }
+                a.used.push(*id);
+                a.devices.insert(*id, device.clone());
+            }
+            (Change::Resign { id, signature }, Some(a)) => {
+                let key = a.key.clone();
+                let Some(d) = a.devices.get_mut(id) else {
+                    return Err(format!(
+                        "a re-signature of device {id}, which is not active"
+                    ));
+                };
+                let msg = crate::sign::device(
+                    &sn,
+                    *id,
+                    &raw32(&d.curve25519_key),
+                    &raw32(&d.ed25519_key),
+                );
+                if !verify_b64(&key, &msg, signature) {
+                    return Err(format!(
+                        "device {id}'s new signature is not by the account key"
+                    ));
+                }
+                d.account_signature = signature.clone();
+                d.stale = false;
+            }
+            (
+                Change::OwnerRevoke {
+                    id,
+                    issued_at,
+                    signature,
+                },
+                Some(a),
+            ) => {
+                if !a.devices.contains_key(id) {
+                    return Err(format!(
+                        "an owner's revoke of device {id}, which is not active"
+                    ));
+                }
+                if !verify_b64(
+                    &a.key,
+                    &crate::sign::revoke(&sn, *id, *issued_at),
+                    signature,
+                ) {
+                    return Err(format!(
+                        "the revoke of device {id} is not signed by the account key"
+                    ));
+                }
+                self.pending = Some(Pending {
+                    kind: "revoke".into(),
+                    account: sn,
+                    device: *id,
+                    from: "owner-revoke".into(),
+                });
+            }
+            (Change::RecoveryRevoke { id, why }, Some(a)) => {
+                if !a.devices.contains_key(id) {
+                    return Err(format!(
+                        "a recovery revoke of device {id}, which is not active"
+                    ));
+                }
+                let what =
+                    format!("the operator revoked device {id} without the owner's key ({why})");
+                a.recovery = Some(what.clone());
+                recovered = Some(what);
+                self.pending = Some(Pending {
+                    kind: "revoke".into(),
+                    account: sn,
+                    device: *id,
+                    from: "recovery-revoke".into(),
+                });
+            }
+            (Change::Revoke { id }, Some(a)) => {
+                let Some(d) = a.devices.get(id) else {
+                    return Err(format!("a revoke of device {id}, which is not active"));
+                };
+                if pending.is_none() && !d.stale {
+                    return Err(format!(
+                        "device {id} revoked without the owner's signature or a recovery entry"
+                    ));
+                }
+                a.devices.remove(id);
+            }
+            (
+                Change::OwnerDelete {
+                    issued_at,
+                    signature,
+                },
+                Some(a),
+            ) => {
+                if !verify_b64(&a.key, &crate::sign::delete(&sn, *issued_at), signature) {
+                    return Err("the delete is not signed by the account key".into());
+                }
+                self.pending = Some(Pending {
+                    kind: "delete".into(),
+                    account: sn,
+                    device: 0,
+                    from: "owner-delete".into(),
+                });
+            }
+            (Change::RecoveryDelete { why }, Some(_)) => {
+                recovered = Some(format!(
+                    "the operator deleted the account without the owner's key ({why})"
+                ));
+                self.deleted.insert(sn.clone(), why.clone());
+                self.pending = Some(Pending {
+                    kind: "delete".into(),
+                    account: sn,
+                    device: 0,
+                    from: "recovery-delete".into(),
+                });
+            }
+            (Change::Delete, Some(_)) => {
+                if pending.is_none() {
+                    return Err(
+                        "the account deleted without the owner's signature or a recovery entry"
+                            .into(),
+                    );
+                }
+                self.accounts.remove(&sn);
+            }
+            (Change::Unknown, _) => {}
+            (_, None) => return Err("an entry for an account that has no key".into()),
+        }
+        Ok(recovered)
+    }
 }
 
 /// Our copy of the log, in the state file: the log's key, pinned on first
@@ -232,6 +588,12 @@ pub struct LogState {
     pub edge: Vec<String>,
     #[serde(default)]
     pub accounts: BTreeMap<String, LogAccount>,
+    /// The revoke or delete the last leaf authorised (it comes next).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<Pending>,
+    /// Accounts the operator deleted without the owner's key.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub deleted: BTreeMap<String, String>,
     #[serde(default)]
     pub own_seen: Vec<u32>,
     /// Our account key in the log that is not ours, once the user was told.
@@ -262,6 +624,24 @@ pub struct LogState {
     /// shows. State version 3.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub broken: Option<String>,
+    /// The log replayed only as far as a pinned auditor has cosigned it, the
+    /// largest such size: what new keys are taken from once an auditor has
+    /// vouched for this copy (second audit of 2026-10, finding 3). Empty and
+    /// 0 in a copy from before; filled at the next look at the auditors.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub vouched_size: u64,
+    #[serde(default, skip_serializing_if = "Replay::is_empty")]
+    pub vouched: Replay,
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+impl Replay {
+    fn is_empty(&self) -> bool {
+        self.accounts.is_empty() && self.pending.is_none() && self.deleted.is_empty()
+    }
 }
 
 /// What the client can rely on from the key log right now.
@@ -272,6 +652,14 @@ pub enum Trust {
     NeverHadLog,
     /// The copy is up to date and adds up: keys are checked against it.
     Trusted,
+    /// The copy is up to date, and a pinned auditor has vouched for this
+    /// copy before but has not within [`AUDIT_MAX_AGE`]: what is known goes
+    /// on, nothing new is taken (second audit of 2026-10, finding 3).
+    Unaudited(String),
+    /// The log was trusted on this state before, and cannot be read now:
+    /// the last trusted copy stands, nothing new is taken until it can be
+    /// read again (second audit of 2026-10, finding 2). Not sticky.
+    TemporarilyUnavailableAfterTrust(String),
     /// A log we had trusted broke; nothing new is taken until `/e2e
     /// resetlog`, see [`LogState::broken`].
     BrokenAfterTrust(String),
@@ -279,9 +667,53 @@ pub enum Trust {
 
 impl LogState {
     /// Whether a log was ever seen and trusted in this copy: its key is
-    /// pinned or it has entries.
+    /// pinned or it has entries. Both are written only after a sync whose
+    /// entries added up, so this is kept in the state file.
     pub fn was_trusted(&self) -> bool {
         self.key.is_some() || self.size > 0
+    }
+
+    /// Whether a pinned auditor has ever cosigned a checkpoint that agrees
+    /// with this copy: from then on new keys are taken only from the part an
+    /// auditor vouched for, and only while one has done so lately.
+    pub fn audit_required(&self) -> bool {
+        self.audited.is_some() || !self.audits.is_empty()
+    }
+
+    /// Whether a pinned auditor's cosignature that agrees with this copy is
+    /// at most [`AUDIT_MAX_AGE`] old at `now`.
+    pub fn audit_fresh(&self, now: u64) -> bool {
+        self.audits
+            .iter()
+            .chain(self.audited.iter())
+            .any(|a| now <= a.time.saturating_add(AUDIT_MAX_AGE))
+    }
+
+    /// The largest log size a pinned auditor cosigned in agreement with
+    /// this copy.
+    pub fn audited_size(&self) -> u64 {
+        self.audits
+            .iter()
+            .chain(self.audited.iter())
+            .map(|a| a.size)
+            .max()
+            .unwrap_or(0)
+            .min(self.size)
+    }
+
+    /// The replayed state as far as this copy goes, rules and all.
+    fn replay(&self) -> Replay {
+        Replay {
+            accounts: self.accounts.clone(),
+            pending: self.pending.clone(),
+            deleted: self.deleted.clone(),
+        }
+    }
+
+    fn set_replay(&mut self, r: Replay) {
+        self.accounts = r.accounts;
+        self.pending = r.pending;
+        self.deleted = r.deleted;
     }
 }
 
@@ -329,48 +761,13 @@ impl LogState {
         self.edge = e.hashes.iter().map(hex).collect();
     }
 
-    /// Replays one leaf. A publish or a reset starts the account afresh: a
-    /// reset needs every device revoked, and a publish of an account that had
-    /// a key means the account was deleted and its UIN given out again.
-    pub fn apply(&mut self, leaf: &Leaf) {
-        let acc = || LogAccount::default();
-        match &leaf.change {
-            Change::Account { change, key } => {
-                let a = self
-                    .accounts
-                    .entry(leaf.screen_name.clone())
-                    .or_insert_with(acc);
-                a.key = key.clone();
-                if change != "rotate" {
-                    a.devices.clear();
-                }
-            }
-            Change::Device { id, device } => {
-                self.accounts
-                    .entry(leaf.screen_name.clone())
-                    .or_insert_with(acc)
-                    .devices
-                    .insert(*id, device.clone());
-            }
-            Change::Resign { id, signature } => {
-                if let Some(d) = self
-                    .accounts
-                    .get_mut(&leaf.screen_name)
-                    .and_then(|a| a.devices.get_mut(id))
-                {
-                    d.account_signature = signature.clone();
-                }
-            }
-            Change::Revoke { id } => {
-                if let Some(a) = self.accounts.get_mut(&leaf.screen_name) {
-                    a.devices.remove(id);
-                }
-            }
-            Change::Delete => {
-                self.accounts.remove(&leaf.screen_name);
-            }
-            Change::Unknown => {}
-        }
+    /// Checks one leaf against the directory's rules and replays it
+    /// ([`Replay::apply`]).
+    pub fn apply(&mut self, leaf: &Leaf) -> Result<Option<String>, String> {
+        let mut r = self.replay();
+        let out = r.apply(leaf)?;
+        self.set_replay(r);
+        Ok(out)
     }
 
     /// Every leaf hash, in order, `None` if the state file holds something
@@ -523,6 +920,9 @@ pub enum SyncError {
     /// The log is not an extension of the one we saw before: smaller, gone,
     /// or a different history.
     Rewritten(String),
+    /// An entry breaks the directory's rules - the auditor stops cosigning
+    /// at the same entry.
+    Violation(String),
 }
 
 impl std::fmt::Display for SyncError {
@@ -532,6 +932,7 @@ impl std::fmt::Display for SyncError {
             SyncError::Net(e) => write!(f, "the key log could not be read: {e}"),
             SyncError::BadKey(e) => write!(f, "the key log's signature is wrong: {e}"),
             SyncError::Rewritten(e) => write!(f, "the key log was rewritten: {e}"),
+            SyncError::Violation(e) => write!(f, "the key log breaks its rules: {e}"),
         }
     }
 }
@@ -599,9 +1000,10 @@ pub fn sync(dir: &dyn DirectoryApi, state: &LogState) -> Result<LogState, SyncEr
             let read = parse_leaf(leaf).ok_or_else(|| {
                 SyncError::Rewritten(format!("entry {} is not a log entry", edge.size))
             })?;
+            next.apply(&read)
+                .map_err(|e| SyncError::Violation(format!("entry {}: {e}", edge.size)))?;
             edge.push(leaf_hash(leaf));
             hashes.push(leaf_hash(leaf));
-            next.apply(&read);
         }
     }
     if cp.size > 0 && edge.root() != Some(cp.root) {
@@ -612,6 +1014,44 @@ pub fn sync(dir: &dyn DirectoryApi, state: &LogState) -> Result<LogState, SyncEr
     next.set_edge(&edge);
     next.hashes = STANDARD.encode(hashes.concat());
     Ok(next)
+}
+
+/// Brings [`LogState::vouched`] up to `size` leaves (no further than the
+/// copy): the leaves are read again and each must be the one whose hash the
+/// copy keeps. Nothing changes on an error; a network error is tried again
+/// at the next look.
+pub fn vouch(dir: &dyn DirectoryApi, state: &mut LogState, size: u64) -> Result<(), SyncError> {
+    let size = size.min(state.size);
+    if size <= state.vouched_size {
+        return Ok(());
+    }
+    let hashes = state
+        .leaf_hashes()
+        .ok_or_else(|| SyncError::Rewritten("our copy of it is damaged".into()))?;
+    let mut at = state.vouched_size;
+    let mut r = state.vouched.clone();
+    while at < size {
+        let want = (size - at).min(MAX_ENTRIES);
+        let leaves = dir.log_entries(at, want).map_err(net)?;
+        if leaves.is_empty() {
+            return Err(SyncError::Net("it ended early".into()));
+        }
+        for leaf in leaves.iter().take(want as usize) {
+            if hashes.get(at as usize) != Some(&leaf_hash(leaf)) {
+                return Err(SyncError::Rewritten(format!(
+                    "entry {at} is not the one it was"
+                )));
+            }
+            let read = parse_leaf(leaf)
+                .ok_or_else(|| SyncError::Rewritten(format!("entry {at} is not a log entry")))?;
+            r.apply(&read)
+                .map_err(|e| SyncError::Violation(format!("entry {at}: {e}")))?;
+            at += 1;
+        }
+    }
+    state.vouched = r;
+    state.vouched_size = size;
+    Ok(())
 }
 
 /// The hashes of the log's first `size` leaves, read again.
@@ -980,46 +1420,102 @@ mod tests {
         assert_eq!(edge.root(), Some(node_hash(&ab, &leaf_hash(b"c"))));
     }
 
+    /// An account key from a fixed seed, its public half, and a signature.
+    fn akey(seed: u8) -> vodozemac::Ed25519SecretKey {
+        vodozemac::Ed25519SecretKey::from_slice(&[seed; 32])
+    }
+
+    fn pubkey(k: &vodozemac::Ed25519SecretKey) -> [u8; 32] {
+        *k.public_key().as_bytes()
+    }
+
+    fn signed(k: &vodozemac::Ed25519SecretKey, msg: &[u8]) -> Vec<u8> {
+        k.sign(msg).to_bytes().to_vec()
+    }
+
+    /// A device leaf of `sn` with keys `[c; 32]`, `[e; 32]`, signed by `k`.
+    fn device_leaf(sn: &str, id: u32, c: u8, e: u8, k: &vodozemac::Ed25519SecretKey) -> Vec<u8> {
+        let sig = signed(k, &crate::sign::device(sn, id, &[c; 32], &[e; 32]));
+        build_leaf(
+            "device",
+            sn,
+            6,
+            &[&id.to_be_bytes(), &[c; 32], &[e; 32], &sig],
+        )
+    }
+
     #[test]
     fn leaves_read_back_and_replay() {
-        let k = |b: u8| [b; 32];
-        let sig = |b: u8| [b; 64];
+        let (k1, k2) = (akey(1), akey(9));
+        let sn = "100001";
         let mut s = LogState::default();
+        let resig = signed(&k2, &crate::sign::device(sn, 1, &[2; 32], &[3; 32]));
         let leaves = [
-            build_leaf("account", "100001", 5, &[b"publish", &k(1)]),
+            build_leaf("account", sn, 5, &[b"publish", &pubkey(&k1)]),
+            device_leaf(sn, 1, 2, 3, &k1),
+            device_leaf(sn, 2, 5, 6, &k1),
             build_leaf(
-                "device",
-                "100001",
-                6,
-                &[&1u32.to_be_bytes(), &k(2), &k(3), &sig(4)],
+                "account",
+                sn,
+                8,
+                &[
+                    b"rotate",
+                    &pubkey(&k2),
+                    &signed(&k1, &crate::sign::rotate(sn, &pubkey(&k1), &pubkey(&k2))),
+                ],
             ),
-            build_leaf(
-                "device",
-                "100001",
-                7,
-                &[&2u32.to_be_bytes(), &k(5), &k(6), &sig(7)],
-            ),
-            build_leaf("account", "100001", 8, &[b"rotate", &k(9)]),
-            build_leaf("resign", "100001", 8, &[&1u32.to_be_bytes(), &sig(8)]),
-            build_leaf("revoke", "100001", 8, &[&2u32.to_be_bytes()]),
-            build_leaf("future-kind", "100001", 9, &[b"x"]),
+            build_leaf("resign", sn, 8, &[&1u32.to_be_bytes(), &resig]),
+            // Device 2 was not re-signed: the rotation cut it off, so its
+            // revoke needs no leaf of the owner's.
+            build_leaf("revoke", sn, 8, &[&2u32.to_be_bytes()]),
+            build_leaf("future-kind", sn, 9, &[b"x"]),
         ];
         for l in &leaves {
-            s.apply(&parse_leaf(l).unwrap());
+            assert_eq!(s.apply(&parse_leaf(l).unwrap()), Ok(None));
         }
-        let a = &s.accounts["100001"];
-        assert_eq!(a.key, vodozemac::base64_encode(k(9)));
+        let a = &s.accounts[sn];
+        assert_eq!(a.key, vodozemac::base64_encode(pubkey(&k2)));
         assert_eq!(a.devices.len(), 1);
         assert_eq!(
             a.devices[&1].account_signature,
-            vodozemac::base64_encode(sig(8))
+            vodozemac::base64_encode(&resig)
         );
-        assert_eq!(a.devices[&1].ed25519_key, vodozemac::base64_encode(k(3)));
+        assert_eq!(
+            a.devices[&1].ed25519_key,
+            vodozemac::base64_encode([3u8; 32])
+        );
         assert_eq!(a.devices[&1].added, 6);
+        assert!(!a.devices[&1].stale);
+        // The rotation carries the old key over: a pin of it is continued.
+        assert!(a.continues(&vodozemac::base64_encode(pubkey(&k1))));
+        assert_eq!(a.new_identity, None);
 
-        // A reset starts the account afresh.
-        s.apply(&parse_leaf(&build_leaf("account", "100001", 10, &[b"reset", &k(1)])).unwrap());
-        assert!(s.accounts["100001"].devices.is_empty());
+        // Device 1 was re-signed: revoking it takes the owner's word.
+        let bare = build_leaf("revoke", sn, 9, &[&1u32.to_be_bytes()]);
+        assert!(s.clone().apply(&parse_leaf(&bare).unwrap()).is_err());
+        let owner = build_leaf(
+            "owner-revoke",
+            sn,
+            9,
+            &[
+                &1u32.to_be_bytes(),
+                &77u64.to_be_bytes(),
+                &signed(&k2, &crate::sign::revoke(sn, 1, 77)),
+            ],
+        );
+        assert_eq!(s.apply(&parse_leaf(&owner).unwrap()), Ok(None));
+        assert_eq!(s.apply(&parse_leaf(&bare).unwrap()), Ok(None));
+
+        // A reset needs every device gone, and starts a new identity.
+        let k3 = akey(4);
+        assert!(s
+            .apply(&parse_leaf(&build_leaf("account", sn, 10, &[b"reset", &pubkey(&k3)])).unwrap())
+            .unwrap()
+            .is_some());
+        let a = &s.accounts[sn];
+        assert!(a.devices.is_empty());
+        assert!(!a.continues(&vodozemac::base64_encode(pubkey(&k2))));
+        assert!(a.new_identity.is_some());
 
         // Known kinds with the wrong fields, and things that are no leaf.
         assert_eq!(parse_leaf(&build_leaf("device", "1", 1, &[b"x"])), None);
@@ -1027,10 +1523,91 @@ mod tests {
             parse_leaf(&build_leaf("account", "1", 1, &[b"publish", &[1; 31]])),
             None
         );
+        assert_eq!(
+            parse_leaf(&build_leaf("owner-revoke", "1", 1, &[&[0; 4]])),
+            None
+        );
+        assert_eq!(
+            parse_leaf(&build_leaf("recovery-delete", "1", 1, &[])),
+            None
+        );
         assert_eq!(parse_leaf(b"OSCAR-E2E-v1\x00\x01a"), None);
         let mut cut = leaves[1].clone();
         cut.pop();
         assert_eq!(parse_leaf(&cut), None);
+    }
+
+    /// Leaves that break the rules, as the auditor refuses them.
+    #[test]
+    fn the_replay_refuses_what_the_auditor_refuses() {
+        let (k1, k2) = (akey(1), akey(9));
+        let sn = "100001";
+        let publish = build_leaf("account", sn, 1, &[b"publish", &pubkey(&k1)]);
+        let cases: [(&str, Vec<Vec<u8>>); 6] = [
+            ("publish over a key", vec![publish.clone(), publish.clone()]),
+            (
+                "a device signed by another key",
+                vec![publish.clone(), device_leaf(sn, 1, 2, 3, &k2)],
+            ),
+            (
+                "a rotation without the old key",
+                vec![
+                    publish.clone(),
+                    build_leaf(
+                        "account",
+                        sn,
+                        2,
+                        &[
+                            b"rotate",
+                            &pubkey(&k2),
+                            &signed(&k2, &crate::sign::rotate(sn, &pubkey(&k1), &pubkey(&k2))),
+                        ],
+                    ),
+                ],
+            ),
+            (
+                "a reset with a device left",
+                vec![
+                    publish.clone(),
+                    device_leaf(sn, 1, 2, 3, &k1),
+                    build_leaf("account", sn, 2, &[b"reset", &pubkey(&k2)]),
+                ],
+            ),
+            (
+                "a device id used again",
+                vec![
+                    publish.clone(),
+                    device_leaf(sn, 1, 2, 3, &k1),
+                    build_leaf("recovery-revoke", sn, 2, &[&1u32.to_be_bytes(), b"test"]),
+                    build_leaf("revoke", sn, 2, &[&1u32.to_be_bytes()]),
+                    device_leaf(sn, 1, 2, 3, &k1),
+                ],
+            ),
+            (
+                "an owner's delete followed by something else",
+                vec![
+                    publish.clone(),
+                    build_leaf(
+                        "owner-delete",
+                        sn,
+                        2,
+                        &[
+                            &5u64.to_be_bytes(),
+                            &signed(&k1, &crate::sign::delete(sn, 5)),
+                        ],
+                    ),
+                    device_leaf(sn, 1, 2, 3, &k1),
+                ],
+            ),
+        ];
+        for (what, leaves) in cases {
+            let mut s = LogState::default();
+            let r: Result<Vec<_>, _> = leaves
+                .iter()
+                .map(|l| s.apply(&parse_leaf(l).unwrap()))
+                .collect();
+            assert!(r.is_err(), "{what}");
+        }
     }
 
     #[test]
@@ -1076,6 +1653,7 @@ mod tests {
 
         let mut edge = Edge::default();
         let mut s = LogState::default();
+        let mut verdicts = Vec::new();
         for l in leaves {
             let raw = vodozemac::base64_decode(l).unwrap();
             edge.push(leaf_hash(&raw));
@@ -1084,13 +1662,16 @@ mod tests {
                 (leaf.screen_name.as_str(), leaf.time),
                 ("100001", 1_700_000_000)
             );
-            s.apply(&leaf);
+            verdicts.push(s.apply(&leaf).is_ok());
         }
         assert_eq!(edge.root(), Some(cp.root));
         assert_eq!(
             s.accounts["100001"].key,
             vodozemac::base64_encode([1u8; 32])
         );
+        // Its device carries a made-up signature, which the rules refuse
+        // (and so the revoke of a device that never came in).
+        assert_eq!(verdicts, [true, false, false]);
         assert!(s.accounts["100001"].devices.is_empty());
     }
 
@@ -1135,23 +1716,51 @@ mod tests {
 
     #[test]
     fn deletes_and_rotation_proofs_read() {
+        let (k1, k2) = (akey(1), akey(2));
+        let sn = "100001";
         let mut s = LogState::default();
         for l in [
-            build_leaf("account", "100001", 1, &[b"publish", &[1; 32]]),
-            build_leaf("account", "100001", 2, &[b"rotate", &[2; 32], &[3; 64]]),
+            build_leaf("account", sn, 1, &[b"publish", &pubkey(&k1)]),
+            build_leaf(
+                "account",
+                sn,
+                2,
+                &[
+                    b"rotate",
+                    &pubkey(&k2),
+                    &signed(&k1, &crate::sign::rotate(sn, &pubkey(&k1), &pubkey(&k2))),
+                ],
+            ),
         ] {
-            s.apply(&parse_leaf(&l).unwrap());
+            s.apply(&parse_leaf(&l).unwrap()).unwrap();
         }
-        assert_eq!(
-            s.accounts["100001"].key,
-            vodozemac::base64_encode([2u8; 32])
+        assert_eq!(s.accounts[sn].key, vodozemac::base64_encode(pubkey(&k2)));
+        // A delete needs the owner's signature or a recovery entry.
+        let delete = build_leaf("delete", sn, 3, &[]);
+        assert!(s.clone().apply(&parse_leaf(&delete).unwrap()).is_err());
+        let owner = build_leaf(
+            "owner-delete",
+            sn,
+            3,
+            &[
+                &5u64.to_be_bytes(),
+                &signed(&k2, &crate::sign::delete(sn, 5)),
+            ],
         );
-        s.apply(&parse_leaf(&build_leaf("delete", "100001", 3, &[])).unwrap());
+        let forged = build_leaf(
+            "owner-delete",
+            sn,
+            3,
+            &[
+                &5u64.to_be_bytes(),
+                &signed(&k1, &crate::sign::delete(sn, 5)),
+            ],
+        );
+        assert!(s.clone().apply(&parse_leaf(&forged).unwrap()).is_err());
+        s.apply(&parse_leaf(&owner).unwrap()).unwrap();
+        s.apply(&parse_leaf(&delete).unwrap()).unwrap();
         assert!(s.accounts.is_empty());
-        assert_eq!(
-            parse_leaf(&build_leaf("delete", "100001", 3, &[b"x"])),
-            None
-        );
+        assert_eq!(parse_leaf(&build_leaf("delete", sn, 3, &[b"x"])), None);
         assert_eq!(
             parse_leaf(&build_leaf(
                 "account",
@@ -1191,6 +1800,92 @@ mod tests {
             build_leaf("account", "100009", 1, &[b"publish", &[9; 32]]),
         );
         assert!(matches!(sync(&dir, &old), Err(SyncError::Rewritten(_))));
+    }
+
+    /// The leaves of `server/e2e/audit_test.go`'s `sharedKTVectors`, as the
+    /// Go server builds them.
+    const SHARED_VECTORS: [&str; 11] = [
+        "T1NDQVItRTJFLUtULXYxAAdhY2NvdW50AAYxMDAwMDEACAAAAABlU/EAAAdwdWJsaXNoACCKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXA==",
+        "T1NDQVItRTJFLUtULXYxAAZkZXZpY2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEAIAMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDACACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgBAymZM6VU7E6HkcvkIbyPYI3F+7UxZBkwaxvlPxTFkyMnL/5uAFJ6R2mFh1CuFjbt5t3+xcBgdP4/BPob0Kj3qBQ==",
+        "T1NDQVItRTJFLUtULXYxAAxvd25lci1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEACAAAAABlU/EAAEBtqTL0mQxf5xJahj15TZDec+7FG277JwFmOjAaE5mXzbSjatUjZLkSw/JxUXnsqSxE837cBwxn3KzjnMHrj6kE",
+        "T1NDQVItRTJFLUtULXYxAAZyZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAE=",
+        "T1NDQVItRTJFLUtULXYxAAxvd25lci1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEACAAAAABlU/EAAED7hSQ8ksBojn+or+VHOMtZQ4C0BYnf64M9ej/d7/TbsAi0iqcXOGyiPf5Xfk+ZjP5+4RCuw7YlBGMUXOldfvED",
+        "T1NDQVItRTJFLUtULXYxAA9yZWNvdmVyeS1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEAC2xvc3QgbGFwdG9w",
+        "T1NDQVItRTJFLUtULXYxAAdhY2NvdW50AAYxMDAwMDEACAAAAABlU/EAAAVyZXNldAAgbnoc3Smwt4/ROvTFWY/v9O8qlxZuPKby5Pv8zYBQW/E=",
+        "T1NDQVItRTJFLUtULXYxAA9yZWNvdmVyeS1kZWxldGUABjEwMDAwMQAIAAAAAGVT8QAAF3RoZSBhY2NvdW50IHdhcyBkZWxldGVk",
+        "T1NDQVItRTJFLUtULXYxAAZkZWxldGUABjEwMDAwMQAIAAAAAGVT8QA=",
+        "T1NDQVItRTJFLUtULXYxAAdhY2NvdW50AAYxMDAwMDEACAAAAABlU/EAAAdwdWJsaXNoACBuehzdKbC3j9E69MVZj+/07yqXFm48pvLk+/zNgFBb8Q==",
+        "T1NDQVItRTJFLUtULXYxAAxvd25lci1kZWxldGUABjEwMDAwMQAIAAAAAGVT8QAACAAAAABlU/EAAEBOWgjh6PMWip+xhnXoAOk4Xy37Uwfp719ulO0e2KzgtRoi7KlikRgHbJXAw/v+U10Ta1Q3fw3En5cZFIcZ5cAA",
+    ];
+
+    /// The same sequences as `sharedKTSequences` in
+    /// `server/e2e/audit_test.go`, with the auditor's verdicts there: the
+    /// client's replay must come to the same (second audit of 2026-10,
+    /// finding 1). `None` is a violation; `Some` the positions the auditor
+    /// logs as the operator's recovery.
+    #[test]
+    fn the_replay_comes_to_the_auditors_verdicts() {
+        let cases: [(&[usize], Option<&[usize]>); 8] = [
+            (&[0, 1, 2, 3], Some(&[])),
+            (&[0, 1, 3], None),
+            (&[0, 1, 4], None),
+            (&[0, 1, 5, 3, 6], Some(&[2, 4])),
+            (&[0, 7, 8, 9], Some(&[1, 3])),
+            (&[0, 8], None),
+            (&[0, 10, 8], Some(&[])),
+            (&[0, 10, 9], None),
+        ];
+        let leaves: Vec<Leaf> = SHARED_VECTORS
+            .iter()
+            .map(|l| parse_leaf(&STANDARD.decode(l).unwrap()).unwrap())
+            .collect();
+        for (seq, want) in cases {
+            let mut s = LogState::default();
+            let mut recovered = Vec::new();
+            let mut verdict = Ok(());
+            for (pos, i) in seq.iter().enumerate() {
+                match s.apply(&leaves[*i]) {
+                    Ok(Some(_)) => recovered.push(pos),
+                    Ok(None) => {}
+                    Err(e) => {
+                        verdict = Err(e);
+                        break;
+                    }
+                }
+            }
+            match want {
+                None => assert!(verdict.is_err(), "{seq:?} must break the rules"),
+                Some(r) => {
+                    assert_eq!(verdict, Ok(()), "{seq:?}");
+                    assert_eq!(recovered, r, "{seq:?}");
+                }
+            }
+        }
+        // What the client keeps of it: a reset after a recovery is a new
+        // identity, a key after the operator's delete too; the owner's own
+        // delete and publish is not marked.
+        let mut s = LogState::default();
+        for i in [0, 1, 5, 3, 6] {
+            s.apply(&leaves[i]).unwrap();
+        }
+        let a = &s.accounts["100001"];
+        assert!(a.new_identity.as_deref().unwrap().contains("lost laptop"));
+        let Change::Account { key: first, .. } = &leaves[0].change else {
+            panic!("leaf 0 is a publish")
+        };
+        assert!(
+            !a.continues(first),
+            "the reset key does not continue the first"
+        );
+        let mut s = LogState::default();
+        for i in [0, 7, 8, 9] {
+            s.apply(&leaves[i]).unwrap();
+        }
+        assert!(s.accounts["100001"]
+            .new_identity
+            .as_deref()
+            .unwrap()
+            .contains("the account was deleted"));
     }
 
     #[test]

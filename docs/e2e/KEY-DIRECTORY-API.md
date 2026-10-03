@@ -154,7 +154,13 @@ on the connection the token belongs to:
   therefore strip an account of its devices (audit 2026-10, finding 7). A
   user who lost the account key cannot sign a revoke: the owner revokes the
   old devices through the management API (section 8), and the user then
-  announces the new key and resets.
+  announces the new key and resets. The key log keeps the owner's signature
+  with the revoke, and marks the management API's revoke as a recovery, so
+  auditors and clients tell the two apart (second audit of 2026-10, finding
+  1; KEY-TRANSPARENCY.md).
+- `DELETE /e2e/v1/account` (the owner deletes the account's keys) needs the
+  same: an announced key and the stored account key's signature (section
+  6.13).
 
 The add-on publishes after its `SetInfo` has gone out. If the directory
 answers `403 not_announced` because the HTTPS request overtook the `SetInfo`,
@@ -232,6 +238,7 @@ field(x) = u16be(len(x)) || x
 | `one-time-key` | device id, key id, Curve25519 key         | the device's Ed25519 key       |
 | `fallback-key` | device id, key id, Curve25519 key         | the device's Ed25519 key       |
 | `revoke`       | device id, issued_at (8 bytes)            | the account key                |
+| `delete`       | issued_at (8 bytes)                       | the account key                |
 
 The functions that build them are in `server/e2e/sign.go`. Vectors that pin
 the bytes are in `sign_test.go`.
@@ -315,6 +322,7 @@ UIN 123456.
 |--------|-----------------------------------------------------|---|-------------------------------------------|
 | POST   | `/e2e/v1/token`                                     | T | fresh token for the same session          |
 | PUT    | `/e2e/v1/account`                                   | T | publish / rotate / reset the account key  |
+| DELETE | `/e2e/v1/account`                                   | T | the owner deletes the account's keys      |
 | PUT    | `/e2e/v1/devices/{device_id}`                       | T | publish or refresh a device               |
 | GET    | `/e2e/v1/devices/{device_id}`                       | T | own device and its key pool state         |
 | DELETE | `/e2e/v1/devices/{device_id}`                       | T | revoke a device                           |
@@ -463,6 +471,10 @@ Errors: `400 bad_request` (no body), `400 invalid_signature` (missing, not by
 the account key, for another device or account or time, or outside the five
 minutes), `409 replayed` (the same signed revoke again), `404 no_account`,
 `404 no_device`.
+
+The key log records the revoke with an `owner-revoke` leaf that carries
+`issued_at` and `signature`, so an auditor can check it too
+(KEY-TRANSPARENCY.md).
 
 ### 6.6 `POST /e2e/v1/devices/{device_id}/one-time-keys`
 
@@ -623,6 +635,26 @@ gone (`404 no_link`). An account holds at most 4 unexpired requests
 (`409 too_many_links`). Only the account's own tokens can see or answer its
 requests.
 
+### 6.13 `DELETE /e2e/v1/account`
+
+```json
+{"issued_at": 1790000000, "signature": "..."}
+```
+
+The owner deletes the account's entry in the directory: the account key,
+its history, every device with its keys, and pending link requests. `204`.
+As for a revoke (6.5), the token's BOS connection must have announced an
+account key (`403 not_announced`), and `signature` is the stored account
+key's signature over the `delete` message:
+
+    "delete" | screen name | issued_at (8 bytes, big endian)
+
+taken within five minutes of the server's clock and once. The key log
+records it as `owner-delete` and `delete` (second audit of 2026-10, finding
+1); a new key published afterwards starts a new identity. Errors:
+`400 bad_request`, `400 invalid_signature`, `409 replayed`,
+`404 no_account`. The add-on does not call it yet.
+
 ## 7. Error codes
 
 | HTTP | `error`               | Meaning                                                 |
@@ -642,7 +674,7 @@ requests.
 | 409  | `too_many_devices`    | `E2E_MAX_DEVICES` reached                               |
 | 409  | `pool_full`           | the upload would exceed `E2E_MAX_ONE_TIME_KEYS`         |
 | 409  | `link_replied`        | the link request already has a reply                    |
-| 409  | `replayed`            | a signed revoke that was used already                   |
+| 409  | `replayed`            | a signed revoke or delete that was used already         |
 | 409  | `too_many_links`      | 4 pending link requests already                         |
 | 410  | `device_revoked`      | the device is revoked; its id is not reused             |
 | 413  | `too_large`           | body over 64 KiB, or a link blob over 16 KiB            |
@@ -657,7 +689,11 @@ The management API (`api.yml`, local only) shows and revokes devices:
   when it was set, and every device with `revoked_at`;
 - `DELETE /user/{screenname}/e2e/devices/{device_id}` - revoke a device (a
   lost laptop, say). After that the user can publish a new account key without
-  proof (a reset) once no active device is left.
+  proof (a reset) once no active device is left. The key log marks it as a
+  recovery (`recovery-revoke`): auditors log it at WARN, and clients take the
+  account's next key as a new identity (second audit of 2026-10, finding 1).
+- `DELETE /user` (deleting the user) is recorded as `recovery-delete` in the
+  key log for the same reason.
 
 ## 9. Settings
 

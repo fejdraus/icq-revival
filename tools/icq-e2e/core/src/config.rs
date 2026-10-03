@@ -51,8 +51,13 @@
 //! - `ICQE2E_FILES_ENCRYPT` - overrides the `files_encrypt=` line of
 //!   `icq-e2e.ini`. `on` encrypts the data connection of a file transfer end
 //!   to end when both sides' add-ons agree on keys for it through the E2E
-//!   session (stages F2-F4); any other transfer stays exactly as it is. Off
-//!   by default; only in encrypt mode, and only where frames may be added.
+//!   session (stages F2-F4); any other transfer stays exactly as it is,
+//!   except with a contact under `/e2e on` or verified, whose transfer is
+//!   encrypted or not sent. Off by default; only in encrypt mode, and only
+//!   where frames may be added. `required` encrypts the same way, and makes
+//!   every contact strict: a transfer that did not agree on keys is not sent
+//!   - no byte of it reaches the wire - and the chat says why (second audit
+//!   of 2026-10, finding 4).
 //! - `ICQE2E_AUDITORS` - overrides the `auditors=` line of `icq-e2e.ini`: the
 //!   verifier keys of the key log's auditors, comma-separated, as
 //!   `e2e-kt-auditor -print-key` prints them (docs/e2e/KEY-TRANSPARENCY.md).
@@ -113,6 +118,9 @@ pub struct Policy {
     /// F2-F4). What the ini says; [`Policy::encrypts_files`] is whether it
     /// applies.
     pub files_encrypt: bool,
+    /// `files_encrypt=required`: as `on`, and a transfer with any contact
+    /// that did not agree on keys is not sent instead of going plain.
+    pub files_required: bool,
     /// `auditors=`: the key log's auditors to trust, exactly; `None` when
     /// the line is absent, and the server's are pinned on first use.
     pub auditors: Option<Vec<String>>,
@@ -294,6 +302,7 @@ impl Policy {
             calls_required: false,
             files_log: false,
             files_encrypt: false,
+            files_required: false,
             auditors: None,
             auditors_unread: Vec::new(),
         }
@@ -313,6 +322,7 @@ impl Policy {
             calls_required: false,
             files_log: false,
             files_encrypt: false,
+            files_required: false,
             auditors: None,
             auditors_unread: Vec::new(),
         }
@@ -435,7 +445,9 @@ impl Policy {
                 || required(calls_encrypt.as_deref()),
             calls_required: required(calls_encrypt.as_deref()),
             files_log: switched_on(files_log.as_deref()),
-            files_encrypt: switched_on(files_encrypt.as_deref()),
+            files_encrypt: switched_on(files_encrypt.as_deref())
+                || required(files_encrypt.as_deref()),
+            files_required: required(files_encrypt.as_deref()),
             auditors,
             auditors_unread,
         }
@@ -536,8 +548,11 @@ impl Policy {
                 ""
             },
             match (self.files_encrypt, self.encrypts_files()) {
+                (true, true) if self.files_required => {
+                    ", files_encrypt=required (file transfers encrypted when both add-ons agree; any other transfer is not sent)"
+                }
                 (true, true) => {
-                    ", files_encrypt=on (file transfers encrypted when both add-ons agree; any other transfer untouched)"
+                    ", files_encrypt=on (file transfers encrypted when both add-ons agree; with a contact under /e2e on or verified any other is not sent, with others it goes untouched)"
                 }
                 (true, false) => {
                     ", files_encrypt=on but inactive (needs encrypt mode with frames allowed)"
@@ -579,7 +594,8 @@ struct Raw {
 
 /// Whether a switch that is off unless asked for (`calls_log=`) is on: only a
 /// clear yes.
-/// Whether `calls_encrypt=` asks for the strict level: `required`.
+/// Whether `calls_encrypt=` or `files_encrypt=` asks for the strict level:
+/// `required`.
 fn required(v: Option<&str>) -> bool {
     matches!(v.map(str::trim), Some(t) if t.eq_ignore_ascii_case("required"))
 }
@@ -1002,6 +1018,38 @@ mod tests {
             assert_eq!(p.calls_required, strict, "{text:?}");
             assert_eq!(
                 p.describe().contains("calls_encrypt=required"),
+                strict,
+                "{text:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `files_encrypt = required` is `on` and the strict level besides, as
+    /// for calls (second audit of 2026-10, finding 4).
+    #[test]
+    fn files_encrypt_required_is_on_and_strict() {
+        let dir = std::env::temp_dir().join("icqe2e-ini-files-required-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ini = dir.join("icq-e2e.ini");
+        let path = ini.to_str().unwrap();
+        for (text, on, strict) in [
+            ("files_encrypt = required\n", true, true),
+            ("files_encrypt = Required\n", true, true),
+            ("files_encrypt = on\n", true, false),
+            ("files_encrypt = off\n", false, false),
+            ("calls_encrypt = required\n", false, false),
+            ("", false, false),
+        ] {
+            std::fs::write(&ini, text).unwrap();
+            let p = policy(Settings {
+                ini_path: Some(path),
+                ..Default::default()
+            });
+            assert_eq!(p.encrypts_files(), on, "{text:?}");
+            assert_eq!(p.files_required, strict, "{text:?}");
+            assert_eq!(
+                p.describe().contains("files_encrypt=required"),
                 strict,
                 "{text:?}"
             );

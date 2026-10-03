@@ -37,8 +37,15 @@
 //! hellos ([`crate::filestream::connection_keys`]).
 //!
 //! Backward compatibility: a peer with no add-on, an older one, or
-//! `files_encrypt` off never answers, and the transfer is exactly as today. A
-//! transfer is never blocked; once agreed it fails closed.
+//! `files_encrypt` off never answers, and the transfer is exactly as today -
+//! for a contact that is not strict. "Encryption is on for this contact"
+//! means the same for files as for text and calls (second audit of 2026-10,
+//! finding 4): with a contact under `/e2e on` or verified ([`PeerInfo`]
+//! `strict`), or with `files_encrypt = required` for every contact, a
+//! transfer that does not agree on keys - no offer or answer, a decline, no
+//! key hello in time - is not sent: its connections are closed before a byte
+//! of it goes out, and the chat says why. Once agreed a transfer fails
+//! closed, whoever it is with.
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -307,6 +314,9 @@ enum TState {
     Keyed,
     /// Not encrypted: no socket of it is ever touched.
     Plain(String),
+    /// Not encrypted, and it must be (a strict contact, or `required`):
+    /// every socket of it is closed, no byte of it passes.
+    Blocked(String),
 }
 
 impl TState {
@@ -315,6 +325,7 @@ impl TState {
             TState::Offered => "offered",
             TState::Keyed => "keyed",
             TState::Plain(_) => "plain",
+            TState::Blocked(_) => "blocked",
         }
     }
 }
@@ -383,6 +394,9 @@ pub struct Found {
     pub role: Option<Role>,
     /// `direct`, `reverse`, `proxy`, or `unknown`.
     pub stage: &'static str,
+    /// The transfer is not let through (it must be encrypted and did not
+    /// agree on keys), and why: the socket is closed, nothing passes.
+    pub blocked: Option<String>,
 }
 
 /// Every file transfer the add-on knows of.
@@ -392,6 +406,9 @@ pub struct FileTable {
     offers: HashMap<[u8; 8], PendingOffer>,
     notes: Vec<Note>,
     log: Vec<String>,
+    /// `files_encrypt = required`: every contact is strict - a transfer that
+    /// did not agree on keys is not sent, never let through plain.
+    required: bool,
 }
 
 impl Default for FileTable {
@@ -402,6 +419,7 @@ impl Default for FileTable {
             offers: HashMap::new(),
             notes: Vec::new(),
             log: Vec::new(),
+            required: false,
         }
     }
 }
@@ -442,6 +460,17 @@ pub mod why {
 }
 
 impl FileTable {
+    /// Switches the strict level on or off (`files_encrypt = required`).
+    pub fn set_required(&mut self, on: bool) {
+        self.required = on;
+    }
+
+    /// Whether a transfer with this contact must be encrypted or not sent:
+    /// `files_encrypt = required`, or a contact under `/e2e on` or verified.
+    fn strict(&self, info: &PeerInfo) -> bool {
+        self.required || info.strict
+    }
+
     /// A rendezvous ICBM seen in either direction: its facts are kept (for
     /// the log's stages and for telling the sockets apart). Changes nothing.
     pub fn observe(&mut self, rdv: &Rendezvous, now: u64) {
@@ -901,15 +930,42 @@ impl FileTable {
         }
     }
 
+    /// The transfer is not encrypted: plain for a contact that is not
+    /// strict, not let through (blocked) for one that is.
     fn go_plain(&mut self, t: &mut Transfer, why: &str) {
-        t.state = TState::Plain(why.to_string());
         t.agreement = None;
         t.sk = None;
+        if self.strict(&t.info) {
+            t.state = TState::Blocked(why.to_string());
+            self.log.push(format!(
+                "{}: not encrypted, so it is not let through ({})",
+                t.label(),
+                if self.required {
+                    "files_encrypt=required"
+                } else {
+                    "encryption is on for the contact"
+                }
+            ));
+            self.say_blocked(t, why);
+            return;
+        }
+        t.state = TState::Plain(why.to_string());
         if t.told.is_none() {
             t.told = Some(false);
             self.notes.push(Note::to(
                 &t.peer_name,
-                crate::policy::file_plain_note(&t.peer_name, why, t.info.strict),
+                crate::policy::file_plain_note(&t.peer_name, why),
+            ));
+        }
+    }
+
+    /// The chat note for a transfer that is not let through, once.
+    fn say_blocked(&mut self, t: &mut Transfer, why: &str) {
+        if t.told.is_none() {
+            t.told = Some(false);
+            self.notes.push(Note::to(
+                &t.peer_name,
+                crate::policy::file_blocked_note(&t.peer_name, why, self.required, t.info.verified),
             ));
         }
     }
@@ -957,18 +1013,21 @@ impl FileTable {
     /// What to do with a socket of transfer `c`: carry the stream (our role)
     /// or leave it alone.
     fn found(&self, c: [u8; 8], stage: &'static str) -> Found {
-        let role = self
-            .transfers
-            .get(&c)
-            .and_then(|t| match (&t.state, t.role) {
-                (TState::Keyed, r) => Some(r),
-                (TState::Offered, Role::Offerer) => Some(Role::Offerer),
-                _ => None,
-            });
+        let t = self.transfers.get(&c);
+        let role = t.and_then(|t| match (&t.state, t.role) {
+            (TState::Keyed, r) => Some(r),
+            (TState::Offered, Role::Offerer) => Some(Role::Offerer),
+            _ => None,
+        });
+        let blocked = t.and_then(|t| match &t.state {
+            TState::Blocked(why) => Some(why.clone()),
+            _ => None,
+        });
         Found {
             cookie: c,
             role,
             stage,
+            blocked,
         }
     }
 
@@ -1036,9 +1095,12 @@ impl FileTable {
     /// Whether any transfer may have a socket to look after: only then is a
     /// socket looked at for encryption.
     pub fn active(&self) -> bool {
-        self.transfers
-            .values()
-            .any(|t| matches!(t.state, TState::Offered | TState::Keyed))
+        self.transfers.values().any(|t| {
+            matches!(
+                t.state,
+                TState::Offered | TState::Keyed | TState::Blocked(_)
+            )
+        })
     }
 
     /// The state of a transfer, for tests and the log.
@@ -1085,8 +1147,15 @@ impl KeySource for FileTable {
 
     fn plain_reason(&mut self, cookie: &[u8; 8]) -> Option<String> {
         match &self.transfers.get(cookie)?.state {
-            TState::Plain(w) => Some(w.clone()),
+            TState::Plain(w) | TState::Blocked(w) => Some(w.clone()),
             _ => None,
+        }
+    }
+
+    fn must_encrypt(&mut self, cookie: &[u8; 8]) -> bool {
+        match self.transfers.get(cookie) {
+            Some(t) => self.strict(&t.info) || matches!(t.state, TState::Blocked(_)),
+            None => self.required,
         }
     }
 
@@ -1102,7 +1171,7 @@ impl KeySource for FileTable {
 
     fn report(&mut self, cookie: &[u8; 8], event: Event) {
         let Some(mut t) = self.transfers.remove(cookie) else {
-            if let Event::Log(l) | Event::Plain(l) | Event::Failed(l) = event {
+            if let Event::Log(l) | Event::Plain(l) | Event::Failed(l) | Event::Blocked(l) = event {
                 self.log
                     .push(format!("file transfer {}: {l}", files::cookie_tag(cookie)));
             }
@@ -1130,6 +1199,17 @@ impl KeySource for FileTable {
                 if t.state != TState::Keyed {
                     self.go_plain(&mut t, &why);
                 }
+            }
+            Event::Blocked(why) => {
+                // Said, not decided: nothing on that connection was
+                // authenticated, so it changes nothing about the transfer -
+                // an outsider that connected first cannot make it plain, and
+                // the real peer may still connect with its key hello.
+                self.log.push(format!(
+                    "{label}: a data connection was closed before anything was sent, since it \
+                     would have gone unencrypted: {why}"
+                ));
+                self.say_blocked(&mut t, &why);
             }
             Event::Failed(why) => {
                 self.log
@@ -1412,7 +1492,8 @@ mod tests {
             Some(Found {
                 cookie: C,
                 role: Some(Role::Answerer),
-                stage: "direct"
+                stage: "direct",
+                blocked: None,
             })
         );
         assert_eq!(a.find_local(5190).unwrap().role, Some(Role::Offerer));
@@ -1448,18 +1529,18 @@ mod tests {
     }
 
     /// A receiver without the add-on, with an older one, or with files off
-    /// never answers: the sender's connection waits for the hello, then goes
-    /// as it is; the note says why.
+    /// never answers: for a contact that is not strict, the sender's
+    /// connection waits for the hello, then goes as it is; the note says why.
     #[test]
     fn a_peer_that_never_answers_gets_an_untouched_transfer() {
         let mut a = FileTable::default();
-        let info = PeerInfo {
-            strict: true,
-            verified: false,
-        };
         let r = rdv(Direction::Outbound, B, 1, 5190);
         a.observe(&r, T0);
-        assert_eq!(a.icbm(&r, info, &mut go(me(A, 1, 1)), T0).len(), 1);
+        assert_eq!(
+            a.icbm(&r, PeerInfo::default(), &mut go(me(A, 1, 1)), T0)
+                .len(),
+            1
+        );
         let mut pa = FilePipe::new(C, Role::Offerer, false);
         pa.connected(&mut a, T0);
         pa.write(b"OFT2 prompt", &mut a, T0).unwrap();
@@ -1473,9 +1554,193 @@ mod tests {
             n[0].contains("is not end-to-end encrypted") && n[0].contains("no key hello"),
             "{n:?}"
         );
-        assert!(n[0].contains("never blocked"), "strict words: {n:?}");
         // A second connection (resume) does not wait again.
         assert_eq!(a.find_local(5190).unwrap().role, None);
+    }
+
+    fn strict() -> PeerInfo {
+        PeerInfo {
+            strict: true,
+            verified: false,
+        }
+    }
+
+    fn verified() -> PeerInfo {
+        PeerInfo {
+            strict: true,
+            verified: true,
+        }
+    }
+
+    /// Second audit of 2026-10, finding 4: a contact under `/e2e on`, or
+    /// verified, whose add-on never answers (no add-on there, an older one,
+    /// files off: no answer through the chat and no key hello): after the
+    /// wait the connection is closed and not one held byte reaches the wire;
+    /// the chat says the file was not sent, and why. It used to go plain.
+    #[test]
+    fn a_strict_contact_that_never_answers_gets_nothing_sent() {
+        for (info, rule) in [(strict(), "/e2e on"), (verified(), "is verified")] {
+            let mut a = FileTable::default();
+            let r = rdv(Direction::Outbound, B, 1, 5190);
+            a.observe(&r, T0);
+            assert_eq!(a.icbm(&r, info, &mut go(me(A, 1, 1)), T0).len(), 1);
+            let mut pa = FilePipe::new(C, Role::Offerer, false);
+            pa.connected(&mut a, T0);
+            pa.write(b"OFT2 prompt", &mut a, T0).unwrap();
+            pa.tick(&mut a, T0 + filestream::HELLO_WAIT_MS);
+            assert_eq!(pa.phase(), Phase::Failed, "{rule}");
+            assert!(pa.take_wire().is_empty(), "{rule}: no byte on the wire");
+            assert!(pa.write(b"file data", &mut a, T0).is_err());
+            assert!(pa.take_wire().is_empty());
+            let n = texts(&mut a);
+            assert_eq!(n.len(), 1, "{n:?}");
+            assert!(
+                n[0].contains("was not sent") && n[0].contains(rule),
+                "{rule}: {n:?}"
+            );
+            assert!(!n[0].contains("never blocked"));
+            // Nothing on that connection was authenticated, so it decides
+            // nothing: the transfer is still waiting for its answer.
+            assert_eq!(a.state_of(&C), Some("offered"));
+            assert_eq!(a.find_local(5190).unwrap().role, Some(Role::Offerer));
+        }
+    }
+
+    /// A strict contact's add-on declines (`/e2e off` on its side): the
+    /// transfer is not sent; every connection of it is refused.
+    #[test]
+    fn a_strict_contacts_decline_means_not_sent() {
+        let (mut a, mut b) = (FileTable::default(), FileTable::default());
+        let r = rdv(Direction::Outbound, B, 1, 5190);
+        a.observe(&r, T0);
+        let offer = a.icbm(&r, verified(), &mut go(me(A, 1, 1)), T0);
+        deliver(&mut b, A, 1, offer);
+        let rb = rdv(Direction::Inbound, A, 1, 5190);
+        b.observe(&rb, T0);
+        b.icbm(
+            &rb,
+            PeerInfo::default(),
+            &mut || Err("encryption is off in this chat (/e2e off)".to_string()),
+            T0,
+        );
+        let decline = see(&mut b, &accept(Direction::Outbound, A), me(B, 2, 2));
+        deliver(&mut a, B, 2, decline);
+        assert_eq!(a.state_of(&C), Some("blocked"));
+        let n = texts(&mut a);
+        assert!(
+            n.len() == 1 && n[0].contains("was not sent") && n[0].contains("declined"),
+            "{n:?}"
+        );
+        let f = a.find_local(5190).unwrap();
+        assert_eq!(f.role, None);
+        assert!(f.blocked.is_some(), "its sockets are refused");
+        assert!(
+            a.active(),
+            "a blocked transfer's sockets are still looked at"
+        );
+        // A pipe made anyway (it was already waiting) closes at once.
+        let mut pa = FilePipe::new(C, Role::Offerer, false);
+        pa.connected(&mut a, T0);
+        pa.write(b"OFT2 prompt", &mut a, T0).unwrap_err();
+        assert_eq!(pa.phase(), Phase::Failed);
+        assert!(pa.take_wire().is_empty());
+    }
+
+    /// The receiving side: a proposal from a strict contact, or with
+    /// `files_encrypt = required` from anyone, that came without a key offer
+    /// (the sender has no add-on) is not let through: the receiver's
+    /// sockets of it are refused.
+    #[test]
+    fn a_proposal_without_an_offer_from_a_strict_contact_is_refused() {
+        for required in [false, true] {
+            let mut b = FileTable::default();
+            b.set_required(required);
+            let info = if required {
+                PeerInfo::default()
+            } else {
+                verified()
+            };
+            let r = rdv(Direction::Inbound, A, 1, 5190);
+            b.observe(&r, T0);
+            b.icbm(&r, info, &mut go(me(B, 2, 2)), T0);
+            assert_eq!(b.state_of(&C), Some("blocked"), "required={required}");
+            let f = b
+                .find_connect(Ipv4Addr::new(192, 168, 1, 20), 5190)
+                .unwrap();
+            assert_eq!((f.role, f.blocked.is_some()), (None, true));
+            let n = texts(&mut b);
+            assert!(n[0].contains("was not sent") && n[0].contains("did not offer"));
+            assert_eq!(n[0].contains("files_encrypt = required"), required, "{n:?}");
+        }
+    }
+
+    /// `files_encrypt = required`: every contact is strict - an offerer whose
+    /// peer never answers sends nothing.
+    #[test]
+    fn with_files_required_a_transfer_that_did_not_agree_is_not_sent() {
+        let mut a = FileTable::default();
+        a.set_required(true);
+        let r = rdv(Direction::Outbound, B, 1, 5190);
+        a.observe(&r, T0);
+        a.icbm(&r, PeerInfo::default(), &mut go(me(A, 1, 1)), T0);
+        let mut pa = FilePipe::new(C, Role::Offerer, false);
+        pa.connected(&mut a, T0);
+        pa.write(b"OFT2 prompt", &mut a, T0).unwrap();
+        pa.tick(&mut a, T0 + filestream::HELLO_WAIT_MS);
+        assert_eq!(pa.phase(), Phase::Failed);
+        assert!(pa.take_wire().is_empty());
+        assert!(texts(&mut a)[0].contains("files_encrypt = required"));
+        // And an agreed one with the same table is encrypted as ever.
+        let (mut a, mut b) = agreed();
+        a.set_required(true);
+        b.set_required(true);
+        let (pa, pb) = pipes_talk(&mut a, &mut b);
+        assert_eq!(
+            (pa.phase(), pb.phase()),
+            (Phase::Encrypted, Phase::Encrypted)
+        );
+    }
+
+    /// An outsider that reaches the offerer's listening port first (the
+    /// accepted socket is matched only by its local port) and sends bytes
+    /// that are no key hello cannot make a strict transfer plain: that
+    /// connection is closed, nothing is sent on it, the transfer stays as it
+    /// was, and the real peer's connection with its key hello is encrypted.
+    /// The same for an agreed transfer, whoever it is with.
+    #[test]
+    fn an_early_unverified_connection_does_not_turn_a_transfer_plain() {
+        // Strict, offered, no answer yet.
+        let (mut a, mut b) = (FileTable::default(), FileTable::default());
+        let r = rdv(Direction::Outbound, B, 1, 5190);
+        a.observe(&r, T0);
+        let offer = a.icbm(&r, strict(), &mut go(me(A, 1, 1)), T0);
+        let mut early = FilePipe::new(C, Role::Offerer, false);
+        early.connected(&mut a, T0);
+        early.write(b"OFT2 prompt", &mut a, T0).unwrap();
+        early.feed(b"OFT2 not a hello", &mut a, T0);
+        assert_eq!(early.phase(), Phase::Failed);
+        assert!(early.take_wire().is_empty(), "nothing went to the outsider");
+        assert_eq!(early.plaintext_len(), 0);
+        assert_eq!(a.state_of(&C), Some("offered"), "not plain");
+        assert_eq!(a.find_local(5190).unwrap().role, Some(Role::Offerer));
+        deliver(&mut b, A, 1, offer);
+        see(&mut b, &rdv(Direction::Inbound, A, 1, 5190), me(B, 2, 2));
+        let (pa, pb) = pipes_talk(&mut a, &mut b);
+        assert_eq!(
+            (pa.phase(), pb.phase()),
+            (Phase::Encrypted, Phase::Encrypted)
+        );
+        // Agreed (not strict): the outsider's connection fails closed and
+        // the transfer stays keyed.
+        let (mut a, mut b) = agreed();
+        let mut early = FilePipe::new(C, Role::Offerer, false);
+        early.connected(&mut a, T0);
+        early.take_wire();
+        early.feed(b"OFT2 not a hello", &mut a, T0);
+        assert_eq!(early.phase(), Phase::Failed);
+        assert_eq!(a.state_of(&C), Some("keyed"));
+        let (pa, _) = pipes_talk(&mut a, &mut b);
+        assert_eq!(pa.phase(), Phase::Encrypted);
     }
 
     /// The sender has no add-on (or files off): no offer, the receiver's

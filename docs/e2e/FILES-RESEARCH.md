@@ -310,7 +310,9 @@ Yes, worth doing, and partly independent of E2E:
   already handles this for long-lived streams.
 - **Fail-closed vs never-blocked**: never blocked applies to transfers that
   were not agreed; an agreed transfer that then sees plaintext is an attack or
-  a bug and is closed, as for calls.
+  a bug and is closed, as for calls. (Changed by the second audit of 2026-10,
+  finding 4: never blocked holds only for a contact that is not strict; see
+  section 9.)
 
 ## 7. Stages and effort (rough)
 
@@ -380,6 +382,17 @@ works exactly as today - every byte untouched - and is never blocked; the
 data connection is encrypted only after both add-ons agreed for that
 cookie; connections that are not file transfers (direct IM, voice) are
 never touched. Once agreed, a transfer fails closed.
+
+Changed by the second audit of 2026-10, finding 4: the rule above holds for
+a contact that is not strict. For a contact under `/e2e on` or verified, and
+with `files_encrypt = required` for every contact, "encryption is on" means
+the same for files as for messages and calls: a transfer that does not agree
+on keys (no offer or answer, a decline, no key hello within 4 s) is not sent
+- the sender's connection is shut and its held bytes dropped, a receiver
+refuses the transfer's sockets - and the chat says so. A connection whose
+first bytes are no key hello only closes itself and decides nothing about the
+transfer (nothing on it was authenticated), so an outsider that reaches the
+sender's listening port first cannot turn the transfer plain.
 
 Differences from section 5a, decided while building:
 

@@ -190,7 +190,23 @@ the add-on checks against it on its own, as Signal does
   never checked, a changed account key, a device the frozen copy does not
   show and a new session from any of them are held or unreadable with a
   note, never trusted on first use. After the operator restores an old backup
-  every user sees this once and types `/e2e resetlog`.
+  every user sees this once and types `/e2e resetlog`. The add-on also checks
+  every entry against the directory's rules, as the auditors do (below): an
+  entry that breaks them - say, a device revoked without its owner's
+  signature - breaks the log the same way.
+- A log trusted before that cannot be read just now (a network error) is not
+  "no log" (second audit of 2026-10, finding 2): the last trusted copy
+  stands - known contacts, devices and sessions go on - and a contact never
+  checked, a new device, a changed key or a new session from an unknown
+  device waits, with a note, until the log can be read again. Not sticky.
+- Keys the server's operator replaced without the contact's own key - a
+  device revoked or the account deleted through the management API, or a
+  reset after a lost key (second audit, finding 1) - are a new identity: the
+  chat says "WARNING: the server replaced X's keys without X's key (operator
+  recovery: ...)" every time it happens, and `/e2e status` says it. For a
+  contact verified or under `/e2e on`, messages are held until `/e2e verify`
+  (after `/e2e safety`) or `/e2e accept`; for others they go on to the new
+  key. A key the contact rotated with their old key is an ordinary change.
 - `/e2e status` ends its key part with what the log says ("key log: 100002's
   keys are in it, checked (N entries)").
 - A server without a log (an older one) works as before.
@@ -205,9 +221,17 @@ lately:
 - A cosigned log that differs from the one this add-on was shown - by any of
   the auditors, however many others agree - is a WARNING: the server is
   showing different users different logs.
+- Once an auditor has vouched for this add-on's copy, anything new - a
+  contact never checked, a changed key, a device or a new session from an
+  unknown device - is taken only from the part of the log an auditor has
+  cosigned (second audit of 2026-10, finding 3). A key published a moment
+  ago is therefore used a minute or two later, once the auditor has looked;
+  a server that keeps the auditors' newer word from you cannot feed you a
+  log of its own.
 - No cosignature by any of them for over an hour is a warning, once per
-  sign-on; messages go on. `/e2e status` lists each auditor: "audited by A
-  (1 min ago), B (2 min ago); C silent 3 h".
+  sign-on; messages to contacts and devices already in use go on, anything
+  new is held until an auditor vouches again. `/e2e status` lists each
+  auditor: "audited by A (1 min ago), B (2 min ago); C silent 3 h".
 - Which auditors are trusted: the `auditors =` line of `icq-e2e.ini`, which
   the patch fills in at Apply with what the server names then (over HTTPS);
   exactly those, whatever the server names later. Without the line (an older
@@ -623,12 +647,21 @@ patch, set the line by hand or use `ICQE2E_FILES_ENCRYPT=on`. It needs encrypt
 mode (not `e2e=off`) and frames allowed (not `ICQE2E_NO_INJECT`); otherwise the
 start-up line says `files_encrypt=on but inactive`. In effect, the start-up
 line ends in `files_encrypt=on (file transfers encrypted when both add-ons
-agree; any other transfer untouched)`.
+agree; ...)`.
 
-The rule: **a transfer is never blocked, and a transfer that is not encrypted
-is exactly what it was without the add-on** - every byte the client's own.
-The data connection is encrypted only after both add-ons agreed for that
-transfer's cookie. Direct IM and voice connections are never touched.
+The rule, the same for files as for messages and calls (second audit of
+2026-10, finding 4): **"encryption is on for this contact" means a transfer
+with them is encrypted or not sent**. For a contact under `/e2e on` or
+verified, a transfer that does not agree on keys - no offer or answer, a
+decline, no key hello within 4 s - is not let through: its connections are
+shut before a byte of it reaches the wire, and the chat says it was not sent
+and why. Any other contact's transfer that is not encrypted is exactly what it
+was without the add-on - every byte the client's own. `files_encrypt =
+required` (by hand in the ini, or `ICQE2E_FILES_ENCRYPT=required`) makes every
+contact strict; the patch's files row keeps a hand-set `required` rather than
+turning it back into `on`. The data connection is encrypted only after both
+add-ons agreed for that transfer's cookie. Direct IM and voice connections are
+never touched.
 
 - **Key agreement** (`filesneg.rs`): when the client sends its first proposal
   of a file (ICBM channel 2, `CapFileTransfer`) to a contact with E2E keys,
@@ -662,10 +695,20 @@ transfer's cookie. Direct IM and voice connections are never touched.
   and the hellos start after `READY`. Non-blocking sockets as the clients
   use them: `FD_READ` reposted for plaintext left over, `FIONREAD` counts
   plaintext, `MSG_PEEK` served from it.
-- **Backward compatibility**: no hello from the receiver within 4 s, or its
-  first bytes not a hello (no add-on, an older one, files off, no answer),
-  and the sender's add-on lets the held bytes go exactly as they were: the
-  transfer is the clients' own. A decline makes it plain at once.
+- **Backward compatibility** (a contact that is not strict): no hello from
+  the receiver within 4 s, or its first bytes not a hello (no add-on, an
+  older one, files off, no answer), and the sender's add-on lets the held
+  bytes go exactly as they were: the transfer is the clients' own. A decline
+  makes it plain at once.
+- **Strict contacts** (`/e2e on`, verified, or `files_encrypt = required`):
+  in each of those cases the sender's connection is shut instead and the held
+  bytes are dropped; a receiver whose sender made no key offer, or that
+  declined, refuses the transfer's sockets (closed from the start, nothing
+  passes either way). A connection that sends no key hello is only closed:
+  it does not decide anything about the transfer, since nothing on it was
+  authenticated - an outsider that reaches the sender's listening port first
+  cannot make the transfer plain, and the real peer can still connect with
+  its hello.
 - **Fail closed, once agreed**: a hello that does not check out, plain bytes
   where the stream should be, a record that does not authenticate, bytes after
   the final record, a cut record, or a panic in these hooks: the socket is
@@ -673,9 +716,10 @@ transfer's cookie. Direct IM and voice connections are never touched.
   send again), and nothing is passed on unencrypted.
 - **Notes** in the chat with the contact, once per transfer: `This file
   transfer with 100002 is end-to-end encrypted ...`, or `This file transfer
-  with 100002 is not end-to-end encrypted: <reason>.` (for a contact under
-  `/e2e on` or verified, with the reminder that transfers are never blocked),
-  or `The encrypted file transfer with 100002 was stopped: <reason>.`
+  with 100002 is not end-to-end encrypted: <reason>.`, or, for a strict
+  contact, `This file transfer with 100002 was not sent: it is not
+  end-to-end encrypted (<reason>), and <the rule> ...`, or `The encrypted
+  file transfer with 100002 was stopped: <reason>.`
 - What the server still sees: the proposal itself (file name, size, both
   addresses) - stage F5 of the research would move the name into the offer.
 
@@ -692,6 +736,65 @@ file transfer 9c1d2e3f with 100002 (we send): the data connection is end-to-end 
 file transfer 9c1d2e3f with 100002 (we send): key answer in (keys already agreed by the hello)
 file transfer 9c1d2e3f: socket 1234 closed (accepted, direct stage, encrypted): 5243136 B from the client, 512 B to it, records 322 out / 3 in, we send
 ```
+
+## Direct IM and direct connections are kept off (`core/src/direct.rs`)
+
+The add-on encrypts what goes over the server. Two older ways of carrying
+text go from client to client and would carry it past the container in
+clear: AIM's Direct IM (a channel-2 rendezvous with `CapDirectICBM`,
+`09461345-4C7F-11D1-8222-444553540000`, then `ODC2` frames on a peer
+connection) and ICQ's own direct connections (the address and port in the DC
+info, TLV `0x000C` of `OServiceSetUserInfoFields` `0x0001/0x001E` and of a
+contact's user info). With `e2e = on` (encrypt mode) the add-on:
+
+- leaves `CapDirectICBM` out of the capability list the client announces in
+  `LocateSetInfo`;
+- drops every direct-IM proposal and acceptance, both ways, and hands the
+  client a cancel from the contact for one it proposed, so it does not wait
+  (with `ICQE2E_NO_INJECT` the frame stays, turned into a cancel);
+- zeroes the DC info's address, port and connection type in the client's own
+  `SetUserInfoFields` and in every contact's user info in "buddy arrived", so
+  neither side has an address to connect to. Lengths stay the same; zeros
+  are also what the server sends when a client never set the TLV.
+
+File transfer (`CapFileTransfer`) and calls (channel 6) are not touched.
+Observe, the harness and `e2e = off` leave all of it as it was. The log says
+`direct IM OUT peer=... proposal: refused, ...`,
+`OUT capabilities: direct IM left out while encrypting` and
+`OUT user info: direct connection address left out`.
+
+### Live test (owner)
+
+> Run this yourself — do not start the clients from here.
+
+Whether ICQ 6.5 and 7.2 use either kind of direct messaging at all is not
+known from the code; this shows it, and that nothing gets past the server
+path while encrypting.
+
+1. Two machines (or two VMs on different hosts) with the add-on, `e2e = on`,
+   `files_log = on`, both on the same LAN, so a direct connection would be
+   possible. Apply the patch as in "How it is checked" below.
+2. With `ICQE2E_MODE=observe` on both, sign on and chat, send a picture or a
+   file, open "Direct connection" / "Direct IM" if the client offers it. In
+   each log, look for `ch2` rendezvous with capability `09461345` (direct IM)
+   and for connections between the two machines that are not a file
+   transfer (`connect: socket ... -> <the other machine>` without a `file
+   rendezvous` line before it), and note the DC info the contact list shows
+   ("user details" of the contact: IP / port). That is the baseline: which
+   of the two kinds the client uses.
+3. With `e2e = on` again (encrypt mode), repeat step 2. Expected: the log
+   says `OUT capabilities: direct IM left out while encrypting` at sign-on
+   and `OUT user info: direct connection address left out` if the client
+   sends its DC info; a direct-IM attempt ends with `direct IM ... refused`
+   and the client shows the session as cancelled; no connection between the
+   two machines appears other than file transfers; every message in the chat
+   is on the server path (each has its `encrypted ... bytes` /
+   `decrypted ... bytes` line); a capture on the LAN (`tcpdump host <other
+   machine>`) shows no TCP between the two except a file transfer.
+4. File transfer and a call between the two still work, as before.
+
+If step 2 shows neither kind is ever used by 6.5/7.2, the fix is a guard
+against a client or a contact (another client generation) that would.
 
 ## Build
 

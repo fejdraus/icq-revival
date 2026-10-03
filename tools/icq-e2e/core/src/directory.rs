@@ -469,6 +469,8 @@ struct Memory {
     kt_off: bool,
     /// Changes are made without a leaf: a directory that lies.
     kt_paused: bool,
+    /// The key log's endpoints fail as if unreachable, the rest works.
+    kt_unreachable: bool,
     /// The log's signing key; another seed is another key.
     kt_seed: u8,
     /// The auditor named on `GET /log/auditors`, and the cosigned checkpoints
@@ -593,13 +595,83 @@ impl MemoryDirectory {
             }
         }
         if revoked {
+            // The operator has no account key: the log says so first (second
+            // audit of 2026-10, finding 1).
+            m.kt_append(
+                "recovery-revoke",
+                &sn,
+                &[
+                    &device_id.to_be_bytes(),
+                    b"revoked by the operator (management API)",
+                ],
+            );
             m.kt_append("revoke", &sn, &[&device_id.to_be_bytes()]);
         }
+    }
+
+    /// Revokes a device on the owner's request: `signature` is the account
+    /// key's over the revoke message at `issued_at`, as
+    /// `DELETE /devices/{id}` takes it. The log keeps the signature.
+    pub fn revoke_signed(
+        &self,
+        screen_name: &str,
+        device_id: u32,
+        issued_at: u64,
+        signature: &[u8],
+    ) {
+        let mut m = self.inner.lock().unwrap();
+        let sn = sign::ident(screen_name);
+        let mut revoked = false;
+        if let Some(a) = m.accounts.get_mut(&sn) {
+            for d in &mut a.devices {
+                if d.device.device_id == device_id && d.device.revoked_at.is_none() {
+                    d.device.revoked_at = Some(1);
+                    d.one_time.clear();
+                    d.fallback = None;
+                    revoked = true;
+                }
+            }
+        }
+        if revoked {
+            m.kt_append(
+                "owner-revoke",
+                &sn,
+                &[
+                    &device_id.to_be_bytes(),
+                    &issued_at.to_be_bytes(),
+                    signature,
+                ],
+            );
+            m.kt_append("revoke", &sn, &[&device_id.to_be_bytes()]);
+        }
+    }
+
+    /// Deletes the account, as the operator does (the management API's
+    /// `DELETE /user`): the log records a recovery, then the delete.
+    pub fn delete_user(&self, screen_name: &str) {
+        let mut m = self.inner.lock().unwrap();
+        let sn = sign::ident(screen_name);
+        if m.accounts.remove(&sn).is_some() {
+            m.kt_append("recovery-delete", &sn, &[b"the account was deleted"]);
+            m.kt_append("delete", &sn, &[]);
+        }
+    }
+
+    /// Appends a leaf as it is: a server writing whatever it likes into its
+    /// log.
+    pub fn append_leaf(&self, leaf: Vec<u8>) {
+        self.inner.lock().unwrap().kt.push(leaf);
     }
 
     /// Takes the key log away (or brings it back), as an older server.
     pub fn set_log(&self, on: bool) {
         self.inner.lock().unwrap().kt_off = !on;
+    }
+
+    /// Makes the key log's endpoints fail as unreachable (or work again)
+    /// while the rest of the directory works.
+    pub fn set_log_unreachable(&self, down: bool) {
+        self.inner.lock().unwrap().kt_unreachable = down;
     }
 
     /// Changes made while paused get no leaf: the directory then serves keys
@@ -985,7 +1057,7 @@ impl DirectoryApi for MemoryDirectory {
 
     fn log_checkpoint(&self) -> DirResult<Option<String>> {
         let m = self.inner.lock().unwrap();
-        if m.offline {
+        if m.offline || m.kt_unreachable {
             return Err(DirError::Net("offline (test)".into()));
         }
         Ok((!m.kt_off).then(|| Self::kt_checkpoint(&m).0))
@@ -993,7 +1065,7 @@ impl DirectoryApi for MemoryDirectory {
 
     fn log_key(&self) -> DirResult<Option<String>> {
         let m = self.inner.lock().unwrap();
-        if m.offline {
+        if m.offline || m.kt_unreachable {
             return Err(DirError::Net("offline (test)".into()));
         }
         Ok((!m.kt_off).then(|| Self::kt_checkpoint(&m).1))
@@ -1001,7 +1073,7 @@ impl DirectoryApi for MemoryDirectory {
 
     fn log_entries(&self, start: u64, count: u64) -> DirResult<Vec<Vec<u8>>> {
         let m = self.inner.lock().unwrap();
-        if m.offline {
+        if m.offline || m.kt_unreachable {
             return Err(DirError::Net("offline (test)".into()));
         }
         if m.kt_off {
@@ -1018,7 +1090,7 @@ impl DirectoryApi for MemoryDirectory {
 
     fn log_auditors(&self) -> DirResult<Option<String>> {
         let m = self.inner.lock().unwrap();
-        if m.offline {
+        if m.offline || m.kt_unreachable {
             return Err(DirError::Net("offline (test)".into()));
         }
         let mut listed = String::new();
@@ -1035,7 +1107,7 @@ impl DirectoryApi for MemoryDirectory {
 
     fn log_cosigned(&self) -> DirResult<Vec<String>> {
         let m = self.inner.lock().unwrap();
-        if m.offline {
+        if m.offline || m.kt_unreachable {
             return Err(DirError::Net("offline (test)".into()));
         }
         Ok(m.kt_cosigned.values().cloned().collect())

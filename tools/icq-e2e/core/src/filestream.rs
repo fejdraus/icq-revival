@@ -20,7 +20,15 @@
 //!   first bytes (the OFT2 prompt) and waits for the answerer's hello at most
 //!   [`HELLO_WAIT_MS`]. Bytes that are not a hello, or none in time: the peer
 //!   has no add-on, an older one, or file encryption off, and the connection
-//!   is the client's own, every byte untouched (backward compatibility).
+//!   is the client's own, every byte untouched (backward compatibility) -
+//!   unless the transfer must be encrypted ([`KeySource::must_encrypt`]: a
+//!   contact under `/e2e on` or verified, or `files_encrypt = required`).
+//!   Then no held byte ever reaches the wire: the connection is closed and
+//!   the chat says the file was not sent (second audit of 2026-10, finding
+//!   4). Such a connection only says so; it does not change what the
+//!   transfer is, since nothing on it was authenticated: an outsider that
+//!   reaches the listening port first cannot turn the transfer plain, and
+//!   the real peer can still connect.
 //! - Once agreed, the connection fails closed: a hello that does not check
 //!   out, bytes that are not records, a record that does not authenticate,
 //!   anything after the final record - the connection is closed and the
@@ -380,6 +388,10 @@ pub trait KeySource {
     /// Why the transfer goes unencrypted, when that is already decided (a
     /// decline, our own refusal).
     fn plain_reason(&mut self, cookie: &[u8; 8]) -> Option<String>;
+    /// Whether the transfer must be encrypted or not sent at all: a contact
+    /// under `/e2e on` or verified, or `files_encrypt = required`. Then a
+    /// connection never goes plain; it is closed instead.
+    fn must_encrypt(&mut self, cookie: &[u8; 8]) -> bool;
     /// The next connection number of this side for the transfer.
     fn next_conn(&mut self, cookie: &[u8; 8]) -> u32;
     /// What happened, for the chat and the log.
@@ -395,6 +407,9 @@ pub enum Event {
     Plain(String),
     /// An agreed connection was closed (fail closed), and why.
     Failed(String),
+    /// A connection of a transfer that must be encrypted was closed before
+    /// any byte of it went out, because it would have gone unencrypted; why.
+    Blocked(String),
     /// A line for the log only.
     Log(String),
 }
@@ -476,6 +491,16 @@ impl FilePipe {
         }
     }
 
+    /// A pipe for a connection of a transfer that is not let through (it
+    /// must be encrypted and was not agreed): closed from the start, so no
+    /// byte passes either way.
+    pub fn refused(cookie: [u8; 8], role: Role, why: &str) -> FilePipe {
+        let mut p = FilePipe::new(cookie, role, false);
+        p.phase = Phase::Failed;
+        p.failure = Some(why.to_string());
+        p
+    }
+
     pub fn role(&self) -> Role {
         self.role
     }
@@ -508,11 +533,11 @@ impl FilePipe {
             Role::Answerer => match ks.agreement(&self.cookie) {
                 Some(ag) => self.send_hello(ks, ag),
                 // Not made for a transfer without keys; never encrypt blind.
-                None => self.go_plain(ks, "this add-on has no keys for it".to_string(), true),
+                None => self.unencrypted(ks, "this add-on has no keys for it".to_string(), true),
             },
             Role::Offerer => {
                 if let Some(why) = ks.plain_reason(&self.cookie) {
-                    self.go_plain(ks, why, false);
+                    self.unencrypted(ks, why, false);
                 } else if let Some(ag) = ks.agreement(&self.cookie) {
                     self.send_hello(ks, ag);
                 }
@@ -674,7 +699,7 @@ impl FilePipe {
                 return false;
             }
             if may_go_plain {
-                self.go_plain(
+                self.unencrypted(
                     ks,
                     "the other side sent no key hello (no E2E add-on there, an older one, or file \
                      encryption off)"
@@ -791,6 +816,32 @@ impl FilePipe {
         ks.report(&self.cookie, Event::Encrypted);
     }
 
+    /// The connection would go unencrypted: plain, every byte the client's
+    /// own, for a transfer that may; closed with nothing sent for one that
+    /// must be encrypted.
+    fn unencrypted(&mut self, ks: &mut dyn KeySource, why: String, by_wait: bool) {
+        if ks.must_encrypt(&self.cookie) {
+            self.block(ks, &why);
+        } else {
+            self.go_plain(ks, why, by_wait);
+        }
+    }
+
+    /// Closes a connection that must not go unencrypted: what the client
+    /// wrote and was held is dropped, never sent; nothing reaches the client.
+    fn block(&mut self, ks: &mut dyn KeySource, why: &str) {
+        if self.phase == Phase::Failed {
+            return;
+        }
+        self.phase = Phase::Failed;
+        self.failure = Some(why.to_string());
+        self.to_client.clear();
+        self.held.clear();
+        self.from_wire.clear();
+        self.to_wire.clear();
+        ks.report(&self.cookie, Event::Blocked(why.to_string()));
+    }
+
     fn go_plain(&mut self, ks: &mut dyn KeySource, why: String, by_wait: bool) {
         self.phase = Phase::Plain;
         self.plain_by_wait = by_wait;
@@ -842,8 +893,10 @@ impl FilePipe {
                 if self.role == Role::Offerer && self.mine.is_none() {
                     // A few bytes that might have been a hello: the client's.
                     let all = std::mem::take(&mut self.from_wire);
-                    self.go_plain(ks, "the other side sent no key hello".to_string(), false);
-                    self.give(&all);
+                    self.unencrypted(ks, "the other side sent no key hello".to_string(), false);
+                    if self.phase == Phase::Plain {
+                        self.give(&all);
+                    }
                 } else {
                     self.fail(ks, "the connection ended during the key hello");
                 }
@@ -860,11 +913,11 @@ impl FilePipe {
             return;
         }
         if let Some(why) = ks.plain_reason(&self.cookie) {
-            self.go_plain(ks, why, false);
+            self.unencrypted(ks, why, false);
         } else if let Some(ag) = ks.agreement(&self.cookie) {
             self.send_hello(ks, ag);
         } else if now_ms.saturating_sub(self.since_ms) >= HELLO_WAIT_MS {
-            self.go_plain(
+            self.unencrypted(
                 ks,
                 format!(
                     "the other side sent no key hello within {} s (no E2E add-on there, an older \
@@ -956,6 +1009,8 @@ pub(crate) mod tests {
         pub from_hello: Option<Agreement>,
         pub kept: bool,
         pub plain: Option<String>,
+        /// What `must_encrypt` says: a strict contact, or `required`.
+        pub strict: bool,
         pub conns: u32,
         pub events: Vec<Event>,
     }
@@ -967,6 +1022,7 @@ pub(crate) mod tests {
                 from_hello: None,
                 kept: false,
                 plain: None,
+                strict: false,
                 conns: 0,
                 events: Vec::new(),
             }
@@ -996,6 +1052,9 @@ pub(crate) mod tests {
         }
         fn plain_reason(&mut self, _: &[u8; 8]) -> Option<String> {
             self.plain.clone()
+        }
+        fn must_encrypt(&mut self, _: &[u8; 8]) -> bool {
+            self.strict
         }
         fn next_conn(&mut self, _: &[u8; 8]) -> u32 {
             self.conns += 1;
@@ -1237,6 +1296,68 @@ pub(crate) mod tests {
         assert_eq!((a.phase(), a.take_wire()), (Phase::Plain, prompt.clone()));
         // An answer through the chat while waiting: the offerer speaks.
         let mut k = Fixed::with(None);
+        let mut a = FilePipe::new(C, Role::Offerer, false);
+        a.connected(&mut k, 0);
+        k.ag = Some(agreement(1));
+        a.tick(&mut k, 10);
+        assert!(a.take_wire().starts_with(HELLO_MAGIC));
+    }
+
+    /// Second audit of 2026-10, finding 4: an offerer whose transfer must be
+    /// encrypted (a strict contact, or `files_encrypt = required`) never goes
+    /// plain - not after the wait, not on bytes that are no hello, not on a
+    /// decline, not at the end of the stream: the connection is closed, the
+    /// held bytes are dropped, nothing reaches the wire or the client.
+    #[test]
+    fn a_strict_offerer_without_a_hello_sends_nothing() {
+        let prompt = crate::files::oft_build(crate::files::OFT_PROMPT, &C, 5, 0, "x");
+        let strict = || {
+            let mut k = Fixed::with(None);
+            k.strict = true;
+            k
+        };
+        let blocked = |k: &Fixed| k.said(|e| matches!(e, Event::Blocked(_)));
+        // Nothing comes within the wait.
+        let mut k = strict();
+        let mut a = FilePipe::new(C, Role::Offerer, false);
+        a.connected(&mut k, 1000);
+        a.write(&prompt, &mut k, 1000).unwrap();
+        a.tick(&mut k, 1000 + HELLO_WAIT_MS);
+        assert_eq!(a.phase(), Phase::Failed);
+        assert!(a.take_wire().is_empty(), "the held prompt is dropped");
+        assert!(a.write(b"more", &mut k, 6000).is_err());
+        assert!(a.take_wire().is_empty());
+        a.feed(b"OFT2 reply", &mut k, 6000);
+        assert_eq!(a.plaintext_len(), 0);
+        assert!(blocked(&k) && !k.said(|e| matches!(e, Event::Plain(_))));
+        // The peer's first bytes are no hello.
+        let mut k = strict();
+        let mut a = FilePipe::new(C, Role::Offerer, false);
+        a.connected(&mut k, 0);
+        a.write(&prompt, &mut k, 0).unwrap();
+        a.feed(b"OFT2...", &mut k, 2);
+        assert_eq!(a.phase(), Phase::Failed);
+        assert!(a.take_wire().is_empty());
+        assert_eq!(a.plaintext_len(), 0);
+        assert!(blocked(&k));
+        // A decline through the chat.
+        let mut k = strict();
+        let mut a = FilePipe::new(C, Role::Offerer, false);
+        a.connected(&mut k, 0);
+        a.write(&prompt, &mut k, 0).unwrap();
+        k.plain = Some("declined".into());
+        a.tick(&mut k, 10);
+        assert_eq!((a.phase(), a.take_wire()), (Phase::Failed, Vec::new()));
+        // A few bytes, then the end of the stream.
+        let mut k = strict();
+        let mut a = FilePipe::new(C, Role::Offerer, false);
+        a.connected(&mut k, 0);
+        a.feed(b"IQ", &mut k, 1);
+        a.end_of_input(&mut k);
+        assert_eq!(a.phase(), Phase::Failed);
+        assert_eq!(a.plaintext_len(), 0);
+        // And an answer in time still encrypts.
+        let mut k = strict();
         let mut a = FilePipe::new(C, Role::Offerer, false);
         a.connected(&mut k, 0);
         k.ag = Some(agreement(1));

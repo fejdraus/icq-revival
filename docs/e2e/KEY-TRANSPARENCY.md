@@ -58,7 +58,11 @@ endian. The kinds and their fields:
 | `device` | device id (4, BE), Curve25519 key (32), Ed25519 key (32), account signature (64) | a device was added |
 | `resign` | device id (4, BE), account signature (64) | a device got a new account signature (rotation) |
 | `revoke` | device id (4, BE) | a device was revoked |
-| `delete` | - | the account was deleted, its key and devices with it (`DeleteUser`) |
+| `delete` | - | the account was deleted, its key and devices with it |
+| `owner-revoke` | device id (4, BE), issued_at (8, BE), signature (64) | the owner revoked that device: the account key's signature over the `revoke` message (`KEY-DIRECTORY-API.md` 5); the `revoke` of that device comes next |
+| `owner-delete` | issued_at (8, BE), signature (64) | the owner deleted the account's keys (`DELETE /e2e/v1/account`): the account key's signature over the `delete` message; the `delete` comes next |
+| `recovery-revoke` | device id (4, BE), why (text) | the operator revoked that device without the owner's key (management API); the `revoke` comes next |
+| `recovery-delete` | why (text) | the account was deleted without the owner's key (`DeleteUser`: management API, ICQ legacy self-delete); the `delete` comes next |
 
 Replaying the leaves in order gives, for each account, its account key and
 its active devices with their keys - what `GET /users/{uin}/devices` must
@@ -66,6 +70,20 @@ return. A `publish` or a `reset` starts the account's devices afresh; a
 `delete` removes the account. (Logs written before `delete` existed may hold
 a `publish` over an account that was deleted unlogged; the auditor refuses
 that from now on.)
+
+**On whose word** (second audit of 2026-10, finding 1). A `revoke` or a
+`delete` comes right after the leaf that says who made it, written in the
+same transaction: `owner-*` with the owner's signature, which auditors and
+clients check against the account key current at that point, or
+`recovery-*` for the operator, who has no account key. The one `revoke`
+with nothing before it is a rotation's: the devices the new key did not
+re-sign are cut off by the rotation itself, which the old key signed. The
+authority is a leaf of its own rather than new fields of `revoke` and
+`delete` so that add-ons built before it read the log as before: they take
+a kind they do not know as a leaf that changes nothing, but a known kind
+with other fields as a rewritten log. Auditors built before it, on the
+other hand, refuse a kind they do not know - they must be updated before
+the server writes one (see Operation).
 
 ### Genesis
 
@@ -119,8 +137,16 @@ log and vouches for it. `cmd/e2e-kt-auditor` (`server/e2e/audit.go`):
   account without a key; a `rotate` with the old key's proof; a `reset` only
   once every device is revoked; a `device` with an id the account never used,
   signed by the account key; a `resign` of an active device signed by the
-  current key; a `revoke` of an active device; a `delete` of an account that
-  has a key; nothing of a kind it does not know.
+  current key; an `owner-revoke` of an active device signed by the account
+  key, and an `owner-delete` signed by it; a `recovery-revoke` of an active
+  device; a `revoke` only right after its `owner-revoke` or
+  `recovery-revoke`, or of a device a rotation left without a signature by
+  the new key; a `delete` only right after its `owner-delete` or
+  `recovery-delete`; nothing of a kind it does not know.
+- The operator's recoveries - `recovery-revoke`, `recovery-delete`, a `reset`
+  and a `publish` after a `recovery-delete` - keep the rules and are
+  cosigned (a lost key is a legitimate reason), but each is logged at WARN
+  once, naming the entry, the account and why.
 - If all is well, cosigns the checkpoint (c2sp.org/tlog-cosignature, Ed25519,
   with the time) and posts it to the server. If not, it records the violation,
   logs it loudly and never cosigns that log again: clients then warn within
@@ -199,8 +225,26 @@ log's key, the size, the tree's right edge and every account replayed.
   to trust on first use, which handed a server that breaks its own log the
   very keys the log is there to check. `/e2e resetlog` forgets the copy and
   its key, for when the operator explains.
-- **Unreadable for now** (network): nothing is checked against the copy until
-  it can be brought up to date again; no note.
+- **Unreadable for now** (network), on a state that trusted a log before
+  (`kt::Trust::TemporarilyUnavailableAfterTrust`, second audit of 2026-10,
+  finding 2): the last trusted copy stands. Known account keys, devices and
+  sessions go on; a contact the copy does not have or never pinned, a
+  changed account key, a new device and a new session from an unknown device
+  are held or unreadable with a note until a sync works. Not sticky. A state
+  that never trusted a log is "no log" as before.
+- **The rules.** The copy is replayed with the auditor's rules
+  (`kt::Replay::apply`, the same verdicts as `AuditState.apply`; the
+  `sharedKTVectors` of `server/e2e/audit_test.go` pin both). An entry that
+  breaks one is a broken log, as a rewrite is. A kind the add-on does not
+  know still changes nothing, so a newer server's log reads.
+- **Recovery.** Each account in the copy keeps the keys its current key
+  descends from by rotations (`LogAccount::chain`) and, for a key that came
+  without the previous key's word, why (`new_identity`: a reset, or a key
+  published after a `recovery-delete`). A contact whose pinned key is
+  replaced that way is a new identity: "WARNING: the server replaced X's
+  keys without X's key (operator recovery: ...)" every time it happens, held
+  for a contact verified or under `/e2e on` until `/e2e verify` or
+  `/e2e accept`, and `/e2e status` says it.
 - **No log on the server** (an older server: the endpoints answer 404): the
   client works as before and `/e2e status` says so.
 - **Status.** `/e2e status` says whether the contact's key is the log's, and
@@ -213,10 +257,16 @@ log's key, the size, the tree's right edge and every account replayed.
   client see a shorter log - a rewrite - and warn; each user then types
   `/e2e resetlog` once.
 - `E2E_KT_ORIGIN` must not change once clients have pinned the key.
-- Deleting an account deletes its directory rows, not its log entries: the
-  log keeps showing its last keys, which no client uses since the directory
-  has no devices for it. A new account on the same UIN starts with a
-  `publish`, which replaces them.
+- Deleting an account writes `recovery-delete` and `delete`; the owner's
+  `DELETE /e2e/v1/account` writes `owner-delete` and `delete`. A new key on
+  the same UIN starts with a `publish`.
+- **Rollout of the authority leaves.** Auditors built before them refuse
+  their kinds, and the server built before them writes a bare `revoke` and
+  `delete`, which the new auditors and add-ons refuse. So the server and the
+  auditors are updated together, with no revoke and no account deletion in
+  between (a log of publishes and devices only is valid under both). Add-ons
+  of any age read the new leaves: older ones skip the authority leaves and
+  apply the `revoke`/`delete` as before.
 
 ## Stage 2 in the client
 
@@ -243,9 +293,21 @@ log's key, the size, the tree's right edge and every account replayed.
 - At least one trusted auditor must have cosigned within the hour
   (`kt::AUDIT_MAX_AGE`; an auditor cosigns every minute). If none has, it is
   a warning once per sign-on naming each auditor's last word, and
-  `/e2e status` says `NOT AUDITED`; messages go on, checked against the log.
-  A server could withhold newer cosignatures from one user, so an hour is
-  the window in which a split view goes unnoticed.
+  `/e2e status` says `NOT AUDITED`.
+- **What an auditor vouched for** (second audit of 2026-10, finding 3).
+  Once a trusted auditor has cosigned a checkpoint that agrees with this
+  copy (`LogState::audit_required`, kept in the state file), new trust
+  material is taken only from the part of the log an auditor cosigned: the
+  copy keeps a second replay up to the largest agreeing cosigned size
+  (`LogState::vouched`, `kt::vouch`, which reads those leaves again and
+  checks each against the hashes it keeps). A contact never pinned, a
+  changed account key, a device without a session and a new inbound session
+  must all be in it - so a key published a moment ago is used a minute or
+  two later, once an auditor has looked. With no fresh cosignature at all
+  (`kt::Trust::Unaudited`), known contacts, devices and sessions go on and
+  anything new is held, until an auditor vouches again. A server that keeps
+  newer cosignatures from one user so as to feed it a log of its own gains
+  nothing: what it adds is never in the vouched part.
 - `/e2e status` ends the log's part with every trusted auditor: ", audited by
   A (1 min ago), B (2 min ago); C silent 3 h". The state file keeps each
   auditor's latest cosignature (`LogState::audits`); a file from before
@@ -279,8 +341,12 @@ user applies again.
   the auditing survives one machine down, and an intruder on the server or
   on one auditor's machine is still caught by the others - but protection
   against the operator needs an auditor someone else runs.
-- A split view younger than an hour, or a key used before the auditor's next
-  look, is caught afterwards, not prevented - the same trade Signal makes.
+- A split view younger than an hour is caught afterwards, not prevented,
+  for what this add-on already used. Something new is used only once an
+  auditor has cosigned it (see "What an auditor vouched for"), so the first
+  message of a contact who published a moment ago may be unreadable until
+  the auditor's next look; the sender's client keeps sending pre-key
+  messages until it hears back, and those open then.
 - The patch pins the auditors the server names at Apply time; a server
   already compromised then could name its own. Clients without the patch's
   line still pin on first use, and take no auditor added later until they

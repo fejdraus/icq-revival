@@ -117,6 +117,21 @@ pub const FALLBACK_KEY_LIFETIME: u64 = 7 * 24 * 60 * 60;
 /// for clocks that disagree.
 pub const INBOUND_ID_KEEP: u64 = 2 * FALLBACK_KEY_LIFETIME + TIME_SKEW_PAST + 24 * 60 * 60;
 
+/// At most this many new inbound sessions are made with one device of a
+/// contact within [`INBOUND_RATE_WINDOW`]; a pre-key message past it is
+/// refused, with a note (second audit of 2026-10, finding 6). A contact's
+/// client makes a new session when it loses its state or links a device - a
+/// few times a year, not ten times an hour.
+pub const INBOUND_SESSIONS_PER_WINDOW: usize = 10;
+/// The window [`INBOUND_SESSIONS_PER_WINDOW`] counts in, seconds.
+pub const INBOUND_RATE_WINDOW: u64 = 60 * 60;
+/// At most this many ids of inbound sessions are kept per device of a
+/// contact. Once a device has this many younger than [`INBOUND_ID_KEEP`],
+/// it gets no new session until the oldest of them expires: an id is never
+/// dropped early to make room, since a dropped id would let its pre-key
+/// message make the session again (audit 2026-10, finding 3).
+pub const INBOUND_IDS_PER_DEVICE: usize = 200;
+
 /// How far a received message's send time may sit from ours (CHECKLIST 3.5).
 /// Offline messages are stored by the server for hours, so the past is generous;
 /// the future is tight, since a far-future stamp is a replay attempt.
@@ -173,11 +188,16 @@ pub struct OwnKeys {
     /// Our copy of the key log (docs/e2e/KEY-TRANSPARENCY.md).
     #[serde(default)]
     pub log: crate::kt::LogState,
-    /// Set by the engine while its copy of the key log is up to date and
-    /// trusted: a new inbound session is then made only with a key the log
-    /// shows. Not kept in the state file.
+    /// What the key log asks of a new inbound session right now, set by the
+    /// engine after every look at the log (second audit of 2026-10,
+    /// findings 2 and 3). Not kept in the state file; while unset, a copy
+    /// of a log trusted before counts as [`InboundGate::Frozen`].
     #[serde(skip)]
-    pub log_trusted: bool,
+    pub inbound_gate: InboundGate,
+    /// Why the last pre-key message was refused, when it was for a reason
+    /// worth saying (too many new sessions); taken by [`OwnKeys::decrypt`].
+    #[serde(skip)]
+    last_refusal: Option<String>,
     /// The ids of the inbound sessions made from a pre-key message, by peer
     /// and device, with when: a pre-key message whose session was made once
     /// is never let make it again (audit 2026-10, finding 3). Kept for
@@ -194,6 +214,26 @@ pub struct OwnKeys {
     /// State version 3.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub revoked: HashMap<String, Vec<u32>>,
+}
+
+/// What the key log asks of a new inbound session (a pre-key message that no
+/// session opens).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum InboundGate {
+    /// No log was ever trusted on this state: the sender's key is trusted
+    /// on first use.
+    #[default]
+    Open,
+    /// The copy of the log is up to date: it must show the sender's account
+    /// key and device.
+    Log,
+    /// The copy is up to date and a pinned auditor has vouched for it
+    /// lately: the part it vouched for must show them too.
+    Vouched,
+    /// The log broke, cannot be read, or no auditor has vouched for it
+    /// lately: only an account key pinned before, with a device the trusted
+    /// copy shows.
+    Frozen,
 }
 
 /// An inbound session made from a pre-key message, and when.
@@ -334,7 +374,8 @@ impl OwnKeys {
             said: HashMap::new(),
             contacts: HashMap::new(),
             log: crate::kt::LogState::default(),
-            log_trusted: false,
+            inbound_gate: InboundGate::Open,
+            last_refusal: None,
             inbound_ids: HashMap::new(),
             fallback_used: false,
             revoked: HashMap::new(),
@@ -520,6 +561,13 @@ impl OwnKeys {
     /// For a verified one the verification is cleared and the contact is
     /// marked [`PinnedKey::held`], so the next message waits for the user.
     /// Returns the note, if there is one.
+    ///
+    /// A key the key log shows as replaced without the contact's own key -
+    /// after the operator revoked or deleted it, or by a reset (second audit
+    /// of 2026-10, finding 1) - is a new identity: it is said in strong
+    /// words every time it happens, and for a contact under `/e2e on` it is
+    /// held as for a verified one, until `/e2e verify` or `/e2e accept`. A
+    /// key the log shows as rotated from the pinned one by its owner is not.
     pub fn pin(&mut self, peer: &str, account_key: &str, now: u64) -> Option<String> {
         let peer = sign::ident(peer);
         match self.pins.get(&peer) {
@@ -530,12 +578,47 @@ impl OwnKeys {
             Some(p) if p.key == account_key => None,
             Some(p) => {
                 let was_verified = p.is_verified() || p.held;
+                let recovery = self.replaced_without_owner(&peer, &p.key, account_key);
+                let on = self
+                    .contacts
+                    .get(&peer)
+                    .is_some_and(|r| r.setting == crate::policy::Setting::On);
+                let held = was_verified || (recovery.is_some() && on);
                 let mut next = PinnedKey::new(account_key, now);
-                next.held = was_verified;
+                next.held = held;
                 self.pins.insert(peer.clone(), next);
-                Some(crate::policy::safety_changed_note(&peer, was_verified))
+                Some(match recovery {
+                    Some(why) => crate::policy::recovery_key_note(&peer, &why, held, was_verified),
+                    None => crate::policy::safety_changed_note(&peer, was_verified),
+                })
             }
         }
+    }
+
+    /// Why the key log says `new` replaced `old` for `peer` without the
+    /// owner's word - a reset, or a key after the operator deleted the
+    /// account - or `None` if it does not say so (a rotation from `old`, the
+    /// owner's own delete, or no log).
+    pub fn replaced_without_owner(&self, peer: &str, old: &str, new: &str) -> Option<String> {
+        let acc = self
+            .log
+            .accounts
+            .get(&sign::ident(peer))
+            .filter(|a| a.key == new)?;
+        if acc.continues(old) {
+            return None;
+        }
+        acc.new_identity.clone()
+    }
+
+    /// Why `peer`'s current key in the key log came without the previous
+    /// key's word, for `/e2e status`.
+    pub fn key_recovery(&self, peer: &str) -> Option<String> {
+        let acc = self.log.accounts.get(&sign::ident(peer))?;
+        let pinned = self.pinned(peer)?;
+        (pinned.key == acc.key)
+            .then(|| acc.new_identity.clone())
+            .flatten()
     }
 
     /// The pinned key of `peer`, if any.
@@ -935,10 +1018,15 @@ impl OwnKeys {
         // directory that cannot be reached leaves the message unreadable for
         // now - the alternative is that an outage silently accepts an
         // unverified sender.
+        self.last_refusal = None;
         let Some((payload, advanced, made)) =
             self.decrypt_olm(&peer, container.sender_device, &olm, dir, now)
         else {
-            return Inbound::Unreadable(unreadable(&peer));
+            return Inbound::Unreadable(
+                self.last_refusal
+                    .take()
+                    .unwrap_or_else(|| unreadable(&peer)),
+            );
         };
         let device = container.sender_device;
         let key: [u8; 32] = match payload.as_slice().try_into() {
@@ -1035,6 +1123,12 @@ impl OwnKeys {
         if self.inbound_seen(peer, sender_device, &id) {
             return None;
         }
+        // A bounded number of new sessions per device, none made by
+        // dropping a remembered id (second audit of 2026-10, finding 6).
+        if let Err(why) = self.inbound_allowed(peer, sender_device, now) {
+            self.last_refusal = Some(why);
+            return None;
+        }
         let ud = dir.user_devices(peer).ok()?;
         let device = ud
             .devices
@@ -1044,17 +1138,9 @@ impl OwnKeys {
         if !device_signed_by(&ud.screen_name, &ud.account_key, &device) {
             return None;
         }
-        if self.log.broken.is_some() {
-            // A key log that was trusted and then broke (audit 2026-10,
-            // finding 4): only an account key pinned before, and a device the
-            // last trusted copy of the log shows, may make a new session.
-            let pinned = self.pinned(peer).is_some_and(|p| p.key == ud.account_key);
-            if !pinned || !self.log_shows(peer, &ud.account_key, &device) {
-                return None;
-            }
-        } else if self.log_trusted && !self.log_shows(peer, &ud.account_key, &device) {
-            // Nothing is pinned and no one-time key spent for a sender whose
-            // keys the key log does not show.
+        // Nothing is pinned and no one-time key spent for a sender the key
+        // log does not vouch for now.
+        if !self.log_allows_inbound(peer, &ud.account_key, &device) {
             return None;
         }
         let their_curve = curve_key(&device.curve25519_key).ok()?;
@@ -1074,6 +1160,93 @@ impl OwnKeys {
             self.said.insert(format!("pin:{}", sign::ident(peer)), note);
         }
         Some((plaintext, next, Some(Made { id, fallback })))
+    }
+
+    /// Whether the key log lets `peer`'s device `d`, under `account_key`,
+    /// make a new inbound session, as [`OwnKeys::inbound_gate`] asks:
+    ///
+    /// - a log never trusted on this state: yes (trust on first use);
+    /// - an up-to-date copy: if it shows the key and device;
+    /// - an up-to-date copy an auditor vouched for lately: if the vouched
+    ///   part shows them too (second audit of 2026-10, finding 3);
+    /// - a log that broke (audit 2026-10, finding 4), cannot be read now
+    ///   (second audit, finding 2) or is not audited lately: only a key
+    ///   pinned before, with a device the trusted copy shows.
+    pub fn log_allows_inbound(&self, peer: &str, account_key: &str, d: &Device) -> bool {
+        let gate = match self.inbound_gate {
+            _ if self.log.broken.is_some() => InboundGate::Frozen,
+            InboundGate::Open if self.log.was_trusted() => InboundGate::Frozen,
+            g => g,
+        };
+        let vouched = || !self.log.audit_required() || self.vouched_shows(peer, account_key, d);
+        match gate {
+            InboundGate::Open => true,
+            InboundGate::Log => self.log_shows(peer, account_key, d),
+            InboundGate::Vouched => {
+                self.log_shows(peer, account_key, d) && self.vouched_shows(peer, account_key, d)
+            }
+            InboundGate::Frozen => {
+                self.pinned(peer).is_some_and(|p| p.key == account_key)
+                    && self.log_shows(peer, account_key, d)
+                    && vouched()
+            }
+        }
+    }
+
+    /// Whether the part of the key log an auditor vouched for has `peer`
+    /// with this account key and this device, keys and signature alike.
+    pub fn vouched_shows(&self, peer: &str, account_key: &str, d: &Device) -> bool {
+        self.log
+            .vouched
+            .accounts
+            .get(&sign::ident(peer))
+            .filter(|a| a.key == account_key)
+            .and_then(|a| a.devices.get(&d.device_id))
+            .is_some_and(|l| {
+                l.curve25519_key == d.curve25519_key
+                    && l.ed25519_key == d.ed25519_key
+                    && l.account_signature == d.account_signature
+            })
+    }
+
+    /// Whether one more inbound session may be made with `peer`'s `device`
+    /// at `now`: at most [`INBOUND_SESSIONS_PER_WINDOW`] within
+    /// [`INBOUND_RATE_WINDOW`], and fewer than [`INBOUND_IDS_PER_DEVICE`]
+    /// ids still kept. `Err` says why not.
+    pub fn inbound_allowed(&self, peer: &str, device: u32, now: u64) -> Result<(), String> {
+        let kept: Vec<&SeenSession> = self
+            .inbound_ids
+            .get(&sign::ident(peer))
+            .and_then(|m| m.get(&device))
+            .map(|l| {
+                l.iter()
+                    .filter(|x| x.at.saturating_add(INBOUND_ID_KEEP) > now)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let recent = kept
+            .iter()
+            .filter(|x| x.at.saturating_add(INBOUND_RATE_WINDOW) > now)
+            .count();
+        if recent >= INBOUND_SESSIONS_PER_WINDOW {
+            return Err(format!(
+                "[ICQ E2E] An encrypted message from {peer} was not read: their device {device} started {recent} new encrypted sessions within the hour, which no client does on its own. It may be an attack on the add-on, or a broken client. New sessions from that device are taken again after the hour."
+            ));
+        }
+        if kept.len() >= INBOUND_IDS_PER_DEVICE {
+            let until = kept
+                .iter()
+                .map(|x| x.at.saturating_add(INBOUND_ID_KEEP))
+                .min()
+                .unwrap_or(now);
+            return Err(format!(
+                "[ICQ E2E] An encrypted message from {peer} was not read: their device {device} has started {} encrypted sessions in the last {} days, the most this add-on remembers. Forgetting older ones would let an old message be replayed, so new sessions from that device are taken again in {} day(s).",
+                kept.len(),
+                INBOUND_ID_KEEP / 86_400,
+                until.saturating_sub(now).div_ceil(86_400)
+            ));
+        }
+        Ok(())
     }
 
     /// Whether our copy of the key log has `peer` with this account key and
@@ -1941,5 +2114,143 @@ mod tests {
         k.remember_inbound("100002", 7, "newer".into(), NOW + INBOUND_ID_KEEP);
         assert!(!k.inbound_seen("100002", 7, "old"));
         assert!(k.inbound_seen("100002", 7, "new"));
+    }
+
+    /// Second audit of 2026-10, finding 1: a key the log shows as rotated
+    /// from the pinned one by its owner is an ordinary change; one the log
+    /// shows as replaced without the owner's key is a new identity, said in
+    /// strong words and held for a contact under `/e2e on`.
+    #[test]
+    fn a_key_replaced_without_the_owner_is_a_new_identity_and_a_rotation_is_not() {
+        let mut k = OwnKeys::create("100001");
+        k.contacts.insert(
+            "100002".into(),
+            crate::policy::Remembered {
+                setting: crate::policy::Setting::On,
+                ..Default::default()
+            },
+        );
+        assert_eq!(k.pin("100002", "K1", NOW), None);
+        k.log.accounts.insert(
+            "100002".into(),
+            crate::kt::LogAccount {
+                key: "K2".into(),
+                chain: vec!["K1".into(), "K2".into()],
+                ..Default::default()
+            },
+        );
+        let note = k.pin("100002", "K2", NOW).unwrap();
+        assert!(
+            note.contains("has changed") && !note.contains("WARNING"),
+            "{note}"
+        );
+        assert!(
+            !k.pinned("100002").unwrap().held,
+            "a rotation holds nothing"
+        );
+
+        k.log.accounts.insert(
+            "100002".into(),
+            crate::kt::LogAccount {
+                key: "K3".into(),
+                chain: vec!["K3".into()],
+                new_identity: Some("a reset".into()),
+                ..Default::default()
+            },
+        );
+        let note = k.pin("100002", "K3", NOW).unwrap();
+        assert!(
+            note.contains("WARNING: the server replaced 100002's keys"),
+            "{note}"
+        );
+        assert!(k.pinned("100002").unwrap().held, "held under /e2e on");
+        assert_eq!(k.key_recovery("100002").as_deref(), Some("a reset"));
+    }
+
+    /// A message from `a` to `peer` that starts a new session: `a` forgets
+    /// the one it had, so it claims a fresh key and sends a pre-key message.
+    fn new_session(a: &mut OwnKeys, dir: &MemoryDirectory, peer: &str, time: u64) -> Container {
+        a.sessions.remove(peer);
+        seal_envelope(
+            a,
+            dir,
+            peer,
+            envelope_for(a, peer, Kind::Message, b"again", time),
+        )
+    }
+
+    /// Second audit of 2026-10, finding 6: at most
+    /// [`INBOUND_SESSIONS_PER_WINDOW`] new sessions per device within the
+    /// hour; the next is refused with a note, and taken again after the
+    /// hour.
+    #[test]
+    fn new_inbound_sessions_from_one_device_are_limited_per_hour() {
+        let dir = MemoryDirectory::new();
+        let mut a = OwnKeys::create("100001");
+        let mut b = OwnKeys::create("100002");
+        publish(&dir, &mut a);
+        publish(&dir, &mut b);
+        for i in 0..INBOUND_SESSIONS_PER_WINDOW as u64 {
+            let c = new_session(&mut a, &dir, "100002", NOW + i);
+            let got = b.decrypt(&dir, "100001", &c, NOW + i);
+            assert!(matches!(got, Inbound::Text { .. }), "{i}: {got:?}");
+        }
+        let c = new_session(&mut a, &dir, "100002", NOW + 20);
+        let before = b.account.clone();
+        match b.decrypt(&dir, "100001", &c, NOW + 20) {
+            Inbound::Unreadable(note) => {
+                assert!(
+                    note.contains("new encrypted sessions within the hour"),
+                    "{note}"
+                )
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(b.account, before, "no one-time key spent");
+        // After the hour, the same message opens.
+        let later = NOW + INBOUND_RATE_WINDOW + 1;
+        assert!(matches!(
+            b.decrypt(&dir, "100001", &c, later),
+            Inbound::Text { .. }
+        ));
+    }
+
+    /// Second audit of 2026-10, finding 6: a device whose kept ids reached
+    /// [`INBOUND_IDS_PER_DEVICE`] gets no new session until the oldest
+    /// expires; no id is dropped to make room, so none can be replayed.
+    #[test]
+    fn a_device_with_too_many_kept_session_ids_waits_and_none_is_dropped() {
+        let dir = MemoryDirectory::new();
+        let mut a = OwnKeys::create("100001");
+        let mut b = OwnKeys::create("100002");
+        publish(&dir, &mut a);
+        publish(&dir, &mut b);
+        let start = NOW - 2 * INBOUND_RATE_WINDOW - INBOUND_IDS_PER_DEVICE as u64 * 60;
+        for i in 0..INBOUND_IDS_PER_DEVICE as u64 {
+            b.remember_inbound("100001", a.device_id, format!("id{i}"), start + i * 60);
+        }
+        let c = new_session(&mut a, &dir, "100002", NOW);
+        match b.decrypt(&dir, "100001", &c, NOW) {
+            Inbound::Unreadable(note) => {
+                assert!(note.contains("the most this add-on remembers"), "{note}")
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            b.inbound_seen("100001", a.device_id, "id0"),
+            "nothing dropped"
+        );
+        assert_eq!(
+            b.inbound_ids["100001"][&a.device_id].len(),
+            INBOUND_IDS_PER_DEVICE
+        );
+        // Once the oldest has expired, a new session is taken.
+        let later = start + INBOUND_ID_KEEP + 1;
+        let c = new_session(&mut a, &dir, "100002", later);
+        assert!(matches!(
+            b.decrypt(&dir, "100001", &c, later),
+            Inbound::Text { .. }
+        ));
+        assert!(!b.inbound_seen("100001", a.device_id, "id0"));
     }
 }

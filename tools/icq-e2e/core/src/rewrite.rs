@@ -82,6 +82,10 @@ pub struct Processed {
     /// never reaches the server, so the add-on has to give the client this
     /// answer itself, or the client marks the message as failed to send.
     pub host_ack: Option<Vec<u8>>,
+    /// SNACs the client is owed for a frame the add-on kept from the server:
+    /// the contact's cancel of a direct-IM proposal the client made
+    /// ([`crate::direct`]), handed to the client by the inbound direction.
+    pub owed: Vec<Vec<u8>>,
 }
 
 impl Processed {
@@ -180,6 +184,66 @@ fn detect_oservice(s: &snac::Snac, p: &mut Processed) {
     }
 }
 
+/// Keeps peer-to-peer messaging off while the add-on encrypts
+/// ([`crate::direct`], audit 2026-10 second part, finding 5): a direct-IM
+/// proposal or acceptance is dropped either way - one the client made is
+/// answered to it by a cancel from the contact - and the DC info's address
+/// and port are zeroed in the client's own `SetUserInfoFields` and in the
+/// contacts' user info. Whether it took the SNAC; the caller then returns.
+/// "Buddy arrived" is left to the caller, which reads it as well.
+fn keep_direct_off(dir: Direction, payload: &[u8], s: &snac::Snac, p: &mut Processed) -> bool {
+    let header_len = payload.len() - s.body.len();
+    if let Some(rdv) = crate::direct::rendezvous(dir, payload) {
+        if !rdv.opens() {
+            return true;
+        }
+        p.drop = true;
+        p.payload = None;
+        // A stream that may not lose a frame sends it on as a cancel.
+        p.withheld = Some(crate::direct::as_cancel(&rdv, payload));
+        if dir == Direction::Outbound {
+            p.owed
+                .push(crate::direct::cancel_to_client(&rdv.peer, &rdv.cookie));
+            p.host_ack = host_ack(Kind::ToHost, s.request_id, s.body);
+        }
+        p.lines.push(format!(
+            "direct IM {} peer={} {}: refused, text stays on the server path while encrypting",
+            dir.tag(),
+            rdv.peer,
+            if rdv.kind == crate::files::RDV_PROPOSE {
+                "proposal"
+            } else {
+                "acceptance"
+            }
+        ));
+        return true;
+    }
+    if (dir, s.food_group, s.sub_group)
+        == (
+            Direction::Outbound,
+            snac::FOOD_OSERVICE,
+            crate::direct::OSERVICE_SET_USER_INFO_FIELDS,
+        )
+    {
+        if let Some(body) = crate::direct::strip_own_dc(s.body) {
+            p.payload = Some([&payload[..header_len], &body[..]].concat());
+            p.lines
+                .push("OUT user info: direct connection address left out".to_string());
+        }
+        return true;
+    }
+    false
+}
+
+/// The contacts' DC info zeroed in a "buddy arrived" payload, for
+/// [`keep_direct_off`]'s callers.
+fn contacts_dc_off(payload: &[u8], s: &snac::Snac, p: &mut Processed) {
+    if let Some(body) = crate::direct::strip_contacts_dc(s.body) {
+        let header_len = payload.len() - s.body.len();
+        p.payload = Some([&payload[..header_len], &body[..]].concat());
+    }
+}
+
 /// Looks at one SNAC payload travelling in `dir` and returns what to send in
 /// its place and what to log.
 pub fn process(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
@@ -192,9 +256,16 @@ pub fn process(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
     if dir == Direction::Inbound {
         detect_oservice(&s, &mut p);
     }
+    let encrypting = policy.mode == Mode::Encrypt;
+    if encrypting && keep_direct_off(dir, payload, &s, &mut p) {
+        return p;
+    }
     match (dir, s.food_group, s.sub_group) {
         (Direction::Inbound, snac::FOOD_BUDDY, snac::BUDDY_ARRIVED) => {
             p.e2e_contacts = caps::contacts(s.body);
+            if encrypting {
+                contacts_dc_off(payload, &s, &mut p);
+            }
             return p;
         }
         // The capability goes out in every mode, not only harness. It is how a
@@ -206,9 +277,18 @@ pub fn process(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
         (Direction::Outbound, snac::FOOD_LOCATE, snac::LOCATE_SET_INFO)
             if matches!(policy.mode, Mode::Harness | Mode::Encrypt) =>
         {
-            match caps::announce(s.body) {
+            let header_len = payload.len() - s.body.len();
+            // Encrypting, the client does not offer direct IM.
+            let stripped = encrypting
+                .then(|| crate::direct::strip_cap(s.body))
+                .flatten();
+            if stripped.is_some() {
+                p.lines
+                    .push("OUT capabilities: direct IM left out while encrypting".to_string());
+            }
+            let base = stripped.as_deref().unwrap_or(s.body);
+            match caps::announce(base) {
                 Announce::Added(body) => {
-                    let header_len = payload.len() - s.body.len();
                     p.payload = Some([&payload[..header_len], &body[..]].concat());
                     p.lines
                         .push("OUT capabilities: E2E add-on announced (+16 bytes)".to_string());
@@ -218,6 +298,11 @@ pub fn process(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
                         .to_string(),
                 ),
                 Announce::AlreadyThere | Announce::NoList => {}
+            }
+            if p.payload.is_none() {
+                if let Some(body) = stripped {
+                    p.payload = Some([&payload[..header_len], &body[..]].concat());
+                }
             }
         }
         _ => {}
@@ -301,13 +386,28 @@ pub fn process_crypto(
     if dir == Direction::Inbound {
         detect_oservice(&s, &mut p);
     }
+    let encrypting = crypto.encrypts();
+    if encrypting && keep_direct_off(dir, payload, &s, &mut p) {
+        return p;
+    }
     match (dir, s.food_group, s.sub_group) {
         // The account key is announced in the same SNAC that gets the
         // capability, so no frame is added and the client sends nothing extra
         // (KEY-DIRECTORY-API.md 3.3).
         (Direction::Outbound, snac::FOOD_LOCATE, snac::LOCATE_SET_INFO) => {
+            // Encrypting, the client does not offer direct IM.
+            let stripped = encrypting
+                .then(|| crate::direct::strip_cap(s.body))
+                .flatten();
+            if let Some(body) = &stripped {
+                let header_len = payload.len() - s.body.len();
+                p.payload = Some([&payload[..header_len], &body[..]].concat());
+                p.lines
+                    .push("OUT capabilities: direct IM left out while encrypting".to_string());
+            }
+            let base = stripped.as_deref().unwrap_or(s.body);
             if let Some(key) = crypto.account_key() {
-                match caps::announce_key(s.body, &key) {
+                match caps::announce_key(base, &key) {
                     caps::KeyAnnounce::Added(body) => {
                         let header_len = payload.len() - s.body.len();
                         let mut out = Vec::with_capacity(header_len + body.len());
@@ -335,6 +435,9 @@ pub fn process_crypto(
         (Direction::Inbound, snac::FOOD_OSERVICE, snac::OSERVICE_USER_INFO) => return p,
         (Direction::Inbound, snac::FOOD_BUDDY, snac::BUDDY_ARRIVED) => {
             p.e2e_contacts = caps::contacts(s.body);
+            if encrypting {
+                contacts_dc_off(payload, &s, &mut p);
+            }
             return p;
         }
         _ => {}

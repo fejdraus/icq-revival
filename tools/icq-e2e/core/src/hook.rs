@@ -407,6 +407,8 @@ fn account_session() -> Option<Arc<Mutex<Session>>> {
             sess.engine()
                 .set_calls_required(policy().encrypts_calls() && policy().calls_required);
             sess.engine().set_files_encrypt(policy().encrypts_files());
+            sess.engine()
+                .set_files_required(policy().encrypts_files() && policy().files_required);
             sess.engine().set_auditors(policy().auditors.clone());
             match sess.locked_out() {
                 Some(why) => log::line(&format!(

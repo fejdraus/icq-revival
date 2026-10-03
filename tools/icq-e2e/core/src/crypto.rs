@@ -777,6 +777,13 @@ impl Engine {
         lock_calls(&self.calls).set_required(on);
     }
 
+    /// Switches the strict level of file transfer encryption on or off
+    /// (`files_encrypt=required`): a transfer that did not agree on keys is
+    /// not sent. On the file table, which the socket hooks share.
+    pub fn set_files_required(&mut self, on: bool) {
+        crate::filesneg::lock(&self.files).set_required(on);
+    }
+
     /// Gives the engine a call table of its own instead of the one the hooks
     /// share: two engines in one test process.
     pub fn use_call_table(&mut self, t: Arc<std::sync::Mutex<crate::callneg::CallTable>>) {
@@ -818,7 +825,7 @@ impl Engine {
             Err(Lookup::Transient(e)) => {
                 return Err(format!("the key directory could not be reached ({e})"))
             }
-            Err(Lookup::NotInLog(why)) => return Err(why),
+            Err(Lookup::NotInLog(why)) | Err(Lookup::NotYet(why)) => return Err(why),
         }
         let key = self
             .keys
@@ -844,7 +851,9 @@ impl Engine {
         let contact = match self.contact(peer, now) {
             Ok(c) => c,
             Err(Lookup::NoKeys) => return Err(format!("{peer} has no encryption keys")),
-            Err(Lookup::Transient(e)) | Err(Lookup::NotInLog(e)) => return Err(e),
+            Err(Lookup::Transient(e)) | Err(Lookup::NotInLog(e)) | Err(Lookup::NotYet(e)) => {
+                return Err(e)
+            }
         };
         if self.keys.pinned(peer).is_some_and(|k| k.held) {
             return Err(format!("{peer}'s safety number changed"));
@@ -998,13 +1007,13 @@ impl Engine {
             return false;
         }
         self.log_synced_at = Some(now);
-        self.keys.log_trusted = false;
         // A log that broke after we trusted it stays broken until `/e2e
         // resetlog` (audit 2026-10, finding 4): the copy is frozen as it was
         // last trusted, and nothing the server says now changes it.
         if let Some(why) = self.keys.log.broken.clone() {
             self.note_once(None, "kt:broken".into(), policy::log_broken_note(&why));
             self.log_status = LogStatus::Broken(why);
+            self.set_inbound_gate(now);
             return true;
         }
         match kt::sync(&*self.dir, &self.keys.log) {
@@ -1014,7 +1023,6 @@ impl Engine {
                     self.changed = true;
                 }
                 self.log_status = LogStatus::Ok;
-                self.keys.log_trusted = true;
                 // A device the log no longer shows has no session any more
                 // (audit 2026-10, finding 2).
                 if self.keys.forget_devices_not_in_log() {
@@ -1024,13 +1032,27 @@ impl Engine {
                 self.audit_log(now, true);
             }
             Err(kt::SyncError::NoLog) => self.log_status = LogStatus::NoLog,
+            // A log trusted before that cannot be read now is not "no log":
+            // the last trusted copy stands and nothing new is taken until it
+            // can be read again (second audit of 2026-10, finding 2).
             Err(kt::SyncError::Net(e)) => self.log_status = LogStatus::Failed(e),
             Err(e) => {
                 let why = e.to_string();
                 self.log_broke(&why);
             }
         }
+        self.set_inbound_gate(now);
         true
+    }
+
+    /// Tells the keys what a new inbound session needs now.
+    fn set_inbound_gate(&mut self, now: u64) {
+        self.keys.inbound_gate = match self.trust_at(now) {
+            kt::Trust::NeverHadLog => keys::InboundGate::Open,
+            kt::Trust::Trusted if self.keys.log.audit_required() => keys::InboundGate::Vouched,
+            kt::Trust::Trusted => keys::InboundGate::Log,
+            _ => keys::InboundGate::Frozen,
+        };
     }
 
     /// The key log does not add up: said once, and, if we had trusted it
@@ -1038,18 +1060,44 @@ impl Engine {
     fn log_broke(&mut self, why: &str) {
         self.note_once(None, "kt:broken".into(), policy::log_broken_note(why));
         self.log_status = LogStatus::Broken(why.to_string());
-        self.keys.log_trusted = false;
         if self.keys.log.was_trusted() && self.keys.log.broken.is_none() {
             self.keys.log.broken = Some(why.to_string());
             self.changed = true;
         }
     }
 
-    /// What the key log can be relied on for right now.
+    /// What the key log can be relied on for, as of the last look at it.
     pub fn log_trust(&self) -> kt::Trust {
-        match (&self.keys.log.broken, &self.log_status) {
+        self.trust_at(self.log_synced_at.unwrap_or(0))
+    }
+
+    /// What the key log can be relied on for at `now`:
+    ///
+    /// - broken after it was trusted: sticky until `/e2e resetlog` (audit
+    ///   2026-10, finding 4);
+    /// - read and adding up: trusted - unless a pinned auditor vouched for
+    ///   this copy before and none has within [`kt::AUDIT_MAX_AGE`], which
+    ///   is unaudited (second audit of 2026-10, finding 3);
+    /// - not readable now, on a state that trusted a log before: temporarily
+    ///   unavailable, never "no log" (second audit, finding 2);
+    /// - never read on this state: no log.
+    pub fn trust_at(&self, now: u64) -> kt::Trust {
+        let log = &self.keys.log;
+        match (&log.broken, &self.log_status) {
             (Some(why), _) => kt::Trust::BrokenAfterTrust(why.clone()),
+            (None, LogStatus::Ok) if log.audit_required() && !log.audit_fresh(now) => {
+                kt::Trust::Unaudited(match &self.audit_status {
+                    AuditStatus::Stale(why) => why.clone(),
+                    _ => "no auditor of the key log has vouched for it within the hour".into(),
+                })
+            }
             (None, LogStatus::Ok) => kt::Trust::Trusted,
+            (None, status) if log.was_trusted() => {
+                kt::Trust::TemporarilyUnavailableAfterTrust(match status {
+                    LogStatus::Failed(e) => e.clone(),
+                    _ => "it has not been read yet".into(),
+                })
+            }
             _ => kt::Trust::NeverHadLog,
         }
     }
@@ -1060,12 +1108,27 @@ impl Engine {
     /// trusted from then on, as for a rewritten one. No recent cosignature by
     /// any of them is a warning, once per sign-on.
     fn audit_log(&mut self, now: u64, may_resync: bool) {
-        let (next, r) = kt::audit(
+        let (mut next, r) = kt::audit(
             &*self.dir,
             &self.keys.log,
             now,
             self.pinned_auditors.as_deref(),
         );
+        // The part of the copy a pinned auditor cosigned in agreement is
+        // what new keys are taken from (second audit of 2026-10, finding 3).
+        // Not after a split view; a read that fails is tried at the next
+        // look.
+        if !matches!(r, Err(kt::AuditError::SplitView(_))) {
+            let size = next.audited_size();
+            if let Err(kt::SyncError::Violation(why) | kt::SyncError::Rewritten(why)) =
+                kt::vouch(&*self.dir, &mut next, size)
+            {
+                self.keys.log = next;
+                self.changed = true;
+                self.log_broke(&why);
+                return;
+            }
+        }
         if next != self.keys.log {
             self.keys.log = next;
             self.changed = true;
@@ -1155,64 +1218,87 @@ impl Engine {
     }
 
     /// What the key log has to say about a contact's keys from the directory:
-    /// `Err` if their account key is not the log's, else the ids of devices
-    /// the log does not have with these keys. Nothing while the log is not
-    /// readable.
-    fn log_check(&self, peer: &str, ud: &UserDevices) -> Result<Vec<u32>, String> {
-        // Never "no constraints" for a log that broke after it was trusted
-        // (audit 2026-10, finding 4).
-        if let Some(why) = &self.keys.log.broken {
-            return self.frozen_log_check(peer, ud, why);
-        }
-        if self.log_status != LogStatus::Ok {
-            return Ok(Vec::new());
-        }
-        let Some(acc) = self.keys.log.accounts.get(&sign::ident(peer)) else {
-            return Err(format!("{peer}'s keys are not in the server's key log"));
-        };
-        if acc.key != ud.account_key {
-            return Err(format!(
-                "{peer}'s account key in the key directory is not the one the server's key log shows"
-            ));
-        }
-        Ok(ud
-            .devices
-            .iter()
-            .filter(|d| d.revoked_at.is_none())
-            .filter(|d| {
-                acc.devices.get(&d.device_id).is_none_or(|l| {
-                    l.curve25519_key != d.curve25519_key
-                        || l.ed25519_key != d.ed25519_key
-                        || l.account_signature != d.account_signature
+    /// `Err` if they are not to be used now, else the ids of devices to leave
+    /// out. Never "no constraints" once a log was trusted on this state:
+    ///
+    /// - an up-to-date copy: the account key must be the log's and a device
+    ///   the log's with the same keys;
+    /// - and once an auditor has vouched for this copy: anything new - a
+    ///   contact never pinned, a changed key, a device without a session -
+    ///   must also be in the part an auditor vouched for (second audit of
+    ///   2026-10, finding 3);
+    /// - a log that broke, cannot be read now, or has no auditor's recent
+    ///   word: only what was checked before goes on
+    ///   ([`Engine::frozen_log_check`]).
+    fn log_check(&self, peer: &str, ud: &UserDevices, now: u64) -> Result<Vec<u32>, Lookup> {
+        let trust = self.trust_at(now);
+        let mut left_out = Vec::new();
+        if matches!(trust, kt::Trust::Trusted | kt::Trust::Unaudited(_)) {
+            let Some(acc) = self.keys.log.accounts.get(&sign::ident(peer)) else {
+                return Err(Lookup::NotInLog(format!(
+                    "{peer}'s keys are not in the server's key log"
+                )));
+            };
+            if acc.key != ud.account_key {
+                return Err(Lookup::NotInLog(format!(
+                    "{peer}'s account key in the key directory is not the one the server's key log shows"
+                )));
+            }
+            left_out = ud
+                .devices
+                .iter()
+                .filter(|d| d.revoked_at.is_none())
+                .filter(|d| {
+                    acc.devices.get(&d.device_id).is_none_or(|l| {
+                        l.curve25519_key != d.curve25519_key
+                            || l.ed25519_key != d.ed25519_key
+                            || l.account_signature != d.account_signature
+                    })
                 })
-            })
-            .map(|d| d.device_id)
-            .collect())
+                .map(|d| d.device_id)
+                .collect();
+        }
+        let more = match &trust {
+            kt::Trust::NeverHadLog => return Ok(left_out),
+            kt::Trust::Trusted if !self.keys.log.audit_required() => return Ok(left_out),
+            kt::Trust::Trusted => self.vouched_log_check(peer, ud)?,
+            kt::Trust::Unaudited(why) => {
+                self.frozen_log_check(peer, ud, &Frozen::Unaudited(why))?
+            }
+            kt::Trust::TemporarilyUnavailableAfterTrust(why) => {
+                self.frozen_log_check(peer, ud, &Frozen::Unavailable(why))?
+            }
+            kt::Trust::BrokenAfterTrust(why) => {
+                self.frozen_log_check(peer, ud, &Frozen::Broken(why))?
+            }
+        };
+        for id in more {
+            if !left_out.contains(&id) {
+                left_out.push(id);
+            }
+        }
+        Ok(left_out)
     }
 
-    /// [`Engine::log_check`] while the log is broken after it was trusted:
-    /// only what was vouched for before it broke is used. The account key
-    /// must be the one pinned - a contact never pinned, or a changed key, is
-    /// refused - and a device must already have a session with us or be in
-    /// the last trusted copy of the log; any other device is left out.
-    fn frozen_log_check(
-        &self,
-        peer: &str,
-        ud: &UserDevices,
-        why: &str,
-    ) -> Result<Vec<u32>, String> {
-        match self.keys.pinned(peer) {
-            Some(p) if p.key == ud.account_key => {}
-            Some(_) => {
-                return Err(format!(
-                    "{peer}'s account key changed while the server's key log is broken ({why}); it is not taken until the log is trusted again (/e2e resetlog once the operator explains)"
-                ))
-            }
-            None => {
-                return Err(format!(
-                    "{peer}'s keys were never checked, and the server's key log is broken ({why}); they are not taken until the log is trusted again (/e2e resetlog once the operator explains)"
-                ))
-            }
+    /// The part of [`Engine::log_check`] for an up-to-date copy an auditor
+    /// vouched for lately: a key not pinned yet must be the vouched part's,
+    /// and a device without a session must be in it; the devices left out.
+    fn vouched_log_check(&self, peer: &str, ud: &UserDevices) -> Result<Vec<u32>, Lookup> {
+        let pinned = self
+            .keys
+            .pinned(peer)
+            .is_some_and(|p| p.key == ud.account_key);
+        let vouched_key = self
+            .keys
+            .log
+            .vouched
+            .accounts
+            .get(&sign::ident(peer))
+            .is_some_and(|a| a.key == ud.account_key);
+        if !pinned && !vouched_key {
+            return Err(Lookup::NotYet(format!(
+                "{peer}'s keys are newer than what the key log's auditor has vouched for, and they are taken once it has (it looks every minute)"
+            )));
         }
         Ok(ud
             .devices
@@ -1220,7 +1306,38 @@ impl Engine {
             .filter(|d| d.revoked_at.is_none())
             .filter(|d| {
                 self.keys.session(peer, d.device_id).is_none()
-                    && !self.keys.log_shows(peer, &ud.account_key, d)
+                    && !self.keys.vouched_shows(peer, &ud.account_key, d)
+            })
+            .map(|d| d.device_id)
+            .collect())
+    }
+
+    /// [`Engine::log_check`] while the log cannot vouch for anything new:
+    /// only what was vouched for before is used. The account key must be
+    /// the one pinned - a contact never pinned, or a changed key, is refused
+    /// - and a device must already have a session with us or be in the
+    /// trusted copy of the log (the part an auditor vouched for, once one
+    /// has); any other device is left out.
+    fn frozen_log_check(
+        &self,
+        peer: &str,
+        ud: &UserDevices,
+        why: &Frozen,
+    ) -> Result<Vec<u32>, Lookup> {
+        match self.keys.pinned(peer) {
+            Some(p) if p.key == ud.account_key => {}
+            Some(_) => return Err(why.lookup(format!("{peer}'s account key changed"))),
+            None => return Err(why.lookup(format!("{peer}'s keys were never checked"))),
+        }
+        let audited = self.keys.log.audit_required();
+        Ok(ud
+            .devices
+            .iter()
+            .filter(|d| d.revoked_at.is_none())
+            .filter(|d| {
+                self.keys.session(peer, d.device_id).is_none()
+                    && !(self.keys.log_shows(peer, &ud.account_key, d)
+                        && (!audited || self.keys.vouched_shows(peer, &ud.account_key, d)))
             })
             .map(|d| d.device_id)
             .collect())
@@ -1228,13 +1345,13 @@ impl Engine {
 
     /// [`Engine::log_check`] against a copy of the log that is up to date: a
     /// change the contact made a moment ago may not be in our copy yet.
-    fn logged(&mut self, peer: &str, ud: &UserDevices, now: u64) -> Result<Vec<u32>, String> {
+    fn logged(&mut self, peer: &str, ud: &UserDevices, now: u64) -> Result<Vec<u32>, Lookup> {
         let fresh = self.sync_log(now, false);
-        match self.log_check(peer, ud) {
+        match self.log_check(peer, ud, now) {
             Ok(none) if none.is_empty() => Ok(none),
             _ if !fresh => {
                 self.sync_log(now, true);
-                self.log_check(peer, ud)
+                self.log_check(peer, ud, now)
             }
             other => other,
         }
@@ -1249,6 +1366,9 @@ impl Engine {
             LogStatus::NoLog => {
                 "; key log: the server keeps none, so keys are trusted on first use".into()
             }
+            LogStatus::Failed(e) if self.keys.log.was_trusted() => format!(
+                "; key log: could not be read ({e}); until it can, only contacts and devices checked before are used and anything new is held"
+            ),
             LogStatus::Failed(e) => format!("; key log: could not be read ({e})"),
             LogStatus::Broken(why) => {
                 format!("; key log: NOT TRUSTED - {why}; only keys checked before it broke are used (/e2e resetlog once the operator explains)")
@@ -1260,7 +1380,15 @@ impl Engine {
                     .accounts
                     .get(&sign::ident(peer))
                     .map(|a| a.key.clone());
-                let audit = self.describe_audit(now);
+                let mut audit = self.describe_audit(now);
+                if let kt::Trust::Unaudited(_) = self.trust_at(now) {
+                    audit += "; new contacts, devices and keys are held until an auditor vouches again";
+                }
+                if let Some(why) = self.keys.key_recovery(peer) {
+                    audit += &format!(
+                        "; WARNING: {peer}'s keys were replaced without {peer}'s key (operator recovery: {why})"
+                    );
+                }
                 match (logged, self.keys.pinned(peer)) {
                     (Some(l), Some(p)) if l == p.key => format!(
                         "; key log: {peer}'s keys are in it, checked ({size} entries){audit}"
@@ -1379,19 +1507,33 @@ impl Engine {
         match self.dir.user_devices(peer) {
             Ok(ud) => {
                 // A key the log does not show is never pinned.
-                let left_out = self.logged(peer, &ud, now).map_err(Lookup::NotInLog)?;
+                let left_out = self.logged(peer, &ud, now)?;
                 let mut c = self.keys.checked_contact(&ud, now);
                 // The pin may have been made or moved.
                 self.changed = true;
                 if !left_out.is_empty() {
                     let p = sign::ident(peer);
                     c.devices.retain(|d| !left_out.contains(&d.device_id));
-                    for id in left_out {
-                        self.note_once(
-                            Some(peer),
-                            format!("kt:device:{p}:{id}"),
-                            policy::log_device_left_out_note(peer, id),
-                        );
+                    let in_log = self.keys.log.accounts.get(&p).cloned();
+                    for id in &left_out {
+                        let unvouched = in_log.as_ref().is_some_and(|a| {
+                            ud.devices
+                                .iter()
+                                .find(|d| d.device_id == *id)
+                                .is_some_and(|d| {
+                                    a.devices.get(id).is_some_and(|l| {
+                                        l.curve25519_key == d.curve25519_key
+                                            && l.ed25519_key == d.ed25519_key
+                                            && l.account_signature == d.account_signature
+                                    })
+                                })
+                        });
+                        let note = if unvouched {
+                            policy::log_device_unvouched_note(peer, *id)
+                        } else {
+                            policy::log_device_left_out_note(peer, *id)
+                        };
+                        self.note_once(Some(peer), format!("kt:device:{p}:{id}"), note);
                     }
                 }
                 if c.usable() {
@@ -1402,6 +1544,12 @@ impl Engine {
                     // never sent in clear as for a contact without keys.
                     Err(Lookup::NotInLog(format!(
                         "no device of {peer} was checked before the server's key log broke ({why})"
+                    )))
+                } else if !left_out.is_empty() {
+                    // Every device left out by the log: held, never sent in
+                    // clear as for a contact without keys.
+                    Err(Lookup::NotYet(format!(
+                        "no device of {peer} is vouched for by the server's key log yet"
                     )))
                 } else {
                     Err(Lookup::NoKeys)
@@ -1465,6 +1613,7 @@ impl Engine {
                 }
             }
             Err(Lookup::NotInLog(why)) => Decision::Hold(Held::NotInLog(why)),
+            Err(Lookup::NotYet(why)) => Decision::Hold(Held::NotYet(why)),
         }
     }
 
@@ -1525,7 +1674,9 @@ impl Engine {
                 Err(Lookup::NoKeys) => {
                     format!("{peer} has no encryption keys in the key directory")
                 }
-                Err(Lookup::NotInLog(why)) => format!("{peer}'s keys are not used: {why}"),
+                Err(Lookup::NotInLog(why)) | Err(Lookup::NotYet(why)) => {
+                    format!("{peer}'s keys are not used: {why}")
+                }
                 Err(Lookup::Transient(e)) => {
                     format!("the key directory could not be reached ({e})")
                 }
@@ -1576,7 +1727,7 @@ impl Engine {
                 Err(Lookup::Transient(e)) => format!(
                     "{pre}There is no safety number with {peer} yet: the key directory could not be reached ({e})."
                 ),
-                Err(Lookup::NotInLog(why)) => format!(
+                Err(Lookup::NotInLog(why)) | Err(Lookup::NotYet(why)) => format!(
                     "{pre}There is no safety number with {peer}: {why}."
                 ),
                 _ => format!(
@@ -1588,7 +1739,7 @@ impl Engine {
         let (key, verified) = (pin.key.clone(), pin.is_verified());
         self.safety_shown.insert(p, key);
         let mut note = policy::safety_note(peer, &safety::grouped(&digits, "\n"), verified);
-        if let Err(Lookup::NotInLog(why)) = &looked {
+        if let Err(Lookup::NotInLog(why)) | Err(Lookup::NotYet(why)) = &looked {
             note.push_str(&format!(
                 " (This is the number for the key you had before: the key directory now gives {peer} another one, and {why}.)"
             ));
@@ -1694,9 +1845,9 @@ impl Crypto for Engine {
                         Err(Lookup::Transient(e)) => note.push_str(&format!(
                             " The key directory could not be reached to check {peer}'s keys ({e})."
                         )),
-                        Err(Lookup::NotInLog(why)) => note.push_str(&format!(
-                            " Messages to {peer} are held: {why}."
-                        )),
+                        Err(Lookup::NotInLog(why)) | Err(Lookup::NotYet(why)) => note.push_str(
+                            &format!(" Messages to {peer} are held: {why}."),
+                        ),
                     }
                 }
                 note
@@ -1763,7 +1914,7 @@ impl Crypto for Engine {
             }
             Command::ResetLog => {
                 self.keys.log = kt::LogState::default();
-                self.keys.log_trusted = false;
+                self.keys.inbound_gate = keys::InboundGate::Open;
                 self.log_synced_at = None;
                 self.log_status = LogStatus::Unknown;
                 self.audit_status = AuditStatus::Unknown;
@@ -1905,7 +2056,11 @@ impl Crypto for Engine {
         // What the message may change, to put back if it cannot be saved.
         let before = self.persist.is_some().then(|| self.keys.snapshot(peer));
         let mut got = self.keys.decrypt(&*self.dir, peer, container, now);
-        if pre_key && matches!(got, Inbound::Unreadable(_)) && self.keys.log_trusted && !fresh {
+        if pre_key
+            && matches!(got, Inbound::Unreadable(_))
+            && self.keys.inbound_gate != keys::InboundGate::Open
+            && !fresh
+        {
             self.sync_log(now, true);
             got = self.keys.decrypt(&*self.dir, peer, container, now);
         }
@@ -2160,6 +2315,36 @@ enum Lookup {
     /// The directory gives the contact an account key the key log does not
     /// show for them.
     NotInLog(String),
+    /// The key log cannot vouch for the contact's keys right now: it cannot
+    /// be read, no auditor has vouched for it lately, or the auditors have
+    /// not reached them yet. Held, not an attack in itself.
+    NotYet(String),
+}
+
+/// Why the key log cannot vouch for anything new, for
+/// [`Engine::frozen_log_check`].
+enum Frozen<'a> {
+    Broken(&'a str),
+    Unavailable(&'a str),
+    Unaudited(&'a str),
+}
+
+impl Frozen<'_> {
+    /// `what` (a contact never checked, a changed key) refused for this
+    /// reason.
+    fn lookup(&self, what: String) -> Lookup {
+        match self {
+            Frozen::Broken(why) => Lookup::NotInLog(format!(
+                "{what} while the server's key log is broken ({why}); it is not taken until the log is trusted again (/e2e resetlog once the operator explains)"
+            )),
+            Frozen::Unavailable(why) => Lookup::NotYet(format!(
+                "{what}, and the server's key log cannot be read right now ({why}); it is taken once the log can be checked again"
+            )),
+            Frozen::Unaudited(why) => Lookup::NotYet(format!(
+                "{what}, and no auditor has vouched for the server's key log lately ({why}); it is taken once one has"
+            )),
+        }
+    }
 }
 
 /// What the key log's auditor said, last time we looked (stage 2).
@@ -4060,9 +4245,12 @@ mod tests {
         ));
         notes(&mut e);
 
+        // The first entry again, at another time: the history changed, and
+        // the log read anew from the start still keeps the rules.
+        let own = e.keys().account_key_bytes();
         dir.rewrite_log(
             0,
-            kt::build_leaf("account", "100009", 1, &[b"publish", &[9; 32]]),
+            kt::build_leaf("account", "100001", 999, &[b"publish", &own]),
         );
         let later = NOW + LOG_SYNC_EVERY;
         // The contact checked before goes on, over its session.
@@ -4194,10 +4382,20 @@ mod tests {
         assert_eq!(e.keys().log.auditors.len(), 1);
         assert_eq!(e.keys().log.audited.as_ref().unwrap().size, 4);
 
-        // The auditor checked fewer entries than there are now: still fine.
+        // The auditor checked fewer entries than there are now: a contact
+        // that came in after its look is not taken until it has looked again
+        // (second audit of 2026-10, finding 3).
         let mut c = OwnKeys::create("100003");
         publish_keys(&dir, &mut c);
         let s = status_of(&mut e, "100003", NOW + LOG_SYNC_EVERY);
+        assert!(
+            s.contains("100003's keys are not used")
+                && s.contains("newer than what the key log's auditor has vouched for")
+                && s.contains("checked (6 entries), audited by"),
+            "{s}"
+        );
+        dir.audit_log(NOW + LOG_SYNC_EVERY);
+        let s = status_of(&mut e, "100003", NOW + 2 * LOG_SYNC_EVERY);
         assert!(
             s.contains("100003's keys are in it, checked (6 entries), audited by"),
             "{s}"
@@ -4251,11 +4449,19 @@ mod tests {
                 "{s}"
             );
             assert!(notes(&mut e).is_empty(), "once per sign-on");
-            // Messages still go, checked against the log.
-            assert!(matches!(
-                e.outbound("100002", form(), b"hi", NOW),
-                Outbound::Encrypted(_)
-            ));
+            let out = e.outbound("100002", form(), b"hi", NOW);
+            if when.is_some() {
+                // An auditor vouched for this log once and has not lately: a
+                // contact never checked is not taken now (second audit of
+                // 2026-10, finding 3).
+                assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+                assert!(notes(&mut e)
+                    .iter()
+                    .any(|n| n.text.contains("no auditor has vouched")));
+            } else {
+                // No auditor ever did: messages go, checked against the log.
+                assert!(matches!(out, Outbound::Encrypted(_)), "{out:?}");
+            }
         }
     }
 
@@ -4441,5 +4647,314 @@ mod tests {
         assert!(matches!(old.publish(NOW), Progress::Done(_)));
         assert!(status_of(&mut old, "100002", NOW).contains("audited by auditor.test/icq"));
         assert_eq!(old.keys().log.audits.len(), 1);
+    }
+
+    // --- second audit of 2026-10 ----------------------------------------------
+
+    /// A message from `from` to `to`, encrypted with `from`'s keys outside
+    /// any engine, as a container.
+    fn written_by(
+        dir: &Arc<MemoryDirectory>,
+        from: &mut OwnKeys,
+        to: &str,
+        text: &[u8],
+        now: u64,
+    ) -> container::Container {
+        let who = from.screen_name.clone();
+        let sent = from
+            .encrypt(
+                &**dir,
+                &bearer(dir, &who),
+                &keys::Outgoing {
+                    peer: to.into(),
+                    form: form(),
+                    text: text.to_vec(),
+                    now,
+                },
+                &keys::fetch_contact(&**dir, to).unwrap(),
+            )
+            .unwrap();
+        container_of(sent)
+    }
+
+    /// Finding 1: keys the operator replaced without the contact's own key
+    /// are a new identity. A contact under `/e2e on` is held until
+    /// `/e2e accept` (or verify), and the warning comes every time it
+    /// happens; `/e2e status` says it.
+    #[test]
+    fn keys_the_operator_replaced_are_a_new_identity_held_under_e2e_on() {
+        let (dir, a, b) = two_published();
+        let mut e = running(&dir, a);
+        assert!(e.command("100002", "/e2e on", NOW));
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        notes(&mut e);
+
+        // The operator revokes the device (management API), and a new key
+        // comes as a reset.
+        let fresh = reset_contact(&dir, &b);
+        let later = NOW + LOG_SYNC_EVERY;
+        let out = e.outbound("100002", form(), b"to whom?", later);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+        let n = notes(&mut e);
+        assert!(
+            n.iter().any(|n| n
+                .text
+                .contains("WARNING: the server replaced 100002's keys without 100002's key (operator recovery")
+                && n.text.contains("held until")),
+            "{n:?}"
+        );
+        assert!(e.keys().pinned("100002").unwrap().held);
+        let s = status_of(&mut e, "100002", later);
+        assert!(
+            s.contains("keys were replaced without 100002's key (operator recovery"),
+            "{s}"
+        );
+        assert!(e.command("100002", "/e2e accept", later));
+        assert!(matches!(
+            e.outbound("100002", form(), b"now", later),
+            Outbound::Encrypted(_)
+        ));
+        notes(&mut e);
+
+        // Again: said again, held again.
+        reset_contact(&dir, &fresh);
+        let later = later + LOG_SYNC_EVERY;
+        assert!(matches!(
+            e.outbound("100002", form(), b"again", later),
+            Outbound::Refused(_)
+        ));
+        let n = notes(&mut e);
+        assert!(
+            n.iter().any(|n| n
+                .text
+                .contains("WARNING: the server replaced 100002's keys")),
+            "{n:?}"
+        );
+    }
+
+    /// Finding 1: a contact in automatic mode gets the warning, and the
+    /// messages go on to the new key.
+    #[test]
+    fn a_recovered_key_of_an_automatic_contact_is_said_loudly_and_used() {
+        let (dir, a, b) = two_published();
+        let mut e = running(&dir, a);
+        e.outbound("100002", form(), b"hi", NOW);
+        notes(&mut e);
+        reset_contact(&dir, &b);
+        assert!(matches!(
+            e.outbound("100002", form(), b"after", NOW + LOG_SYNC_EVERY),
+            Outbound::Encrypted(_)
+        ));
+        let n = notes(&mut e);
+        assert!(
+            n.iter()
+                .any(|n| n.text.contains("WARNING: the server replaced")
+                    && n.text.contains("still encrypted")),
+            "{n:?}"
+        );
+    }
+
+    /// Finding 1: a revoke the owner did not sign and that is no recovery
+    /// breaks the key log for the client as for the auditor; one the owner
+    /// signed does not, and is no recovery.
+    #[test]
+    fn a_revoke_without_the_owners_signature_breaks_the_log() {
+        let (dir, a, b) = two_published();
+        let mut e = running(&dir, a);
+        e.outbound("100002", form(), b"hi", NOW);
+        notes(&mut e);
+        dir.append_leaf(kt::build_leaf(
+            "revoke",
+            "100002",
+            9,
+            &[&b.device_id.to_be_bytes()],
+        ));
+        let s = status_of(&mut e, "100002", NOW + LOG_SYNC_EVERY);
+        assert!(
+            s.contains("NOT TRUSTED") && s.contains("without the owner's signature"),
+            "{s}"
+        );
+        assert!(matches!(e.log_trust(), kt::Trust::BrokenAfterTrust(_)));
+
+        // The owner's own revoke, signed by the account key.
+        let (dir, a, b) = two_published();
+        let mut e = running(&dir, a);
+        e.outbound("100002", form(), b"hi", NOW);
+        notes(&mut e);
+        let sig = b
+            .account_key
+            .sign(&sign::revoke("100002", b.device_id, NOW))
+            .to_bytes();
+        dir.revoke_signed("100002", b.device_id, NOW, &sig);
+        let s = status_of(&mut e, "100002", NOW + LOG_SYNC_EVERY);
+        assert!(!s.contains("NOT TRUSTED") && !s.contains("WARNING"), "{s}");
+        assert_eq!(e.log_trust(), kt::Trust::Trusted);
+        assert!(e.keys().session("100002", b.device_id).is_none());
+    }
+
+    /// Finding 2: a log trusted before that cannot be read now is not "no
+    /// log". What is known goes on; a new contact, a changed key and a new
+    /// session from a contact never checked wait until the log is read again
+    /// - and only until then.
+    #[test]
+    fn a_trusted_log_that_cannot_be_read_takes_nothing_new_until_it_can() {
+        let (dir, a, b) = two_published();
+        let mut c = OwnKeys::create("100003");
+        publish_keys(&dir, &mut c);
+        let mut e = running(&dir, a);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        notes(&mut e);
+
+        dir.set_log_unreachable(true);
+        let later = NOW + LOG_SYNC_EVERY;
+        // Known: goes on.
+        assert!(matches!(
+            e.outbound("100002", form(), b"still", later),
+            Outbound::Encrypted(_)
+        ));
+        assert!(matches!(
+            e.log_trust(),
+            kt::Trust::TemporarilyUnavailableAfterTrust(_)
+        ));
+        // A contact never checked: held, never pinned, never in clear.
+        let out = e.outbound("100003", form(), b"new", later);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+        assert!(e.keys().pinned("100003").is_none());
+        assert!(notes(&mut e)
+            .iter()
+            .any(|n| n.text.contains("cannot be read right now")));
+        // A new session from it: unreadable, nothing made.
+        let got = e.inbound(
+            "100003",
+            &written_by(&dir, &mut c, "100001", b"hello", later),
+            later,
+        );
+        assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
+        assert!(e.keys().session("100003", c.device_id).is_none());
+        // A changed key of a known contact: held.
+        reset_contact(&dir, &b);
+        let out = e.outbound("100002", form(), b"to the new key", later);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+        assert_eq!(e.keys().pinned("100002").unwrap().key, b.account_key_b64());
+        let s = status_of(&mut e, "100003", later);
+        assert!(
+            s.contains("could not be read") && s.contains("anything new is held"),
+            "{s}"
+        );
+
+        // Not sticky: the log is back, and so is everything.
+        dir.set_log_unreachable(false);
+        let back = later + LOG_SYNC_EVERY;
+        assert!(matches!(
+            e.outbound("100003", form(), b"now", back),
+            Outbound::Encrypted(_)
+        ));
+        assert_eq!(e.log_trust(), kt::Trust::Trusted);
+    }
+
+    /// Finding 2: a state that never trusted a log is not frozen by a log
+    /// that cannot be read: trust on first use, as before.
+    #[test]
+    fn a_log_never_trusted_that_cannot_be_read_is_no_log() {
+        let (dir, a, _) = two_published();
+        dir.set_log_unreachable(true);
+        let mut e = running(&dir, a);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        assert_eq!(e.log_trust(), kt::Trust::NeverHadLog);
+    }
+
+    /// Finding 3: once an auditor vouched for this copy, new keys are taken
+    /// only from the part an auditor cosigned - a contact, a device or a new
+    /// session the server added after the auditor's last word waits - and
+    /// with no fresh cosignature at all, nothing new is taken while what is
+    /// known goes on.
+    #[test]
+    fn new_keys_are_taken_only_from_what_a_fresh_cosignature_covers() {
+        let (dir, a, b) = two_published();
+        dir.set_auditor(true);
+        dir.audit_log(NOW);
+        let mut e = running(&dir, a);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        assert_eq!(e.keys().log.vouched_size, 4);
+        notes(&mut e);
+
+        // The server adds a contact and a device of 100002 to its log, and
+        // keeps the auditor's newer cosignatures to itself.
+        let mut c = OwnKeys::create("100003");
+        publish_keys(&dir, &mut c);
+        dir.plant_device("100002", planted_device(&b, 777));
+        let t = NOW + LOG_SYNC_EVERY;
+        let out = e.outbound("100003", form(), b"new", t);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+        assert!(e.keys().pinned("100003").is_none());
+        let got = e.inbound(
+            "100003",
+            &written_by(&dir, &mut c, "100001", b"hello", t),
+            t,
+        );
+        assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
+        assert!(e.keys().session("100003", c.device_id).is_none());
+        // The device is in the log, not yet vouched for: left out.
+        assert!(matches!(
+            e.outbound("100002", form(), b"known", t),
+            Outbound::Encrypted(_)
+        ));
+        assert!(e.keys().session("100002", 777).is_none());
+        assert!(notes(&mut e)
+            .iter()
+            .any(|n| n.text.contains("(device 777)") && n.text.contains("not yet vouched")));
+
+        // An hour later, still no newer cosignature: unaudited.
+        let stale = NOW + kt::AUDIT_MAX_AGE + 120;
+        assert!(matches!(
+            e.outbound("100002", form(), b"still known", stale),
+            Outbound::Encrypted(_)
+        ));
+        assert!(matches!(e.log_trust(), kt::Trust::Unaudited(_)));
+        let out = e.outbound("100003", form(), b"still new", stale);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+
+        // The auditor's word on the log as it is now: taken.
+        dir.audit_log(stale);
+        let t = stale + LOG_SYNC_EVERY;
+        assert!(matches!(
+            e.outbound("100003", form(), b"vouched", t),
+            Outbound::Encrypted(_)
+        ));
+        assert_eq!(e.keys().log.vouched_size, e.keys().log.size);
+    }
+
+    /// Finding 3: a state file from before the vouched copy, of a log an
+    /// auditor already vouched for, fills it at the next look.
+    #[test]
+    fn a_state_file_from_before_the_vouched_copy_fills_it() {
+        let (dir, a, _) = two_published();
+        dir.set_auditor(true);
+        dir.audit_log(NOW);
+        let e = running(&dir, a);
+        let mut json: serde_json::Value = serde_json::to_value(e.keys()).unwrap();
+        let log = json["log"].as_object_mut().unwrap();
+        log.remove("vouched");
+        log.remove("vouched_size");
+        let mut old = Engine::new(dir.clone(), serde_json::from_value(json).unwrap());
+        old.set_token(&dir.token("100001"));
+        assert!(matches!(old.publish(NOW), Progress::Done(_)));
+        assert_eq!(old.keys().log.vouched_size, 4);
+        assert!(matches!(
+            old.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
     }
 }

@@ -22,6 +22,10 @@
 //! Only a socket of a transfer that is agreed (or offered by us, waiting for
 //! the answer) gets a pipe; every other socket - FLAP, a transfer not agreed,
 //! encryption off - takes exactly the path it took before, byte for byte.
+//! The exception is a transfer that must be encrypted (a contact under
+//! `/e2e on` or verified, or `files_encrypt = required`) and did not agree
+//! on keys: its sockets get a pipe closed from the start, and nothing of it
+//! passes (second audit of 2026-10, finding 4).
 //!
 //! The clients' sockets are non-blocking with `WSAAsyncSelect`, so the hooks
 //! do what `hook_tls.rs` does: every `recv` reaches Winsock once (that is what
@@ -181,10 +185,14 @@ fn make(
     via_proxy: bool,
     connected: bool,
 ) -> Option<Arc<FileConn>> {
-    let role = found.role?;
     if sock.tls.get().is_some() || sock.file.get().is_some() {
         return None;
     }
+    if let Some(why) = &found.blocked {
+        refuse(s, sock, found, how, why);
+        return None;
+    }
+    let role = found.role?;
     let fc = Arc::new(FileConn {
         cookie: found.cookie,
         role,
@@ -216,6 +224,43 @@ fn make(
     }
     register(s, sock.clone(), fc.clone());
     Some(fc)
+}
+
+/// A socket of a transfer that is not let through (it must be encrypted -
+/// a contact under `/e2e on` or verified, or `files_encrypt = required` -
+/// and did not agree on keys): it gets a pipe that is closed from the start,
+/// so the client's `send` and `recv` fail and no byte passes either way, and
+/// the socket is shut down.
+fn refuse(s: Socket, sock: &Arc<Sock>, found: &Found, how: &'static str, why: &str) {
+    let role = match filesneg::lock(&table()).we_send(&found.cookie) {
+        Some(true) => Role::Offerer,
+        _ => Role::Answerer,
+    };
+    let fc = Arc::new(FileConn {
+        cookie: found.cookie,
+        role,
+        stage: found.stage,
+        how,
+        pipe: Mutex::new(FilePipe::refused(found.cookie, role, why)),
+        read: Mutex::new(()),
+        wire: Mutex::new(Vec::new()),
+        connecting: AtomicBool::new(false),
+        closed: AtomicBool::new(false),
+        owed: AtomicBool::new(false),
+        broken: AtomicBool::new(true),
+        table: table(),
+        seen: AtomicU8::new(phase_code(Phase::Failed)),
+    });
+    if sock.file.set(fc).is_err() {
+        return;
+    }
+    // SAFETY: shutdown on the client's open socket.
+    unsafe { windows_sys::Win32::Networking::WinSock::shutdown(s, SD_BOTH) };
+    log::line(&format!(
+        "file transfer {}: socket {s} ({how}) shut: the transfer is not let through ({why})",
+        files::cookie_tag(&found.cookie)
+    ));
+    post_fd_read(sock, s);
 }
 
 // --- finding the sockets ----------------------------------------------------------
@@ -838,7 +883,7 @@ pub(super) fn start() {
     if policy().encrypts_files() {
         log::line(
             "files_encrypt=on: a file transfer is encrypted end to end when both add-ons agree on \
-             its keys through the E2E session; any other transfer is left exactly as it is",
+             its keys through the E2E session; any other transfer is left exactly as it is,              except with a contact under /e2e on or verified (or files_encrypt=required),              whose transfer is not sent",
         );
     }
 }
@@ -1505,6 +1550,112 @@ mod tests {
         );
         set_table(Some(ta.clone()));
         let _ = testing::close(as_);
+        let _ = testing::close(bs);
+        set_table(None);
+    }
+
+    /// Second audit of 2026-10, finding 4, through the hooks over real
+    /// sockets: with `files_encrypt = required` (every contact strict) the
+    /// sender's peer does not take part (no add-on: no answer, no hello).
+    /// After the wait the connection is shut: not one byte of the prompt or
+    /// the file reaches the wire, the receiving client gets nothing, the
+    /// sender's client gets an error, and the chat says it was not sent.
+    #[test]
+    fn with_files_required_nothing_reaches_the_wire_for_a_peer_without_the_add_on() {
+        point_at_winsock();
+        let cookie = [0xD8; 8];
+        let (ta, tb): (Table, Table) = Default::default();
+        filesneg::lock(&ta).set_required(true);
+        let (_l, ls, a_port) = listener();
+        let relay = relay_to(a_port);
+        setup(&ta, &tb, cookie, a_port, 0, false, false);
+        set_table(None);
+        let bs = raw_socket();
+        connect_via_hook(bs, relay.port);
+        set_table(Some(ta.clone()));
+        let as_ = accept_via_hook(ls);
+        assert!(sock_for(as_).file.get().is_some(), "A offered: it waits");
+        let prompt = files::oft_build(files::OFT_PROMPT, &cookie, 30_000, 0, "plain.txt");
+        client_send(as_, &prompt);
+        std::thread::sleep(Duration::from_millis(
+            crate::filestream::HELLO_WAIT_MS + 700,
+        ));
+        let sent = transport_send(&sock_for(as_), as_, &file(5000), 0);
+        assert_eq!(sent, SOCKET_ERROR, "the sender's client is told");
+        set_table(None);
+        let got = client_read(bs, 1);
+        assert!(
+            matches!(&got, Ok(v) if v.is_empty()) || got.is_err(),
+            "{got:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        let seen = relay.seen.lock().unwrap().clone();
+        assert!(seen[1].is_empty(), "no byte A to B: {:?}", seen[1].len());
+        assert!(filesneg::lock(&ta).take_notes().iter().any(
+            |n| n.text.contains("was not sent") && n.text.contains("files_encrypt = required")
+        ));
+        set_table(Some(ta.clone()));
+        let _ = testing::close(as_);
+        set_table(None);
+        let _ = testing::close(bs);
+    }
+
+    /// The receiving side of the same: a verified contact (or `required`)
+    /// whose proposal came without a key offer - the sender has no add-on -
+    /// and whose connection is plain OFT2: the receiver's socket is refused,
+    /// its client never sees the prompt, and it sends nothing.
+    #[test]
+    fn a_strict_receiver_refuses_a_sender_without_the_add_on() {
+        point_at_winsock();
+        let cookie = [0xD9; 8];
+        let tb: Table = Default::default();
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        {
+            // B's table sees A's proposal, without a key offer, from a
+            // verified contact.
+            let rb = rdv(Direction::Inbound, A, cookie, 1, port, false);
+            let mut b = filesneg::lock(&tb);
+            b.observe(&rb, 0);
+            b.icbm(
+                &rb,
+                PeerInfo {
+                    strict: true,
+                    verified: true,
+                },
+                &mut || Ok(me(B, 2, 2)),
+                0,
+            );
+            assert_eq!(b.state_of(&cookie), Some("blocked"));
+        }
+        let prompt = files::oft_build(files::OFT_PROMPT, &cookie, 5, 0, "x");
+        let p2 = prompt.clone();
+        let peer = std::thread::spawn(move || {
+            let (mut s, _) = l.accept().unwrap();
+            let _ = s.write_all(&p2);
+            let mut rest = Vec::new();
+            let _ = s.read_to_end(&mut rest);
+            rest
+        });
+        let bs = raw_socket();
+        set_table(Some(tb.clone()));
+        connect_via_hook(bs, port);
+        assert!(
+            sock_for(bs).file.get().is_some(),
+            "refused by a closed pipe"
+        );
+        let r = client_read(bs, 1);
+        assert!(
+            matches!(r, Err(tlsio::WSAECONNRESET)) || matches!(&r, Ok(v) if v.is_empty()),
+            "{r:?}"
+        );
+        assert_ne!(r.as_deref().ok(), Some(&prompt[..]));
+        assert_eq!(
+            transport_send(&sock_for(bs), bs, b"OFT2 ack", 0),
+            SOCKET_ERROR
+        );
+        let rest = peer.join().unwrap();
+        assert!(rest.is_empty(), "nothing was sent: {rest:?}");
         let _ = testing::close(bs);
         set_table(None);
     }

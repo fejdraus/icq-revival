@@ -35,6 +35,7 @@ pub mod caps;
 pub mod config;
 pub mod container;
 pub mod crypto;
+pub mod direct;
 pub mod directory;
 pub mod engine;
 pub mod files;

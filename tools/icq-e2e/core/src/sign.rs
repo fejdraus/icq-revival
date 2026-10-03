@@ -65,6 +65,28 @@ pub fn fallback_key(screen_name: &str, device_id: u32, key_id: &str, key: &[u8; 
     )
 }
 
+/// `rotate`: the old account key hands over to the new one, signed by the
+/// old key.
+pub fn rotate(screen_name: &str, old_key: &[u8; 32], new_key: &[u8; 32]) -> Vec<u8> {
+    message("rotate", screen_name, &[old_key, new_key])
+}
+
+/// `revoke`: the account key revokes one of its devices, at `issued_at`
+/// (Unix seconds, 8 bytes big endian).
+pub fn revoke(screen_name: &str, device_id: u32, issued_at: u64) -> Vec<u8> {
+    message(
+        "revoke",
+        screen_name,
+        &[&device_id.to_be_bytes(), &issued_at.to_be_bytes()],
+    )
+}
+
+/// `delete`: the account key deletes the account's keys from the directory,
+/// at `issued_at` (Unix seconds, 8 bytes big endian).
+pub fn delete(screen_name: &str, issued_at: u64) -> Vec<u8> {
+    message("delete", screen_name, &[&issued_at.to_be_bytes()])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

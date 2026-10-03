@@ -15,6 +15,8 @@
 //                   (a hand-set "required" - calls that are not encrypted
 //                   are not let through - counts as on and is kept)
 //   files_encrypt = on | off - the row "End-to-end encryption of file transfers"
+//                   (a hand-set "required" - transfers that are not encrypted
+//                   are not sent - counts as on and is kept)
 //   auditors      = the key log's auditors, pinned (with the messages row)
 //
 // auditors= is what the server names on GET /e2e/v1/log/auditors at Apply
@@ -138,7 +140,15 @@ namespace IcqRevival.Patch
         public static bool FilesOn(string text)
         {
             string v = Value(text, "files_encrypt");
-            return v != null && OnWords.Any(w => w.Equals(v, StringComparison.OrdinalIgnoreCase)) && E2eOn(text);
+            return v != null && (OnWords.Any(w => w.Equals(v, StringComparison.OrdinalIgnoreCase)) || FilesRequired(text)) && E2eOn(text);
+        }
+
+        // files_encrypt=required: the strict level set by hand, which the
+        // files row keeps rather than turning it back into on.
+        public static bool FilesRequired(string text)
+        {
+            string v = Value(text, "files_encrypt");
+            return v != null && v.Equals("required", StringComparison.OrdinalIgnoreCase);
         }
 
         // Whether the lines the patch owns say what they would for this domain;
@@ -165,7 +175,7 @@ namespace IcqRevival.Patch
                 // add-on would only say calls_encrypt=on but inactive.
                 { "calls_encrypt", calls && e2e ? (CallsRequired(current) ? "required" : "on") : "off" },
                 // File transfers likewise: their keys come from the E2E session.
-                { "files_encrypt", files && e2e ? "on" : "off" },
+                { "files_encrypt", files && e2e ? (FilesRequired(current) ? "required" : "on") : "off" },
                 { "auditors", auditors },
             };
             List<string> lines = Lines(current);
@@ -220,7 +230,7 @@ namespace IcqRevival.Patch
             if (calls && e2e) s.Add("Voice and video calls are encrypted end to end when the other side has the add-on with this row ticked too; any other call goes as it is and is never blocked. The call's chat says whether it was encrypted.");
             else if (calls) s.Add("End-to-end encryption of calls needs end-to-end encryption of messages, which is not ticked: calls go as they are.");
             else s.Add("Calls are not encrypted end to end: they go as they are.");
-            if (files && e2e) s.Add("File transfers are encrypted end to end when the other side has the add-on with this row ticked too; any other transfer goes as it is and is never blocked. The chat says whether a transfer was encrypted.");
+            if (files && e2e) s.Add("File transfers are encrypted end to end when the other side has the add-on with this row ticked too; any other transfer goes as it is, except with a contact under /e2e on or verified, whose transfer is encrypted or not sent. The chat says whether a transfer was encrypted.");
             else if (files) s.Add(FilesNeedE2e);
             else s.Add("File transfers are not encrypted end to end: they go as they are.");
             s.Add(FileName + " in the ICQ folder holds these settings (e2e =, tls =, calls_encrypt =, files_encrypt = and auditors =); lines added to it by hand are kept. Set ICQE2E_LOG to a file path before starting ICQ to log what the add-on does.");

@@ -232,6 +232,12 @@ pub enum Held {
     /// The directory gives the contact an account key that is not theirs in
     /// the key log (docs/e2e/KEY-TRANSPARENCY.md).
     NotInLog(String),
+    /// The contact's keys are new to this add-on, and the key log cannot
+    /// vouch for them right now: it cannot be read, no auditor has vouched
+    /// for it lately, or its auditors have not reached them yet (second
+    /// audit of 2026-10, findings 2 and 3). Not an attack in itself; the
+    /// message waits for the log.
+    NotYet(String),
 }
 
 /// The note for a message that was held.
@@ -250,7 +256,10 @@ pub fn held_note(peer: &str, why: &Held) -> String {
             "{PREFIX}The message to {peer} was NOT sent: this add-on's keys are not in the key directory yet, and messages to {peer} must not go unencrypted. Send it again in a moment."
         ),
         Held::SafetyChanged => format!(
-            "{PREFIX}The message to {peer} was NOT sent: you had verified {peer}, and your safety number with them has changed. Type /e2e safety and compare the new number with {peer} in person or by phone - not through this chat - then /e2e verify, and send the message again. To send without verifying, type /e2e accept."
+            "{PREFIX}The message to {peer} was NOT sent: your safety number with {peer} has changed, and {peer} was verified (or, after keys replaced by the server's operator, is under /e2e on), so nothing goes to the new key until you check it. Type /e2e safety and compare the new number with {peer} in person or by phone - not through this chat - then /e2e verify, and send the message again. To send without verifying, type /e2e accept."
+        ),
+        Held::NotYet(why) => format!(
+            "{PREFIX}The message to {peer} was NOT sent: {why}. Nothing goes to keys the key log has not vouched for; send it again in a minute or two."
         ),
         Held::NotInLog(why) => format!(
             "{PREFIX}The message to {peer} was NOT sent: {why}. The key directory is handing out a key that the server's public key log does not show, which is what an attack on the server looks like. Ask {peer} another way whether they reset their keys. Type /e2e plain to send the next message unencrypted once."
@@ -263,13 +272,13 @@ pub fn held_note(peer: &str, why: &Held) -> String {
 /// The note when the key log cannot be trusted any more: rewritten, gone, or
 /// signed by another key. Once per sign-on.
 pub fn log_broken_note(why: &str) -> String {
-    format!("{PREFIX}WARNING: {why}. The key log lets this add-on check that everyone gets the same keys; a log that changes its past is what an attack on the server looks like. Until it is sorted out, keys are trusted on first use, as without a log. If the server's operator says the log was restored from a backup or started afresh, type /e2e resetlog.")
+    format!("{PREFIX}WARNING: {why}. The key log lets this add-on check that everyone gets the same keys; a log that changes its past is what an attack on the server looks like. Until it is sorted out, only contacts and devices checked before it broke are used; nothing new is taken. If the server's operator says the log was restored from a backup or started afresh, type /e2e resetlog.")
 }
 
 /// The note when the key log's auditor has not vouched for it lately, once
 /// per sign-on.
 pub fn audit_stale_note(why: &str) -> String {
-    format!("{PREFIX}Warning: {why}. The auditor is the independent party that checks the server shows everyone the same key log; without its recent word, a server showing you a log of its own would not be noticed. Messages are still encrypted, and checked against the log.")
+    format!("{PREFIX}Warning: {why}. The auditor is the independent party that checks the server shows everyone the same key log; without its recent word, a server showing you a log of its own would not be noticed. Messages to contacts and devices already in use are still encrypted; new contacts, new devices and changed keys are held until an auditor vouches for the log again.")
 }
 
 /// The note when the key log shows our account with an account key that is
@@ -288,6 +297,33 @@ pub fn log_own_device_note(device_id: u32) -> String {
 /// the key log, so nothing is encrypted for it.
 pub fn log_device_left_out_note(peer: &str, device_id: u32) -> String {
     format!("{PREFIX}One of {peer}'s devices (device {device_id}) is in the key directory but not in the server's key log, so messages are not encrypted for it. That device may not be theirs.")
+}
+
+/// The note when one of a contact's devices is in the key log but newer than
+/// what its auditors have vouched for, so nothing is encrypted for it yet.
+pub fn log_device_unvouched_note(peer: &str, device_id: u32) -> String {
+    format!("{PREFIX}One of {peer}'s devices (device {device_id}) is new and not yet vouched for by the key log's auditor (or the log cannot be checked right now), so messages are not encrypted for it until it is.")
+}
+
+/// The note when a contact's account key was replaced without the
+/// contact's own key: the operator revoked or deleted it (a recovery), or it
+/// was reset (second audit of 2026-10, finding 1). Said every time it
+/// happens. `held`: the contact is verified or under `/e2e on`, so messages
+/// wait for `/e2e verify` or `/e2e accept`.
+pub fn recovery_key_note(peer: &str, why: &str, held: bool, was_verified: bool) -> String {
+    let mut base = format!(
+        "{PREFIX}WARNING: the server replaced {peer}'s keys without {peer}'s key (operator recovery: {why}). Your safety number with {peer} has changed. Treat this as a new contact: it may be {peer} after losing their keys, or someone else."
+    );
+    if was_verified {
+        base.push_str(&format!(
+            " You had verified {peer}, so that verification is cleared."
+        ));
+    }
+    if held {
+        format!("{base} Messages to {peer} are held until you type /e2e safety, compare the number with {peer} in person or by phone and type /e2e verify (or /e2e accept to send without verifying).")
+    } else {
+        format!("{base} Messages are still encrypted, to the new key. Type /e2e safety to compare the number with {peer}.")
+    }
 }
 
 /// The note when a contact's safety number changed (CHECKLIST 10.10), once
@@ -352,17 +388,29 @@ pub fn file_encrypted_note(peer: &str, verified: bool) -> String {
     format!("{PREFIX}This file transfer with {peer} is end-to-end encrypted: the files and their names travel encrypted with keys agreed through your encrypted chat. {trust}")
 }
 
-/// The note for a file transfer that goes unencrypted, with the reason. A
-/// transfer is never blocked (the owner's rule, as for calls); for a contact
-/// under `/e2e on` or verified the note says so in stronger words.
-pub fn file_plain_note(peer: &str, why: &str, strict: bool) -> String {
+/// The note for a file transfer that goes unencrypted, with the reason: a
+/// contact that is not strict (neither under `/e2e on` nor verified, and no
+/// `files_encrypt = required`), whose transfer goes as it always did.
+pub fn file_plain_note(peer: &str, why: &str) -> String {
     let why = why.trim_end_matches('.');
-    let mut s =
-        format!("{PREFIX}This file transfer with {peer} is not end-to-end encrypted: {why}.");
-    if strict {
-        s.push_str(&format!(" Encryption is on for {peer} in this chat, but file transfers are never blocked: the network between you, or a relay, can read this one. Cancel it if it must stay private."));
-    }
-    s
+    format!("{PREFIX}This file transfer with {peer} is not end-to-end encrypted: {why}.")
+}
+
+/// The note for a file transfer that is not let through because it is not
+/// end-to-end encrypted: `required` says the ini lets no unencrypted
+/// transfer through; otherwise encryption is on for the contact (`/e2e on`,
+/// or verified), for file transfers as for messages and calls (second audit
+/// of 2026-10, finding 4).
+pub fn file_blocked_note(peer: &str, why: &str, required: bool, verified: bool) -> String {
+    let why = why.trim_end_matches('.');
+    let rule = if required {
+        "files_encrypt = required in icq-e2e.ini lets no other file transfer through".to_string()
+    } else if verified {
+        format!("{peer} is verified, so a file transfer with them is encrypted or not sent, as messages are")
+    } else {
+        format!("encryption is on for {peer} in this chat (/e2e on), for file transfers as for messages")
+    };
+    format!("{PREFIX}This file transfer with {peer} was not sent: it is not end-to-end encrypted ({why}), and {rule}. Nothing of it went over the network unencrypted; cancel it.")
 }
 
 /// The note for an encrypted file transfer whose connection was closed

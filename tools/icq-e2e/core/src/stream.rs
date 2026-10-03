@@ -577,6 +577,11 @@ impl StreamRewriter {
                 self.answers.owe(ack);
                 lines.push("the ack for the /e2e command is owed to the client".to_string());
             }
+            // A direct-IM proposal kept from the server: the contact's
+            // cancel is owed to the client, so it stops waiting.
+            for snac in processed.owed {
+                self.answers.owe(snac);
+            }
             self.removed(seq_of(frame));
         } else {
             match processed.payload {
@@ -629,7 +634,7 @@ impl StreamRewriter {
         let owed = self.answers.take_owed();
         for snac in &owed {
             self.put_frame(&flap(FLAP_CHANNEL_SNAC, snac), Seq::Ours, out);
-            lines.push("ack for the /e2e command given to the client".to_string());
+            lines.push("owed answer (an ack for a /e2e command, or a cancel of a direct-IM proposal) given to the client".to_string());
         }
         !owed.is_empty()
     }
@@ -1959,6 +1964,241 @@ next"]);
             // Then the SIP frame, its payload untouched.
             assert_eq!(got[1].1, payload);
             assert!(got[0].0 < got[1].0, "numbered in order");
+        }
+    }
+
+    // ---- direct IM is kept off while encrypting (audit 2026-10, second part, finding 5) ----
+
+    use crate::direct::{self, CAP_DIRECT_ICBM};
+    use crate::files::{CAP_FILE_TRANSFER, RDV_CANCEL, RDV_PROPOSE};
+
+    #[test]
+    fn an_outbound_direct_im_proposal_never_reaches_the_wire_and_the_client_gets_a_cancel() {
+        let (mut out_side, mut in_side) = StreamRewriter::pair();
+        let mut c = Fake::new();
+        let mut wire = Vec::new();
+        out_side.push_crypto(&hello(), &mut c, 1, &encrypt(), &mut wire);
+        let cookie = [0x42; 8];
+        let p = direct::tests::rdv(
+            Direction::Outbound,
+            "100002",
+            RDV_PROPOSE,
+            cookie,
+            CAP_DIRECT_ICBM,
+        );
+        let lines = out_side.push_crypto(
+            &frame(FLAP_CHANNEL_SNAC, 2, &p),
+            &mut c,
+            1,
+            &encrypt(),
+            &mut wire,
+        );
+        assert_eq!(wire, hello(), "nothing but the sign-on left: {lines:?}");
+        assert!(lines.iter().any(|l| l.contains("direct IM")), "{lines:?}");
+
+        // The client is handed the contact's cancel (and the ack it asked
+        // for) with the next frame from the server.
+        let mut to_client = Vec::new();
+        in_side.push_crypto(&hello(), &mut c, 1, &encrypt(), &mut to_client);
+        in_side.push_crypto(
+            &in_message(2, "100002", "hi", None),
+            &mut c,
+            1,
+            &encrypt(),
+            &mut to_client,
+        );
+        let cancels: Vec<_> = frames_of(&to_client)
+            .iter()
+            .filter_map(|(_, p)| direct::rendezvous(Direction::Inbound, p))
+            .collect();
+        assert_eq!(cancels.len(), 1, "one cancel for the client");
+        assert_eq!(
+            (cancels[0].peer.as_str(), cancels[0].kind, cancels[0].cookie),
+            ("100002", RDV_CANCEL, cookie)
+        );
+        assert!(frames_of(&to_client)
+            .iter()
+            .filter_map(|(_, p)| snac::parse(p))
+            .any(|s| s.sub_group == ICBM_HOST_ACK));
+    }
+
+    #[test]
+    fn an_inbound_direct_im_proposal_is_not_handed_to_the_client() {
+        let (mut r, mut out) = opened(Direction::Inbound);
+        let mut c = Fake::new();
+        for kind in [RDV_PROPOSE, crate::files::RDV_ACCEPT] {
+            let p = direct::tests::rdv(Direction::Inbound, "100002", kind, [7; 8], CAP_DIRECT_ICBM);
+            r.push_crypto(
+                &frame(FLAP_CHANNEL_SNAC, 2, &p),
+                &mut c,
+                1,
+                &encrypt(),
+                &mut out,
+            );
+        }
+        assert_eq!(out, hello(), "neither the proposal nor the acceptance");
+    }
+
+    #[test]
+    fn with_injection_off_a_direct_im_proposal_goes_on_only_as_a_cancel() {
+        let policy = Policy::from_settings(crate::config::Settings {
+            mode: Some("encrypt"),
+            directory: Some("https://example.invalid"),
+            home: Some(" "),
+            no_inject: Some("1"),
+            ..Default::default()
+        });
+        for dir in [Direction::Outbound, Direction::Inbound] {
+            let mut r = StreamRewriter::new(dir);
+            let mut out = Vec::new();
+            r.push_crypto(&hello(), &mut Fake::new(), 1, &policy, &mut out);
+            let p = direct::tests::rdv(dir, "100002", RDV_PROPOSE, [7; 8], CAP_DIRECT_ICBM);
+            r.push_crypto(
+                &frame(FLAP_CHANNEL_SNAC, 2, &p),
+                &mut Fake::new(),
+                1,
+                &policy,
+                &mut out,
+            );
+            let got = frames_of(&out);
+            assert_eq!(got.len(), 2, "the frame count is the client's");
+            assert_eq!(direct::rendezvous(dir, &got[1].1).unwrap().kind, RDV_CANCEL);
+        }
+    }
+
+    #[test]
+    fn file_transfer_and_call_frames_pass_untouched_while_direct_im_is_refused() {
+        for dir in [Direction::Outbound, Direction::Inbound] {
+            let mut r = StreamRewriter::new(dir);
+            let mut out = Vec::new();
+            r.push_crypto(&hello(), &mut Fake::new(), 1, &encrypt(), &mut out);
+            let file = frame(
+                FLAP_CHANNEL_SNAC,
+                2,
+                &direct::tests::rdv(dir, "100002", RDV_PROPOSE, [9; 8], CAP_FILE_TRANSFER),
+            );
+            // An ICBM on channel 6 (a call's SIP), whatever it carries.
+            let mut body = vec![3; 8];
+            body.extend_from_slice(&6u16.to_be_bytes());
+            body.push(6);
+            body.extend_from_slice(b"100002");
+            if dir == Direction::Inbound {
+                body.extend_from_slice(&[0, 0, 0, 0]);
+            }
+            snac::put_tlv(
+                &mut body,
+                icbm::TLV_RENDEZVOUS_DATA,
+                b"INVITE sip:x SIP/2.0\r\n\r\n",
+            );
+            let sub = match dir {
+                Direction::Outbound => snac::ICBM_MSG_TO_HOST,
+                Direction::Inbound => snac::ICBM_MSG_TO_CLIENT,
+            };
+            let call = frame(
+                FLAP_CHANNEL_SNAC,
+                3,
+                &snac_frame(snac::FOOD_ICBM, sub, 5, &body),
+            );
+            let mut c = Fake::new();
+            r.push_crypto(&file, &mut c, 1, &encrypt(), &mut out);
+            r.push_crypto(&call, &mut c, 1, &encrypt(), &mut out);
+            assert_eq!(out, [hello(), file, call].concat(), "{dir:?}");
+        }
+    }
+
+    /// A `LocateSetInfo` frame whose capability list holds direct IM.
+    fn set_info_with_direct_im() -> Vec<u8> {
+        let mut body = Vec::new();
+        snac::put_tlv(&mut body, 0x0005, &[[0x11; 16], CAP_DIRECT_ICBM].concat());
+        frame(
+            FLAP_CHANNEL_SNAC,
+            2,
+            &snac_frame(snac::FOOD_LOCATE, snac::LOCATE_SET_INFO, 1, &body),
+        )
+    }
+
+    fn names_direct_im(bytes: &[u8]) -> bool {
+        bytes.windows(16).any(|w| w == CAP_DIRECT_ICBM)
+    }
+
+    #[test]
+    fn the_direct_im_capability_is_not_announced_while_encrypting_and_is_otherwise() {
+        // Encrypting, with a session and without one.
+        let (mut r, mut out) = opened(Direction::Outbound);
+        r.push_crypto(
+            &set_info_with_direct_im(),
+            &mut Fake::new(),
+            1,
+            &encrypt(),
+            &mut out,
+        );
+        assert!(!names_direct_im(&out));
+        let mut r = StreamRewriter::new(Direction::Outbound);
+        let mut out = Vec::new();
+        r.push(
+            &[hello(), set_info_with_direct_im()].concat(),
+            &encrypt(),
+            &mut out,
+        );
+        assert!(!names_direct_im(&out));
+        // Observe, the harness and e2e=off leave it.
+        for policy in [Policy::observe(), Policy::harness()] {
+            let mut r = StreamRewriter::new(Direction::Outbound);
+            let mut out = Vec::new();
+            r.push(
+                &[hello(), set_info_with_direct_im()].concat(),
+                &policy,
+                &mut out,
+            );
+            assert!(names_direct_im(&out));
+        }
+        let mut r = StreamRewriter::new(Direction::Outbound);
+        let mut out = Vec::new();
+        r.push_crypto(
+            &[hello(), set_info_with_direct_im()].concat(),
+            &mut crate::crypto::Disabled::default(),
+            1,
+            &encrypt(),
+            &mut out,
+        );
+        assert!(names_direct_im(&out), "e2e=off");
+    }
+
+    #[test]
+    fn direct_connection_addresses_are_zeroed_both_ways_while_encrypting() {
+        let mut dc = vec![192, 168, 1, 20, 0, 0, 0x14, 0x46, 4, 0, 9];
+        dc.extend_from_slice(&[0; 26]);
+        let mut fields = Vec::new();
+        snac::put_tlv(&mut fields, direct::TLV_DC_INFO, &dc);
+        let own = frame(
+            FLAP_CHANNEL_SNAC,
+            2,
+            &snac_frame(
+                snac::FOOD_OSERVICE,
+                direct::OSERVICE_SET_USER_INFO_FIELDS,
+                1,
+                &fields,
+            ),
+        );
+        let mut info = vec![6];
+        info.extend_from_slice(b"100002");
+        info.extend_from_slice(&[0, 0, 0, 1]);
+        snac::put_tlv(&mut info, direct::TLV_DC_INFO, &dc);
+        let arrived = frame(
+            FLAP_CHANNEL_SNAC,
+            2,
+            &snac_frame(snac::FOOD_BUDDY, snac::BUDDY_ARRIVED, 0, &info),
+        );
+        let addr = [192u8, 168, 1, 20];
+        for (dir, f) in [(Direction::Outbound, &own), (Direction::Inbound, &arrived)] {
+            let (mut r, mut out) = opened(dir);
+            r.push_crypto(f, &mut Fake::new(), 1, &encrypt(), &mut out);
+            assert_eq!(out.len(), hello().len() + f.len(), "same length");
+            assert!(!out.windows(4).any(|w| w == addr), "{dir:?}");
+            let mut r = StreamRewriter::new(dir);
+            let mut out = Vec::new();
+            r.push(&[hello(), f.clone()].concat(), &Policy::observe(), &mut out);
+            assert!(out.windows(4).any(|w| w == addr), "observe leaves it");
         }
     }
 }
