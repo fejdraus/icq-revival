@@ -744,6 +744,18 @@ impl FileTable {
         self.transfers.insert(rdv.cookie, t);
     }
 
+    /// Whether a file proposal with `cookie` in `peer`'s name is vouched for
+    /// end to end (sixth audit of 2026-10, finding 3): the key offer
+    /// `peer`'s add-on sends before its proposal has come over the Olm
+    /// session and waits for it, or the transfer is one already known with
+    /// `peer` (our own proposal, or one let through before). Nothing is
+    /// consumed: the proposal takes the offer itself ([`Self::icbm`]).
+    pub fn vouched(&self, peer: &str, cookie: &[u8; 8]) -> bool {
+        let p = sign::ident(peer);
+        self.transfers.get(cookie).is_some_and(|t| t.peer == p)
+            || self.offers.get(cookie).is_some_and(|o| o.peer == p)
+    }
+
     /// A file control message from `peer`, sent by its device `sender`.
     pub fn control(&mut self, peer: &str, sender: u32, msg: Msg, now: u64) {
         let p = sign::ident(peer);

@@ -476,6 +476,35 @@ pub fn plain_dropped_note(peer: &str, why: &str) -> String {
     )
 }
 
+/// The text an authorization event in a protected contact's name carries in
+/// place of the contact's (sixth audit of 2026-10, finding 2): the event
+/// itself stays, so the client's request or reply flow still works, but
+/// nothing in it is shown as the contact's words. ASCII, so it reads the
+/// same in every charset; one sentence, since ICQ 5 drops a request with
+/// more than one period in its text.
+pub fn auth_local_text(peer: &str, request: bool) -> String {
+    let peer: String = peer.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    format!(
+        "{PREFIX}Authorization {} attributed to {peer} was not end-to-end authenticated, its text is not shown.",
+        if request { "request" } else { "reply" }
+    )
+}
+
+/// The warning for a call, a file proposal or a tZer in `peer`'s name that
+/// came without the announcement `peer`'s add-on sends before it, and was
+/// not let through (sixth audit of 2026-10, findings 3 and 4).
+pub fn unauthenticated_action_note(peer: &str, what: &str, why: &str) -> String {
+    let why = why.trim_end_matches('.');
+    let (a, done) = match what {
+        "call" => ("A call", "was not put through"),
+        "file transfer" => ("A file transfer", "was not shown"),
+        _ => ("A tZer", "was not shown"),
+    };
+    format!(
+        "{PREFIX}WARNING: {a} in {peer}'s name {done}: it came without the announcement {peer}'s add-on sends over the encrypted session first, so it is not end-to-end authenticated ({why}). The server or the network can make such a {what}. If {peer} really sent it, their add-on is missing, older, or has this switched off; typing /e2e off here lets such things through again."
+    )
+}
+
 /// What a message from the network that starts like a note gets in front of
 /// it, so that only the add-on can put a real-looking note in the chat
 /// (finding 2).

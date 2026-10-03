@@ -56,9 +56,20 @@ The plan is `docs/e2e/STAGE-3-CLIENT-CRYPTO.md`, the design is
   `/e2e off` in the chat shows that contact's unencrypted messages again (and
   sends yours unencrypted); `/e2e plain` is about sending only. Without
   usable keys (no state file, locked out) every contact counts as protected.
-  One exception: a tZer exactly as the server writes it for ICQ 7.2 out of
-  a 6.5 one (`core/src/tzer.rs`: a known tZer on the `server =` host's
-  `/icq/tzers/`, nothing else in it) is shown, since it carries no text.
+  Text that merely contains the armor tag (`IQE1:...`) without a whole
+  container in it is unencrypted text like any other.
+- The same holds for what a protected contact does without writing
+  (`docs/e2e/AUDIT-2026-10.md`, sixth audit): an incoming call or file
+  proposal reaches the client only once the key offer their add-on sends
+  first (`IQC1`, `IQF1`) has come over the session - held up to 3 seconds
+  for it, then dropped with a warning and declined towards the sender; a
+  tZer only once their add-on announced it (`IQT1`, a hash of the tZer).
+  tZers themselves are not encrypted - they are public animations, and the
+  server must read them to translate between ICQ 6.5 and 7.2 - only
+  announced. An authorization request or reply in a protected contact's
+  name keeps its place but shows the add-on's words instead of its text. A
+  profile, away message or status text that starts like a note is shown
+  with `(from <uin>)` in front.
 
 ## Two jobs, two rows
 

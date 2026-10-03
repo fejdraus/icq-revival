@@ -39,7 +39,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::config::Policy;
 use crate::container;
-use crate::crypto::{Crypto, Note};
+use crate::crypto::{Action, Crypto, Note};
 use crate::icbm::{self, Direction};
 use crate::rewrite;
 use crate::snac;
@@ -134,6 +134,10 @@ pub struct Detected {
 pub struct Answers {
     hidden: Arc<Mutex<Vec<u32>>>,
     owed: Arc<Mutex<Vec<Vec<u8>>>>,
+    /// SNACs the add-on owes the far end in the client's name, for the
+    /// outbound direction to send: the refusal of a call or a file proposal
+    /// it did not let through (sixth audit of 2026-10, finding 3).
+    owed_out: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 impl Answers {
@@ -182,6 +186,37 @@ impl Answers {
     pub fn owes(&self) -> bool {
         !self.owed.lock().expect("owed answers").is_empty()
     }
+
+    /// Queues `snac`, a SNAC payload to the server, for the outbound
+    /// direction to send with the client's next frame. Bounded the same way.
+    pub fn owe_out(&self, snac: Vec<u8>) {
+        let mut v = self.owed_out.lock().expect("owed frames");
+        if v.len() == Self::MAX {
+            v.remove(0);
+        }
+        v.push(snac);
+    }
+
+    /// Takes every SNAC owed to the server, oldest first.
+    pub fn take_owed_out(&self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut *self.owed_out.lock().expect("owed frames"))
+    }
+}
+
+/// How long, in seconds, an inbound frame that must be vouched for waits
+/// for the announcement of the contact's add-on (sixth audit of 2026-10,
+/// findings 3 and 4). The announcement goes before it on the same
+/// connection, so it is normally there already; this only tolerates the
+/// two being reordered on the way.
+pub const HOLD_SECS: u64 = 3;
+/// Frames held at most; the oldest is given up first.
+const MAX_HELD: usize = 16;
+
+/// An inbound frame waiting for the announcement that vouches for it.
+struct Held {
+    frame: Vec<u8>,
+    action: Action,
+    since: u64,
 }
 
 /// Which sequence number a frame is given on the way out.
@@ -228,6 +263,11 @@ pub struct StreamRewriter {
     /// client accepts next to what the add-on makes.
     logged_real: bool,
     logged_note: bool,
+    /// Inbound frames held for the announcement that vouches for them.
+    held: Vec<Held>,
+    /// Whether held frames are being let through or given up right now, so
+    /// a frame let through does not start the same again.
+    settling: bool,
 }
 
 impl StreamRewriter {
@@ -265,6 +305,8 @@ impl StreamRewriter {
             saw_token: false,
             logged_real: false,
             logged_note: false,
+            held: Vec::new(),
+            settling: false,
         }
     }
 
@@ -496,6 +538,12 @@ impl StreamRewriter {
         let may_add = ctx.as_ref().is_some_and(|c| c.add_frames);
         if frame[1] != FLAP_CHANNEL_SNAC {
             self.put_frame(frame, Seq::Own, out);
+            // A keep-alive is time passing too, for the frames held.
+            if self.dir == Direction::Inbound && may_add && !self.settling {
+                if let Some(c) = ctx.as_deref_mut() {
+                    self.settle_held(policy, c, out, lines);
+                }
+            }
             return;
         }
         let payload = &frame[HEADER_LEN..];
@@ -526,11 +574,29 @@ impl StreamRewriter {
                     &g.media(),
                     c.crypto.strictness(&peer),
                 );
-                match verdict {
-                    crate::gate::Verdict::Block(why) => {
-                        self.refuse(frame, &peer, "call", &why, c, lines);
-                        return;
+                if let crate::gate::Verdict::Block(why) = &verdict {
+                    self.refuse(frame, &peer, "call", why, c, lines);
+                    return;
+                }
+                // An incoming call in a protected contact's name goes on
+                // only once the key offer their add-on sends before the
+                // INVITE has come (sixth audit of 2026-10, finding 3).
+                if self.dir == Direction::Inbound {
+                    if let Some(call_id) = crate::callneg::invite_call_id(sip) {
+                        let action = Action::Call {
+                            peer: peer.clone(),
+                            call_id,
+                        };
+                        if c.crypto.protected(&peer).is_some()
+                            && !c.crypto.authenticated(&action, false, c.now)
+                        {
+                            self.hold(frame, action, c, lines);
+                            return;
+                        }
                     }
+                }
+                match verdict {
+                    crate::gate::Verdict::Block(_) => {}
                     crate::gate::Verdict::Plain(why) => {
                         if g.once(&format!("call-plain:{peer}"), c.now, 60) {
                             c.crypto.note(
@@ -590,6 +656,21 @@ impl StreamRewriter {
                             }
                             _ => {}
                         }
+                        // A file proposal in a protected contact's name goes
+                        // on only once the key offer their add-on sends
+                        // before it has come (sixth audit, finding 3).
+                        if rdv.dir == Direction::Inbound && rdv.kind == crate::files::RDV_PROPOSE {
+                            let action = Action::File {
+                                peer: rdv.peer.clone(),
+                                cookie: rdv.cookie,
+                            };
+                            if c.crypto.protected(&rdv.peer).is_some()
+                                && !c.crypto.authenticated(&action, false, c.now)
+                            {
+                                self.hold(frame, action, c, lines);
+                                return;
+                            }
+                        }
                     }
                 }
                 crate::filesneg::lock(&crate::filesneg::shared())
@@ -626,7 +707,7 @@ impl StreamRewriter {
             lines.push("server answer to a message of the add-on's own: removed".to_string());
             return;
         }
-        let processed = match ctx.as_mut() {
+        let mut processed = match ctx.as_mut() {
             Some(c) => {
                 rewrite::process_crypto_for(self.dir, payload, c.crypto, c.now, policy.tls.server())
             }
@@ -657,7 +738,13 @@ impl StreamRewriter {
             self.detected.announce_key = processed.announce_key;
             self.announced = processed.announce_key;
         }
-        if processed.drop && !may_add {
+        let controls = std::mem::take(&mut processed.controls);
+        if let (Some(action), true) = (processed.hold.take(), may_add) {
+            // Held for the contact's announcement, not dropped yet.
+            if let Some(c) = ctx.as_deref_mut() {
+                self.hold(frame, action, c, lines);
+            }
+        } else if processed.drop && !may_add {
             // With `ICQE2E_NO_INJECT` the frame count on the connection must
             // not change, so the frame stays. An outbound one goes with its
             // text withheld - a held message or a command must never leave as
@@ -704,6 +791,13 @@ impl StreamRewriter {
             }
             self.removed(seq_of(frame));
         } else {
+            // Announcements the contact's add-on is owed before this frame
+            // (a tZer's).
+            if let (true, Some(to)) = (may_add, peer.as_deref()) {
+                for container in &controls {
+                    self.put_control(to, container, out, lines);
+                }
+            }
             match processed.payload {
                 Some(p) if p.len() <= u16::MAX as usize => {
                     self.put_frame(&with_payload(frame, &p), Seq::Own, out);
@@ -754,6 +848,7 @@ impl StreamRewriter {
             match self.dir {
                 // A control message goes the way the client's messages go.
                 Direction::Outbound => {
+                    self.put_owed_out(out, lines);
                     if let (Some(peer), Some(c)) = (peer.as_deref(), ctx.as_deref_mut()) {
                         self.inject_control(peer, c.crypto, out, lines);
                     }
@@ -774,6 +869,116 @@ impl StreamRewriter {
                     }
                 },
             }
+        }
+        // Held frames: let through what is vouched for now, give up what
+        // waited too long.
+        if self.dir == Direction::Inbound && may_add && !self.settling {
+            if let Some(c) = ctx.as_deref_mut() {
+                self.settle_held(policy, c, out, lines);
+            }
+        }
+    }
+
+    /// Takes an inbound frame out of the stream until the announcement that
+    /// vouches for `action` arrives ([`Self::settle_held`]), for at most
+    /// [`HOLD_SECS`].
+    fn hold(&mut self, frame: &[u8], action: Action, c: &mut Ctx<'_>, lines: &mut Vec<String>) {
+        self.removed(seq_of(frame));
+        lines.push(format!(
+            "{} in {}'s name held for the announcement of their add-on (up to {HOLD_SECS} s)",
+            action.what(),
+            action.peer()
+        ));
+        if self.held.len() >= MAX_HELD {
+            let old = self.held.remove(0);
+            self.give_up(old, c, lines);
+        }
+        self.held.push(Held {
+            frame: frame.to_vec(),
+            action,
+            since: c.now,
+        });
+    }
+
+    /// Lets through every held frame that is vouched for now (or whose
+    /// contact is no longer protected), in the order they came, and gives up
+    /// those that waited [`HOLD_SECS`].
+    fn settle_held(
+        &mut self,
+        policy: &Policy,
+        c: &mut Ctx<'_>,
+        out: &mut Vec<u8>,
+        lines: &mut Vec<String>,
+    ) {
+        if self.held.is_empty() {
+            return;
+        }
+        self.settling = true;
+        for h in std::mem::take(&mut self.held) {
+            let open = c.crypto.protected(h.action.peer()).is_none()
+                || c.crypto.authenticated(&h.action, false, c.now);
+            if open {
+                lines.push(format!(
+                    "{} in {}'s name: vouched for, let through",
+                    h.action.what(),
+                    h.action.peer()
+                ));
+                self.emit(&h.frame, policy, Some(&mut *c), out, lines);
+            } else if c.now.saturating_sub(h.since) >= HOLD_SECS {
+                self.give_up(h, c, lines);
+            } else {
+                self.held.push(h);
+            }
+        }
+        self.settling = false;
+    }
+
+    /// A held frame that was never vouched for: dropped for good, with the
+    /// warning, and the sender's client told no (a call is declined, a
+    /// file proposal cancelled) so it does not wait.
+    fn give_up(&mut self, h: Held, c: &mut Ctx<'_>, lines: &mut Vec<String>) {
+        let peer = h.action.peer().to_string();
+        let what = h.action.what();
+        let why = c
+            .crypto
+            .protected(&peer)
+            .unwrap_or_else(|| format!("{peer} is protected"));
+        lines.push(format!(
+            "{what} in {peer}'s name not let through: no announcement from their add-on within {HOLD_SECS} s ({why})"
+        ));
+        c.crypto.unauthenticated(
+            &peer,
+            what,
+            crate::policy::unauthenticated_action_note(&peer, what, &why),
+            c.now,
+        );
+        let refusal = match &h.action {
+            Action::Call { .. } => {
+                crate::calls::sip_message(Direction::Inbound, &h.frame[HEADER_LEN..])
+                    .and_then(|(_, sip)| crate::callneg::decline_to_host(&peer, sip))
+            }
+            Action::File { cookie, .. } => Some(crate::files::cancel_to_host(&peer, cookie)),
+            Action::Tzer { .. } => None,
+        };
+        if let Some(r) = refusal {
+            self.answers.owe_out(r);
+            lines.push(format!("the {what}'s refusal is owed to {peer}"));
+        }
+    }
+
+    /// Sends every SNAC the add-on owes the far end ([`Answers::owe_out`])
+    /// as a frame of its own, with a request id of the add-on's whose
+    /// answer the client never sees.
+    fn put_owed_out(&mut self, out: &mut Vec<u8>, lines: &mut Vec<String>) {
+        for mut snac in self.answers.take_owed_out() {
+            if snac.len() < 10 || self.last_seq.is_none() {
+                continue;
+            }
+            let id = self.next_injected_id();
+            snac[6..10].copy_from_slice(&id.to_be_bytes());
+            self.hide(id, lines);
+            self.put_frame(&flap(FLAP_CHANNEL_SNAC, &snac), Seq::Ours, out);
+            lines.push("a refusal owed to the far end sent".to_string());
         }
     }
 
@@ -836,7 +1041,16 @@ impl StreamRewriter {
         {
             return false;
         }
-        let mut put = self.put_owed(out, lines);
+        let before = out.len();
+        if !self.held.is_empty() {
+            let mut c = Ctx {
+                crypto: &mut *crypto,
+                now: crate::crypto::unix_now(),
+                add_frames: true,
+            };
+            self.settle_held(policy, &mut c, out, lines);
+        }
+        let mut put = self.put_owed(out, lines) || out.len() > before;
         while let Some(n) = crypto.take_note() {
             self.put_note(&n, out, lines);
             put = true;
@@ -1417,6 +1631,10 @@ mod tests {
         /// What `strictness` answers; notes the gate asked for.
         strict: Option<bool>,
         gate_notes: Vec<String>,
+        /// What the contacts' add-ons announced (`authenticated`), and the
+        /// tZer announcements `tzer_notice` hands out.
+        vouched: Vec<Action>,
+        notices: Vec<[u8; 16]>,
     }
 
     impl Fake {
@@ -1433,6 +1651,8 @@ mod tests {
                 rdv_seen: Vec::new(),
                 strict: Some(false),
                 gate_notes: Vec::new(),
+                vouched: Vec::new(),
+                notices: Vec::new(),
             }
         }
 
@@ -1487,7 +1707,17 @@ mod tests {
 
         fn inbound(&mut self, peer: &str, _: &Container, _: u64) -> Inbound {
             self.seen.push(peer.to_string());
-            self.next_in()
+            let got = self.next_in();
+            // A tZer's announcement vouches for it, as in the engine.
+            if let Inbound::Control(p) = &got {
+                if let Some(n) = crate::tzer::Notice::decode(p) {
+                    self.vouched.push(Action::Tzer {
+                        peer: peer.to_string(),
+                        hash: n.hash,
+                    });
+                }
+            }
+            got
         }
 
         fn unsupported(&mut self, peer: &str, _: u8, _: u8) -> Inbound {
@@ -1528,6 +1758,31 @@ mod tests {
             let n = format!("unencrypted message from {peer} not shown");
             self.gate_notes.push(n.clone());
             Some(n)
+        }
+
+        fn protected(&self, peer: &str) -> Option<String> {
+            (self.strict != Some(false)).then(|| format!("{peer} is protected"))
+        }
+
+        fn unauthenticated(&mut self, _peer: &str, _what: &str, note: String, _now: u64) {
+            self.gate_notes.push(note);
+        }
+
+        fn authenticated(&mut self, action: &Action, consume: bool, _now: u64) -> bool {
+            match self.vouched.iter().position(|a| a == action) {
+                Some(i) => {
+                    if consume && matches!(action, Action::Tzer { .. }) {
+                        self.vouched.remove(i);
+                    }
+                    true
+                }
+                None => false,
+            }
+        }
+
+        fn tzer_notice(&mut self, _peer: &str, hash: [u8; 16], _now: u64) -> Option<Vec<u8>> {
+            self.notices.push(hash);
+            Some(any_container())
         }
 
         fn note(&mut self, _peer: &str, text: String) {
@@ -2774,7 +3029,17 @@ next"]);
             c.strict = Some(true);
             let mut out = Vec::new();
             r.push_crypto(f, &mut c, 1, &encrypt(), &mut out);
-            assert_eq!(&out, f, "{what}: no words, passes");
+            if what.contains("authorization") {
+                // Sixth audit, finding 2: the event stays, its text is not
+                // the contact's.
+                assert!(!contains(&out, forged), "{what}");
+                assert!(
+                    contains(&out, b"Authorization request attributed to 100002"),
+                    "{what}"
+                );
+            } else {
+                assert_eq!(&out, f, "{what}: no words, passes");
+            }
         }
     }
 
@@ -2803,8 +3068,10 @@ next"]);
     }
 
     /// The tZer the server writes for ICQ 7.2 out of a 6.5 one is shown from
-    /// a protected (verified) contact too; the same with text appended, with
-    /// a foreign URL, or with no server configured is text, and dropped.
+    /// a protected (verified) contact when their add-on announced it (sixth
+    /// audit, finding 4); the same with text appended, with a foreign URL,
+    /// or with no server configured is not a tZer of this server's, and
+    /// dropped even announced.
     #[test]
     fn the_servers_tzer_form_is_shown_from_a_protected_contact_and_nothing_like_it() {
         use crate::test_frames as tf;
@@ -2825,6 +3092,12 @@ next"]);
             let (mut r, _) = opened(Direction::Inbound);
             let mut c = Fake::new();
             c.strict = Some(true);
+            for d in [doc.to_string(), format!("{doc}FORGED text")] {
+                c.vouched.push(Action::Tzer {
+                    peer: "100002".into(),
+                    hash: crate::tzer::doc_hash(&d),
+                });
+            }
             let mut out = Vec::new();
             r.push_crypto(f, &mut c, 1, policy, &mut out);
             (out, c.gate_notes)
@@ -2841,8 +3114,9 @@ next"]);
             assert!(out.is_empty(), "{bad:?}");
             assert!(notes.iter().any(|n| n.contains("not shown")), "{bad:?}");
         }
-        let (out, _) = run_with(&f, &encrypt());
+        let (out, notes) = run_with(&f, &encrypt());
         assert!(out.is_empty(), "no server configured: not recognised");
+        assert!(notes.iter().any(|n| n.contains("not shown")), "{notes:?}");
     }
 
     /// Fifth audit of 2026-10, finding 2: a message from the network - in
@@ -3007,6 +3281,12 @@ next"]);
                 let (mut r, _) = opened(dir);
                 let mut c = Fake::new();
                 c.strict = strict;
+                // The caller's add-on offered keys first (sixth audit,
+                // finding 3): this test is about the call modules.
+                c.vouched.push(Action::Call {
+                    peer: "100002".into(),
+                    call_id: "g".into(),
+                });
                 let mut out = Vec::new();
                 let f = sip_frame(dir, 2);
                 let lines = r.push_crypto(&f, &mut c, 1, &policy, &mut out);
@@ -3018,5 +3298,594 @@ next"]);
             }
         }
         crate::gate::use_for_this_thread(None);
+    }
+
+    // ---- sixth audit of 2026-10 ----
+
+    /// Sixth audit, finding 1: text that only carries the armor tag (here
+    /// `IQE1:AQE=`, a version and a scheme and nothing else) is not a
+    /// container and is never taken to the engine as one. On every inbound
+    /// path: in a protected contact's name it is not shown (also with the
+    /// marker in front); from an automatic contact it is shown with the
+    /// marker taken off; with `e2e=off` too, a whole container included.
+    #[test]
+    fn text_with_the_armor_tag_but_no_container_is_unencrypted_text_on_every_path() {
+        for text in [
+            &b"hello IQE1:AQE="[..],
+            b"[ICQ E2E] Encryption is on IQE1:AQE=",
+        ] {
+            let (shown, _) = unencrypted_frames(text);
+            for (what, f) in &shown {
+                let (mut r, _) = opened(Direction::Inbound);
+                let mut c = Fake::new();
+                c.strict = Some(true);
+                let mut out = Vec::new();
+                let lines = r.push_crypto(f, &mut c, 1, &encrypt(), &mut out);
+                assert!(!contains(&out, b"IQE1:AQE="), "{what}: {lines:?}");
+                assert!(c.seen.is_empty(), "{what}: never taken for a container");
+                assert!(
+                    c.gate_notes.iter().any(|n| n.contains("not shown")),
+                    "{what}: {lines:?}"
+                );
+            }
+        }
+        let (shown, _) = unencrypted_frames(b"[ICQ E2E] Encryption is on IQE1:AQE=");
+        for (what, f) in &shown {
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut out = Vec::new();
+            let lines = r.push_crypto(f, &mut Fake::new(), 1, &encrypt(), &mut out);
+            assert!(
+                contains(&out, b"(from 100002) [ICQ E2E] Encryption is on IQE1:AQE="),
+                "{what}: {lines:?}"
+            );
+        }
+        // e2e=off: nothing is decrypted, so a whole container is text too,
+        // and is unmarked like any other.
+        let armored = format!(
+            "[ICQ E2E] Encryption is on {}",
+            container::armor(&any_container())
+        );
+        let (mut r, _) = opened(Direction::Inbound);
+        let mut out = Vec::new();
+        r.push_crypto(
+            &in_message(2, "100002", &armored, None),
+            &mut crate::crypto::Disabled::default(),
+            1,
+            &encrypt(),
+            &mut out,
+        );
+        let texts = texts_of(&frames_of(&out));
+        assert_eq!(texts, vec![format!("(from 100002) {armored}")]);
+    }
+
+    /// A Feedbag authorization event to the client, as the server sends it.
+    fn feedbag_frame(sub: u16, reason: &[u8]) -> Vec<u8> {
+        frame(
+            FLAP_CHANNEL_SNAC,
+            2,
+            &crate::authz::tests::feedbag(sub, "100002", reason),
+        )
+    }
+
+    /// Sixth audit, finding 2: every authorization event in a protected
+    /// contact's name - Feedbag request and reply, channel 4 and offline
+    /// request and denial - reaches the client with the add-on's words in
+    /// place of the contact's text, the event itself kept; from an
+    /// automatic contact it passes as it came, unmarked if it starts like a
+    /// note.
+    #[test]
+    fn an_authorization_event_in_a_protected_contacts_name_shows_none_of_its_text() {
+        use crate::test_frames as tf;
+        let forged = b"FORGED: add me, I am your bank";
+        let request = [&b"nick\xFEfirst\xFElast\xFEmail\xFE1\xFE"[..], forged].concat();
+        let offline = |t: u8, text: &[u8]| {
+            let mut f = tf::offline_reply(2, 100002, text);
+            f[40] = t;
+            f
+        };
+        let events = |text: &[u8], req: &[u8]| {
+            vec![
+                (
+                    "feedbag request",
+                    feedbag_frame(crate::authz::FEEDBAG_REQUEST_AUTHORIZE_TO_CLIENT, text),
+                ),
+                (
+                    "feedbag reply",
+                    feedbag_frame(crate::authz::FEEDBAG_RESPOND_AUTHORIZE_TO_CLIENT, text),
+                ),
+                ("ch4 request", in_ch4(2, "100002", 0x06, req)),
+                ("ch4 denial", in_ch4(2, "100002", 0x07, text)),
+                ("offline request", offline(0x06, req)),
+                ("offline denial", offline(0x07, text)),
+            ]
+        };
+        for strict in [Some(true), None] {
+            for (what, f) in events(forged, &request) {
+                let (mut r, _) = opened(Direction::Inbound);
+                let mut c = Fake::new();
+                c.strict = strict;
+                let mut out = Vec::new();
+                let lines = r.push_crypto(&f, &mut c, 1, &encrypt(), &mut out);
+                assert!(!contains(&out, forged), "{what}: {lines:?}");
+                assert!(
+                    contains(
+                        &out,
+                        b" attributed to 100002 was not end-to-end authenticated"
+                    ),
+                    "{what}: the event is kept with the add-on's words: {lines:?}"
+                );
+                if what.contains("request") && !what.contains("feedbag") {
+                    assert!(
+                        contains(&out, b"nick\xFEfirst\xFElast\xFEmail\xFE1\xFE[ICQ E2E]"),
+                        "{what}: the directory fields stay"
+                    );
+                }
+            }
+        }
+        // Automatic: as it came; a note's marker is taken off.
+        for (what, f) in events(forged, &request) {
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut out = Vec::new();
+            r.push_crypto(&f, &mut Fake::new(), 1, &encrypt(), &mut out);
+            assert_eq!(out, f, "{what}");
+        }
+        let marked = b"[ICQ E2E] 100002 is marked verified";
+        let marked_req = [&b"n\xFEf\xFEl\xFEe\xFE1\xFE"[..], marked].concat();
+        for (what, f) in events(marked, &marked_req) {
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut out = Vec::new();
+            r.push_crypto(&f, &mut Fake::new(), 1, &encrypt(), &mut out);
+            assert!(
+                contains(&out, b"(from 100002) [ICQ E2E] 100002 is marked verified"),
+                "{what}"
+            );
+        }
+    }
+
+    /// A Locate user info reply about 100002 with `profile` and `away`, and
+    /// a "buddy arrived" with the status text `status`.
+    fn profile_frames(profile: &[u8], away: &[u8], status: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        use crate::test_frames as tf;
+        let mut info = vec![6];
+        info.extend_from_slice(b"100002");
+        info.extend_from_slice(&[0, 0]);
+        let mut bart = 2u16.to_be_bytes().to_vec();
+        bart.push(0x04);
+        let mut item = (status.len() as u16).to_be_bytes().to_vec();
+        item.extend_from_slice(status);
+        item.extend_from_slice(&[0, 0]);
+        bart.push(item.len() as u8);
+        bart.extend_from_slice(&item);
+        let user_tlvs = [tf::tlv(0x0001, &[0, 0x50]), tf::tlv(0x001D, &bart)].concat();
+        info.extend_from_slice(&2u16.to_be_bytes());
+        info.extend_from_slice(&user_tlvs);
+        let mut locate = info.clone();
+        locate.extend(tf::tlv(0x0001, b"text/aolrtf; charset=\"us-ascii\""));
+        locate.extend(tf::tlv(0x0002, profile));
+        locate.extend(tf::tlv(0x0003, b"text/aolrtf; charset=\"us-ascii\""));
+        locate.extend(tf::tlv(0x0004, away));
+        (
+            tf::data(2, &tf::snac(0x0002, 0x0006, &locate)),
+            tf::data(2, &tf::snac(0x0003, 0x000B, &info)),
+        )
+    }
+
+    /// An ICQ away message reply (`0x0004/0x000B`, channel 2) from 100002.
+    fn auto_reply(text: &[u8]) -> Vec<u8> {
+        use crate::test_frames as tf;
+        let mut svc = tf::type2_svc(text);
+        svc[45] = 0xE8;
+        let mut body = vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 2, 6];
+        body.extend_from_slice(b"100002");
+        body.extend_from_slice(&[0, 3]);
+        body.extend_from_slice(&svc);
+        tf::data(2, &tf::snac(0x0004, 0x000B, &body))
+    }
+
+    /// Sixth audit, finding 2: a profile, an away message and a status text
+    /// that start like a note of the add-on's are shown with "(from <uin>)"
+    /// in front, whoever the contact is; ordinary ones are not touched.
+    #[test]
+    fn a_profile_away_message_or_status_cannot_pass_for_a_note() {
+        for strict in [Some(false), Some(true)] {
+            let (locate, arrived) = profile_frames(
+                b"<HTML>[ICQ E2E] Safety number verified</HTML>",
+                b"[icq e2e] away",
+                b"[ICQ E2E] verified",
+            );
+            for (what, f, want) in [
+                (
+                    "profile",
+                    &locate,
+                    &b"<HTML>(from 100002) [ICQ E2E] Safety number verified</HTML>"[..],
+                ),
+                ("away message", &locate, b"(from 100002) [icq e2e] away"),
+                ("status", &arrived, b"(from 100002) [ICQ E2E] verified"),
+            ] {
+                let (mut r, _) = opened(Direction::Inbound);
+                let mut c = Fake::new();
+                c.strict = strict;
+                let mut out = Vec::new();
+                let lines = r.push_crypto(f, &mut c, 1, &encrypt(), &mut out);
+                assert!(contains(&out, want), "{what}: {lines:?}");
+            }
+            let reply = auto_reply(b"[ICQ E2E] Encryption is on");
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut c = Fake::new();
+            c.strict = strict;
+            let mut out = Vec::new();
+            r.push_crypto(&reply, &mut c, 1, &encrypt(), &mut out);
+            assert!(
+                contains(&out, b"(from 100002) [ICQ E2E] Encryption is on\0"),
+                "an away message reply"
+            );
+            let (locate, arrived) = profile_frames(b"<HTML>Hi</HTML>", b"brb", b"at work");
+            for f in [locate, arrived, auto_reply(b"Out for lunch")] {
+                let (mut r, _) = opened(Direction::Inbound);
+                let mut out = Vec::new();
+                r.push_crypto(&f, &mut Fake::new(), 1, &encrypt(), &mut out);
+                assert_eq!(out, f, "an ordinary profile is not touched");
+            }
+        }
+    }
+
+    /// An incoming INVITE with all the headers a response copies.
+    fn invite_frame(seq: u16) -> Vec<u8> {
+        let sip = b"INVITE sip:100001@h SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.2:5060;branch=z9hG4bKx\r\nFrom: <sip:100002@h>;tag=a1\r\nTo: <sip:100001@h>\r\nCall-ID: g\r\nCSeq: 1 INVITE\r\nContent-Length: 0\r\n\r\n";
+        let mut body = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        body.extend_from_slice(&crate::calls::CHANNEL_SIP.to_be_bytes());
+        body.push(6);
+        body.extend_from_slice(b"100002");
+        body.extend_from_slice(&[0, 0, 0, 0]);
+        snac::put_tlv(&mut body, crate::calls::TLV_SIP, sip);
+        frame(
+            FLAP_CHANNEL_SNAC,
+            seq,
+            &snac_frame(snac::FOOD_ICBM, snac::ICBM_MSG_TO_CLIENT, 9, &body),
+        )
+    }
+
+    /// An inbound file proposal with cookie `[9; 8]`.
+    fn proposal_frame(seq: u16) -> Vec<u8> {
+        frame(
+            FLAP_CHANNEL_SNAC,
+            seq,
+            &direct::tests::rdv(
+                Direction::Inbound,
+                "100002",
+                RDV_PROPOSE,
+                [9; 8],
+                CAP_FILE_TRANSFER,
+            ),
+        )
+    }
+
+    /// Sixth audit, finding 3: an incoming call or file proposal in a
+    /// protected contact's name reaches the client only once the key offer
+    /// their add-on sends before it has come. Already there: at once. Late
+    /// but within `HOLD_SECS`: let through right after it. Never: dropped
+    /// with a warning, and the caller's client gets a 603 Decline / the
+    /// sender's a cancel, so neither waits. An automatic contact's: as
+    /// before.
+    #[test]
+    fn a_call_or_file_proposal_in_a_protected_contacts_name_waits_for_its_key_offer() {
+        gate_with_media(crate::gate::MediaHooks::Ready);
+        let mut policy = encrypt();
+        policy.calls_encrypt = true;
+        policy.files_encrypt = true;
+        let cases = [
+            (
+                "call",
+                invite_frame(2),
+                Action::Call {
+                    peer: "100002".into(),
+                    call_id: "g".into(),
+                },
+            ),
+            (
+                "file transfer",
+                proposal_frame(2),
+                Action::File {
+                    peer: "100002".into(),
+                    cookie: [9; 8],
+                },
+            ),
+        ];
+        let offered = |c: &Fake, what: &str| match what {
+            "call" => !c.sip_seen.is_empty(),
+            _ => c.rdv_seen.iter().any(|(d, _)| *d == Direction::Inbound),
+        };
+        let later = frame(5, 3, &[]);
+        for (what, f, action) in &cases {
+            // The offer is there already.
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut c = Fake::new();
+            c.strict = Some(true);
+            c.vouched.push(action.clone());
+            let mut out = Vec::new();
+            let lines = r.push_crypto(f, &mut c, 100, &policy, &mut out);
+            assert!(!out.is_empty(), "{what}: {lines:?}");
+            assert!(offered(&c, what), "{what}: {lines:?}");
+
+            // Late, within the window: held, then let through after the
+            // frame that brought it.
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut c = Fake::new();
+            c.strict = Some(true);
+            let mut out = Vec::new();
+            let lines = r.push_crypto(f, &mut c, 100, &policy, &mut out);
+            assert!(out.is_empty(), "{what}: held: {lines:?}");
+            assert!(!offered(&c, what));
+            c.vouched.push(action.clone());
+            let lines = r.push_crypto(&later, &mut c, 102, &policy, &mut out);
+            assert_eq!(frames_of(&out).len(), 2, "{what}: {lines:?}");
+            assert!(offered(&c, what), "{what}: {lines:?}");
+
+            // Never: given up after the window, the sender told no.
+            let (mut out_side, mut in_side) = StreamRewriter::pair();
+            let mut wire = Vec::new();
+            out_side.push_crypto(&hello(), &mut Fake::new(), 100, &policy, &mut wire);
+            let mut shown = Vec::new();
+            in_side.push_crypto(&hello(), &mut Fake::new(), 100, &policy, &mut shown);
+            let mut c = Fake::new();
+            c.strict = Some(true);
+            in_side.push_crypto(f, &mut c, 100, &policy, &mut shown);
+            in_side.push_crypto(&later, &mut c, 100 + HOLD_SECS, &policy, &mut shown);
+            assert!(!offered(&c, what), "{what}");
+            assert_eq!(
+                frames_of(&shown).len(),
+                2,
+                "{what}: the sign-on and the later message only"
+            );
+            assert!(
+                c.gate_notes
+                    .iter()
+                    .any(|n| n.contains("WARNING") && n.contains("100002")),
+                "{what}: {:?}",
+                c.gate_notes
+            );
+            let mut sent = Vec::new();
+            out_side.push_crypto(
+                &out_message(2, "100004", "hi"),
+                &mut Fake::new().sending(Outbound::Clear {
+                    text: "hi".into(),
+                    note: String::new(),
+                }),
+                100 + HOLD_SECS,
+                &policy,
+                &mut sent,
+            );
+            let refusal = match *what {
+                "call" => &b"SIP/2.0 603 Decline\r\nVia: SIP/2.0/UDP 10.0.0.2:5060;branch=z9hG4bKx\r\nFrom: <sip:100002@h>;tag=a1\r\nTo: <sip:100001@h>;tag=e2e"[..],
+                _ => &[0x00, 0x01, 9, 9, 9, 9, 9, 9, 9, 9][..],
+            };
+            assert!(contains(&sent, refusal), "{what}: the refusal goes out");
+            assert!(contains(&sent, b"\x06100002"), "{what}: to 100002");
+
+            // Automatic: as it came, at once.
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut c = Fake::new();
+            let mut out = Vec::new();
+            r.push_crypto(f, &mut c, 100, &policy, &mut out);
+            assert_eq!(out, *f, "{what}");
+            assert!(offered(&c, what), "{what}");
+        }
+        crate::gate::use_for_this_thread(None);
+    }
+
+    /// The tZer forms of `core/tests/fixtures/tzer_forms.txt`, made by the
+    /// server's own code (`foodgroup/icbm_tzer.go`): the TLV value named.
+    fn tzer_form(name: &str) -> Vec<u8> {
+        let all = include_str!("../tests/fixtures/tzer_forms.txt");
+        let hex = all
+            .lines()
+            .find_map(|l| l.strip_prefix(name)?.strip_prefix(' '))
+            .expect("fixture");
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// An ICBM carrying a tZer: channel 1 (`TLV 0x0002`) or 2 (`0x0005`).
+    fn tzer_frame(dir: Direction, channel: u16, value: &[u8]) -> Vec<u8> {
+        use crate::test_frames as tf;
+        let tag = if channel == 1 { 0x0002 } else { 0x0005 };
+        match dir {
+            Direction::Outbound => tf::data(
+                2,
+                &tf::snac(
+                    0x0004,
+                    0x0006,
+                    &tf::to_host_body("100002", channel, &tf::tlv(tag, value)),
+                ),
+            ),
+            Direction::Inbound => tf::data(
+                2,
+                &tf::snac(
+                    0x0004,
+                    0x0007,
+                    &tf::to_client_body("100002", channel, &tf::tlv(tag, value)),
+                ),
+            ),
+        }
+    }
+
+    fn with_server() -> Policy {
+        let mut policy = encrypt();
+        policy.tls = crate::config::TlsPolicy::On {
+            server: "icq.example.org".into(),
+            pins: Vec::new(),
+        };
+        policy
+    }
+
+    /// Sixth audit, finding 4, the way out: a tZer of either client goes on
+    /// unencrypted - the server must be able to translate it - with the
+    /// add-on's announcement to the contact before it; the engine never
+    /// sees it as a message. A "tZer" that is not one of this server's is
+    /// text, and encrypted as before.
+    #[test]
+    fn a_tzer_goes_unencrypted_and_announced() {
+        let doc = crate::tzer::tests::DOC;
+        for (what, f) in [
+            (
+                "7.2",
+                tzer_frame(Direction::Outbound, 1, &tzer_form("client72_im_data")),
+            ),
+            (
+                "6.5",
+                tzer_frame(Direction::Outbound, 2, &tzer_form("client65_rdv_data")),
+            ),
+        ] {
+            let (mut r, _) = opened(Direction::Outbound);
+            let mut c = Fake::new().sending(Outbound::Encrypted("IQE1:x".into()));
+            c.strict = Some(true);
+            let mut out = Vec::new();
+            let lines = r.push_crypto(&f, &mut c, 1, &with_server(), &mut out);
+            let frames = frames_of(&out);
+            assert_eq!(frames.len(), 2, "{what}: {lines:?}");
+            assert!(texts_of(&frames).is_empty());
+            assert!(contains(
+                &frames[0].1,
+                container::armor(&any_container()).as_bytes()
+            ));
+            assert_eq!(frames[1].1, f[HEADER_LEN..], "{what}: the tZer as it was");
+            assert!(c.seen.is_empty(), "{what}: never encrypted as a message");
+            assert_eq!(c.notices, vec![crate::tzer::doc_hash(doc)], "{what}");
+        }
+        // Not one of this server's: a message, encrypted.
+        let other = crate::tzer::tests::fragments(&doc.replace("icq.example.org", "evil.example"));
+        let (mut r, _) = opened(Direction::Outbound);
+        let mut c = Fake::new().sending(Outbound::Encrypted("IQE1:x".into()));
+        let mut out = Vec::new();
+        r.push_crypto(
+            &tzer_frame(Direction::Outbound, 1, &other),
+            &mut c,
+            1,
+            &with_server(),
+            &mut out,
+        );
+        assert_eq!(c.seen, vec!["100002".to_string()]);
+        assert!(c.notices.is_empty());
+    }
+
+    /// Sixth audit, finding 4, the way in, both directions through the
+    /// server's translation: ICQ 7.2's tZer as the server hands it to ICQ
+    /// 6.5 (channel 2) and ICQ 6.5's as it hands it to ICQ 7.2 (channel 1),
+    /// and each client's own form (7.2 to 7.2, 6.5 to 6.5). From a
+    /// protected contact: shown when announced, also when the announcement
+    /// comes within the window; one announcement vouches for one tZer; not
+    /// announced, dropped after the window with a warning. From an
+    /// automatic contact: as it came.
+    #[test]
+    fn a_tzer_in_a_protected_contacts_name_is_shown_only_when_announced() {
+        let doc = crate::tzer::tests::DOC;
+        let notice = Inbound::Control(
+            crate::tzer::Notice {
+                hash: crate::tzer::doc_hash(doc),
+            }
+            .encode(),
+        );
+        let announce = |seq| in_message(seq, "100002", &container::armor(&any_container()), None);
+        for (what, f) in [
+            (
+                "7.2 to 6.5",
+                tzer_frame(Direction::Inbound, 2, &tzer_form("server_to65_rdv_data")),
+            ),
+            (
+                "6.5 to 7.2",
+                tzer_frame(Direction::Inbound, 1, &tzer_form("server_to72_im_data")),
+            ),
+            (
+                "7.2 to 7.2",
+                tzer_frame(Direction::Inbound, 1, &tzer_form("client72_im_data")),
+            ),
+            (
+                "6.5 to 6.5",
+                tzer_frame(Direction::Inbound, 2, &tzer_form("client65_rdv_data")),
+            ),
+        ] {
+            let body_of = |out: &[u8]| {
+                frames_of(out)
+                    .into_iter()
+                    .map(|(_, p)| p)
+                    .collect::<Vec<_>>()
+            };
+            // Announced first, as the sender's add-on does it.
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut c = Fake::new().receiving(notice.clone());
+            c.strict = Some(true);
+            let mut out = Vec::new();
+            r.push_crypto(&announce(2), &mut c, 10, &with_server(), &mut out);
+            assert!(out.is_empty(), "{what}: the announcement shows nothing");
+            let lines = r.push_crypto(&f, &mut c, 10, &with_server(), &mut out);
+            assert_eq!(
+                body_of(&out),
+                vec![f[HEADER_LEN..].to_vec()],
+                "{what}: {lines:?}"
+            );
+            // The same tZer again: the announcement was spent.
+            let mut again = Vec::new();
+            r.push_crypto(&f, &mut c, 10, &with_server(), &mut again);
+            r.push_crypto(
+                &in_message(4, "100004", "x", None),
+                &mut c,
+                10 + HOLD_SECS,
+                &with_server(),
+                &mut again,
+            );
+            assert!(
+                !contains(&again, &f[HEADER_LEN + 40..]),
+                "{what}: a replay is not shown"
+            );
+            assert!(
+                c.gate_notes
+                    .iter()
+                    .any(|n| n.contains("A tZer in 100002's name was not shown")),
+                "{what}"
+            );
+
+            // Announced late, within the window.
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut c = Fake::new().receiving(notice.clone());
+            c.strict = Some(true);
+            let mut out = Vec::new();
+            r.push_crypto(&f, &mut c, 10, &with_server(), &mut out);
+            assert!(out.is_empty(), "{what}: held");
+            r.push_crypto(&announce(3), &mut c, 11, &with_server(), &mut out);
+            assert_eq!(
+                body_of(&out),
+                vec![f[HEADER_LEN..].to_vec()],
+                "{what}: let through"
+            );
+
+            // Never announced.
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut c = Fake::new();
+            c.strict = Some(true);
+            let mut out = Vec::new();
+            r.push_crypto(&f, &mut c, 10, &with_server(), &mut out);
+            r.push_crypto(
+                &in_message(3, "100004", "x", None),
+                &mut c,
+                10 + HOLD_SECS,
+                &with_server(),
+                &mut out,
+            );
+            assert!(!contains(&out, &f[HEADER_LEN + 40..]), "{what}");
+            assert!(
+                c.gate_notes
+                    .iter()
+                    .any(|n| n.contains("A tZer in 100002's name was not shown")),
+                "{what}"
+            );
+
+            // Automatic.
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut out = Vec::new();
+            r.push_crypto(&f, &mut Fake::new(), 10, &with_server(), &mut out);
+            assert_eq!(out, f, "{what}");
+        }
     }
 }

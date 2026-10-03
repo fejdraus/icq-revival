@@ -986,6 +986,70 @@ mod tests {
         );
     }
 
+    /// What the client gets of `text` sent unencrypted in `peer`'s name, on
+    /// channel 1 and offline: `None` when neither reached it (the warning is
+    /// then asserted in the chat), else the texts it was shown.
+    fn shown_of(s: &mut Session, peer: &str, text: &[u8]) -> Option<Vec<String>> {
+        static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let now = NOW + 61 * CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let frames = vec![
+            crate::test_frames::in_ch1(2, peer, 0, text),
+            crate::test_frames::offline_reply(3, peer.parse().unwrap(), text),
+        ];
+        let (out, texts) = delivered(s, &frames, now);
+        if has(&out, b"IQE1:AQE=") {
+            return Some(texts);
+        }
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.contains("not end-to-end encrypted arrived in") && t.contains(peer)),
+            "the chat is told: {texts:?}"
+        );
+        None
+    }
+
+    /// Sixth audit of 2026-10, finding 1, the auditor's cases: text that
+    /// carries the armor tag with a few bytes that are no container is
+    /// unencrypted text - never shown in a protected contact's name (seen
+    /// encrypting, `/e2e on`, verified), shown with the marker taken off
+    /// for a brand-new automatic contact.
+    #[test]
+    fn text_that_only_carries_the_armor_tag_is_unencrypted_text() {
+        let home = Temp::new("armor-tag");
+        let dir = Arc::new(MemoryDirectory::new());
+        let _b = peer_published(&dir);
+        let mut s = published_session(&dir, &home.0);
+        let hello = b"hello IQE1:AQE=";
+        let note = b"[ICQ E2E] Encryption is on IQE1:AQE=";
+
+        // A brand-new automatic contact: shown, and not as a note.
+        let shown = shown_of(&mut s, "100004", note).expect("an automatic contact's is shown");
+        assert!(
+            shown
+                .iter()
+                .any(|t| t == "(from 100004) [ICQ E2E] Encryption is on IQE1:AQE="),
+            "{shown:?}"
+        );
+        assert!(
+            !shown.iter().any(|t| crate::policy::looks_like_note(t)),
+            "{shown:?}"
+        );
+
+        // Seen encrypting.
+        established(&mut s);
+        assert_eq!(shown_of(&mut s, "100002", hello), None, "seen encrypting");
+        // /e2e on, on a contact never seen encrypting.
+        assert!(s.engine().command("100003", "/e2e on", NOW));
+        assert_eq!(shown_of(&mut s, "100003", hello), None, "/e2e on");
+        // Verified.
+        assert!(s.engine().command("100002", "/e2e safety", NOW));
+        assert!(s.engine().command("100002", "/e2e verify", NOW));
+        assert!(s.engine().keys().pinned("100002").unwrap().is_verified());
+        assert_eq!(shown_of(&mut s, "100002", hello), None, "verified");
+        assert_eq!(shown_of(&mut s, "100002", note), None, "verified, a note");
+    }
+
     #[test]
     fn a_contacts_capability_is_taken_once() {
         let home = Temp::new("contacts");

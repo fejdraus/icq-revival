@@ -15,6 +15,7 @@
 //! add-on's capability appended, and contacts announcing it are reported
 //! ([`crate::caps`]). Anything else is not touched.
 
+use crate::authz;
 use crate::caps::{self, Announce};
 use crate::config::{Mode, Policy};
 use crate::container;
@@ -86,6 +87,14 @@ pub struct Processed {
     /// the contact's cancel of a direct-IM proposal the client made
     /// ([`crate::direct`]), handed to the client by the inbound direction.
     pub owed: Vec<Vec<u8>>,
+    /// An inbound frame that may only reach the client once `action` has
+    /// been announced by the contact's add-on (a tZer's `IQT1`, sixth audit
+    /// of 2026-10, finding 4): the stream holds it for a few seconds, then
+    /// drops it. With `ICQE2E_NO_INJECT` it is dropped at once ([`Self::withheld`]).
+    pub hold: Option<crate::crypto::Action>,
+    /// Control containers to put on the wire to the contact before this
+    /// outbound frame (a tZer's announcement).
+    pub controls: Vec<Vec<u8>>,
 }
 
 impl Processed {
@@ -403,7 +412,9 @@ pub fn process_crypto(
 
 /// [`process_crypto`] knowing the server's domain (`server =` of the ini),
 /// which is where the tZers the server hands out live
-/// ([`crate::tzer::is_served_tzer`]). Without it no tZer is recognised.
+/// ([`crate::tzer::served_doc`]). Without it no tZer is recognised: one
+/// of the client's is encrypted as text, and one from a protected contact
+/// is not shown.
 pub fn process_crypto_for(
     dir: Direction,
     payload: &[u8],
@@ -482,6 +493,18 @@ fn process_crypto_snac(
         (Direction::Inbound, snac::FOOD_OSERVICE, snac::OSERVICE_USER_INFO) => return p,
         (Direction::Inbound, snac::FOOD_BUDDY, snac::BUDDY_ARRIVED) => {
             p.e2e_contacts = caps::contacts(s.body);
+            unmark_user_texts(payload, &mut p);
+            return p;
+        }
+        (Direction::Inbound, snac::FOOD_LOCATE, authz::LOCATE_USER_INFO_REPLY)
+        | (Direction::Inbound, snac::FOOD_ICBM, authz::ICBM_AUTO_RESPONSE) => {
+            unmark_user_texts(payload, &mut p);
+            return p;
+        }
+        (Direction::Inbound, authz::FOOD_FEEDBAG, sub) => {
+            if let Some(a) = authz::feedbag_auth(sub, s.body) {
+                feedbag_auth_in(payload, s.body, &a, crypto, &mut p);
+            }
             return p;
         }
         _ => {}
@@ -490,20 +513,58 @@ fn process_crypto_snac(
         return p;
     };
     let header_len = payload.len() - s.body.len();
+    // A tZer of the client's goes as it is, announced to the contact's
+    // add-on first (sixth audit of 2026-10, finding 4).
+    if dir == Direction::Outbound && kind == Kind::ToHost {
+        if let Some((peer, doc)) = tzer_of(kind, s.body) {
+            if server.is_some_and(|srv| crate::tzer::served_doc(&doc, srv)) {
+                let hash = crate::tzer::doc_hash(&doc);
+                let notice = crypto.tzer_notice(&peer, hash, now);
+                p.lines.push(format!(
+                    "OUT peer={peer} tZer: sent as it is (not secret), {}",
+                    if notice.is_some() {
+                        "announced to the contact's add-on first"
+                    } else {
+                        "no session to announce it over"
+                    }
+                ));
+                p.controls.extend(notice);
+                return p;
+            }
+        }
+    }
     let msg = decode(kind, s.body);
     if let Some(m) = &msg {
         p.lines.push(m.log_line());
     }
-    // Inbound, anything that is not an armoured container and that the
+    // Inbound, anything that is not a whole armoured container and that the
     // client shows as the contact's words - on any channel, and offline -
     // is unauthenticated text: asked about once, in one place (fifth audit
-    // of 2026-10, finding 1).
-    if dir == Direction::Inbound
-        && !msg
+    // of 2026-10, finding 1). "Whole" is the container parser's word, not
+    // the armor tag's: text that only carries `IQE1:<base64>` somewhere
+    // (sixth audit, finding 1) is text like any other. With `e2e=off`
+    // nothing is decrypted, so a container is text too.
+    if dir == Direction::Inbound {
+        let parsed = msg
             .as_ref()
-            .is_some_and(|m| container::find_armor(&m.text).is_some())
-    {
-        return plain_in(kind, payload, header_len, s.body, crypto, now, server, p);
+            .and_then(|m| container::find_armor(&m.text))
+            .and_then(|bytes| container::parse(&bytes));
+        return match (msg, parsed) {
+            (Some(msg), Some(parsed)) if crypto.encrypts() => {
+                container_in(kind, payload, header_len, &s, &msg, parsed, crypto, now, p)
+            }
+            (msg, parsed) => {
+                if let (Some(m), None) = (&msg, &parsed) {
+                    if container::find_armor(&m.text).is_some() {
+                        p.lines.push(format!(
+                            "{} (armored but not a container: taken as unencrypted text)",
+                            m.log_line()
+                        ));
+                    }
+                }
+                plain_in(kind, payload, header_len, s.body, crypto, now, server, p)
+            }
+        };
     }
     let Some(msg) = msg else {
         return p;
@@ -556,72 +617,84 @@ fn process_crypto_snac(
                 }
             }
         }
-        Direction::Inbound => {
-            // An armoured container is a whole message in the armor's own text,
-            // wherever it was carried; a peer without the add-on sends plain
-            // text, which is left exactly as it arrived.
-            let Some(bytes) = container::find_armor(&msg.text) else {
-                return p;
+        // Inbound returned above.
+        Direction::Inbound => {}
+    }
+    p
+}
+
+/// An inbound message whose text is a whole armoured container
+/// ([`container::parse`] read it): decrypted, or the note for a version or
+/// scheme this build does not know, said like any other and never read with
+/// the scheme-1 layout (CHECKLIST 9.8). Whatever happens, the frame never
+/// reaches the client as it came: the decrypted text in its place, or
+/// nothing.
+#[allow(clippy::too_many_arguments)]
+fn container_in(
+    kind: Kind,
+    payload: &[u8],
+    header_len: usize,
+    s: &snac::Snac,
+    msg: &Message,
+    parsed: container::Parsed,
+    crypto: &mut dyn Crypto,
+    now: u64,
+    mut p: Processed,
+) -> Processed {
+    let got = match parsed {
+        container::Parsed::Container(c) => crypto.inbound(&msg.peer, &c, now),
+        container::Parsed::Unsupported { version, scheme } => {
+            crypto.unsupported(&msg.peer, version, scheme)
+        }
+    };
+    p.ack_request = ack_request(kind, s.body);
+    match got {
+        Inbound::Text { text, form, .. } => {
+            // The sender's own bytes go back into the fragment, with the
+            // charset restored from the envelope: the reader sees the
+            // message exactly as it was written, nothing added to it -
+            // unless it starts like a note of the add-on's, which only
+            // the add-on may write (fifth audit of 2026-10, finding 2).
+            let text = match crate::policy::unmark(&msg.peer, charset_of(form), &text) {
+                Some(t) => {
+                    p.lines.push(format!(
+                        "{} starts like a note of the add-on's: shown as the contact's",
+                        msg.log_line()
+                    ));
+                    t
+                }
+                None => text,
             };
-            // A version or scheme this build does not know is a message it
-            // cannot read, said like any other; it is never read with the
-            // scheme-1 layout (CHECKLIST 9.8).
-            let got = match container::parse(&bytes) {
-                Some(container::Parsed::Container(c)) => crypto.inbound(&msg.peer, &c, now),
-                Some(container::Parsed::Unsupported { version, scheme }) => {
-                    crypto.unsupported(&msg.peer, version, scheme)
-                }
-                None => {
+            match put_text(kind, s.body, &text, form) {
+                Ok(Some(body)) => {
+                    p.payload = Some([&payload[..header_len], &body[..]].concat());
                     p.lines
-                        .push(format!("{} (armored but not a container)", msg.log_line()));
-                    return p;
+                        .push(format!("{} decrypted {} bytes", msg.log_line(), text.len()));
                 }
-            };
-            p.ack_request = ack_request(kind, s.body);
-            match got {
-                Inbound::Text { text, form, .. } => {
-                    // The sender's own bytes go back into the fragment, with the
-                    // charset restored from the envelope: the reader sees the
-                    // message exactly as it was written, nothing added to it -
-                    // unless it starts like a note of the add-on's, which only
-                    // the add-on may write (fifth audit of 2026-10, finding 2).
-                    let text = match crate::policy::unmark(&msg.peer, charset_of(form), &text) {
-                        Some(t) => {
-                            p.lines.push(format!(
-                                "{} starts like a note of the add-on's: shown as the contact's",
-                                msg.log_line()
-                            ));
-                            t
-                        }
-                        None => text,
-                    };
-                    match put_text(kind, s.body, &text, form) {
-                        Ok(Some(body)) => {
-                            p.payload = Some([&payload[..header_len], &body[..]].concat());
-                            p.lines.push(format!(
-                                "{} decrypted {} bytes",
-                                msg.log_line(),
-                                text.len()
-                            ));
-                        }
-                        Ok(None) => {}
-                        Err(why) => {
-                            p.drop = true;
-                            p.lines.push(format!("{} not shown: {why}", msg.log_line()));
-                        }
-                    }
-                }
-                // A control message advances the ratchet and shows nothing.
-                Inbound::Control(_) => {
+                // No text where the container was found: the frame is
+                // never handed on with the container in it.
+                Ok(None) => {
                     p.drop = true;
-                    p.lines
-                        .push(format!("{} control message (removed)", msg.log_line()));
+                    p.lines.push(format!(
+                        "{} not shown: no place for the decrypted text",
+                        msg.log_line()
+                    ));
                 }
-                Inbound::Unreadable(note) => {
+                Err(why) => {
                     p.drop = true;
-                    p.lines.push(note);
+                    p.lines.push(format!("{} not shown: {why}", msg.log_line()));
                 }
             }
+        }
+        // A control message advances the ratchet and shows nothing.
+        Inbound::Control(_) => {
+            p.drop = true;
+            p.lines
+                .push(format!("{} control message (removed)", msg.log_line()));
+        }
+        Inbound::Unreadable(note) => {
+            p.drop = true;
+            p.lines.push(note);
         }
     }
     p
@@ -736,20 +809,24 @@ fn plain_in(
     server: Option<&str>,
     mut p: Processed,
 ) -> Processed {
+    // A tZer, in either form: shown in a protected contact's name only when
+    // their add-on announced it (sixth audit of 2026-10, finding 4).
+    if let Some((peer, doc)) = tzer_of(kind, body) {
+        return tzer_in(
+            kind, payload, header_len, body, &peer, &doc, crypto, now, server, p,
+        );
+    }
+    // An authorization event carries the contact's text too (finding 2).
+    if let Some((peer, msg_type)) = auth_peer(kind, body) {
+        let request = msg_type == authz::MSG_TYPE_AUTH_REQ;
+        auth_in(
+            kind, payload, header_len, body, &peer, request, crypto, &mut p,
+        );
+        return p;
+    }
     let Some((peer, form)) = shown_text(kind, body) else {
         return p;
     };
-    // A tZer exactly as the server writes it for ICQ 7.2 carries no words of
-    // the contact's: shown for a protected contact too. Anything that
-    // deviates from that form is text.
-    if let (Some(server), Some(frags)) = (server, ch1_frags(kind, body)) {
-        if crate::tzer::is_served_tzer(frags, server) {
-            p.lines.push(format!(
-                "IN  peer={peer} {form}: a tZer of the server's, shown"
-            ));
-            return p;
-        }
-    }
     if let Some(why) = crypto.plain_inbound(&peer, now) {
         p.drop = true;
         p.payload = None;
@@ -777,6 +854,250 @@ fn plain_in(
         ));
     }
     p
+}
+
+/// A profile, away message or status text that starts like a note of the
+/// add-on's, unmarked (sixth audit of 2026-10, finding 2).
+fn unmark_user_texts(payload: &[u8], p: &mut Processed) {
+    if let Some((b, what)) = authz::unmark_user_texts(payload) {
+        p.payload = Some(b);
+        p.lines.push(format!(
+            "IN  {what} starts like a note of the add-on's: shown as the contact's"
+        ));
+    }
+}
+
+/// A Feedbag authorization event (sixth audit of 2026-10, finding 2): for a
+/// protected contact its reason is replaced by the add-on's words and the
+/// event kept; for any other, a reason that starts like a note is unmarked.
+fn feedbag_auth_in(
+    payload: &[u8],
+    body: &[u8],
+    a: &authz::FeedbagAuth,
+    crypto: &mut dyn Crypto,
+    p: &mut Processed,
+) {
+    let header_len = payload.len() - body.len();
+    let reason = a.reason(body);
+    let new = match crypto.protected(&a.peer) {
+        Some(why) if a.request || !reason.is_empty() => {
+            p.lines.push(format!(
+                "IN  peer={} authorization {}: its text is not shown, it is not end-to-end authenticated ({why})",
+                a.peer,
+                if a.request { "request" } else { "reply" }
+            ));
+            Some(crate::policy::auth_local_text(&a.peer, a.request).into_bytes())
+        }
+        Some(_) => None,
+        None => crate::policy::unmark(&a.peer, text::CHARSET_ASCII, reason),
+    };
+    let Some(r) = new else {
+        return;
+    };
+    match a.with_reason(body, &r) {
+        Some(b) => p.payload = Some([&payload[..header_len], &b[..]].concat()),
+        None => {
+            p.drop = true;
+            p.payload = None;
+        }
+    }
+}
+
+/// The contact and the message type of a legacy authorization event
+/// (channel 4, or an ICQ offline message, of one of [`authz::AUTH_TYPES`]).
+fn auth_peer(kind: Kind, body: &[u8]) -> Option<(String, u8)> {
+    match kind {
+        Kind::ToClient => {
+            let head = icbm_head_len(kind, body)?;
+            if u16::from_be_bytes([*body.get(8)?, *body.get(9)?]) != icbm::CHANNEL_ICQ {
+                return None;
+            }
+            let tlvs = snac::read_tlvs(&body[head..]);
+            let (t, _) = icbm::ch4_text(
+                snac::find_tlv(&tlvs, icbm::TLV_ICQ_DATA)?,
+                authz::AUTH_TYPES,
+            )?;
+            let n = *body.get(10)? as usize;
+            let peer = String::from_utf8_lossy(body.get(11..11 + n)?).into_owned();
+            (!peer.is_empty()).then_some((peer, t))
+        }
+        Kind::Offline => {
+            let tlvs = snac::read_tlvs(body);
+            let env = snac::find_tlv(&tlvs, icbm::ICQ_TLV_DATA)?;
+            authz::AUTH_TYPES.iter().find_map(|t| {
+                icbm::offline_reply_text(env, &[*t]).map(|(_, sender)| (sender.to_string(), *t))
+            })
+        }
+        Kind::ToHost | Kind::OfflineOut => None,
+    }
+}
+
+/// A legacy authorization event (sixth audit of 2026-10, finding 2), as
+/// [`feedbag_auth_in`]: the event stays, the contact's text does not for a
+/// protected contact; it is unmarked for any other.
+#[allow(clippy::too_many_arguments)]
+fn auth_in(
+    kind: Kind,
+    payload: &[u8],
+    header_len: usize,
+    body: &[u8],
+    peer: &str,
+    request: bool,
+    crypto: &mut dyn Crypto,
+    p: &mut Processed,
+) {
+    let protected = crypto.protected(peer);
+    let rewritten = match &protected {
+        Some(_) => rewrite_typed(
+            kind,
+            body,
+            |_, t| {
+                if t.is_empty() && !request {
+                    return None;
+                }
+                let local = crate::policy::auth_local_text(peer, request);
+                authz::legacy_text(peer, t, request, Some(local.as_bytes()))
+                    .map(|t| (text::CHARSET_ASCII, t))
+            },
+            authz::AUTH_TYPES,
+        ),
+        None => rewrite_typed(
+            kind,
+            body,
+            |_, t| authz::legacy_text(peer, t, request, None).map(|t| (text::CHARSET_ASCII, t)),
+            authz::AUTH_TYPES,
+        ),
+    };
+    match rewritten {
+        Ok(Some(b)) => {
+            p.payload = Some([&payload[..header_len], &b[..]].concat());
+            p.lines.push(match protected {
+                Some(why) => format!(
+                    "IN  peer={peer} authorization event: its text is not shown, it is not end-to-end authenticated ({why})"
+                ),
+                None => format!(
+                    "IN  peer={peer} authorization event starts like a note of the add-on's: shown as the contact's"
+                ),
+            });
+        }
+        Ok(None) => {}
+        // A text that cannot be put back is never shown as it came.
+        Err(why) => {
+            p.drop = true;
+            p.payload = None;
+            p.lines.push(format!(
+                "IN  peer={peer} authorization event dropped: {why}"
+            ));
+        }
+    }
+}
+
+/// The contact and the document of a tZer in either form: a channel-1
+/// message with the tZer mark, or a channel-2 tZer plugin message
+/// ([`crate::tzer`]). Both directions.
+fn tzer_of(kind: Kind, body: &[u8]) -> Option<(String, String)> {
+    if !matches!(kind, Kind::ToClient | Kind::ToHost) {
+        return None;
+    }
+    let head = icbm_head_len(kind, body)?;
+    let channel = u16::from_be_bytes([*body.get(8)?, *body.get(9)?]);
+    let n = *body.get(10)? as usize;
+    let peer = String::from_utf8_lossy(body.get(11..11 + n)?).into_owned();
+    let tlvs = snac::read_tlvs(&body[head..]);
+    let doc = match channel {
+        icbm::CHANNEL_IM => crate::tzer::ch1_doc(snac::find_tlv(&tlvs, icbm::TLV_AOL_IM_DATA)?)?,
+        icbm::CHANNEL_RENDEZVOUS => {
+            crate::tzer::plugin_doc(snac::find_tlv(&tlvs, icbm::TLV_RENDEZVOUS_DATA)?)?
+        }
+        _ => return None,
+    };
+    (!peer.is_empty()).then_some((peer, doc))
+}
+
+/// An inbound tZer (sixth audit of 2026-10, finding 4). From a contact who
+/// is not protected: as it came. From a protected one: shown only when it
+/// is a tZer of this server's ([`crate::tzer::served_doc`]) and the
+/// contact's add-on announced it ([`crate::tzer::Notice`]); one of this
+/// server's that is not announced yet is held for its announcement
+/// ([`Processed::hold`]); anything else is dropped with a warning.
+#[allow(clippy::too_many_arguments)]
+fn tzer_in(
+    kind: Kind,
+    payload: &[u8],
+    header_len: usize,
+    body: &[u8],
+    peer: &str,
+    doc: &str,
+    crypto: &mut dyn Crypto,
+    now: u64,
+    server: Option<&str>,
+    mut p: Processed,
+) -> Processed {
+    let Some(why) = crypto.protected(peer) else {
+        p.lines
+            .push(format!("IN  peer={peer} tZer: shown as it came"));
+        return p;
+    };
+    let action = crate::crypto::Action::Tzer {
+        peer: peer.to_string(),
+        hash: crate::tzer::doc_hash(doc),
+    };
+    let known = server.is_some_and(|srv| crate::tzer::served_doc(doc, srv));
+    if known && crypto.authenticated(&action, true, now) {
+        p.lines.push(format!(
+            "IN  peer={peer} tZer: announced by the contact's add-on, shown"
+        ));
+        return p;
+    }
+    p.drop = true;
+    p.payload = None;
+    p.withheld = tzer_stand_in(kind, payload, header_len, body);
+    if known {
+        p.lines.push(format!(
+            "IN  peer={peer} tZer: held for the announcement of the contact's add-on"
+        ));
+        p.hold = Some(action);
+    } else {
+        let why = format!("{why}; it is not one of this server's tZers either");
+        p.lines.push(format!(
+            "IN  peer={peer} tZer: not end-to-end authenticated and not shown: {why}"
+        ));
+        crypto.unauthenticated(
+            peer,
+            "tZer",
+            crate::policy::unauthenticated_action_note(peer, "tZer", &why),
+            now,
+        );
+    }
+    p
+}
+
+/// What a tZer that is not shown becomes where no frame may be dropped
+/// (`ICQE2E_NO_INJECT`): on channel 1 the document gives way to the
+/// add-on's words; on channel 2 the proposal becomes a cancel, which the
+/// client ignores.
+fn tzer_stand_in(kind: Kind, payload: &[u8], header_len: usize, body: &[u8]) -> Option<Vec<u8>> {
+    let instead = format!(
+        "{}(a tZer that was not authenticated was not shown)",
+        crate::policy::PREFIX
+    );
+    let instead = instead.as_bytes();
+    if let Ok(Some(b)) = rewrite_typed(
+        kind,
+        body,
+        |_, _| Some((text::CHARSET_ASCII, instead.to_vec())),
+        icbm::SHOWN_TYPES,
+    ) {
+        return Some([&payload[..header_len], &b[..]].concat());
+    }
+    let head = icbm_head_len(kind, body)?;
+    let (tlvs, _) = snac::split_tlvs(&body[head..]);
+    let t = tlvs.iter().find(|t| t.tag == icbm::TLV_RENDEZVOUS_DATA)?;
+    let at = header_len + (t.value.as_ptr() as usize - body.as_ptr() as usize);
+    let mut out = payload.to_vec();
+    out.get_mut(at..at + 2)?
+        .copy_from_slice(&crate::files::RDV_CANCEL.to_be_bytes());
+    Some(out)
 }
 
 /// Who an inbound message is from and on which path, when the client shows
@@ -826,21 +1147,6 @@ fn shown_text(kind: Kind, body: &[u8]) -> Option<(String, &'static str)> {
         }
         Kind::ToHost | Kind::OfflineOut => None,
     }
-}
-
-/// The fragment list (TLV `0x0002`) of an inbound channel-1 message.
-fn ch1_frags(kind: Kind, body: &[u8]) -> Option<&[u8]> {
-    if kind != Kind::ToClient {
-        return None;
-    }
-    let head = icbm_head_len(kind, body)?;
-    if u16::from_be_bytes([*body.get(8)?, *body.get(9)?]) != icbm::CHANNEL_IM {
-        return None;
-    }
-    let (tlvs, _) = snac::split_tlvs(&body[head..]);
-    tlvs.iter()
-        .find(|t| t.tag == icbm::TLV_AOL_IM_DATA)
-        .map(|t| t.value)
 }
 
 /// Whether a channel-1 fragment list has a message fragment (id 1).

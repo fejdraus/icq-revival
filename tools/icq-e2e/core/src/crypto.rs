@@ -107,6 +107,41 @@ pub trait Crypto {
     /// default: an engine that cannot tell the contact's policy refuses.
     fn plain_inbound(&mut self, peer: &str, now: u64) -> Option<String>;
 
+    /// Whether `peer` is protected, and why: `None` when they are not.
+    /// Protected means nothing is shown to the user as an action or words of
+    /// theirs that did not pass end-to-end authentication - the rule of
+    /// [`Self::plain_inbound`] (`/e2e on`, seen encrypting, verified; every
+    /// contact while the policy cannot be read), without its warning. Asked
+    /// for what is not a message: an authorization event, an incoming call,
+    /// a file proposal, a tZer (sixth audit of 2026-10). No default.
+    fn protected(&self, peer: &str) -> Option<String>;
+
+    /// Something in `peer`'s name that was not authenticated end to end was
+    /// kept from the client (`what`: "call", "file", "tzer", ...): `note`
+    /// goes into the chat at most once a minute per contact and kind, and
+    /// is raised as a security alert. No default: every engine that can be
+    /// asked shows it somewhere.
+    fn unauthenticated(&mut self, peer: &str, what: &str, note: String, now: u64);
+
+    /// Whether `action` in its contact's name was authenticated end to end:
+    /// the contact's add-on announced it over the Olm session before it
+    /// came (a call's key offer `IQC1`, a file transfer's `IQF1`, a tZer's
+    /// `IQT1`). `consume` takes a one-time announcement (a tZer's) so it
+    /// cannot vouch for a second copy. `false` by default: an engine without
+    /// sessions authenticates nothing.
+    fn authenticated(&mut self, action: &Action, consume: bool, now: u64) -> bool {
+        let _ = (action, consume, now);
+        false
+    }
+
+    /// The control container that announces a tZer with document hash
+    /// `hash` to `peer` (`IQT1`, [`crate::tzer::Notice`]), sent just before
+    /// the tZer itself; `None` when there is no session to send it over.
+    fn tzer_notice(&mut self, peer: &str, hash: [u8; 16], now: u64) -> Option<Vec<u8>> {
+        let _ = (peer, hash, now);
+        None
+    }
+
     /// A note for the chat with `peer`: the gate's refusal of a call or a
     /// transfer. Dropped by an engine that shows no notes.
     fn note(&mut self, peer: &str, text: String) {
@@ -144,6 +179,61 @@ pub trait Crypto {
         let _ = (rdv, now, lines);
         Vec::new()
     }
+}
+
+/// Something a contact does that is not a message, which the client shows as
+/// theirs and which their add-on announces over the Olm session before it
+/// happens (sixth audit of 2026-10, findings 3 and 4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    /// An incoming call: the INVITE with this Call-ID.
+    Call { peer: String, call_id: String },
+    /// A file proposal with this rendezvous cookie.
+    File { peer: String, cookie: [u8; 8] },
+    /// A tZer whose document hashes to this ([`crate::tzer::doc_hash`]).
+    Tzer { peer: String, hash: [u8; 16] },
+}
+
+impl Action {
+    /// Whose action it is said to be.
+    pub fn peer(&self) -> &str {
+        match self {
+            Action::Call { peer, .. } | Action::File { peer, .. } | Action::Tzer { peer, .. } => {
+                peer
+            }
+        }
+    }
+
+    /// What it is, for the log and the warning's key.
+    pub fn what(&self) -> &'static str {
+        match self {
+            Action::Call { .. } => "call",
+            Action::File { .. } => "file transfer",
+            Action::Tzer { .. } => "tZer",
+        }
+    }
+}
+
+/// [`Crypto::unauthenticated`] for an engine that keeps notes: `note` into
+/// the chat at most once every [`PLAIN_DROPPED_EVERY`] per contact and kind,
+/// and a security alert (itself rate-limited).
+pub fn unauthenticated_note(
+    said: &mut HashMap<String, u64>,
+    notes: &mut Vec<Note>,
+    peer: &str,
+    what: &str,
+    note: String,
+    now: u64,
+) {
+    let key = format!("{what}:{}", sign::ident(peer));
+    let due = said
+        .get(&key)
+        .is_none_or(|at| now.saturating_sub(*at) >= PLAIN_DROPPED_EVERY);
+    if due {
+        said.insert(key.clone(), now);
+        notes.push(Note::to(peer, note.clone()));
+    }
+    crate::alert::raise(&format!("unauth:{key}"), &note, now);
 }
 
 /// The engine of an install with `e2e=off` (the patch's "encrypted connection
@@ -230,6 +320,15 @@ impl Crypto for Disabled {
     /// protected and every message is shown as it came.
     fn plain_inbound(&mut self, _peer: &str, _now: u64) -> Option<String> {
         None
+    }
+
+    /// Nothing is protected on an install that encrypts nothing.
+    fn protected(&self, _peer: &str) -> Option<String> {
+        None
+    }
+
+    fn unauthenticated(&mut self, peer: &str, _what: &str, note: String, _now: u64) {
+        self.notes.push(Note::to(peer, note));
     }
 
     fn note(&mut self, peer: &str, text: String) {
@@ -701,8 +800,12 @@ pub struct Engine {
     /// then held, never sent in clear, and nothing is published.
     locked_out: Option<String>,
     /// When the warning about an unencrypted message in a contact's name
-    /// was last put in the chat ([plain_dropped]).
+    /// was last put in the chat ([plain_dropped]), and the warnings about
+    /// other things kept from the client ([`unauthenticated_note`]).
     plain_said: HashMap<String, u64>,
+    /// tZers announced by their senders' add-ons (`IQT1`), not yet seen:
+    /// the contact, the document's hash, when ([`crate::tzer::Notice`]).
+    tzer_notices: Vec<(String, [u8; 16], u64)>,
 }
 
 impl Engine {
@@ -738,6 +841,7 @@ impl Engine {
             unsaved: HashSet::new(),
             locked_out: None,
             plain_said: HashMap::new(),
+            tzer_notices: Vec::new(),
         }
     }
 
@@ -2192,6 +2296,21 @@ impl Crypto for Engine {
                 return Inbound::Unreadable(self.not_saved(peer, &why, false));
             }
         }
+        // A tZer's announcement (sixth audit of 2026-10, finding 4): kept
+        // for the tZer that follows it, whatever calls and files do.
+        if let Inbound::Control(payload) = &got {
+            if let Some(n) = crate::tzer::Notice::decode(payload) {
+                let p = sign::ident(peer);
+                self.tzer_notices
+                    .retain(|(_, _, at)| now.saturating_sub(*at) < crate::tzer::NOTICE_TTL);
+                if self.tzer_notices.len() >= crate::tzer::MAX_NOTICES {
+                    self.tzer_notices.remove(0);
+                }
+                self.tzer_notices.push((p, n.hash, now));
+                self.remember(peer, |r| r.seen_encrypting = true);
+                return got;
+            }
+        }
         // A call key exchange (`calls_encrypt=on` only): it goes to the call
         // table and is answered by the call's own SIP, not by a control
         // message of ours. Off, it is taken below like any control message,
@@ -2360,18 +2479,69 @@ impl Crypto for Engine {
     /// is shown, as without the add-on. Locked out, the contact's settings
     /// are in a state file this engine cannot read: refused.
     fn plain_inbound(&mut self, peer: &str, now: u64) -> Option<String> {
-        let why = match &self.locked_out {
-            Some(locked) => format!("the add-on cannot read its settings for {peer}: {locked}"),
+        let why = self.protected(peer)?;
+        plain_dropped(&mut self.plain_said, &mut self.notes, peer, &why, now);
+        Some(why)
+    }
+
+    fn protected(&self, peer: &str) -> Option<String> {
+        match &self.locked_out {
+            Some(locked) => Some(format!(
+                "the add-on cannot read its settings for {peer}: {locked}"
+            )),
             None => {
                 let verified = self
                     .keys
                     .pinned(peer)
                     .is_some_and(|p| p.is_verified() || p.held);
-                policy::plain_inbound_refusal(peer, Some(self.remembered(peer)), verified)?
+                policy::plain_inbound_refusal(peer, Some(self.remembered(peer)), verified)
             }
-        };
-        plain_dropped(&mut self.plain_said, &mut self.notes, peer, &why, now);
-        Some(why)
+        }
+    }
+
+    fn unauthenticated(&mut self, peer: &str, what: &str, note: String, now: u64) {
+        unauthenticated_note(&mut self.plain_said, &mut self.notes, peer, what, note, now);
+    }
+
+    /// A call or a file proposal is authenticated by the key offer that
+    /// came for it (or by the call or transfer it belongs to, which only
+    /// such an offer, or our own side, started); a tZer by its `IQT1`.
+    /// Locked out, nothing is.
+    fn authenticated(&mut self, action: &Action, consume: bool, now: u64) -> bool {
+        if self.locked_out.is_some() {
+            return false;
+        }
+        match action {
+            Action::Call { peer, call_id } => {
+                self.calls_encrypt && lock_calls(&self.calls).vouched(peer, call_id)
+            }
+            Action::File { peer, cookie } => {
+                self.files_encrypt && crate::filesneg::lock(&self.files).vouched(peer, cookie)
+            }
+            Action::Tzer { peer, hash } => {
+                let p = sign::ident(peer);
+                let at = self.tzer_notices.iter().position(|(who, h, at)| {
+                    *who == p && h == hash && now.saturating_sub(*at) < crate::tzer::NOTICE_TTL
+                });
+                match at {
+                    Some(i) => {
+                        if consume {
+                            self.tzer_notices.remove(i);
+                        }
+                        true
+                    }
+                    None => false,
+                }
+            }
+        }
+    }
+
+    fn tzer_notice(&mut self, peer: &str, hash: [u8; 16], now: u64) -> Option<Vec<u8>> {
+        if self.locked_out.is_some() {
+            return None;
+        }
+        let payload = crate::tzer::Notice { hash }.encode();
+        self.encrypt_call_payload(peer, &payload, now).ok()
     }
 
     fn note(&mut self, peer: &str, text: String) {
@@ -5289,5 +5459,95 @@ mod tests {
         );
         assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
         assert!(e.keys().session("100003", c.device_id).is_none());
+    }
+
+    /// Sixth audit of 2026-10, findings 3 and 4, through two real engines and
+    /// their Olm session: what B lets through in A's name is what A's
+    /// add-on announced. A call's key offer vouches for its INVITE, a file
+    /// offer for its proposal (neither is spent by the check); a tZer's
+    /// `IQT1` for one tZer with that document, from that contact, for
+    /// `NOTICE_TTL`. Nothing is vouched for before.
+    #[test]
+    fn an_announcement_over_the_session_vouches_for_a_call_a_file_and_one_tzer() {
+        use crate::crypto::Action;
+        use crate::icbm::Direction;
+        let (dir, a, b) = two_published();
+        let mut ea = running(&dir, a);
+        let mut eb = running(&dir, b);
+        for e in [&mut ea, &mut eb] {
+            e.use_call_table(Default::default());
+            e.use_file_table(Default::default());
+            e.set_calls_encrypt(true);
+            e.set_files_encrypt(true);
+        }
+        let mut lines = Vec::new();
+        let call = Action::Call {
+            peer: "100001".into(),
+            call_id: "six-call".into(),
+        };
+        let file = Action::File {
+            peer: "100001".into(),
+            cookie: FILE_COOKIE,
+        };
+        let hash = crate::tzer::doc_hash(crate::tzer::tests::DOC);
+        let tzer = Action::Tzer {
+            peer: "100001".into(),
+            hash,
+        };
+        for a in [&call, &file, &tzer] {
+            assert!(!eb.authenticated(a, false, NOW), "{a:?} before");
+        }
+        assert_eq!(eb.protected("100001"), None, "a contact not seen yet");
+
+        let offer = ea.call_sip(
+            Direction::Outbound,
+            "100002",
+            b"INVITE sip:100002@h SIP/2.0\r\nCall-ID: six-call\r\nCSeq: 1 INVITE\r\n\r\n",
+            NOW,
+            &mut lines,
+        );
+        hand(&mut eb, "100001", offer);
+        assert!(eb.authenticated(&call, false, NOW));
+        assert!(eb.authenticated(&call, true, NOW), "not spent by a check");
+        assert!(eb.protected("100001").is_some(), "seen encrypting now");
+        let other_call = Action::Call {
+            peer: "100001".into(),
+            call_id: "another".into(),
+        };
+        assert!(!eb.authenticated(&other_call, false, NOW));
+
+        let offer = ea.file_icbm(
+            &file_rdv(Direction::Outbound, "100002", crate::files::RDV_PROPOSE),
+            NOW,
+            &mut lines,
+        );
+        hand(&mut eb, "100001", offer);
+        assert!(eb.authenticated(&file, false, NOW));
+
+        let notice = ea.tzer_notice("100002", hash, NOW).expect("a session");
+        assert!(matches!(
+            hand(&mut eb, "100001", vec![notice])[..],
+            [Inbound::Control(_)]
+        ));
+        let not_ours = Action::Tzer {
+            peer: "100003".into(),
+            hash,
+        };
+        assert!(!eb.authenticated(&not_ours, true, NOW), "another contact");
+        let other_doc = Action::Tzer {
+            peer: "100001".into(),
+            hash: crate::tzer::doc_hash("<tzerRoot id=\"boo\"/>"),
+        };
+        assert!(!eb.authenticated(&other_doc, true, NOW), "another tZer");
+        assert!(
+            eb.authenticated(&tzer, false, NOW),
+            "a look does not spend it"
+        );
+        assert!(eb.authenticated(&tzer, true, NOW));
+        assert!(!eb.authenticated(&tzer, true, NOW), "one tZer per notice");
+
+        let notice = ea.tzer_notice("100002", hash, NOW).expect("a session");
+        hand(&mut eb, "100001", vec![notice]);
+        assert!(!eb.authenticated(&tzer, true, NOW + crate::tzer::NOTICE_TTL));
     }
 }

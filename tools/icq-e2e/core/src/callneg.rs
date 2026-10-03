@@ -573,6 +573,75 @@ pub fn shared() -> Arc<Mutex<CallTable>> {
     T.clone()
 }
 
+/// The `603 Decline` for an incoming INVITE that was not let through
+/// (sixth audit of 2026-10, finding 3), as an ICBM on channel 6 to `peer`
+/// (SNAC payload, request id 0), so the caller's client stops ringing. The
+/// response takes the INVITE's Via headers, From, To (with a tag of ours if
+/// it has none), Call-ID and CSeq, as RFC 3261 8.2.6 asks. `None` for
+/// anything that is not an INVITE with those headers.
+pub fn decline_to_host(peer: &str, invite: &[u8]) -> Option<Vec<u8>> {
+    let text = String::from_utf8_lossy(invite);
+    let head = text.split("\r\n\r\n").next()?;
+    let mut lines = head.split("\r\n");
+    if !lines.next()?.starts_with("INVITE ") {
+        return None;
+    }
+    let (mut vias, mut from, mut to, mut call_id, mut cseq) = (Vec::new(), None, None, None, None);
+    for l in lines {
+        let Some((name, _)) = l.split_once(':') else {
+            continue;
+        };
+        match name.trim().to_ascii_lowercase().as_str() {
+            "via" | "v" => vias.push(l),
+            "from" | "f" => from = Some(l),
+            "to" | "t" => to = Some(l),
+            "call-id" | "i" => call_id = Some(l),
+            "cseq" => cseq = Some(l),
+            _ => {}
+        }
+    }
+    let (from, to, call_id, cseq) = (from?, to?, call_id?, cseq?);
+    if vias.is_empty() {
+        return None;
+    }
+    let mut tag = [0u8; 4];
+    getrandom::fill(&mut tag).ok()?;
+    let to = if to.to_ascii_lowercase().contains(";tag=") {
+        to.to_string()
+    } else {
+        let t: String = tag.iter().map(|b| format!("{b:02x}")).collect();
+        format!("{to};tag=e2e{t}")
+    };
+    let mut sip = String::from("SIP/2.0 603 Decline\r\n");
+    for v in vias {
+        sip.push_str(v);
+        sip.push_str("\r\n");
+    }
+    for h in [from, &to, call_id, cseq] {
+        sip.push_str(h);
+        sip.push_str("\r\n");
+    }
+    sip.push_str("Content-Length: 0\r\n\r\n");
+    let mut cookie = [0u8; 8];
+    getrandom::fill(&mut cookie).ok()?;
+    let name = &peer.as_bytes()[..peer.len().min(255)];
+    let mut p = crate::snac::FOOD_ICBM.to_be_bytes().to_vec();
+    p.extend_from_slice(&crate::snac::ICBM_MSG_TO_HOST.to_be_bytes());
+    p.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+    p.extend_from_slice(&cookie);
+    p.extend_from_slice(&crate::calls::CHANNEL_SIP.to_be_bytes());
+    p.push(name.len() as u8);
+    p.extend_from_slice(name);
+    crate::snac::put_tlv(&mut p, crate::calls::TLV_SIP, sip.as_bytes());
+    Some(p)
+}
+
+/// The Call-ID of an INVITE request, `None` for any other SIP message.
+pub fn invite_call_id(sip: &[u8]) -> Option<String> {
+    let s = Sip::parse(sip)?;
+    matches!(&s.start, Start::Request(m) if m == "INVITE").then_some(s.call_id)
+}
+
 /// The words for why a call goes plain.
 pub mod why {
     pub fn no_offer(peer: &str) -> String {
@@ -885,6 +954,19 @@ impl CallTable {
             }
         }
         self.calls.insert(h, c);
+    }
+
+    /// Whether an incoming INVITE with `call_id` in `peer`'s name is vouched
+    /// for end to end (sixth audit of 2026-10, finding 3): the key offer
+    /// `peer`'s add-on sends before its INVITE has come over the Olm session
+    /// and waits for it, or the call is one already set up with `peer` (a
+    /// re-INVITE). Nothing is consumed: the INVITE takes the offer itself
+    /// when it goes on ([`Self::sip`]).
+    pub fn vouched(&self, peer: &str, call_id: &str) -> bool {
+        let h = short(&call_digest(call_id));
+        let p = sign::ident(peer);
+        self.calls.get(&h).is_some_and(|c| c.peer == p)
+            || self.offers.get(&h).is_some_and(|o| o.peer == p)
     }
 
     /// A call control message from `peer`, sent by its device `sender`.

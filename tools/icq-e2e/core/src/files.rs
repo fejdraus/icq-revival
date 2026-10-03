@@ -211,6 +211,28 @@ pub fn rendezvous(dir: Direction, payload: &[u8]) -> Option<Rendezvous> {
     parse_data(dir, peer, data)
 }
 
+/// A cancel of the file proposal `cookie` to `peer`, as the client would
+/// send it (`ICBMChannelMsgToHost`, channel 2, reason 1 "declined"), as a
+/// SNAC payload with request id 0: what the add-on sends the sender of a
+/// proposal it did not let through (sixth audit of 2026-10, finding 3), so
+/// the sender's client stops waiting.
+pub fn cancel_to_host(peer: &str, cookie: &[u8; 8]) -> Vec<u8> {
+    let mut data = RDV_CANCEL.to_be_bytes().to_vec();
+    data.extend_from_slice(cookie);
+    data.extend_from_slice(&CAP_FILE_TRANSFER);
+    snac::put_tlv(&mut data, RDV_TLV_CANCEL_REASON, &1u16.to_be_bytes());
+    let name = &peer.as_bytes()[..peer.len().min(255)];
+    let mut p = snac::FOOD_ICBM.to_be_bytes().to_vec();
+    p.extend_from_slice(&snac::ICBM_MSG_TO_HOST.to_be_bytes());
+    p.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+    p.extend_from_slice(cookie);
+    p.extend_from_slice(&icbm::CHANNEL_RENDEZVOUS.to_be_bytes());
+    p.push(name.len() as u8);
+    p.extend_from_slice(name);
+    snac::put_tlv(&mut p, icbm::TLV_RENDEZVOUS_DATA, &data);
+    p
+}
+
 /// The channel-2 data: `type | cookie | capability | TLVs`.
 fn parse_data(dir: Direction, peer: String, data: &[u8]) -> Option<Rendezvous> {
     let mut r = Reader::new(data);

@@ -659,6 +659,26 @@ impl Crypto for Withheld {
         Some(why)
     }
 
+    /// Unknown, so protected: there is no state to tell the contact's policy
+    /// by, and no session to authenticate anything over.
+    fn protected(&self, peer: &str) -> Option<String> {
+        Some(format!(
+            "the add-on cannot read its settings for {peer}: {}",
+            self.why.trim_end_matches('.')
+        ))
+    }
+
+    fn unauthenticated(&mut self, peer: &str, what: &str, note: String, now: u64) {
+        crate::crypto::unauthenticated_note(
+            &mut self.plain_said,
+            &mut self.notes,
+            peer,
+            what,
+            note,
+            now,
+        );
+    }
+
     fn note(&mut self, peer: &str, text: String) {
         self.notes.push(Note::to(peer, text));
     }

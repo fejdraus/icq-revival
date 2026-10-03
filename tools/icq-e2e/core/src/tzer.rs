@@ -1,10 +1,28 @@
-//! The one unencrypted channel-1 form that may be shown in a protected
-//! contact's name: a tZer exactly as our server writes it for ICQ 7.2.
+//! tZers in a protected contact's name (fifth and sixth audits of 2026-10).
 //!
-//! ICQ 6.5 sends a tZer as a channel-2 plugin message, which the add-on does
-//! not encrypt (it carries no text the add-on handles); the server turns it
-//! into the channel-1 form ICQ 7.2 plays (`foodgroup/icbm_tzer.go`,
-//! `tzerForRecipient`, `tzerIMFragments`):
+//! A tZer is a short public animation, not a secret: its document names one
+//! of the movies the server hands out and a caption. The add-on therefore
+//! never encrypts one (sixth audit, finding 4): the server must be able to
+//! read it to turn one client's form into the other's (`foodgroup/icbm_tzer.go`,
+//! `tzerForRecipient`) - ICQ 6.5 sends a channel-2 plugin message, ICQ 7.2 a
+//! channel-1 IM with the tZer mark. Encrypted, ICQ 7.2's tZer reached ICQ 6.5
+//! as a plugin message whose document was the armoured container.
+//!
+//! What makes a tZer the contact's is authentication instead: just before
+//! the tZer goes, the sender's add-on sends an Olm control message,
+//! [`Notice`] (`IQT1 | 1 | hash`), with the hash of the document
+//! ([`doc_hash`]), which the server copies unchanged through either
+//! translation. The receiver's add-on shows a tZer in a protected contact's
+//! name only when a notice from that contact with the same hash arrived
+//! (held up to a few seconds for it, then dropped with a warning); each
+//! notice vouches for one tZer. An automatic contact's tZers pass as before.
+//!
+//! On the way out only a document of the known list on the configured
+//! server ([`served_doc`]) is left unencrypted; any other channel-1 "tZer" is
+//! text and encrypted as before. On the way in, a protected contact's tZer
+//! must be such a document as well as announced.
+//!
+//! The server's channel-1 form, for reference:
 //!
 //! ```text
 //! 05 01 00 01 01               features: text
@@ -12,23 +30,20 @@
 //! 01 01 <len> 00 02 00 2D ...  the document in UCS-2BE
 //! ```
 //!
-//! with the document ICQ 6.5 wrote, as the clients' `tzer.xml` lists them:
+//! with the document as the clients' `tzer.xml` lists them:
 //!
 //! ```text
 //! <tzerRoot id="cantH" url="https://<server>[:port]/icq/tzers/canthearu.swf"
 //!     thumb="https://<server>[:port]/icq/tzers/canthearu.png" name="..." freeData=""/>
 //! ```
 //!
-//! Plaintext, so on its own it would be dropped for a protected contact
-//! (fifth audit of 2026-10, finding 1) - which broke tZers between a 6.5 and
-//! a 7.2 that are verified to each other. [`is_served_tzer`] recognises
-//! exactly that form and nothing else: the three fragments in that order, the
-//! attributes in that order, an id of the known list with its own movie and
-//! picture, both on the configured server's `/icq/tzers/` path, an empty
-//! `freeData`, a short name of letters, digits, spaces and a little
-//! punctuation (the tZer's caption in the sender's language), at most
-//! [`MAX_DOC`] characters, and nothing before or after. Anything that
-//! deviates is text, and is dropped as text.
+//! [`served_doc`] takes exactly that: the attributes in that order, an id of
+//! the known list with its own movie and picture, both on the configured
+//! server's `/icq/tzers/` path, an empty `freeData`, a short name of letters,
+//! digits, spaces and a little punctuation (the caption in the sender's
+//! language), at most [`MAX_DOC`] characters, and nothing before or after.
+
+use crate::snac;
 
 /// `CapICQTZers` (`B2EC8F16-7C6F-451B-BD79-DC58497888B9`, `wire/snacs.go`).
 pub const CAP_ICQ_TZERS: [u8; 16] = [
@@ -104,7 +119,7 @@ pub fn is_served_tzer(frags: &[u8], server: &str) -> bool {
 }
 
 /// Whether `doc` is a tZer document of the known list on `server`.
-fn served_doc(doc: &str, server: &str) -> bool {
+pub fn served_doc(doc: &str, server: &str) -> bool {
     if doc.chars().count() > MAX_DOC || server.is_empty() {
         return false;
     }
@@ -164,6 +179,118 @@ fn plain_name(name: &str) -> bool {
             .chars()
             .all(|c| c.is_alphanumeric() || matches!(c, ' ' | '\'' | '!' | '?' | '.' | ',' | '-'))
         && !name.contains("..")
+}
+
+/// What an `IQT1` payload starts with, inside the control envelope.
+pub const MAGIC: &[u8; 4] = b"IQT1";
+const T_NOTICE: u8 = 1;
+
+/// How long a notice waits for its tZer, in seconds.
+pub const NOTICE_TTL: u64 = 120;
+/// Notices kept at most; the oldest goes first.
+pub const MAX_NOTICES: usize = 32;
+
+/// A tZer's announcement: `IQT1 | 1 | hash[16]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Notice {
+    pub hash: [u8; 16],
+}
+
+impl Notice {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut v = MAGIC.to_vec();
+        v.push(T_NOTICE);
+        v.extend_from_slice(&self.hash);
+        v
+    }
+
+    /// `None` for anything that is not exactly a notice.
+    pub fn decode(b: &[u8]) -> Option<Notice> {
+        let rest = b.strip_prefix(MAGIC)?;
+        let (&kind, hash) = rest.split_first()?;
+        if kind != T_NOTICE || hash.len() != 16 {
+            return None;
+        }
+        let mut h = [0u8; 16];
+        h.copy_from_slice(hash);
+        Some(Notice { hash: h })
+    }
+}
+
+/// The hash a notice names: SHA-256 of the document in UTF-8, without a
+/// trailing CRLF or NUL, cut to 16 bytes. The same whichever form the tZer
+/// travels in: the server copies the document unchanged.
+pub fn doc_hash(doc: &str) -> [u8; 16] {
+    let d = ring::digest::digest(
+        &ring::digest::SHA256,
+        doc.trim_end_matches(['\r', '\n', '\0']).as_bytes(),
+    );
+    let mut h = [0u8; 16];
+    h.copy_from_slice(&d.as_ref()[..16]);
+    h
+}
+
+/// The tZer plugin's GUID in the service data,
+/// `{4FA6F34C-09B7-FD48-9208-7E857AE07330}` (`tzerPluginGUID`).
+const PLUGIN_GUID: [u8; 16] = [
+    0x4F, 0xA6, 0xF3, 0x4C, 0x09, 0xB7, 0xFD, 0x48, 0x92, 0x08, 0x7E, 0x85, 0x7A, 0xE0, 0x73, 0x30,
+];
+/// The plugin function that sends a tZer.
+const PLUGIN_FUNCTION: &[u8] = b"Send Tzer";
+
+/// The document of a channel-1 tZer: fragment list `frags` (TLV `0x0002`)
+/// with the tZer mark (fragment `0x10`, `CapICQTZers`); the text of fragment
+/// 1, decoded. `None` for a message without the mark.
+pub fn ch1_doc(frags: &[u8]) -> Option<String> {
+    let mut r = snac::Reader::new(frags);
+    let mut marked = false;
+    let mut doc = None;
+    while r.remaining() >= 4 {
+        let (id, _version, len) = (r.u8()?, r.u8()?, r.u16()?);
+        let p = r.bytes(len as usize)?;
+        match id {
+            0x10 => marked |= p == CAP_ICQ_TZERS,
+            0x01 if p.len() >= 4 && doc.is_none() => {
+                let charset = u16::from_be_bytes([p[0], p[1]]);
+                doc = Some(crate::text::decode(charset, &p[4..]));
+            }
+            _ => {}
+        }
+    }
+    if marked {
+        doc
+    } else {
+        None
+    }
+}
+
+/// The document of a channel-2 tZer: the rendezvous data (TLV `0x0005`) of a
+/// proposal under the ICQ server relay capability whose service data names
+/// the tZer plugin and its "Send Tzer" function, read the way the server
+/// reads it (`parseTzerPlugin`). `None` for anything else.
+pub fn plugin_doc(data: &[u8]) -> Option<String> {
+    let mut r = snac::Reader::new(data);
+    if r.u16()? != 0 {
+        return None;
+    }
+    r.skip(8)?;
+    if r.bytes(16)? != crate::icbm::CAP_ICQ_SERVER_RELAY {
+        return None;
+    }
+    let tlvs = snac::read_tlvs(r.bytes(r.remaining())?);
+    let svc = snac::find_tlv(&tlvs, crate::icbm::RDV_TLV_SVC_DATA)?;
+    let at = svc.windows(16).position(|w| w == PLUGIN_GUID)?;
+    if at < 2
+        || !svc[at..]
+            .windows(PLUGIN_FUNCTION.len())
+            .any(|w| w == PLUGIN_FUNCTION)
+    {
+        return None;
+    }
+    let pos = at + u16::from_le_bytes([svc[at - 2], svc[at - 1]]) as usize;
+    let len = u32::from_le_bytes(svc.get(pos + 4..pos + 8)?.try_into().ok()?) as usize;
+    let doc = svc.get(pos + 8..(pos + 8).checked_add(len)?)?;
+    Some(String::from_utf8_lossy(doc).into_owned())
 }
 
 #[cfg(test)]
