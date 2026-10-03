@@ -1779,7 +1779,9 @@ namespace IcqRevival.Patch
         string RemovalState(Removal r)
         {
             string path = At(r.Path);
-            bool gone = !PatchFiles.Exists(path);
+            // Our E2E add-on lives in tbdiag.dll's slot: the stock module is
+            // gone when the slot holds ours, so the fix is not undone by it.
+            bool gone = !PatchFiles.Exists(path) || (r.Path == E2eProbeFile && IsOurE2e(path));
             bool saved = PatchFiles.Exists(path + Suffix);
             if (gone && saved) return "patched";
             if (!gone) return "original";
@@ -1943,6 +1945,20 @@ namespace IcqRevival.Patch
                 if (codeNote != null) notes.Add(codeNote);
             }
 
+            PatchSteps.Step("tZers player...");
+            string playerNote = SetPlayer(wanted("tzers-player"));
+            if (playerNote != null) notes.Add(playerNote);
+
+            // The E2E add-on first: it backs the stock tbdiag.dll up before ours
+            // goes into its slot, and puts the stock back when it is taken out.
+            PatchSteps.Step("E2E add-on...");
+            string e2eNote = SetE2e(wanted(E2eIni.E2eJob), wanted(E2eIni.TlsJob), wanted(E2eIni.CallsJob), wanted(E2eIni.FilesJob), domain);
+            if (e2eNote != null) notes.Add(e2eNote);
+
+            // The fix after the add-on: the add-on lives in tbdiag.dll's slot.
+            // With ours there the stock module is already gone (kept as the
+            // backup); without it, a stock the add-on's removal has just put
+            // back is renamed aside again. Ours is never renamed or removed here.
             foreach (Removal r in Removals)
             {
                 PatchSteps.Step("Renaming " + PatchFiles.Leaf(r.Path) + "...");
@@ -1955,21 +1971,11 @@ namespace IcqRevival.Patch
                     if (state == "original" && PatchFiles.Exists(path + Suffix)) PatchFiles.Discard(path);
                     else if (state == "original") PatchFiles.Rename(path, PatchFiles.Leaf(path) + Suffix);
                 }
-                else if (state == "patched")
+                else if (state == "patched" && !IsOurE2e(path))
                 {
                     PatchFiles.Rename(path + Suffix, PatchFiles.Leaf(path));
                 }
             }
-
-            PatchSteps.Step("tZers player...");
-            string playerNote = SetPlayer(wanted("tzers-player"));
-            if (playerNote != null) notes.Add(playerNote);
-
-            // The E2E add-on after the fix removal, so ours goes into a freed
-            // slot or over the stock, as the two selections require.
-            PatchSteps.Step("E2E add-on...");
-            string e2eNote = SetE2e(wanted(E2eIni.E2eJob), wanted(E2eIni.TlsJob), wanted(E2eIni.CallsJob), wanted(E2eIni.FilesJob), domain);
-            if (e2eNote != null) notes.Add(e2eNote);
             // Whatever the selection: the lock button is gone for good.
             TakeDroppedLockFiles();
 
