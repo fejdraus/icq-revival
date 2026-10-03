@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -89,24 +90,25 @@ func TestSQLiteUserStore_E2EKT_RecordsEveryChange(t *testing.T) {
 
 	require.NoError(t, f.E2ERotateAccountKey(ctx, e2eAlice, bytes32(1), bytes32(2), bytes32(8),
 		[]E2EDeviceSignature{{DeviceID: 1, AccountSignature: []byte{7, 7}}}, e2eT0.Add(time.Hour)))
-	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, e2eT0.Add(2*time.Hour)))
+	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, E2ERecovery("test"), e2eT0.Add(2*time.Hour)))
 	// Revoking a revoked device is a no-op.
-	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, e2eT0.Add(3*time.Hour)))
+	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, E2ERecovery("test"), e2eT0.Add(3*time.Hour)))
 	require.NoError(t, f.E2EResetAccountKey(ctx, e2eAlice, bytes32(2), bytes32(3), e2eT0.Add(4*time.Hour)))
 
 	assert.Equal(t, []string{
 		"account alice", "device alice", "device alice",
 		"account alice", "resign alice", "revoke alice",
-		"revoke alice",
+		"recovery-revoke alice", "revoke alice",
 		"account alice",
 	}, ktKinds(t, f))
-	assert.EqualValues(t, 8, ktCheckRoot(t, f))
+	assert.EqualValues(t, 9, ktCheckRoot(t, f))
 
 	leaves, err := f.E2EKTEntries(ctx, 0, E2EKTMaxEntries)
 	require.NoError(t, err)
 	assert.Equal(t, [][]byte{[]byte("rotate"), bytes32(2), bytes32(8)}, ktFields(t, leaves[3])[3:])
 	assert.Equal(t, [][]byte{{0, 0, 0, 1}, {7, 7}}, ktFields(t, leaves[4])[3:])
 	assert.Equal(t, [][]byte{{0, 0, 0, 2}}, ktFields(t, leaves[5])[3:])
+	assert.Equal(t, [][]byte{{0, 0, 0, 1}, []byte("test")}, ktFields(t, leaves[6])[3:])
 	dev := e2eTestDevice(2, 20)
 	assert.Equal(t, [][]byte{{0, 0, 0, 2}, dev.Curve25519Key, dev.Ed25519Key, dev.AccountSignature}, ktFields(t, leaves[2])[3:])
 
@@ -128,7 +130,7 @@ func TestSQLiteUserStore_E2EKT_Genesis(t *testing.T) {
 	require.NoError(t, err)
 	_, err = f.E2EPutDevice(ctx, e2eAlice, bytes32(1), e2eTestDevice(2, 20), 10, e2eT0)
 	require.NoError(t, err)
-	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 2, e2eT0))
+	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 2, E2ERecovery("test"), e2eT0))
 	for _, q := range []string{`DELETE FROM e2e_kt_leaf`, `DELETE FROM e2e_kt_hash`, `DELETE FROM e2e_kt_meta`} {
 		_, err := f.db.ExecContext(ctx, q)
 		require.NoError(t, err)
@@ -170,8 +172,58 @@ func TestSQLiteUserStore_E2EKT_ManyLeaves(t *testing.T) {
 		_, err := f.E2EPutDevice(ctx, e2eAlice, bytes32(1), e2eTestDevice(i, byte(i*2)), 100, e2eT0)
 		require.NoError(t, err)
 		if i%3 == 0 {
-			require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, i, e2eT0))
+			require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, i, E2ERecovery("test"), e2eT0))
 		}
 		ktCheckRoot(t, f)
 	}
+}
+
+// Second audit of 2026-10, finding 1: the log says on whose word a device was
+// revoked or an account deleted - the owner's signature, or the operator's
+// recovery - in a leaf right before the revoke or delete, and a change on
+// the owner's word needs the owner's key to still be the account's.
+func TestSQLiteUserStore_E2EKT_RecordsWhoRevokedAndDeleted(t *testing.T) {
+	ctx := context.Background()
+	f := newE2ETestStore(t)
+	require.NoError(t, f.E2EPublishAccountKey(ctx, e2eAlice, bytes32(1), e2eT0))
+	for i := uint32(1); i <= 2; i++ {
+		_, err := f.E2EPutDevice(ctx, e2eAlice, bytes32(1), e2eTestDevice(i, byte(i)), 10, e2eT0)
+		require.NoError(t, err)
+	}
+	sig := bytes.Repeat([]byte{9}, 64)
+
+	assert.ErrorIs(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, E2EAuthority{}, e2eT0), ErrE2ENoAuthority)
+	assert.ErrorIs(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, E2EOwner(bytes32(7), 100, sig), e2eT0), ErrE2EAccountKeyChanged)
+	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, E2EOwner(bytes32(1), 100, sig), e2eT0))
+	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 2, E2ERecovery("lost laptop"), e2eT0))
+	assert.ErrorIs(t, f.E2EDeleteAccountKeys(ctx, e2eAlice, E2EOwner(bytes32(7), 200, sig), e2eT0), ErrE2EAccountKeyChanged)
+	require.NoError(t, f.E2EDeleteAccountKeys(ctx, e2eAlice, E2EOwner(bytes32(1), 200, sig), e2eT0))
+	acc, err := f.E2EAccount(ctx, e2eAlice)
+	require.NoError(t, err)
+	assert.Nil(t, acc, "the owner's delete takes the keys")
+	devs, err := f.E2EDevices(ctx, e2eAlice)
+	require.NoError(t, err)
+	assert.Empty(t, devs)
+	assert.ErrorIs(t, f.E2EDeleteAccountKeys(ctx, e2eAlice, E2EOwner(bytes32(1), 200, sig), e2eT0), ErrE2EAccountNotFound)
+
+	// The same UIN publishes again and the operator deletes the user.
+	require.NoError(t, f.E2EPublishAccountKey(ctx, e2eAlice, bytes32(2), e2eT0))
+	require.NoError(t, f.DeleteUser(ctx, e2eAlice))
+
+	assert.Equal(t, []string{
+		"account alice", "device alice", "device alice",
+		"owner-revoke alice", "revoke alice",
+		"recovery-revoke alice", "revoke alice",
+		"owner-delete alice", "delete alice",
+		"account alice",
+		"recovery-delete alice", "delete alice",
+	}, ktKinds(t, f))
+	leaves, err := f.E2EKTEntries(ctx, 0, E2EKTMaxEntries)
+	require.NoError(t, err)
+	at := func(n int64) []byte { return binary.BigEndian.AppendUint64(nil, uint64(n)) }
+	assert.Equal(t, [][]byte{{0, 0, 0, 1}, at(100), sig}, ktFields(t, leaves[3])[3:])
+	assert.Equal(t, [][]byte{{0, 0, 0, 2}, []byte("lost laptop")}, ktFields(t, leaves[5])[3:])
+	assert.Equal(t, [][]byte{at(200), sig}, ktFields(t, leaves[7])[3:])
+	assert.Equal(t, [][]byte{[]byte("the account was deleted")}, ktFields(t, leaves[10])[3:])
+	ktCheckRoot(t, f)
 }

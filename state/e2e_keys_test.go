@@ -177,7 +177,7 @@ func TestSQLiteUserStore_E2EResetAccountKey(t *testing.T) {
 
 	assert.ErrorIs(t, f.E2EResetAccountKey(ctx, e2eAlice, bytes32(1), bytes32(2), e2eT0), ErrE2EActiveDevices)
 
-	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 10, e2eT0))
+	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 10, E2ERecovery("test"), e2eT0))
 	assert.ErrorIs(t, f.E2EResetAccountKey(ctx, e2eAlice, bytes32(7), bytes32(2), e2eT0), ErrE2EAccountKeyChanged)
 	require.NoError(t, f.E2EResetAccountKey(ctx, e2eAlice, bytes32(1), bytes32(2), e2eT0))
 
@@ -213,7 +213,7 @@ func TestSQLiteUserStore_E2EPutDevice(t *testing.T) {
 			_, err := f.E2EPutDevice(ctx, e2eAlice, bytes32(1), e2eTestDevice(1, 1), 10, e2eT0)
 			require.NoError(t, err)
 			if tc.revokeFirst {
-				require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, e2eT0))
+				require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, E2ERecovery("test"), e2eT0))
 			}
 
 			later := e2eT0.Add(time.Minute)
@@ -286,15 +286,15 @@ func TestSQLiteUserStore_E2EOneTimeKeys(t *testing.T) {
 	_, err = f.E2EClaimKey(ctx, e2eAlice, 99)
 	assert.ErrorIs(t, err, ErrE2EDeviceNotFound)
 
-	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, e2eT0))
+	require.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, E2ERecovery("test"), e2eT0))
 	_, err = f.E2EClaimKey(ctx, e2eAlice, 1)
 	assert.ErrorIs(t, err, ErrE2EDeviceRevoked)
 	assert.ErrorIs(t, f.E2ESetFallbackKey(ctx, e2eAlice, 1, key("g"), e2eT0), ErrE2EDeviceRevoked)
 	_, hasFallback, err := f.E2EKeyStatus(ctx, e2eAlice, 1)
 	require.NoError(t, err)
 	assert.False(t, hasFallback)
-	assert.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, e2eT0), "revoking twice is a no-op")
-	assert.ErrorIs(t, f.E2ERevokeDevice(ctx, e2eAlice, 99, e2eT0), ErrE2EDeviceNotFound)
+	assert.NoError(t, f.E2ERevokeDevice(ctx, e2eAlice, 1, E2ERecovery("test"), e2eT0), "revoking twice is a no-op")
+	assert.ErrorIs(t, f.E2ERevokeDevice(ctx, e2eAlice, 99, E2ERecovery("test"), e2eT0), ErrE2EDeviceNotFound)
 }
 
 func TestSQLiteUserStore_E2ELinkRequests(t *testing.T) {

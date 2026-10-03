@@ -977,7 +977,9 @@ func (f SQLiteUserStore) DeleteUser(ctx context.Context, screenName IdentScreenN
 	// records that in the same transaction, so a later account on the same
 	// number is a new account there too and not a key quietly replaced.
 	err := f.e2eTx(ctx, func(tx *sql.Tx) error {
-		if err := e2eKTDeleteAccount(ctx, tx, screenName, time.Now()); err != nil {
+		// Not on the owner's account key: a recovery, which clients take
+		// as the end of this identity.
+		if err := e2eKTDeleteAccount(ctx, tx, screenName, E2ERecovery("the account was deleted"), time.Now()); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `DELETE FROM users WHERE identScreenName = ?`, screenName.String())

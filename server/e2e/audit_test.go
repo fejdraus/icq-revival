@@ -4,7 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,7 +36,7 @@ func auditedDirectory(t *testing.T) (*testDirectory, *httptest.Server, *Auditor)
 	t.Cleanup(srv.Close)
 	return d, srv, &Auditor{
 		Base: srv.URL + "/e2e/v1/", Name: testAuditor, Key: priv,
-		Client: srv.Client(), Now: time.Now,
+		Client: srv.Client(), Now: time.Now, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 
@@ -138,41 +143,156 @@ func TestAuditState_Rules(t *testing.T) {
 	curve, ed := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
 	devSig := ed25519.Sign(priv, DeviceMessage(sn, 1, curve, ed))
 	at := time.Unix(1, 0)
+	be := func(n int64) []byte { return binary.BigEndian.AppendUint64(nil, uint64(n)) }
 	publish := state.E2EKTLeaf("account", sn, at, []byte("publish"), pub)
 	device := state.E2EKTLeaf("device", sn, at, []byte{0, 0, 0, 1}, curve, ed, devSig)
 	revoke := state.E2EKTLeaf("revoke", sn, at, []byte{0, 0, 0, 1})
+	ownerRevoke := state.E2EKTLeaf("owner-revoke", sn, at, []byte{0, 0, 0, 1}, be(7), ed25519.Sign(priv, RevokeMessage(sn, 1, 7)))
+	forgedRevoke := state.E2EKTLeaf("owner-revoke", sn, at, []byte{0, 0, 0, 1}, be(7), ed25519.Sign(priv2, RevokeMessage(sn, 1, 7)))
+	recoveryRevoke := state.E2EKTLeaf("recovery-revoke", sn, at, []byte{0, 0, 0, 1}, []byte("lost laptop"))
 	reset := state.E2EKTLeaf("account", sn, at, []byte("reset"), pub2)
+	rotate := state.E2EKTLeaf("account", sn, at, []byte("rotate"), pub2, ed25519.Sign(priv, RotateMessage(sn, pub, pub2)))
+	resign := state.E2EKTLeaf("resign", sn, at, []byte{0, 0, 0, 1}, ed25519.Sign(priv2, DeviceMessage(sn, 1, curve, ed)))
+	del := state.E2EKTLeaf("delete", sn, at)
+	ownerDelete := state.E2EKTLeaf("owner-delete", sn, at, be(9), ed25519.Sign(priv, DeleteMessage(sn, 9)))
+	forgedDelete := state.E2EKTLeaf("owner-delete", sn, at, be(9), ed25519.Sign(priv2, DeleteMessage(sn, 9)))
+	recoveryDelete := state.E2EKTLeaf("recovery-delete", sn, at, []byte("the account was deleted"))
 	cases := []struct {
 		name   string
 		leaves [][]byte
 		why    string
+		// recovered are the entries the auditor logs as the operator's.
+		recovered []int
 	}{
-		{"publish over a key", [][]byte{publish, publish}, "already has a key"},
-		{"reset with an active device", [][]byte{publish, device, reset}, "still has active devices"},
-		{"rotation without the old key", [][]byte{publish, state.E2EKTLeaf("account", sn, at, []byte("rotate"), pub2, ed25519.Sign(priv2, RotateMessage(sn, pub, pub2)))}, "not signed by the old key"},
-		{"device id used again", [][]byte{publish, device, revoke, device}, "used before"},
-		{"revoke twice", [][]byte{publish, device, revoke, revoke}, "no such active device"},
-		{"unknown kind", [][]byte{publish, state.E2EKTLeaf("future", sn, at)}, "unknown kind"},
-		{"device of no account", [][]byte{device}, "no account"},
-		{"fine", [][]byte{publish, device, revoke, reset, state.E2EKTLeaf("account", sn, at, []byte("rotate"), pub, ed25519.Sign(priv2, RotateMessage(sn, pub2, pub))), state.E2EKTLeaf("delete", sn, at), publish}, ""},
+		{name: "publish over a key", leaves: [][]byte{publish, publish}, why: "already has a key"},
+		{name: "reset with an active device", leaves: [][]byte{publish, device, reset}, why: "still has active devices"},
+		{name: "rotation without the old key", leaves: [][]byte{publish, state.E2EKTLeaf("account", sn, at, []byte("rotate"), pub2, ed25519.Sign(priv2, RotateMessage(sn, pub, pub2)))}, why: "not signed by the old key"},
+		{name: "device id used again", leaves: [][]byte{publish, device, ownerRevoke, revoke, device}, why: "used before"},
+		{name: "revoke twice", leaves: [][]byte{publish, device, ownerRevoke, revoke, ownerRevoke}, why: "no such active device"},
+		{name: "unknown kind", leaves: [][]byte{publish, state.E2EKTLeaf("future", sn, at)}, why: "unknown kind"},
+		{name: "device of no account", leaves: [][]byte{device}, why: "no account"},
+		// Second audit of 2026-10, finding 1.
+		{name: "a revoke without the owner's signature", leaves: [][]byte{publish, device, revoke}, why: "without the owner's signature or a recovery entry"},
+		{name: "a revoke signed by another key", leaves: [][]byte{publish, device, forgedRevoke}, why: "not signed by the account key"},
+		{name: "a revoke signed for another time", leaves: [][]byte{publish, device, state.E2EKTLeaf("owner-revoke", sn, at, []byte{0, 0, 0, 1}, be(8), ed25519.Sign(priv, RevokeMessage(sn, 1, 7)))}, why: "not signed by the account key"},
+		{name: "an owner's revoke not followed by its revoke", leaves: [][]byte{publish, device, ownerRevoke, reset}, why: "not followed by its revoke"},
+		{name: "a recovery not followed by its revoke", leaves: [][]byte{publish, device, recoveryRevoke, publish}, why: "not followed by its revoke"},
+		{name: "a delete without the owner's signature", leaves: [][]byte{publish, del}, why: "without the owner's signature or a recovery entry"},
+		{name: "a delete signed by another key", leaves: [][]byte{publish, forgedDelete}, why: "not signed by the account key"},
+		{name: "a re-signed device needs the owner to revoke it", leaves: [][]byte{publish, device, rotate, resign, revoke}, why: "without the owner's signature or a recovery entry"},
+		{name: "signed revokes and deletes", leaves: [][]byte{publish, device, ownerRevoke, revoke, ownerDelete, del, publish}},
+		{name: "a device a rotation left unsigned", leaves: [][]byte{publish, device, rotate, revoke}},
+		{name: "the operator's recovery is taken and flagged", leaves: [][]byte{publish, device, recoveryRevoke, revoke, reset}, recovered: []int{2, 4}},
+		{name: "a key after the operator deleted the account is flagged", leaves: [][]byte{publish, recoveryDelete, del, publish}, recovered: []int{1, 3}},
+		{name: "a log of publishes and devices only", leaves: [][]byte{publish, device}},
+		{name: "fine", leaves: [][]byte{publish, device, ownerRevoke, revoke, reset, state.E2EKTLeaf("account", sn, at, []byte("rotate"), pub, ed25519.Sign(priv2, RotateMessage(sn, pub2, pub))), ownerDelete, del, publish}, recovered: []int{4}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var st AuditState
 			var err error
+			var recovered []int
 			for i, l := range tc.leaves {
-				if err = st.apply(int64(i), l); err != nil {
+				var what string
+				if what, err = st.apply(int64(i), l); err != nil {
 					break
+				}
+				if what != "" {
+					recovered = append(recovered, i)
 				}
 			}
 			if tc.why == "" {
 				assert.NoError(t, err)
+				assert.Equal(t, tc.recovered, recovered)
 			} else {
 				require.ErrorIs(t, err, ErrViolation)
 				assert.Contains(t, err.Error(), tc.why)
 			}
 		})
 	}
+}
+
+// An auditor's state from before the authority entries has devices without
+// the stale flag: a bare revoke of one is still refused, and its state reads.
+func TestAuditState_OldStateRefusesABareRevoke(t *testing.T) {
+	sn := state.NewIdentScreenName("100001")
+	pub, priv, _ := ed25519.GenerateKey(nil)
+	curve, ed := bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{2}, 32)
+	var st AuditState
+	for i, l := range [][]byte{
+		state.E2EKTLeaf("account", sn, time.Unix(1, 0), []byte("publish"), pub),
+		state.E2EKTLeaf("device", sn, time.Unix(1, 0), []byte{0, 0, 0, 1}, curve, ed, ed25519.Sign(priv, DeviceMessage(sn, 1, curve, ed))),
+	} {
+		_, err := st.apply(int64(i), l)
+		require.NoError(t, err)
+	}
+	raw, err := json.Marshal(st)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "stale")
+	assert.NotContains(t, string(raw), "pending")
+	var old AuditState
+	require.NoError(t, json.Unmarshal(raw, &old))
+	_, err = old.apply(2, state.E2EKTLeaf("revoke", sn, time.Unix(1, 0), []byte{0, 0, 0, 1}))
+	assert.ErrorIs(t, err, ErrViolation)
+}
+
+// Second audit of 2026-10, finding 1, through the real server: the owner's
+// revoke and delete are cosigned quietly; the operator's revoke, a reset, a
+// user the operator deleted and the key published on that number afterwards
+// are cosigned too - the auditor does not stop at a legitimate recovery - but
+// each one is a warning in its log.
+func TestAuditor_TellsTheOwnerFromTheOperator(t *testing.T) {
+	d, _, a := auditedDirectory(t)
+	var logged bytes.Buffer
+	a.Logger = slog.New(slog.NewTextHandler(&logged, nil))
+	ctx := context.Background()
+
+	token, instance := d.signOn("100001")
+	sn := state.NewIdentScreenName("100001")
+	pub, priv := newKey(t)
+	instance.SetE2EAccountKey(pub)
+	require.Equal(t, http.StatusCreated, d.do(http.MethodPut, "/e2e/v1/account", token, accountBody(sn, pub, priv)).status)
+	for _, id := range []uint32{1, 2} {
+		require.Equal(t, http.StatusCreated, d.do(http.MethodPut, fmt.Sprintf("/e2e/v1/devices/%d", id), token, deviceBody(sn, newTestDevice(t, id), priv)).status)
+	}
+	require.Equal(t, http.StatusNoContent, d.do(http.MethodDelete, "/e2e/v1/devices/1", token, revokeBody(sn, 1, priv, time.Now())).status)
+	var st AuditState
+	require.NoError(t, a.Step(ctx, &st))
+	assert.NotContains(t, logged.String(), "recovery", "the owner's revoke is no recovery")
+
+	// The operator revokes the other device and the user resets.
+	require.NoError(t, d.store.E2ERevokeDevice(ctx, sn, 2, state.E2ERecovery("revoked by the operator (management API)"), time.Now()))
+	pub2, priv2 := newKey(t)
+	instance.SetE2EAccountKey(pub2)
+	require.Equal(t, http.StatusOK, d.do(http.MethodPut, "/e2e/v1/account", token, accountBody(sn, pub2, priv2)).status)
+	// Another account: deleted by the operator, then published again.
+	bob, _ := account(t, d, "100002", 1)
+	require.NoError(t, d.store.DeleteUser(ctx, bob))
+	require.NoError(t, d.store.InsertUser(ctx, state.User{IdentScreenName: bob, DisplayScreenName: "100002", IsICQ: true}))
+	bobPub, _ := newKey(t)
+	require.NoError(t, d.store.E2EPublishAccountKey(ctx, bob, bobPub, time.Now()))
+
+	require.NoError(t, a.Step(ctx, &st), "a recovery is cosigned")
+	assert.Empty(t, st.Violation)
+	out := logged.String()
+	for _, want := range []string{
+		"device 2 revoked without the owner's key (revoked by the operator (management API))",
+		"a new account key without the old key's proof (reset)",
+		"the account deleted without the owner's key (the account was deleted)",
+		"a new account key after the operator deleted the account",
+	} {
+		assert.Contains(t, out, want)
+	}
+	assert.Equal(t, 4, strings.Count(out, "level=WARN"), out)
+
+	// The owner deletes its keys with a signed request: quiet again.
+	logged.Reset()
+	at := time.Now()
+	body := map[string]any{"issued_at": at.Unix(), "signature": enc(ed25519.Sign(priv2, DeleteMessage(sn, at.Unix())))}
+	require.Equal(t, http.StatusNoContent, d.do(http.MethodDelete, "/e2e/v1/account", token, body).status)
+	require.NoError(t, a.Step(ctx, &st))
+	assert.NotContains(t, st.Accounts, "100001")
+	assert.Empty(t, logged.String())
 }
 
 func TestHandler_RefusesCosignaturesItCannotTrust(t *testing.T) {
@@ -228,6 +348,7 @@ func TestHandler_SeveralAuditors(t *testing.T) {
 		d.handler.cfg.KTAuditors = append(d.handler.cfg.KTAuditors, CosignerKey(name, priv.Public().(ed25519.PublicKey)))
 		auditors = append(auditors, &Auditor{
 			Base: srv.URL + "/e2e/v1/", Name: name, Key: priv, Client: srv.Client(), Now: time.Now,
+			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		})
 	}
 	configured := append([]string(nil), d.handler.cfg.KTAuditors...)
@@ -284,4 +405,90 @@ func mustLogVerifier(t *testing.T, d *testDirectory) note.Verifier {
 	v, err := note.NewVerifier(strings.TrimSpace(vkey))
 	require.NoError(t, err)
 	return v
+}
+
+// sharedKTVectors are key log leaves of account 100001 (account keys from the
+// Ed25519 seeds 32 x 01 and 32 x 05, device 1 with Curve25519 key 32 x 03 and
+// Ed25519 key 32 x 02, time 1700000000): a publish by the first key, device
+// 1, the owner's revoke of it, the revoke, an owner's revoke signed by the
+// second key, a recovery revoke, a reset to the second key, a recovery
+// delete, the delete, a publish of the second key and the owner's delete.
+// tools/icq-e2e/core/src/kt.rs replays the same leaves in the same
+// sequences and must come to the same verdicts (second audit of 2026-10,
+// finding 1: the client's replay matches the auditor).
+var sharedKTVectors = []string{
+	"T1NDQVItRTJFLUtULXYxAAdhY2NvdW50AAYxMDAwMDEACAAAAABlU/EAAAdwdWJsaXNoACCKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXA==",
+	"T1NDQVItRTJFLUtULXYxAAZkZXZpY2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEAIAMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDACACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgBAymZM6VU7E6HkcvkIbyPYI3F+7UxZBkwaxvlPxTFkyMnL/5uAFJ6R2mFh1CuFjbt5t3+xcBgdP4/BPob0Kj3qBQ==",
+	"T1NDQVItRTJFLUtULXYxAAxvd25lci1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEACAAAAABlU/EAAEBtqTL0mQxf5xJahj15TZDec+7FG277JwFmOjAaE5mXzbSjatUjZLkSw/JxUXnsqSxE837cBwxn3KzjnMHrj6kE",
+	"T1NDQVItRTJFLUtULXYxAAZyZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAE=",
+	"T1NDQVItRTJFLUtULXYxAAxvd25lci1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEACAAAAABlU/EAAED7hSQ8ksBojn+or+VHOMtZQ4C0BYnf64M9ej/d7/TbsAi0iqcXOGyiPf5Xfk+ZjP5+4RCuw7YlBGMUXOldfvED",
+	"T1NDQVItRTJFLUtULXYxAA9yZWNvdmVyeS1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEAC2xvc3QgbGFwdG9w",
+	"T1NDQVItRTJFLUtULXYxAAdhY2NvdW50AAYxMDAwMDEACAAAAABlU/EAAAVyZXNldAAgbnoc3Smwt4/ROvTFWY/v9O8qlxZuPKby5Pv8zYBQW/E=",
+	"T1NDQVItRTJFLUtULXYxAA9yZWNvdmVyeS1kZWxldGUABjEwMDAwMQAIAAAAAGVT8QAAF3RoZSBhY2NvdW50IHdhcyBkZWxldGVk",
+	"T1NDQVItRTJFLUtULXYxAAZkZWxldGUABjEwMDAwMQAIAAAAAGVT8QA=",
+	"T1NDQVItRTJFLUtULXYxAAdhY2NvdW50AAYxMDAwMDEACAAAAABlU/EAAAdwdWJsaXNoACBuehzdKbC3j9E69MVZj+/07yqXFm48pvLk+/zNgFBb8Q==",
+	"T1NDQVItRTJFLUtULXYxAAxvd25lci1kZWxldGUABjEwMDAwMQAIAAAAAGVT8QAACAAAAABlU/EAAEBOWgjh6PMWip+xhnXoAOk4Xy37Uwfp719ulO0e2KzgtRoi7KlikRgHbJXAw/v+U10Ta1Q3fw3En5cZFIcZ5cAA",
+}
+
+// sharedKTSequences are the sequences of sharedKTVectors and their verdict:
+// a violation, or the positions the auditor logs as the operator's recovery.
+var sharedKTSequences = []struct {
+	leaves    []int
+	violation bool
+	recovered []int
+}{
+	{leaves: []int{0, 1, 2, 3}},
+	{leaves: []int{0, 1, 3}, violation: true},
+	{leaves: []int{0, 1, 4}, violation: true},
+	{leaves: []int{0, 1, 5, 3, 6}, recovered: []int{2, 4}},
+	{leaves: []int{0, 7, 8, 9}, recovered: []int{1, 3}},
+	{leaves: []int{0, 8}, violation: true},
+	{leaves: []int{0, 10, 8}},
+	{leaves: []int{0, 10, 9}, violation: true},
+}
+
+func TestAuditState_SharedVectors(t *testing.T) {
+	sn := state.NewIdentScreenName("100001")
+	k1 := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{1}, 32))
+	k2 := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{5}, 32))
+	curve, ed := bytes.Repeat([]byte{3}, 32), bytes.Repeat([]byte{2}, 32)
+	at := time.Unix(1_700_000_000, 0)
+	be := binary.BigEndian.AppendUint64(nil, uint64(at.Unix()))
+	built := [][]byte{
+		state.E2EKTLeaf("account", sn, at, []byte("publish"), k1.Public().(ed25519.PublicKey)),
+		state.E2EKTLeaf("device", sn, at, []byte{0, 0, 0, 1}, curve, ed, ed25519.Sign(k1, DeviceMessage(sn, 1, curve, ed))),
+		state.E2EKTLeaf("owner-revoke", sn, at, []byte{0, 0, 0, 1}, be, ed25519.Sign(k1, RevokeMessage(sn, 1, at.Unix()))),
+		state.E2EKTLeaf("revoke", sn, at, []byte{0, 0, 0, 1}),
+		state.E2EKTLeaf("owner-revoke", sn, at, []byte{0, 0, 0, 1}, be, ed25519.Sign(k2, RevokeMessage(sn, 1, at.Unix()))),
+		state.E2EKTLeaf("recovery-revoke", sn, at, []byte{0, 0, 0, 1}, []byte("lost laptop")),
+		state.E2EKTLeaf("account", sn, at, []byte("reset"), k2.Public().(ed25519.PublicKey)),
+		state.E2EKTLeaf("recovery-delete", sn, at, []byte("the account was deleted")),
+		state.E2EKTLeaf("delete", sn, at),
+		state.E2EKTLeaf("account", sn, at, []byte("publish"), k2.Public().(ed25519.PublicKey)),
+		state.E2EKTLeaf("owner-delete", sn, at, be, ed25519.Sign(k1, DeleteMessage(sn, at.Unix()))),
+	}
+	require.Len(t, sharedKTVectors, len(built))
+	for i, l := range built {
+		assert.Equal(t, sharedKTVectors[i], base64.StdEncoding.EncodeToString(l), "leaf %d", i)
+	}
+	for _, tc := range sharedKTSequences {
+		var st AuditState
+		var err error
+		var recovered []int
+		for pos, i := range tc.leaves {
+			var what string
+			if what, err = st.apply(int64(pos), built[i]); err != nil {
+				break
+			}
+			if what != "" {
+				recovered = append(recovered, pos)
+			}
+		}
+		if tc.violation {
+			assert.ErrorIs(t, err, ErrViolation, "%v", tc.leaves)
+		} else {
+			assert.NoError(t, err, "%v", tc.leaves)
+			assert.Equal(t, tc.recovered, recovered, "%v", tc.leaves)
+		}
+	}
 }

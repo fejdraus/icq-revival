@@ -185,16 +185,16 @@ func (_c *mockE2EDeviceManager_E2EDevices_Call) RunAndReturn(run func(ctx contex
 }
 
 // E2ERevokeDevice provides a mock function for the type mockE2EDeviceManager
-func (_mock *mockE2EDeviceManager) E2ERevokeDevice(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, now time.Time) error {
-	ret := _mock.Called(ctx, screenName, deviceID, now)
+func (_mock *mockE2EDeviceManager) E2ERevokeDevice(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, by state.E2EAuthority, now time.Time) error {
+	ret := _mock.Called(ctx, screenName, deviceID, by, now)
 
 	if len(ret) == 0 {
 		panic("no return value specified for E2ERevokeDevice")
 	}
 
 	var r0 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, state.IdentScreenName, uint32, time.Time) error); ok {
-		r0 = returnFunc(ctx, screenName, deviceID, now)
+	if returnFunc, ok := ret.Get(0).(func(context.Context, state.IdentScreenName, uint32, state.E2EAuthority, time.Time) error); ok {
+		r0 = returnFunc(ctx, screenName, deviceID, by, now)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -210,12 +210,13 @@ type mockE2EDeviceManager_E2ERevokeDevice_Call struct {
 //   - ctx context.Context
 //   - screenName state.IdentScreenName
 //   - deviceID uint32
+//   - by state.E2EAuthority
 //   - now time.Time
-func (_e *mockE2EDeviceManager_Expecter) E2ERevokeDevice(ctx any, screenName any, deviceID any, now any) *mockE2EDeviceManager_E2ERevokeDevice_Call {
-	return &mockE2EDeviceManager_E2ERevokeDevice_Call{Call: _e.mock.On("E2ERevokeDevice", ctx, screenName, deviceID, now)}
+func (_e *mockE2EDeviceManager_Expecter) E2ERevokeDevice(ctx any, screenName any, deviceID any, by any, now any) *mockE2EDeviceManager_E2ERevokeDevice_Call {
+	return &mockE2EDeviceManager_E2ERevokeDevice_Call{Call: _e.mock.On("E2ERevokeDevice", ctx, screenName, deviceID, by, now)}
 }
 
-func (_c *mockE2EDeviceManager_E2ERevokeDevice_Call) Run(run func(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, now time.Time)) *mockE2EDeviceManager_E2ERevokeDevice_Call {
+func (_c *mockE2EDeviceManager_E2ERevokeDevice_Call) Run(run func(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, by state.E2EAuthority, now time.Time)) *mockE2EDeviceManager_E2ERevokeDevice_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 context.Context
 		if args[0] != nil {
@@ -229,15 +230,20 @@ func (_c *mockE2EDeviceManager_E2ERevokeDevice_Call) Run(run func(ctx context.Co
 		if args[2] != nil {
 			arg2 = args[2].(uint32)
 		}
-		var arg3 time.Time
+		var arg3 state.E2EAuthority
 		if args[3] != nil {
-			arg3 = args[3].(time.Time)
+			arg3 = args[3].(state.E2EAuthority)
+		}
+		var arg4 time.Time
+		if args[4] != nil {
+			arg4 = args[4].(time.Time)
 		}
 		run(
 			arg0,
 			arg1,
 			arg2,
 			arg3,
+			arg4,
 		)
 	})
 	return _c
@@ -248,7 +254,7 @@ func (_c *mockE2EDeviceManager_E2ERevokeDevice_Call) Return(err error) *mockE2ED
 	return _c
 }
 
-func (_c *mockE2EDeviceManager_E2ERevokeDevice_Call) RunAndReturn(run func(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, now time.Time) error) *mockE2EDeviceManager_E2ERevokeDevice_Call {
+func (_c *mockE2EDeviceManager_E2ERevokeDevice_Call) RunAndReturn(run func(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, by state.E2EAuthority, now time.Time) error) *mockE2EDeviceManager_E2ERevokeDevice_Call {
 	_c.Call.Return(run)
 	return _c
 }

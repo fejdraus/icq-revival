@@ -15,7 +15,10 @@
 //
 // The key file is made on first use. -print-key prints the verifier key the
 // server's operator puts into E2E_KT_AUDITORS. A violation of the log exits with
-// status 3, for good: the state file records it.
+// status 3, for good: the state file records it. A change the operator made
+// without the account owner's key (a recovery: a device revoked or an account
+// deleted through the management API, a reset) keeps the rules and is
+// cosigned, but logged at WARN, once.
 package main
 
 import (
@@ -74,6 +77,7 @@ func main() {
 		Key:    priv,
 		Client: &http.Client{Timeout: 30 * time.Second},
 		Now:    time.Now,
+		Logger: logger,
 	}
 	logger.Info("auditing", "log", *base, "auditor", e2e.CosignerKey(*name, priv.Public().(ed25519.PublicKey)))
 	for {

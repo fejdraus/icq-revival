@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -33,11 +34,24 @@ import (
 //   - reset: only once every device of the account is revoked;
 //   - device: a device id the account has not used, signed by its key;
 //   - resign: an active device, signed by the account's (new) key;
-//   - revoke: an active device;
-//   - delete: an account that has a key.
+//   - owner-revoke: an active device, and the account key's signature over
+//     the revoke message; the revoke of that device comes next;
+//   - recovery-revoke: an active device; the revoke of that device comes next;
+//   - revoke: an active device, right after its owner-revoke or
+//     recovery-revoke - or one that a rotation left without a signature by
+//     the new key, which the rotation (signed by the old key) cut off anyway;
+//   - owner-delete: the account key's signature over the delete message; the
+//     delete comes next;
+//   - recovery-delete: an account that has a key; the delete comes next;
+//   - delete: right after its owner-delete or recovery-delete.
 //
 // An entry that breaks one is a violation: the auditor stops cosigning for
 // good, so every client soon warns that the log is no longer audited.
+//
+// A change the operator made without the owner's key - recovery-revoke,
+// recovery-delete, a reset, and a publish after a recovery-delete - keeps the
+// rules and is cosigned, but logged as a warning (second audit of 2026-10,
+// finding 1): clients take the account's next key as a new identity.
 
 // AuditState is what an auditor keeps between runs.
 type AuditState struct {
@@ -48,6 +62,12 @@ type AuditState struct {
 	// subtrees, largest first.
 	Edge     [][]byte                 `json:"edge"`
 	Accounts map[string]*auditAccount `json:"accounts"`
+	// Pending is the revoke or delete the previous entry authorised, which
+	// must be the next entry.
+	Pending *auditPending `json:"pending,omitempty"`
+	// Deleted are the accounts the operator deleted without the owner's key,
+	// with why, until a new key is published for them.
+	Deleted map[string]string `json:"deleted,omitempty"`
 	// Violation, once set, is why the auditor no longer cosigns.
 	Violation string `json:"violation,omitempty"`
 }
@@ -62,6 +82,26 @@ type auditAccount struct {
 type auditDevice struct {
 	Curve25519 []byte `json:"curve25519"`
 	Ed25519    []byte `json:"ed25519"`
+	// Stale is set by a rotation and cleared by a re-signature: the device
+	// has no signature by the current account key.
+	Stale bool `json:"stale,omitempty"`
+}
+
+// auditPending is a revoke (of Device) or a delete that an owner-* or
+// recovery-* entry announced.
+type auditPending struct {
+	Kind    string `json:"kind"`
+	Account string `json:"account"`
+	Device  uint32 `json:"device,omitempty"`
+	From    string `json:"from"`
+}
+
+// AuditRecovery is a change the operator made without the owner's key: it
+// keeps the rules, and the auditor logs it.
+type AuditRecovery struct {
+	Index   int64
+	Account string
+	What    string
 }
 
 // ErrViolation wraps what the log did wrong.
@@ -123,11 +163,12 @@ func ktFields(leaf []byte) ([][]byte, bool) {
 	return out, len(out) >= 3 && len(out[2]) == 8
 }
 
-// apply checks one leaf against the rules and replays it.
-func (s *AuditState) apply(index int64, leaf []byte) error {
+// apply checks one leaf against the rules and replays it. It returns what
+// the leaf did without the owner's key, if anything.
+func (s *AuditState) apply(index int64, leaf []byte) (string, error) {
 	f, ok := ktFields(leaf)
 	if !ok {
-		return violation("entry %d is not a log entry", index)
+		return "", violation("entry %d is not a log entry", index)
 	}
 	kind, sn, args := string(f[0]), state.NewIdentScreenName(string(f[1])), f[3:]
 	if s.Accounts == nil {
@@ -141,89 +182,164 @@ func (s *AuditState) apply(index int64, leaf []byte) error {
 		}
 		return binary.BigEndian.Uint32(b), true
 	}
+	// What the previous entry authorised must come now, and nothing else.
+	pending := s.Pending
+	s.Pending = nil
+	if pending != nil {
+		d, _ := id(firstArg(args))
+		if kind != pending.Kind || sn.String() != pending.Account || (kind == state.E2EKTRevoke && d != pending.Device) {
+			return "", bad(fmt.Sprintf("the %s entry before it is not followed by its %s", pending.From, pending.Kind))
+		}
+	}
+	recovered := ""
 	switch kind {
 	case state.E2EKTAccount:
 		if len(args) < 2 || len(args[1]) != keyLen {
-			return bad("not an account key")
+			return "", bad("not an account key")
 		}
 		change, key := string(args[0]), args[1]
 		switch change {
 		case state.E2EKeyPublished:
 			if len(args) != 2 {
-				return bad("a publish carries no proof")
+				return "", bad("a publish carries no proof")
 			}
 			if acc != nil {
-				return bad("the account already has a key: a new key needs a rotation or a reset")
+				return "", bad("the account already has a key: a new key needs a rotation or a reset")
 			}
 			s.Accounts[sn.String()] = &auditAccount{Key: key, Devices: map[uint32]*auditDevice{}, Used: map[uint32]bool{}}
+			if why, ok := s.Deleted[sn.String()]; ok {
+				recovered = "a new account key after the operator deleted the account (" + why + "): a new identity"
+				delete(s.Deleted, sn.String())
+			}
 		case state.E2EKeyRotated:
 			if acc == nil {
-				return bad("no key to rotate")
+				return "", bad("no key to rotate")
 			}
 			if len(args) != 3 || !verify(acc.Key, RotateMessage(sn, acc.Key, key), args[2]) {
-				return bad("the rotation is not signed by the old key")
+				return "", bad("the rotation is not signed by the old key")
 			}
 			acc.Key = key
+			// Until re-signed by the new key, a device is vouched for by
+			// nothing current.
+			for _, d := range acc.Devices {
+				d.Stale = true
+			}
 		case state.E2EKeyReset:
 			if acc == nil {
-				return bad("no key to reset")
+				return "", bad("no key to reset")
 			}
 			if len(args) != 2 {
-				return bad("a reset carries no proof")
+				return "", bad("a reset carries no proof")
 			}
 			if len(acc.Devices) > 0 {
-				return bad("a reset while the account still has active devices")
+				return "", bad("a reset while the account still has active devices")
 			}
 			acc.Key = key
+			recovered = "a new account key without the old key's proof (reset): a new identity"
 		default:
-			return bad("unknown change " + change)
+			return "", bad("unknown change " + change)
 		}
 	case state.E2EKTDevice:
 		if acc == nil {
-			return bad("no account")
+			return "", bad("no account")
 		}
-		d, ok := id(args[0])
+		d, ok := id(firstArg(args))
 		if len(args) != 4 || !ok || len(args[1]) != keyLen || len(args[2]) != keyLen {
-			return bad("not a device")
+			return "", bad("not a device")
 		}
 		if acc.Used[d] {
-			return bad("the device id was used before")
+			return "", bad("the device id was used before")
 		}
 		if !verify(acc.Key, DeviceMessage(sn, d, args[1], args[2]), args[3]) {
-			return bad("the device is not signed by the account key")
+			return "", bad("the device is not signed by the account key")
 		}
 		acc.Used[d] = true
 		acc.Devices[d] = &auditDevice{Curve25519: args[1], Ed25519: args[2]}
 	case state.E2EKTResign:
 		if acc == nil || len(args) != 2 {
-			return bad("not a re-signature of a device")
+			return "", bad("not a re-signature of a device")
 		}
 		d, _ := id(args[0])
 		dev := acc.Devices[d]
 		if dev == nil {
-			return bad("no such active device")
+			return "", bad("no such active device")
 		}
 		if !verify(acc.Key, DeviceMessage(sn, d, dev.Curve25519, dev.Ed25519), args[1]) {
-			return bad("the new signature is not by the account key")
+			return "", bad("the new signature is not by the account key")
 		}
+		dev.Stale = false
+	case state.E2EKTOwnerRevoke:
+		d, ok := id(firstArg(args))
+		if acc == nil || len(args) != 3 || !ok || len(args[1]) != 8 {
+			return "", bad("not an owner's revoke")
+		}
+		if acc.Devices[d] == nil {
+			return "", bad("no such active device")
+		}
+		if !verify(acc.Key, RevokeMessage(sn, d, int64(binary.BigEndian.Uint64(args[1]))), args[2]) {
+			return "", bad("the revoke is not signed by the account key")
+		}
+		s.Pending = &auditPending{Kind: state.E2EKTRevoke, Account: sn.String(), Device: d, From: kind}
+	case state.E2EKTRecoveryRevoke:
+		d, ok := id(firstArg(args))
+		if acc == nil || len(args) != 2 || !ok {
+			return "", bad("not a recovery revoke")
+		}
+		if acc.Devices[d] == nil {
+			return "", bad("no such active device")
+		}
+		s.Pending = &auditPending{Kind: state.E2EKTRevoke, Account: sn.String(), Device: d, From: kind}
+		recovered = fmt.Sprintf("device %d revoked without the owner's key (%s): continuity lost", d, args[1])
 	case state.E2EKTRevoke:
 		if acc == nil || len(args) != 1 {
-			return bad("not a revocation")
+			return "", bad("not a revocation")
 		}
 		d, _ := id(args[0])
-		if acc.Devices[d] == nil {
-			return bad("no such active device")
+		dev := acc.Devices[d]
+		if dev == nil {
+			return "", bad("no such active device")
+		}
+		if pending == nil && !dev.Stale {
+			return "", bad("a revoke without the owner's signature or a recovery entry")
 		}
 		delete(acc.Devices, d)
+	case state.E2EKTOwnerDelete:
+		if acc == nil || len(args) != 2 || len(args[0]) != 8 {
+			return "", bad("not an owner's delete")
+		}
+		if !verify(acc.Key, DeleteMessage(sn, int64(binary.BigEndian.Uint64(args[0]))), args[1]) {
+			return "", bad("the delete is not signed by the account key")
+		}
+		s.Pending = &auditPending{Kind: state.E2EKTDelete, Account: sn.String(), From: kind}
+	case state.E2EKTRecoveryDelete:
+		if acc == nil || len(args) != 1 {
+			return "", bad("not a recovery delete")
+		}
+		s.Pending = &auditPending{Kind: state.E2EKTDelete, Account: sn.String(), From: kind}
+		if s.Deleted == nil {
+			s.Deleted = map[string]string{}
+		}
+		s.Deleted[sn.String()] = string(args[0])
+		recovered = "the account deleted without the owner's key (" + string(args[0]) + "): continuity lost"
 	case state.E2EKTDelete:
 		if acc == nil || len(args) != 0 {
-			return bad("no account to delete")
+			return "", bad("no account to delete")
+		}
+		if pending == nil {
+			return "", bad("a delete without the owner's signature or a recovery entry")
 		}
 		delete(s.Accounts, sn.String())
 	default:
-		return bad("unknown kind")
+		return "", bad("unknown kind")
 	}
-	return nil
+	return recovered, nil
+}
+
+func firstArg(args [][]byte) []byte {
+	if len(args) == 0 {
+		return nil
+	}
+	return args[0]
 }
 
 // Auditor follows one log.
@@ -234,6 +350,9 @@ type Auditor struct {
 	Key    ed25519.PrivateKey
 	Client *http.Client
 	Now    func() time.Time
+	// Logger takes a warning for every change the operator made without
+	// the owner's key; the auditor still cosigns those.
+	Logger *slog.Logger
 }
 
 func (a *Auditor) get(ctx context.Context, path string) ([]byte, error) {
@@ -292,6 +411,7 @@ func (a *Auditor) Step(ctx context.Context, st *AuditState) error {
 	}
 
 	next := st.clone()
+	var recoveries []AuditRecovery
 	for next.Size < size {
 		count := min(size-next.Size, state.E2EKTMaxEntries)
 		raw, err := a.get(ctx, fmt.Sprintf("log/entries?start=%d&count=%d", next.Size, count))
@@ -309,8 +429,13 @@ func (a *Auditor) Step(ctx context.Context, st *AuditState) error {
 			if next.Size == size {
 				break
 			}
-			if err := next.apply(next.Size, leaf); err != nil {
+			what, err := next.apply(next.Size, leaf)
+			if err != nil {
 				return a.record(st, err)
+			}
+			if what != "" {
+				f, _ := ktFields(leaf)
+				recoveries = append(recoveries, AuditRecovery{Index: next.Size, Account: string(f[1]), What: what})
 			}
 			next.push(leaf)
 		}
@@ -319,6 +444,10 @@ func (a *Auditor) Step(ctx context.Context, st *AuditState) error {
 		return a.record(st, violation("the entries do not add up to the signed root at %d", size))
 	}
 	*st = *next
+	for _, r := range recoveries {
+		a.Logger.Warn("key log: operator recovery, made without the owner's key",
+			"entry", r.Index, "account", r.Account, "what", r.What)
+	}
 
 	line := Cosign(a.Name, a.Key, n.Text, uint64(a.Now().Unix()))
 	body, _ := json.Marshal(cosignatureRequest{Checkpoint: n.Text, Cosignature: line})

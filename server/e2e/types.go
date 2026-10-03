@@ -20,7 +20,8 @@ type Store interface {
 	E2EDevices(ctx context.Context, screenName state.IdentScreenName) ([]state.E2EDevice, error)
 	E2EDevice(ctx context.Context, screenName state.IdentScreenName, deviceID uint32) (*state.E2EDevice, error)
 	E2EPutDevice(ctx context.Context, screenName state.IdentScreenName, accountKey []byte, dev state.E2EDevice, maxDevices int, now time.Time) (bool, error)
-	E2ERevokeDevice(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, now time.Time) error
+	E2ERevokeDevice(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, by state.E2EAuthority, now time.Time) error
+	E2EDeleteAccountKeys(ctx context.Context, screenName state.IdentScreenName, by state.E2EAuthority, now time.Time) error
 	E2ESetFallbackKey(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, key state.E2ESignedKey, now time.Time) error
 	E2EAddOneTimeKeys(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, keys []state.E2ESignedKey, maxPool int, now time.Time) (int, error)
 	E2EKeyStatus(ctx context.Context, screenName state.IdentScreenName, deviceID uint32) (int, bool, error)

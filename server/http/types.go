@@ -177,8 +177,8 @@ type E2EDeviceManager interface {
 	// E2EDevices returns the account's devices, revoked ones included.
 	E2EDevices(ctx context.Context, screenName state.IdentScreenName) ([]state.E2EDevice, error)
 	// E2ERevokeDevice revokes a device and deletes its fallback and one-time
-	// keys.
-	E2ERevokeDevice(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, now time.Time) error
+	// keys; by says on whose word, for the key log.
+	E2ERevokeDevice(ctx context.Context, screenName state.IdentScreenName, deviceID uint32, by state.E2EAuthority, now time.Time) error
 }
 
 // ICQProfileManager defines methods for getting and setting ICQ user profile data.

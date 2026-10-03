@@ -325,9 +325,18 @@ func (f SQLiteUserStore) E2EPutDevice(ctx context.Context, screenName IdentScree
 }
 
 // E2ERevokeDevice revokes a device and deletes its fallback and one-time keys.
-// Revoking a revoked device is a no-op.
-func (f SQLiteUserStore) E2ERevokeDevice(ctx context.Context, screenName IdentScreenName, deviceID uint32, now time.Time) error {
+// Revoking a revoked device is a no-op. by is on whose word: the owner's
+// signed request (its account key must still be the account's,
+// ErrE2EAccountKeyChanged otherwise) or the operator's recovery; the key log
+// records it right before the revoke, so an auditor and every client can tell
+// the two apart (second audit of 2026-10, finding 1).
+func (f SQLiteUserStore) E2ERevokeDevice(ctx context.Context, screenName IdentScreenName, deviceID uint32, by E2EAuthority, now time.Time) error {
 	return f.e2eTx(ctx, func(tx *sql.Tx) error {
+		if by.Signature != nil {
+			if err := e2eCheckAccountKey(ctx, tx, screenName, by.AccountKey); err != nil {
+				return err
+			}
+		}
 		cur, err := e2eDevice(ctx, tx, screenName, deviceID)
 		if err != nil {
 			return err
@@ -338,7 +347,45 @@ func (f SQLiteUserStore) E2ERevokeDevice(ctx context.Context, screenName IdentSc
 		if cur.Revoked() {
 			return nil
 		}
+		auth, err := e2eKTAuthorityLeaf(screenName, by, true, deviceID, now)
+		if err != nil {
+			return err
+		}
+		if err := e2eKTAppendLeaf(ctx, tx, auth, now); err != nil {
+			return err
+		}
 		return e2eRevokeDevice(ctx, tx, screenName, deviceID, now)
+	})
+}
+
+// E2EDeleteAccountKeys deletes the account's key directory entry - its
+// account key, key history, devices with their keys, and pending link
+// requests - on the owner's signed request (by), whose account key must still
+// be the account's. The key log records the owner's signature and then the
+// delete. ErrE2EAccountNotFound if the account has no key.
+func (f SQLiteUserStore) E2EDeleteAccountKeys(ctx context.Context, screenName IdentScreenName, by E2EAuthority, now time.Time) error {
+	return f.e2eTx(ctx, func(tx *sql.Tx) error {
+		acc, err := e2eAccount(ctx, tx, screenName)
+		if err != nil {
+			return err
+		}
+		if acc == nil {
+			return ErrE2EAccountNotFound
+		}
+		if err := e2eKTDeleteAccount(ctx, tx, screenName, by, now); err != nil {
+			return err
+		}
+		sn := screenName.String()
+		for _, q := range []string{
+			`DELETE FROM e2e_account WHERE identScreenName = ?`,
+			`DELETE FROM e2e_account_key_history WHERE identScreenName = ?`,
+			`DELETE FROM e2e_link_request WHERE identScreenName = ?`,
+		} {
+			if _, err := tx.ExecContext(ctx, q, sn); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

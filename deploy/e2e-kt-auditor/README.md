@@ -24,6 +24,15 @@ If the log ever breaks a rule, the auditor logs `KEY LOG VIOLATION`, never
 cosigns that log again, and exits with status 3; the unit then stays failed
 (`RestartPreventExitStatus=3`) for whoever watches it to see.
 
+A change the server's operator made without the account owner's key - a
+device revoked or a user deleted through the management API, a key reset
+after a lost key - keeps the rules and is cosigned, but logged once at WARN
+(`key log: operator recovery, made without the owner's key`, with the entry,
+the account and why); clients take that account's next key as a new identity.
+An auditor older than the server's authority entries (`owner-revoke`,
+`recovery-revoke`, ...) refuses them as an unknown kind: update the auditors
+together with the server (docs/e2e/KEY-TRANSPARENCY.md, Operation).
+
 ## Files
 
 | File | What it is |

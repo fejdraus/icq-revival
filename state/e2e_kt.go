@@ -35,7 +35,81 @@ const (
 	E2EKTRevoke = "revoke"
 	// E2EKTDelete deletes the account, its key and devices with it.
 	E2EKTDelete = "delete"
+
+	// The four kinds below say on whose word the revoke or delete leaf that
+	// comes right after them in the same transaction was written (second
+	// audit of 2026-10, finding 1). They are leaves of their own, not new
+	// fields of revoke and delete, so add-ons that predate them read the log
+	// as before: those take a kind they do not know as a leaf that changes
+	// nothing, but a known kind with other fields as a rewritten log.
+
+	// E2EKTOwnerRevoke carries the owner's signed revoke request: the device
+	// id, the request's issued_at and the account key's signature over the
+	// revoke message. A revoke leaf of that device follows.
+	E2EKTOwnerRevoke = "owner-revoke"
+	// E2EKTOwnerDelete carries the owner's signed request to delete the
+	// account's keys: issued_at and the account key's signature over the
+	// delete message. A delete leaf follows.
+	E2EKTOwnerDelete = "owner-delete"
+	// E2EKTRecoveryRevoke marks a revoke the operator made without the
+	// owner's key (the management API): the device id and why. A revoke leaf
+	// of that device follows. Clients treat the account's next key as a new
+	// identity.
+	E2EKTRecoveryRevoke = "recovery-revoke"
+	// E2EKTRecoveryDelete marks an account deleted without the owner's key
+	// (the user removed by the operator, or by its password): why. A delete
+	// leaf follows.
+	E2EKTRecoveryDelete = "recovery-delete"
 )
+
+// E2EAuthority is on whose word a device is revoked or an account's keys
+// deleted, as the key log records it: the owner's signed request, or the
+// operator's recovery without the owner's key.
+type E2EAuthority struct {
+	// AccountKey, IssuedAt and Signature are the owner's signed request; the
+	// caller has checked the signature, and AccountKey must still be the
+	// account's key when the change is written.
+	AccountKey []byte
+	IssuedAt   int64
+	Signature  []byte
+	// Recovery is why the operator does it without the owner's key; set
+	// only when Signature is not.
+	Recovery string
+}
+
+// E2EOwner is the authority of the owner's request signed by accountKey.
+func E2EOwner(accountKey []byte, issuedAt int64, signature []byte) E2EAuthority {
+	return E2EAuthority{AccountKey: accountKey, IssuedAt: issuedAt, Signature: signature}
+}
+
+// E2ERecovery is the authority of the operator, without the owner's key.
+func E2ERecovery(why string) E2EAuthority {
+	return E2EAuthority{Recovery: why}
+}
+
+// ErrE2ENoAuthority means a revoke or a delete came with neither the
+// owner's signature nor a recovery reason.
+var ErrE2ENoAuthority = errors.New("e2e change without the owner's signature or a recovery reason")
+
+func e2eKTTime(at int64) []byte {
+	return binary.BigEndian.AppendUint64(nil, uint64(at))
+}
+
+// e2eKTAuthorityLeaf is the leaf that goes right before the revoke of
+// deviceID (revoke) or the delete of the account (!revoke).
+func e2eKTAuthorityLeaf(screenName IdentScreenName, by E2EAuthority, revoke bool, deviceID uint32, now time.Time) ([]byte, error) {
+	switch {
+	case by.Signature != nil && revoke:
+		return E2EKTLeaf(E2EKTOwnerRevoke, screenName, now, e2eKTDeviceID(deviceID), e2eKTTime(by.IssuedAt), by.Signature), nil
+	case by.Signature != nil:
+		return E2EKTLeaf(E2EKTOwnerDelete, screenName, now, e2eKTTime(by.IssuedAt), by.Signature), nil
+	case by.Recovery != "" && revoke:
+		return E2EKTLeaf(E2EKTRecoveryRevoke, screenName, now, e2eKTDeviceID(deviceID), []byte(by.Recovery)), nil
+	case by.Recovery != "":
+		return E2EKTLeaf(E2EKTRecoveryDelete, screenName, now, []byte(by.Recovery)), nil
+	}
+	return nil, ErrE2ENoAuthority
+}
 
 // E2EKTMaxEntries is the most leaves one read returns.
 const E2EKTMaxEntries = 1000
@@ -88,11 +162,22 @@ func e2eKTRevokeLeaf(screenName IdentScreenName, deviceID uint32, at time.Time) 
 	return E2EKTLeaf(E2EKTRevoke, screenName, at, e2eKTDeviceID(deviceID))
 }
 
-// E2EKTDeleteAccount records, in the key log, that the account is deleted,
-// if it has keys. Called inside the transaction that deletes the user.
-func e2eKTDeleteAccount(ctx context.Context, q e2eQuerier, screenName IdentScreenName, now time.Time) error {
+// e2eKTDeleteAccount records, in the key log, that the account is deleted,
+// if it has keys, and on whose word: the authority's leaf, then the delete.
+// Called inside the transaction that deletes the keys or the user.
+func e2eKTDeleteAccount(ctx context.Context, q e2eQuerier, screenName IdentScreenName, by E2EAuthority, now time.Time) error {
 	acc, err := e2eAccount(ctx, q, screenName)
 	if err != nil || acc == nil {
+		return err
+	}
+	if by.Signature != nil && !bytes.Equal(acc.Key, by.AccountKey) {
+		return ErrE2EAccountKeyChanged
+	}
+	auth, err := e2eKTAuthorityLeaf(screenName, by, false, 0, now)
+	if err != nil {
+		return err
+	}
+	if err := e2eKTAppendLeaf(ctx, q, auth, now); err != nil {
 		return err
 	}
 	return e2eKTAppendLeaf(ctx, q, E2EKTLeaf(E2EKTDelete, screenName, now), now)

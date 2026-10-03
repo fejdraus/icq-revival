@@ -89,6 +89,15 @@ func RevokeMessage(screenName state.IdentScreenName, deviceID uint32, issuedAt i
 	return signedMessage("revoke", screenName, deviceIDBytes(deviceID), binary.BigEndian.AppendUint64(nil, uint64(issuedAt)))
 }
 
+// DeleteMessage is what the account key signs to delete the account's keys
+// from the directory (DELETE /e2e/v1/account), with the time the request was
+// made (Unix seconds), taken like a revoke's.
+//
+//	"delete" | screen name | issued at (8 bytes big endian)
+func DeleteMessage(screenName state.IdentScreenName, issuedAt int64) []byte {
+	return signedMessage("delete", screenName, binary.BigEndian.AppendUint64(nil, uint64(issuedAt)))
+}
+
 // verify reports whether sig is publicKey's signature over msg. A key or
 // signature of the wrong size does not verify.
 func verify(publicKey, msg, sig []byte) bool {

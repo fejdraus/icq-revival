@@ -1693,7 +1693,11 @@ func deleteE2EDeviceHandler(w http.ResponseWriter, r *http.Request, userManager 
 		return
 	}
 
-	err = mgr.E2ERevokeDevice(r.Context(), user.IdentScreenName, uint32(deviceID), time.Now())
+	// The operator has no account key: the key log records a recovery, and
+	// clients take the account's next key as a new identity (second audit of
+	// 2026-10, finding 1).
+	err = mgr.E2ERevokeDevice(r.Context(), user.IdentScreenName, uint32(deviceID),
+		state.E2ERecovery("revoked by the operator (management API)"), time.Now())
 	switch {
 	case errors.Is(err, state.ErrE2EDeviceNotFound):
 		errorMsg(w, "device not found", http.StatusNotFound)

@@ -88,6 +88,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /e2e/v1/token", h.authed(h.refreshToken))
 
 	mux.Handle("PUT /e2e/v1/account", h.authed(h.putAccount))
+	mux.Handle("DELETE /e2e/v1/account", h.authed(h.deleteAccount))
 	mux.Handle("GET /e2e/v1/devices/{device_id}", h.authed(h.getOwnDevice))
 	mux.Handle("PUT /e2e/v1/devices/{device_id}", h.authed(h.putDevice))
 	mux.Handle("DELETE /e2e/v1/devices/{device_id}", h.authed(h.revokeDevice))
@@ -441,7 +442,55 @@ func (h *Handler) revokeDevice(w http.ResponseWriter, r *http.Request, c caller)
 		writeError(w, http.StatusConflict, "replayed", "this signed revoke was used already")
 		return
 	}
-	if err := h.store.E2ERevokeDevice(r.Context(), c.screenName, deviceID, now); err != nil {
+	// The key log keeps the signature, so an auditor and every client can
+	// check that the owner revoked it (second audit of 2026-10, finding 1).
+	if err := h.store.E2ERevokeDevice(r.Context(), c.screenName, deviceID,
+		state.E2EOwner(acc.Key, req.IssuedAt, req.Signature), now); err != nil {
+		h.storeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteAccount deletes the caller's account key, devices and key history
+// from the directory, on the stored account key's signature over the delete
+// message (DeleteMessage) with a time within revokeWindow, accepted once, and
+// with an account key announced on the token's BOS connection - as a revoke.
+// The key log records the signature with the delete, so clients and auditors
+// can tell the owner's delete from the operator's (second audit of 2026-10,
+// finding 1).
+func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, c caller) {
+	if c.instance.E2EAccountKey() == nil {
+		writeError(w, http.StatusForbidden, "not_announced",
+			"deleting needs an account key announced on the BOS connection of this token (LocateSetInfo TLV 0x0E2E)")
+		return
+	}
+	var req revokeRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	acc, ok := h.account(w, r, c.screenName)
+	if !ok {
+		return
+	}
+	now := h.now()
+	issued := time.Unix(req.IssuedAt, 0)
+	if issued.Before(now.Add(-revokeWindow)) || issued.After(now.Add(revokeWindow)) {
+		writeError(w, http.StatusBadRequest, "invalid_signature",
+			"the delete's issued_at is not within five minutes of the server's clock")
+		return
+	}
+	if !verify(acc.Key, DeleteMessage(c.screenName, req.IssuedAt), req.Signature) {
+		writeError(w, http.StatusBadRequest, "invalid_signature",
+			"the delete is not signed by the account key")
+		return
+	}
+	if !h.revokes.use(string(req.Signature), issued.Add(revokeWindow), now) {
+		writeError(w, http.StatusConflict, "replayed", "this signed delete was used already")
+		return
+	}
+	if err := h.store.E2EDeleteAccountKeys(r.Context(), c.screenName,
+		state.E2EOwner(acc.Key, req.IssuedAt, req.Signature), now); err != nil {
 		h.storeError(w, r, err)
 		return
 	}

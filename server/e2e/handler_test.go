@@ -590,3 +590,65 @@ func TestHandler_BodyLimit(t *testing.T) {
 	big := `{"ephemeral_key":"` + string(bytes.Repeat([]byte("A"), maxBodyBytes)) + `"}`
 	assert.Equal(t, http.StatusRequestEntityTooLarge, d.do(http.MethodPost, "/e2e/v1/link", token, big).status)
 }
+
+// Second audit of 2026-10, finding 1: the owner deletes the account's keys
+// only with the account key's signature over the delete, the time within the
+// window and once; the key log keeps the signature for the auditors.
+func TestHandler_DeleteAccountNeedsTheAccountKeysSignature(t *testing.T) {
+	d := newTestDirectory(t)
+	token, instance := d.signOn("100001")
+	sn := state.NewIdentScreenName("100001")
+	pub, priv := newKey(t)
+	_, stranger := newKey(t)
+	now := time.Unix(1_790_000_000, 0)
+	d.handler.now = func() time.Time { return now }
+	body := func(priv ed25519.PrivateKey, sn state.IdentScreenName, at time.Time) map[string]any {
+		return map[string]any{"issued_at": at.Unix(), "signature": enc(ed25519.Sign(priv, DeleteMessage(sn, at.Unix())))}
+	}
+	good := body(priv, sn, now)
+
+	res := d.do(http.MethodDelete, "/e2e/v1/account", token, good)
+	assert.Equal(t, http.StatusForbidden, res.status, "a token alone does not delete")
+	instance.SetE2EAccountKey(pub)
+	assert.Equal(t, http.StatusNotFound, d.do(http.MethodDelete, "/e2e/v1/account", token, good).status)
+	require.Equal(t, http.StatusCreated, d.do(http.MethodPut, "/e2e/v1/account", token, accountBody(sn, pub, priv)).status)
+	require.Equal(t, http.StatusCreated, d.do(http.MethodPut, "/e2e/v1/devices/1", token, deviceBody(sn, newTestDevice(t, 1), priv)).status)
+
+	cases := []struct {
+		name string
+		body any
+		want int
+		code string
+	}{
+		{name: "no body", body: nil, want: http.StatusBadRequest, code: "bad_request"},
+		{name: "signed by a stranger", body: body(stranger, sn, now), want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "signed for another account", body: body(priv, state.NewIdentScreenName("100002"), now), want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "a revoke's signature", body: map[string]any{"issued_at": now.Unix(), "signature": enc(ed25519.Sign(priv, RevokeMessage(sn, 1, now.Unix())))}, want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "too old", body: body(priv, sn, now.Add(-revokeWindow-time.Second)), want: http.StatusBadRequest, code: "invalid_signature"},
+		{name: "good", body: good, want: http.StatusNoContent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := d.do(http.MethodDelete, "/e2e/v1/account", token, tc.body)
+			assert.Equal(t, tc.want, res.status, res.body)
+			if tc.code != "" {
+				assert.Equal(t, tc.code, res.body["error"])
+			}
+		})
+	}
+	assert.Equal(t, http.StatusNotFound, d.do(http.MethodGet, "/e2e/v1/users/100001/devices", "", nil).status, "the keys are gone")
+
+	// The same key published again: the captured delete does not take it.
+	require.Equal(t, http.StatusCreated, d.do(http.MethodPut, "/e2e/v1/account", token, accountBody(sn, pub, priv)).status)
+	res = d.do(http.MethodDelete, "/e2e/v1/account", token, good)
+	assert.Equal(t, http.StatusConflict, res.status)
+	assert.Equal(t, "replayed", res.body["error"])
+
+	leaves, err := d.store.E2EKTEntries(context.Background(), 0, state.E2EKTMaxEntries)
+	require.NoError(t, err)
+	require.Len(t, leaves, 5)
+	f, ok := ktFields(leaves[2])
+	require.True(t, ok)
+	assert.Equal(t, state.E2EKTOwnerDelete, string(f[0]))
+	assert.Equal(t, good["signature"], enc(f[4]), "the log keeps the owner's signature")
+}

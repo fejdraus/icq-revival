@@ -119,7 +119,7 @@ func TestDeleteE2EDeviceHandler(t *testing.T) {
 			deviceID: "7",
 			setup: func(users *mockUserManager, e2e *mockE2EDeviceManager) {
 				users.EXPECT().User(mock.Anything, sn).Return(user, nil)
-				e2e.EXPECT().E2ERevokeDevice(mock.Anything, sn, uint32(7), mock.Anything).Return(state.ErrE2EDeviceNotFound)
+				e2e.EXPECT().E2ERevokeDevice(mock.Anything, sn, uint32(7), state.E2ERecovery("revoked by the operator (management API)"), mock.Anything).Return(state.ErrE2EDeviceNotFound)
 			},
 			statusCode: http.StatusNotFound,
 			want:       `{"message":"device not found"}`,
@@ -129,7 +129,7 @@ func TestDeleteE2EDeviceHandler(t *testing.T) {
 			deviceID: "7",
 			setup: func(users *mockUserManager, e2e *mockE2EDeviceManager) {
 				users.EXPECT().User(mock.Anything, sn).Return(user, nil)
-				e2e.EXPECT().E2ERevokeDevice(mock.Anything, sn, uint32(7), mock.Anything).Return(io.EOF)
+				e2e.EXPECT().E2ERevokeDevice(mock.Anything, sn, uint32(7), state.E2ERecovery("revoked by the operator (management API)"), mock.Anything).Return(io.EOF)
 			},
 			statusCode: http.StatusInternalServerError,
 			want:       `{"message":"internal server error"}`,
@@ -139,7 +139,7 @@ func TestDeleteE2EDeviceHandler(t *testing.T) {
 			deviceID: "7",
 			setup: func(users *mockUserManager, e2e *mockE2EDeviceManager) {
 				users.EXPECT().User(mock.Anything, sn).Return(user, nil)
-				e2e.EXPECT().E2ERevokeDevice(mock.Anything, sn, uint32(7), mock.Anything).Return(nil)
+				e2e.EXPECT().E2ERevokeDevice(mock.Anything, sn, uint32(7), state.E2ERecovery("revoked by the operator (management API)"), mock.Anything).Return(nil)
 			},
 			statusCode: http.StatusNoContent,
 		},
