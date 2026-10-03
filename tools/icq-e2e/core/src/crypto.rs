@@ -750,6 +750,7 @@ impl Engine {
     /// `icq-e2e.ini`), or, with `None`, the ones the server names when the
     /// log is first audited.
     pub fn set_auditors(&mut self, keys: Option<Vec<String>>) {
+        self.keys.audit_configured = keys.is_some();
         self.pinned_auditors = keys;
     }
 
@@ -1049,7 +1050,7 @@ impl Engine {
     fn set_inbound_gate(&mut self, now: u64) {
         self.keys.inbound_gate = match self.trust_at(now) {
             kt::Trust::NeverHadLog => keys::InboundGate::Open,
-            kt::Trust::Trusted if self.keys.log.audit_required() => keys::InboundGate::Vouched,
+            kt::Trust::Trusted if self.keys.audit_required() => keys::InboundGate::Vouched,
             kt::Trust::Trusted => keys::InboundGate::Log,
             _ => keys::InboundGate::Frozen,
         };
@@ -1081,20 +1082,29 @@ impl Engine {
     /// - not readable now, on a state that trusted a log before: temporarily
     ///   unavailable, never "no log" (second audit, finding 2);
     /// - never read on this state: no log.
+    ///
+    /// With an auditor configured (`auditors =`) or pinned, its word is
+    /// required from the start (third audit of 2026-10, finding 1): no fresh
+    /// cosignature yet is unaudited, and a log that cannot be read, or that
+    /// the server says it does not keep, is never "no log".
     pub fn trust_at(&self, now: u64) -> kt::Trust {
         let log = &self.keys.log;
+        let audited = self.keys.audit_required();
         match (&log.broken, &self.log_status) {
             (Some(why), _) => kt::Trust::BrokenAfterTrust(why.clone()),
-            (None, LogStatus::Ok) if log.audit_required() && !log.audit_fresh(now) => {
+            (None, LogStatus::Ok) if audited && !log.audit_fresh(now) => {
                 kt::Trust::Unaudited(match &self.audit_status {
                     AuditStatus::Stale(why) => why.clone(),
                     _ => "no auditor of the key log has vouched for it within the hour".into(),
                 })
             }
             (None, LogStatus::Ok) => kt::Trust::Trusted,
-            (None, status) if log.was_trusted() => {
+            (None, status) if log.was_trusted() || audited => {
                 kt::Trust::TemporarilyUnavailableAfterTrust(match status {
                     LogStatus::Failed(e) => e.clone(),
+                    LogStatus::NoLog => {
+                        "the server says it keeps none, though auditors of it are pinned".into()
+                    }
                     _ => "it has not been read yet".into(),
                 })
             }
@@ -1118,8 +1128,10 @@ impl Engine {
         // what new keys are taken from (second audit of 2026-10, finding 3).
         // Not after a split view; a read that fails is tried at the next
         // look.
+        // Only a cosignature fresh now moves it, however much more of the
+        // log a stale one covers (third audit of 2026-10, finding 2).
         if !matches!(r, Err(kt::AuditError::SplitView(_))) {
-            let size = next.audited_size();
+            let size = next.fresh_audited_size(now);
             if let Err(kt::SyncError::Violation(why) | kt::SyncError::Rewritten(why)) =
                 kt::vouch(&*self.dir, &mut next, size)
             {
@@ -1260,7 +1272,7 @@ impl Engine {
         }
         let more = match &trust {
             kt::Trust::NeverHadLog => return Ok(left_out),
-            kt::Trust::Trusted if !self.keys.log.audit_required() => return Ok(left_out),
+            kt::Trust::Trusted if !self.keys.audit_required() => return Ok(left_out),
             kt::Trust::Trusted => self.vouched_log_check(peer, ud)?,
             kt::Trust::Unaudited(why) => {
                 self.frozen_log_check(peer, ud, &Frozen::Unaudited(why))?
@@ -1329,7 +1341,7 @@ impl Engine {
             Some(_) => return Err(why.lookup(format!("{peer}'s account key changed"))),
             None => return Err(why.lookup(format!("{peer}'s keys were never checked"))),
         }
-        let audited = self.keys.log.audit_required();
+        let audited = self.keys.audit_required();
         Ok(ud
             .devices
             .iter()
@@ -1363,10 +1375,13 @@ impl Engine {
         let size = self.keys.log.size;
         match &self.log_status {
             LogStatus::Unknown => String::new(),
+            LogStatus::NoLog if self.keys.audit_required() => {
+                "; key log: the server says it keeps none, though auditors of it are pinned; only contacts and devices checked before are used and anything new is held".into()
+            }
             LogStatus::NoLog => {
                 "; key log: the server keeps none, so keys are trusted on first use".into()
             }
-            LogStatus::Failed(e) if self.keys.log.was_trusted() => format!(
+            LogStatus::Failed(e) if self.keys.log.was_trusted() || self.keys.audit_required() => format!(
                 "; key log: could not be read ({e}); until it can, only contacts and devices checked before are used and anything new is held"
             ),
             LogStatus::Failed(e) => format!("; key log: could not be read ({e})"),
@@ -4449,19 +4464,21 @@ mod tests {
                 "{s}"
             );
             assert!(notes(&mut e).is_empty(), "once per sign-on");
+            // An auditor vouched for this log once and has not lately, or
+            // one is pinned and has never cosigned: a contact never checked
+            // is not taken now (second audit of 2026-10, finding 3; third
+            // audit, finding 1 - it used to go when no auditor ever had).
             let out = e.outbound("100002", form(), b"hi", NOW);
-            if when.is_some() {
-                // An auditor vouched for this log once and has not lately: a
-                // contact never checked is not taken now (second audit of
-                // 2026-10, finding 3).
-                assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
-                assert!(notes(&mut e)
-                    .iter()
-                    .any(|n| n.text.contains("no auditor has vouched")));
+            assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+            let want = if when.is_some() {
+                "no auditor has vouched"
             } else {
-                // No auditor ever did: messages go, checked against the log.
-                assert!(matches!(out, Outbound::Encrypted(_)), "{out:?}");
-            }
+                "no auditor has cosigned"
+            };
+            assert!(
+                notes(&mut e).iter().any(|n| n.text.contains(want)),
+                "{when:?}"
+            );
         }
     }
 
@@ -4956,5 +4973,136 @@ mod tests {
             old.outbound("100002", form(), b"hi", NOW),
             Outbound::Encrypted(_)
         ));
+    }
+
+    // --- third audit of 2026-10 -----------------------------------------------
+
+    /// The key of the in-memory auditor, as an `auditors =` line names it.
+    fn usual_auditor() -> String {
+        kt::cosign(
+            crate::directory::MEMORY_AUDITOR,
+            &crate::directory::MEMORY_AUDITOR_SEED,
+            "",
+            0,
+        )
+        .1
+    }
+
+    /// Finding 1: with an auditor named by `auditors =`, its word is
+    /// required from the start. Before any cosignature, a contact and a
+    /// session already known go on; a new contact, a new device of a known
+    /// one and a new inbound session are not taken - until the auditor
+    /// cosigns.
+    #[test]
+    fn with_auditors_configured_nothing_new_is_taken_before_the_first_cosignature() {
+        let (dir, a, b) = two_published();
+        let mut c = OwnKeys::create("100003");
+        publish_keys(&dir, &mut c);
+        // Known before: a session with 100002, made with no auditor at all.
+        let mut e = running(&dir, a);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        let keys: OwnKeys =
+            serde_json::from_str(&serde_json::to_string(e.keys()).unwrap()).unwrap();
+
+        // The patch pins the auditor; the server hands out no cosignature.
+        dir.plant_device("100002", planted_device(&b, 777));
+        let mut e = running_pinned(&dir, keys, vec![usual_auditor()]);
+        notes(&mut e);
+        let t = NOW + LOG_SYNC_EVERY;
+        assert!(matches!(
+            e.outbound("100002", form(), b"known", t),
+            Outbound::Encrypted(_)
+        ));
+        assert!(matches!(e.log_trust(), kt::Trust::Unaudited(_)));
+        assert!(e.keys().session("100002", 777).is_none());
+        let out = e.outbound("100003", form(), b"new", t);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+        assert!(e.keys().pinned("100003").is_none());
+        let got = e.inbound(
+            "100003",
+            &written_by(&dir, &mut c, "100001", b"hello", t),
+            t,
+        );
+        assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
+        assert!(e.keys().session("100003", c.device_id).is_none());
+        assert!(status_of(&mut e, "100003", t).contains("NOT AUDITED"));
+
+        // The auditor cosigns the log as it is: taken.
+        dir.audit_log(t);
+        let t = t + LOG_SYNC_EVERY;
+        assert!(matches!(
+            e.outbound("100003", form(), b"vouched", t),
+            Outbound::Encrypted(_)
+        ));
+        assert_eq!(e.log_trust(), kt::Trust::Trusted);
+    }
+
+    /// Finding 1: with an auditor named by `auditors =`, a log that cannot
+    /// be read or that the server says it does not keep is not trust on
+    /// first use, even on a state that never read one.
+    #[test]
+    fn with_auditors_configured_a_missing_log_is_not_trust_on_first_use() {
+        for unreachable in [true, false] {
+            let (dir, a, _) = two_published();
+            if unreachable {
+                dir.set_log_unreachable(true);
+            } else {
+                dir.set_log(false);
+            }
+            let mut e = running_pinned(&dir, a, vec![usual_auditor()]);
+            let out = e.outbound("100002", form(), b"hi", NOW);
+            assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+            assert!(e.keys().pinned("100002").is_none());
+            assert!(matches!(
+                e.log_trust(),
+                kt::Trust::TemporarilyUnavailableAfterTrust(_)
+            ));
+        }
+        // Guard: with no auditor named anywhere, an older server without a
+        // log is still trust on first use.
+        let (dir, a, _) = two_published();
+        dir.set_log(false);
+        let mut e = running(&dir, a);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        assert_eq!(e.log_trust(), kt::Trust::NeverHadLog);
+    }
+
+    /// Finding 2: a stale cosignature over more of the log vouches for
+    /// nothing a fresh one does not cover. Auditor A cosigned 6 entries two
+    /// hours ago, auditor B 4 entries now: the vouched part stops at 4, and
+    /// a contact published in entries 5 and 6 is not taken.
+    #[test]
+    fn a_stale_cosignature_over_more_of_the_log_vouches_for_nothing_new() {
+        let (dir, a, _) = two_published();
+        dir.audit_log_as(B_AUDITOR, &B_SEED, NOW);
+        let mut c = OwnKeys::create("100003");
+        publish_keys(&dir, &mut c);
+        assert_eq!(dir.log_size(), 6);
+        dir.audit_log(NOW - 2 * kt::AUDIT_MAX_AGE);
+        let b_key = kt::cosign(B_AUDITOR, &B_SEED, "", 0).1;
+        let mut e = running_pinned(&dir, a, vec![usual_auditor(), b_key]);
+        assert_eq!(e.keys().log.size, 6);
+        assert_eq!(e.keys().log.vouched_size, 4);
+        assert_eq!(e.log_trust(), kt::Trust::Trusted);
+        assert!(matches!(
+            e.outbound("100002", form(), b"vouched", NOW),
+            Outbound::Encrypted(_)
+        ));
+        let out = e.outbound("100003", form(), b"not vouched", NOW);
+        assert!(matches!(out, Outbound::Refused(_)), "{out:?}");
+        assert!(e.keys().pinned("100003").is_none());
+        let got = e.inbound(
+            "100003",
+            &written_by(&dir, &mut c, "100001", b"hello", NOW),
+            NOW,
+        );
+        assert!(matches!(got, Inbound::Unreadable(_)), "{got:?}");
+        assert!(e.keys().session("100003", c.device_id).is_none());
     }
 }

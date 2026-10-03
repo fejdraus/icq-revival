@@ -28,6 +28,12 @@
 //!   client's own `SetUserInfoFields` and in the contacts' user info, so
 //!   neither side has an address to open an ICQ direct connection to. The
 //!   lengths stay the same; the server's own default for the TLV is zeros.
+//!   Every SNAC that carries user info is covered, not only "buddy arrived"
+//!   (third audit of 2026-10, finding 4): a Locate user info reply, a
+//!   message's sender, missed messages, a warning notice, chat users and a
+//!   chat message's sender lose a contact's external address too, and the
+//!   ICQ random chat reply its partner's addresses
+//!   ([`strip_user_info_dc`]).
 //!
 //! File transfer (`CapFileTransfer`, its own rendezvous) and calls (channel 6)
 //! are not touched. Whether ICQ 6.5 and 7.2 use either kind of direct
@@ -228,34 +234,208 @@ pub fn strip_contacts_dc(body: &[u8]) -> Option<Vec<u8>> {
     let mut out = body.to_vec();
     let mut changed = false;
     // A block that does not read stops the walk; what was zeroed stays.
-    let _ = zero_contacts_dc(&mut out, &mut changed);
+    let _ = zero_blocks(&mut out, 0, Whose::Contact, &mut changed);
     changed.then_some(out)
 }
 
-fn zero_contacts_dc(out: &mut [u8], changed: &mut bool) -> Option<()> {
-    let be16 = |b: &[u8], at: usize| -> Option<usize> {
-        Some(u16::from_be_bytes(b.get(at..at + 2)?.try_into().ok()?) as usize)
-    };
-    let mut at = 0;
-    while at < out.len() {
-        let sn = *out.get(at)? as usize;
-        at += 1 + sn + 2; // screen name, warning level
-        let count = be16(out, at)?;
-        at += 2;
-        for _ in 0..count {
-            let tag = be16(out, at)? as u16;
-            let len = be16(out, at + 2)?;
-            let end = at + 4 + len;
-            if end > out.len() {
-                return None;
-            }
-            if tag == TLV_DC_INFO {
-                *changed |= zero_dc(&mut out[at + 4..end]);
-            }
-            at = end;
+/// A contact's external address in a user info block
+/// (`wire.OServiceUserInfoExternalIP`, 4 bytes).
+pub const TLV_EXTERNAL_IP: u16 = 0x000A;
+/// The same address as text (`wire.OServiceUserInfoExternalIPStr`).
+pub const TLV_EXTERNAL_IP_TEXT: u16 = 0x100A;
+
+/// Whose user info a block is. A contact's loses its addresses as well as
+/// its DC info; the user's own keeps its external address, which only says
+/// where the user is to the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Whose {
+    Own,
+    Contact,
+}
+
+fn be16(b: &[u8], at: usize) -> Option<usize> {
+    Some(u16::from_be_bytes(b.get(at..at + 2)?.try_into().ok()?) as usize)
+}
+
+/// Zeroes one user info block (screen name, warning level, TLV count,
+/// TLVs) that starts at `at`, in place: the DC info's address, port and
+/// type, and for a contact its external address (as 4 bytes, and as text
+/// with every digit made `0`). Returns where the block ends; `None` when it
+/// does not read, and what was zeroed stays.
+fn zero_block(out: &mut [u8], at: usize, whose: Whose, changed: &mut bool) -> Option<usize> {
+    let sn = *out.get(at)? as usize;
+    let mut at = at + 1 + sn + 2; // screen name, warning level
+    let count = be16(out, at)?;
+    at += 2;
+    for _ in 0..count {
+        let tag = be16(out, at)? as u16;
+        let len = be16(out, at + 2)?;
+        let end = at + 4 + len;
+        if end > out.len() {
+            return None;
         }
+        let value = &mut out[at + 4..end];
+        match (tag, whose) {
+            (TLV_DC_INFO, _) => *changed |= zero_dc(value),
+            (TLV_EXTERNAL_IP, Whose::Contact) => {
+                *changed |= value.iter().any(|b| *b != 0);
+                value.fill(0);
+            }
+            (TLV_EXTERNAL_IP_TEXT, Whose::Contact) => {
+                for b in value.iter_mut() {
+                    if b.is_ascii_digit() && *b != b'0' {
+                        *b = b'0';
+                        *changed = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        at = end;
+    }
+    Some(at)
+}
+
+/// Zeroes every user info block from `at` to the end of `out`.
+fn zero_blocks(out: &mut [u8], mut at: usize, whose: Whose, changed: &mut bool) -> Option<()> {
+    while at < out.len() {
+        at = zero_block(out, at, whose, changed)?;
     }
     Some(())
+}
+
+/// `OServiceEvilNotification` (`0x0001/0x0010`): the new warning level, then
+/// the user info of whoever warned, unless anonymous.
+pub const OSERVICE_EVIL_NOTIFICATION: u16 = 0x0010;
+/// `LocateUserInfoReply` (`0x0002/0x0006`): a contact's user info block,
+/// then the profile and away message TLVs.
+pub const LOCATE_USER_INFO_REPLY: u16 = 0x0006;
+/// `BuddyDeparted` (`0x0003/0x000C`).
+pub const BUDDY_DEPARTED: u16 = 0x000C;
+/// `ICBMMissedCalls` (`0x0004/0x000A`): per sender, the channel, its user
+/// info, the number missed and why.
+pub const ICBM_MISSED_CALLS: u16 = 0x000A;
+/// The chat food group (`0x000E`), its user lists and its message.
+pub const FOOD_CHAT: u16 = 0x000E;
+pub const CHAT_USERS_JOINED: u16 = 0x0003;
+pub const CHAT_USERS_LEFT: u16 = 0x0004;
+pub const CHAT_MSG_TO_CLIENT: u16 = 0x0006;
+/// The sender's user info in a chat message (`wire.ChatTLVSenderInformation`).
+pub const CHAT_TLV_SENDER: u16 = 0x0003;
+/// The ICQ meta reply that names a random chat partner
+/// (`ICQ_0x07DA_0x0366_DBQueryMetaReplyRandomFound`), with its addresses.
+const ICQ_META_REPLY: u16 = 0x07DA;
+const ICQ_RANDOM_FOUND: u16 = 0x0366;
+const ICQ_STATUS_OK: u8 = 0x0A;
+
+/// An inbound SNAC payload with every peer address the add-on knows of in
+/// it zeroed (third audit of 2026-10, finding 4), and what kind of SNAC it
+/// was, for the log; `None` when there was nothing to zero. Same length.
+/// Where the server hands the client user info:
+///
+/// - the user's own info (`0x0001/0x000F`): the DC info;
+/// - a warning notice (`0x0001/0x0010`), a Locate user info reply
+///   (`0x0002/0x0006`), "buddy arrived" and "departed" (`0x0003/0x000B`,
+///   `0x000C`), a message's sender (`0x0004/0x0007`), missed messages
+///   (`0x0004/0x000A`), the users of a chat room and a chat message's
+///   sender (`0x000E/0x0003`, `0x0004`, `0x0006`): the DC info and the
+///   external address;
+/// - the ICQ meta reply naming a random chat partner (`0x0015/0x0003`,
+///   `0x07DA/0x0366`): its addresses and port.
+///
+/// ICQ white pages and directory search results carry no address.
+pub fn strip_user_info_dc(payload: &[u8]) -> Option<(Vec<u8>, &'static str)> {
+    let s = snac::parse(payload)?;
+    let at = payload.len() - s.body.len();
+    let mut out = payload.to_vec();
+    let mut changed = false;
+    let c = &mut changed;
+    // A block that does not read stops the walk; what was zeroed stays.
+    let what = match (s.food_group, s.sub_group) {
+        (snac::FOOD_OSERVICE, snac::OSERVICE_USER_INFO) => {
+            let _ = zero_blocks(&mut out, at, Whose::Own, c);
+            "own user info"
+        }
+        (snac::FOOD_OSERVICE, OSERVICE_EVIL_NOTIFICATION) => {
+            if out.len() > at + 2 {
+                let _ = zero_block(&mut out, at + 2, Whose::Contact, c);
+            }
+            "warning notice"
+        }
+        (snac::FOOD_LOCATE, LOCATE_USER_INFO_REPLY) => {
+            let _ = zero_block(&mut out, at, Whose::Contact, c);
+            "user info reply"
+        }
+        (snac::FOOD_BUDDY, snac::BUDDY_ARRIVED | BUDDY_DEPARTED) => {
+            let _ = zero_blocks(&mut out, at, Whose::Contact, c);
+            "buddy arrived"
+        }
+        (snac::FOOD_ICBM, snac::ICBM_MSG_TO_CLIENT) => {
+            let _ = zero_block(&mut out, at + 10, Whose::Contact, c);
+            "message sender"
+        }
+        (snac::FOOD_ICBM, ICBM_MISSED_CALLS) => {
+            let mut pos = at;
+            while pos < out.len() {
+                match zero_block(&mut out, pos + 2, Whose::Contact, c) {
+                    Some(end) => pos = end + 4,
+                    None => break,
+                }
+            }
+            "missed messages"
+        }
+        (FOOD_CHAT, CHAT_USERS_JOINED | CHAT_USERS_LEFT) => {
+            let _ = zero_blocks(&mut out, at, Whose::Contact, c);
+            "chat users"
+        }
+        (FOOD_CHAT, CHAT_MSG_TO_CLIENT) => {
+            let mut pos = at + 10;
+            while let (Some(tag), Some(len)) = (be16(&out, pos), be16(&out, pos + 2)) {
+                let end = pos + 4 + len;
+                if end > out.len() {
+                    break;
+                }
+                if tag as u16 == CHAT_TLV_SENDER {
+                    let _ = zero_block(&mut out[pos + 4..end], 0, Whose::Contact, c);
+                }
+                pos = end;
+            }
+            "chat message sender"
+        }
+        (snac::FOOD_ICQ, snac::ICQ_DB_REPLY) => {
+            zero_random_found(&mut out[at..], c);
+            "ICQ random chat partner"
+        }
+        _ => return None,
+    };
+    changed.then_some((out, what))
+}
+
+/// Zeroes the external address, port and internal address of an ICQ meta
+/// reply naming a random chat partner, in the TLV `0x0001` of a DB reply
+/// body. Little endian inside: block length (2), UIN (4), request type (2),
+/// sequence (2), subtype (2), status (1), partner UIN (4), group (2), then
+/// external address (4), port (4), internal address (4).
+fn zero_random_found(body: &mut [u8], changed: &mut bool) {
+    let le16 = |v: &[u8], i: usize| v.get(i..i + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
+    let mut pos = 0;
+    while let (Some(tag), Some(len)) = (be16(body, pos), be16(body, pos + 2)) {
+        let end = pos + 4 + len;
+        if end > body.len() {
+            return;
+        }
+        let v = &mut body[pos + 4..end];
+        if tag as u16 == crate::icbm::ICQ_TLV_DATA
+            && le16(v, 6) == Some(ICQ_META_REPLY)
+            && le16(v, 10) == Some(ICQ_RANDOM_FOUND)
+            && v.get(12) == Some(&ICQ_STATUS_OK)
+            && v.len() >= 31
+        {
+            *changed |= v[19..31].iter().any(|b| *b != 0);
+            v[19..31].fill(0);
+        }
+        pos = end;
+    }
 }
 
 #[cfg(test)]
@@ -396,5 +576,204 @@ pub(crate) mod tests {
         .concat();
         assert_eq!(strip_contacts_dc(&arrived), Some(want.clone()));
         assert_eq!(strip_contacts_dc(&want), None);
+    }
+
+    // --- third audit of 2026-10, finding 4 ----------------------------------
+
+    /// A DC info value with an address and port, or with them zeroed.
+    fn dc_value(real: bool) -> Vec<u8> {
+        let mut dc = if real {
+            vec![192, 168, 1, 20, 0, 0, 0x14, 0x46, 4]
+        } else {
+            vec![0; 9]
+        };
+        dc.extend_from_slice(&[0, 9]);
+        dc.extend_from_slice(&[0xAB; 26]);
+        dc
+    }
+
+    /// A user info block of `sn` with a DC info, an external address in both
+    /// forms and a TLV that is no address; `real` false is what the add-on
+    /// leaves of it for a contact.
+    fn block(sn: &str, real: bool) -> Vec<u8> {
+        let tlvs = [
+            tlv(0x0001, &[0, 0x50]),
+            tlv(
+                TLV_EXTERNAL_IP,
+                if real { &[192, 168, 1, 20] } else { &[0; 4] },
+            ),
+            tlv(
+                TLV_EXTERNAL_IP_TEXT,
+                if real {
+                    b"192.168.1.20"
+                } else {
+                    b"000.000.0.00"
+                },
+            ),
+            tlv(TLV_DC_INFO, &dc_value(real)),
+        ];
+        let mut v = vec![sn.len() as u8];
+        v.extend_from_slice(sn.as_bytes());
+        v.extend_from_slice(&0u16.to_be_bytes());
+        v.extend_from_slice(&(tlvs.len() as u16).to_be_bytes());
+        v.extend(tlvs.concat());
+        v
+    }
+
+    fn snac_of(food: u16, sub: u16, body: &[u8]) -> Vec<u8> {
+        let mut p = food.to_be_bytes().to_vec();
+        p.extend_from_slice(&sub.to_be_bytes());
+        p.extend_from_slice(&[0, 0, 0, 0, 0, 9]);
+        p.extend_from_slice(body);
+        p
+    }
+
+    /// The ICQ meta reply naming a random chat partner, with its addresses
+    /// and port, or with them zeroed.
+    fn random_found(real: bool) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&100001u32.to_le_bytes());
+        b.extend_from_slice(&0x07DAu16.to_le_bytes());
+        b.extend_from_slice(&7u16.to_le_bytes());
+        b.extend_from_slice(&0x0366u16.to_le_bytes());
+        b.push(0x0A);
+        b.extend_from_slice(&100002u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        let addr: [u8; 4] = if real { [192, 168, 1, 20] } else { [0; 4] };
+        b.extend_from_slice(&addr);
+        b.extend_from_slice(&(if real { 5190u32 } else { 0 }).to_le_bytes());
+        b.extend_from_slice(&addr);
+        b.push(4);
+        b.extend_from_slice(&10u16.to_le_bytes());
+        let mut v = (b.len() as u16).to_le_bytes().to_vec();
+        v.extend(b);
+        tlv(crate::icbm::ICQ_TLV_DATA, &v)
+    }
+
+    /// Every SNAC that hands the client user info or a peer's address, as
+    /// the server sends it (`real`) and as the add-on passes it on.
+    pub(crate) fn address_carriers(real: bool) -> Vec<(&'static str, Vec<u8>)> {
+        let b = |sn| block(sn, real);
+        let own = {
+            // The user's own external address stays; only the DC info goes.
+            let mut v = block("100001", true);
+            if !real {
+                let at = v.len() - dc_value(true).len();
+                v[at..at + 9].fill(0);
+            }
+            v
+        };
+        let mut chat_msg = [7u8; 8].to_vec();
+        chat_msg.extend_from_slice(&3u16.to_be_bytes());
+        chat_msg.extend(tlv(CHAT_TLV_SENDER, &b("100002")));
+        chat_msg.extend(tlv(0x0005, b"hello"));
+        let mut icbm = [7u8; 8].to_vec();
+        icbm.extend_from_slice(&1u16.to_be_bytes());
+        icbm.extend(b("100002"));
+        icbm.extend(tlv(0x0002, b"message"));
+        let missed = [
+            &[0, 1][..],
+            &b("100002"),
+            &[0, 1, 0, 0],
+            &[0, 1],
+            &b("100003"),
+            &[0, 2, 0, 1],
+        ]
+        .concat();
+        vec![
+            (
+                "own user info",
+                snac_of(snac::FOOD_OSERVICE, snac::OSERVICE_USER_INFO, &own),
+            ),
+            (
+                "warning notice",
+                snac_of(
+                    snac::FOOD_OSERVICE,
+                    OSERVICE_EVIL_NOTIFICATION,
+                    &[&[0, 5][..], &b("100002")].concat(),
+                ),
+            ),
+            (
+                "user info reply",
+                snac_of(
+                    snac::FOOD_LOCATE,
+                    LOCATE_USER_INFO_REPLY,
+                    &[b("100002"), tlv(0x0002, b"profile")].concat(),
+                ),
+            ),
+            (
+                "buddy arrived",
+                snac_of(
+                    snac::FOOD_BUDDY,
+                    snac::BUDDY_ARRIVED,
+                    &[b("100002"), b("100003")].concat(),
+                ),
+            ),
+            (
+                "buddy arrived",
+                snac_of(snac::FOOD_BUDDY, BUDDY_DEPARTED, &b("100002")),
+            ),
+            (
+                "message sender",
+                snac_of(snac::FOOD_ICBM, snac::ICBM_MSG_TO_CLIENT, &icbm),
+            ),
+            (
+                "missed messages",
+                snac_of(snac::FOOD_ICBM, ICBM_MISSED_CALLS, &missed),
+            ),
+            (
+                "chat users",
+                snac_of(
+                    FOOD_CHAT,
+                    CHAT_USERS_JOINED,
+                    &[b("100002"), b("100003")].concat(),
+                ),
+            ),
+            (
+                "chat users",
+                snac_of(FOOD_CHAT, CHAT_USERS_LEFT, &b("100002")),
+            ),
+            (
+                "chat message sender",
+                snac_of(FOOD_CHAT, CHAT_MSG_TO_CLIENT, &chat_msg),
+            ),
+            (
+                "ICQ random chat partner",
+                snac_of(snac::FOOD_ICQ, snac::ICQ_DB_REPLY, &random_found(real)),
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_user_info_carrier_loses_the_peer_addresses() {
+        for ((what, real), (_, want)) in address_carriers(true)
+            .into_iter()
+            .zip(address_carriers(false))
+        {
+            let (got, said) = strip_user_info_dc(&real).unwrap_or_else(|| panic!("{what}"));
+            assert_eq!(said, what);
+            assert_eq!(got.len(), real.len(), "{what}: same length");
+            assert_eq!(got, want, "{what}");
+            assert_eq!(strip_user_info_dc(&got), None, "{what}: nothing left");
+        }
+    }
+
+    #[test]
+    fn snacs_without_user_info_are_not_touched() {
+        let mut icbm = [7u8; 8].to_vec();
+        icbm.extend_from_slice(&1u16.to_be_bytes());
+        icbm.extend(block("100002", true));
+        // An outbound message, a profile query, a random chat search that
+        // found no one, a block that does not read: nothing.
+        let mut not_random = random_found(true);
+        not_random[4 + 2 + 10] = 0xA4;
+        for p in [
+            snac_of(snac::FOOD_ICBM, snac::ICBM_MSG_TO_HOST, &icbm),
+            snac_of(snac::FOOD_LOCATE, 0x0005, &block("100002", true)),
+            snac_of(snac::FOOD_ICQ, snac::ICQ_DB_REPLY, &not_random),
+            snac_of(snac::FOOD_BUDDY, snac::BUDDY_ARRIVED, &[6, b'1']),
+        ] {
+            assert_eq!(strip_user_info_dc(&p), None, "{p:?}");
+        }
     }
 }

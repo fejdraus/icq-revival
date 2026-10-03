@@ -138,7 +138,11 @@ log and vouches for it. `cmd/e2e-kt-auditor` (`server/e2e/audit.go`):
   once every device is revoked; a `device` with an id the account never used,
   signed by the account key; a `resign` of an active device signed by the
   current key; an `owner-revoke` of an active device signed by the account
-  key, and an `owner-delete` signed by it; a `recovery-revoke` of an active
+  key, and an `owner-delete` signed by it - each issued within five minutes
+  of its own entry's time (the window the server takes the request in,
+  `OwnerSignatureWindow`) and carried by the log only once, so a server
+  cannot log an old signature it kept (third audit of 2026-10, finding 3);
+  a `recovery-revoke` of an active
   device; a `revoke` only right after its `owner-revoke` or
   `recovery-revoke`, or of a device a rotation left without a signature by
   the new key; a `delete` only right after its `owner-delete` or
@@ -294,13 +298,19 @@ log's key, the size, the tree's right edge and every account replayed.
   (`kt::AUDIT_MAX_AGE`; an auditor cosigns every minute). If none has, it is
   a warning once per sign-on naming each auditor's last word, and
   `/e2e status` says `NOT AUDITED`.
-- **What an auditor vouched for** (second audit of 2026-10, finding 3).
-  Once a trusted auditor has cosigned a checkpoint that agrees with this
-  copy (`LogState::audit_required`, kept in the state file), new trust
+- **What an auditor vouched for** (second audit of 2026-10, finding 3;
+  third audit, findings 1 and 2). From the moment an auditor is trusted -
+  named by the `auditors =` line, pinned in the state file, or (for a copy
+  from before) having cosigned it (`OwnKeys::audit_required`) - new trust
   material is taken only from the part of the log an auditor cosigned: the
-  copy keeps a second replay up to the largest agreeing cosigned size
-  (`LogState::vouched`, `kt::vouch`, which reads those leaves again and
-  checks each against the hashes it keeps). A contact never pinned, a
+  copy keeps a second replay up to the largest size that a cosignature
+  agreeing with it and **fresh now** covers (`LogState::vouched`,
+  `LogState::fresh_audited_size`, `kt::vouch`, which reads those leaves
+  again and checks each against the hashes it keeps); a stale cosignature
+  over more of the log moves it no further. Before the first cosignature
+  the log is `Unaudited`, never plain trusted, and a log that cannot be read
+  or that the server says it does not keep is not trust on first use while
+  an auditor is configured. A contact never pinned, a
   changed account key, a device without a session and a new inbound session
   must all be in it - so a key published a moment ago is used a minute or
   two later, once an auditor has looked. With no fresh cosignature at all

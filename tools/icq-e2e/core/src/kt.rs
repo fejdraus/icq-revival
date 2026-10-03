@@ -12,7 +12,7 @@
 //! directory must be the log's keys for them, and our own account in the log
 //! must hold nothing we did not put there.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
@@ -334,6 +334,49 @@ pub struct Replay {
     /// until a key is published for them again.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub deleted: BTreeMap<String, String>,
+    /// Every owner's signed action the log has carried, as
+    /// [`owner_action_id`] names it: a signature the log already used is not
+    /// taken again (third audit of 2026-10, finding 3).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub owner_used: BTreeSet<String>,
+}
+
+/// How far an owner's signed action (`owner-revoke`, `owner-delete`) may be
+/// issued from the time of its leaf, either way, in seconds: the window the
+/// server takes the request in (`server/e2e/sign.go`,
+/// `OwnerSignatureWindow`), so a server cannot log an old signature it kept
+/// (third audit of 2026-10, finding 3).
+pub const OWNER_SIGNATURE_WINDOW: u64 = 300;
+
+/// The name of one owner's signed action - the message it signs - for
+/// [`Replay::owner_used`]: the kind, the account, the device (0 for a
+/// delete) and the time it was issued.
+pub fn owner_action_id(kind: &str, account: &str, device: u32, issued_at: u64) -> String {
+    format!("{kind}|{account}|{device}|{issued_at}")
+}
+
+/// The rules an owner's signed action keeps besides its signature: issued
+/// within [`OWNER_SIGNATURE_WINDOW`] of its leaf, and never carried by the
+/// log before ([`Replay::owner_used`], where it is recorded).
+fn owner_action(
+    used: &mut BTreeSet<String>,
+    leaf: &Leaf,
+    kind: &str,
+    device: u32,
+    issued_at: u64,
+) -> Result<(), String> {
+    if leaf.time.abs_diff(issued_at) > OWNER_SIGNATURE_WINDOW {
+        return Err(format!(
+                "the owner's {kind} was issued at {issued_at}, not within {OWNER_SIGNATURE_WINDOW} s of its entry ({})",
+                leaf.time
+            ));
+    }
+    if !used.insert(owner_action_id(kind, &leaf.screen_name, device, issued_at)) {
+        return Err(format!(
+            "the owner's {kind} signed at {issued_at} is in the log a second time"
+        ));
+    }
+    Ok(())
 }
 
 fn verify_b64(key: &str, msg: &[u8], sig: &str) -> bool {
@@ -494,6 +537,7 @@ impl Replay {
                         "the revoke of device {id} is not signed by the account key"
                     ));
                 }
+                owner_action(&mut self.owner_used, leaf, "owner-revoke", *id, *issued_at)?;
                 self.pending = Some(Pending {
                     kind: "revoke".into(),
                     account: sn,
@@ -539,6 +583,7 @@ impl Replay {
                 if !verify_b64(&a.key, &crate::sign::delete(&sn, *issued_at), signature) {
                     return Err("the delete is not signed by the account key".into());
                 }
+                owner_action(&mut self.owner_used, leaf, "owner-delete", 0, *issued_at)?;
                 self.pending = Some(Pending {
                     kind: "delete".into(),
                     account: sn,
@@ -594,6 +639,9 @@ pub struct LogState {
     /// Accounts the operator deleted without the owner's key.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub deleted: BTreeMap<String, String>,
+    /// The owner's signed actions the log carried ([`Replay::owner_used`]).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub owner_used: BTreeSet<String>,
     #[serde(default)]
     pub own_seen: Vec<u32>,
     /// Our account key in the log that is not ours, once the user was told.
@@ -640,7 +688,10 @@ fn is_zero(n: &u64) -> bool {
 
 impl Replay {
     fn is_empty(&self) -> bool {
-        self.accounts.is_empty() && self.pending.is_none() && self.deleted.is_empty()
+        self.accounts.is_empty()
+            && self.pending.is_none()
+            && self.deleted.is_empty()
+            && self.owner_used.is_empty()
     }
 }
 
@@ -652,9 +703,11 @@ pub enum Trust {
     NeverHadLog,
     /// The copy is up to date and adds up: keys are checked against it.
     Trusted,
-    /// The copy is up to date, and a pinned auditor has vouched for this
-    /// copy before but has not within [`AUDIT_MAX_AGE`]: what is known goes
-    /// on, nothing new is taken (second audit of 2026-10, finding 3).
+    /// The copy is up to date, an auditor's word is required - one is
+    /// configured or pinned, or has vouched for this copy before (third
+    /// audit of 2026-10, finding 1) - and none has vouched within
+    /// [`AUDIT_MAX_AGE`]: what is known goes on, nothing new is taken
+    /// (second audit of 2026-10, finding 3).
     Unaudited(String),
     /// The log was trusted on this state before, and cannot be read now:
     /// the last trusted copy stands, nothing new is taken until it can be
@@ -673,28 +726,37 @@ impl LogState {
         self.key.is_some() || self.size > 0
     }
 
-    /// Whether a pinned auditor has ever cosigned a checkpoint that agrees
-    /// with this copy: from then on new keys are taken only from the part an
-    /// auditor vouched for, and only while one has done so lately.
+    /// Whether new keys are taken only from the part of the log an auditor
+    /// vouched for, and only while one has done so lately: from the moment
+    /// an auditor is pinned in this copy (third audit of 2026-10, finding 1),
+    /// not only once one has cosigned - and, for a copy from before, once
+    /// one has. The engine adds the `auditors =` line of `icq-e2e.ini`,
+    /// which counts before it is pinned here.
     pub fn audit_required(&self) -> bool {
-        self.audited.is_some() || !self.audits.is_empty()
+        !self.auditors.is_empty() || self.audited.is_some() || !self.audits.is_empty()
+    }
+
+    /// The cosignatures that agree with this copy and are at most
+    /// [`AUDIT_MAX_AGE`] old at `now`.
+    fn fresh_audits(&self, now: u64) -> impl Iterator<Item = &Audited> {
+        self.audits
+            .iter()
+            .chain(self.audited.iter())
+            .filter(move |a| now <= a.time.saturating_add(AUDIT_MAX_AGE))
     }
 
     /// Whether a pinned auditor's cosignature that agrees with this copy is
     /// at most [`AUDIT_MAX_AGE`] old at `now`.
     pub fn audit_fresh(&self, now: u64) -> bool {
-        self.audits
-            .iter()
-            .chain(self.audited.iter())
-            .any(|a| now <= a.time.saturating_add(AUDIT_MAX_AGE))
+        self.fresh_audits(now).next().is_some()
     }
 
-    /// The largest log size a pinned auditor cosigned in agreement with
-    /// this copy.
-    pub fn audited_size(&self) -> u64 {
-        self.audits
-            .iter()
-            .chain(self.audited.iter())
+    /// The largest log size that a cosignature fresh at `now` covers, no
+    /// more than this copy: how far [`LogState::vouched`] may go. A stale
+    /// cosignature over more of the log vouches for nothing beyond what a
+    /// fresh one covers (third audit of 2026-10, finding 2).
+    pub fn fresh_audited_size(&self, now: u64) -> u64 {
+        self.fresh_audits(now)
             .map(|a| a.size)
             .max()
             .unwrap_or(0)
@@ -707,6 +769,7 @@ impl LogState {
             accounts: self.accounts.clone(),
             pending: self.pending.clone(),
             deleted: self.deleted.clone(),
+            owner_used: self.owner_used.clone(),
         }
     }
 
@@ -714,6 +777,7 @@ impl LogState {
         self.accounts = r.accounts;
         self.pending = r.pending;
         self.deleted = r.deleted;
+        self.owner_used = r.owner_used;
     }
 }
 
@@ -1266,6 +1330,15 @@ fn audit_into(
                     .map(|c| c.name)
                     .collect();
                 next.audits.retain(|a| names.contains(&a.auditor));
+                // Nor does the newest word of an auditor no longer trusted
+                // vouch for anything.
+                if next
+                    .audited
+                    .as_ref()
+                    .is_some_and(|a| !names.contains(&a.auditor))
+                {
+                    next.audited = None;
+                }
             }
             if keys.is_empty() {
                 return Err(AuditError::Stale(
@@ -1804,7 +1877,7 @@ mod tests {
 
     /// The leaves of `server/e2e/audit_test.go`'s `sharedKTVectors`, as the
     /// Go server builds them.
-    const SHARED_VECTORS: [&str; 11] = [
+    const SHARED_VECTORS: [&str; 15] = [
         "T1NDQVItRTJFLUtULXYxAAdhY2NvdW50AAYxMDAwMDEACAAAAABlU/EAAAdwdWJsaXNoACCKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXA==",
         "T1NDQVItRTJFLUtULXYxAAZkZXZpY2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEAIAMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDACACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgBAymZM6VU7E6HkcvkIbyPYI3F+7UxZBkwaxvlPxTFkyMnL/5uAFJ6R2mFh1CuFjbt5t3+xcBgdP4/BPob0Kj3qBQ==",
         "T1NDQVItRTJFLUtULXYxAAxvd25lci1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEACAAAAABlU/EAAEBtqTL0mQxf5xJahj15TZDec+7FG277JwFmOjAaE5mXzbSjatUjZLkSw/JxUXnsqSxE837cBwxn3KzjnMHrj6kE",
@@ -1816,6 +1889,10 @@ mod tests {
         "T1NDQVItRTJFLUtULXYxAAZkZWxldGUABjEwMDAwMQAIAAAAAGVT8QA=",
         "T1NDQVItRTJFLUtULXYxAAdhY2NvdW50AAYxMDAwMDEACAAAAABlU/EAAAdwdWJsaXNoACBuehzdKbC3j9E69MVZj+/07yqXFm48pvLk+/zNgFBb8Q==",
         "T1NDQVItRTJFLUtULXYxAAxvd25lci1kZWxldGUABjEwMDAwMQAIAAAAAGVT8QAACAAAAABlU/EAAEBOWgjh6PMWip+xhnXoAOk4Xy37Uwfp719ulO0e2KzgtRoi7KlikRgHbJXAw/v+U10Ta1Q3fw3En5cZFIcZ5cAA",
+        "T1NDQVItRTJFLUtULXYxAAxvd25lci1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEACAAAAABlU+/TAEDzK2qDdMmqjlPnylAriHgqp1MhzH+nTB2wo2j74mLVuzORo4v1TJTvqa1Ora0u/e/ilq2KjznWoHa7hBumsRQI",
+        "T1NDQVItRTJFLUtULXYxAAxvd25lci1yZXZva2UABjEwMDAwMQAIAAAAAGVT8QAABAAAAAEACAAAAABlU+/UAEDoGt15N4n57HDAddKMpD/A+keAdWo1itoNsNSQD4lSuPL5hipM2ri0qTPv5c1vzfO4T7t1U86J9A21jUNjXWML",
+        "T1NDQVItRTJFLUtULXYxAAxvd25lci1kZWxldGUABjEwMDAwMQAIAAAAAGVT8QAACAAAAABlU/ItAEAwWehLkufry/UqI8Pk9DV82XOVZGYg2V+dXmmwn2HGNzR4ls/lLDovT4JMJ5qxrXjymwRMWUBEKn5W65re8SsN",
+        "T1NDQVItRTJFLUtULXYxAAxvd25lci1kZWxldGUABjEwMDAwMQAIAAAAAGVT8QAACAAAAABlU/EBAEDgsblczgScbu5K/oS4gwBxO4YHZ6/9ZKSaR0KrJPdbJuUv2YlL0DUHvqqGehSN+Zlqt4QPTibjzc9w2N7zcwgI",
     ];
 
     /// The same sequences as `sharedKTSequences` in
@@ -1825,7 +1902,7 @@ mod tests {
     /// logs as the operator's recovery.
     #[test]
     fn the_replay_comes_to_the_auditors_verdicts() {
-        let cases: [(&[usize], Option<&[usize]>); 8] = [
+        let cases: [(&[usize], Option<&[usize]>); 13] = [
             (&[0, 1, 2, 3], Some(&[])),
             (&[0, 1, 3], None),
             (&[0, 1, 4], None),
@@ -1834,6 +1911,15 @@ mod tests {
             (&[0, 8], None),
             (&[0, 10, 8], Some(&[])),
             (&[0, 10, 9], None),
+            // Third audit of 2026-10, finding 3: an owner's signature issued
+            // more than OWNER_SIGNATURE_WINDOW from its entry, either way, is
+            // refused, one just within it is not; and one the log already
+            // carried is refused the second time.
+            (&[0, 1, 11, 3], None),
+            (&[0, 1, 12, 3], Some(&[])),
+            (&[0, 13, 8], None),
+            (&[0, 10, 8, 0, 14, 8], Some(&[])),
+            (&[0, 10, 8, 0, 10, 8], None),
         ];
         let leaves: Vec<Leaf> = SHARED_VECTORS
             .iter()

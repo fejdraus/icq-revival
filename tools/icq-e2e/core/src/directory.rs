@@ -484,8 +484,14 @@ struct Memory {
 
 impl Memory {
     fn kt_append(&mut self, kind: &str, sn: &str, fields: &[&[u8]]) {
+        let time = self.kt.len() as u64 + 1;
+        self.kt_append_at(kind, sn, time, fields);
+    }
+
+    /// A leaf with the commit time `time`, as the server stamps an owner's
+    /// signed action: within the signature's window of its `issued_at`.
+    fn kt_append_at(&mut self, kind: &str, sn: &str, time: u64, fields: &[&[u8]]) {
         if !self.kt_paused {
-            let time = self.kt.len() as u64 + 1;
             self.kt.push(crate::kt::build_leaf(kind, sn, time, fields));
         }
     }
@@ -633,16 +639,17 @@ impl MemoryDirectory {
             }
         }
         if revoked {
-            m.kt_append(
+            m.kt_append_at(
                 "owner-revoke",
                 &sn,
+                issued_at,
                 &[
                     &device_id.to_be_bytes(),
                     &issued_at.to_be_bytes(),
                     signature,
                 ],
             );
-            m.kt_append("revoke", &sn, &[&device_id.to_be_bytes()]);
+            m.kt_append_at("revoke", &sn, issued_at, &[&device_id.to_be_bytes()]);
         }
     }
 

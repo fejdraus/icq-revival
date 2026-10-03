@@ -753,9 +753,16 @@ contact's user info). With `e2e = on` (encrypt mode) the add-on:
   client a cancel from the contact for one it proposed, so it does not wait
   (with `ICQE2E_NO_INJECT` the frame stays, turned into a cancel);
 - zeroes the DC info's address, port and connection type in the client's own
-  `SetUserInfoFields` and in every contact's user info in "buddy arrived", so
-  neither side has an address to connect to. Lengths stay the same; zeros
-  are also what the server sends when a client never set the TLV.
+  `SetUserInfoFields` and in every contact's user info, so neither side has
+  an address to connect to: "buddy arrived" and "departed", the Locate user
+  info reply ("user details"), a message's sender, missed messages, a
+  warning notice, chat users and a chat message's sender, and the user's
+  own info; a contact's external address (TLV `0x000A`, and `0x100A` as
+  text) is zeroed in the same places, and so are the addresses and port of
+  the ICQ random chat partner (`0x0015/0x0003`, `0x07DA/0x0366`). Lengths
+  stay the same; zeros are also what the server sends when a client never
+  set the TLV. The log says `IN <which SNAC>: direct connection address left
+  out`.
 
 File transfer (`CapFileTransfer`) and calls (channel 6) are not touched.
 Observe, the harness and `e2e = off` leave all of it as it was. The log says
@@ -769,7 +776,11 @@ Observe, the harness and `e2e = off` leave all of it as it was. The log says
 
 Whether ICQ 6.5 and 7.2 use either kind of direct messaging at all is not
 known from the code; this shows it, and that nothing gets past the server
-path while encrypting.
+path while encrypting. Run it once more with ICQ 2003b (no add-on, the
+generation most likely to open an ICQ direct connection) as the contact on
+the other machine: it must get no address for the 6.5/7.2 user and open no
+direct connection to it. Look at the contact's "user details" on both
+sides too: no address may show there while encrypting.
 
 1. Two machines (or two VMs on different hosts) with the add-on, `e2e = on`,
    `files_log = on`, both on the same LAN, so a direct connection would be
@@ -793,8 +804,9 @@ path while encrypting.
    machine>`) shows no TCP between the two except a file transfer.
 4. File transfer and a call between the two still work, as before.
 
-If step 2 shows neither kind is ever used by 6.5/7.2, the fix is a guard
-against a client or a contact (another client generation) that would.
+If step 2 shows neither kind is ever used by 6.5/7.2 (nor by a 2003b
+contact towards them), the fix is a guard against a client or a contact
+(another client generation) that would.
 
 ## Build
 

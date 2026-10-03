@@ -194,6 +194,12 @@ pub struct OwnKeys {
     /// of a log trusted before counts as [`InboundGate::Frozen`].
     #[serde(skip)]
     pub inbound_gate: InboundGate,
+    /// The `auditors =` line of `icq-e2e.ini` names auditors, set by the
+    /// engine: an auditor's word is required from the start, before any is
+    /// pinned in [`OwnKeys::log`] (third audit of 2026-10, finding 1). Not
+    /// kept in the state file.
+    #[serde(skip)]
+    pub audit_configured: bool,
     /// Why the last pre-key message was refused, when it was for a reason
     /// worth saying (too many new sessions); taken by [`OwnKeys::decrypt`].
     #[serde(skip)]
@@ -375,6 +381,7 @@ impl OwnKeys {
             contacts: HashMap::new(),
             log: crate::kt::LogState::default(),
             inbound_gate: InboundGate::Open,
+            audit_configured: false,
             last_refusal: None,
             inbound_ids: HashMap::new(),
             fallback_used: false,
@@ -1175,10 +1182,15 @@ impl OwnKeys {
     pub fn log_allows_inbound(&self, peer: &str, account_key: &str, d: &Device) -> bool {
         let gate = match self.inbound_gate {
             _ if self.log.broken.is_some() => InboundGate::Frozen,
-            InboundGate::Open if self.log.was_trusted() => InboundGate::Frozen,
+            InboundGate::Open if self.log.was_trusted() || self.audit_required() => {
+                InboundGate::Frozen
+            }
+            // With an auditor configured or pinned, the log alone never
+            // makes a session (third audit of 2026-10, finding 1).
+            InboundGate::Log if self.audit_required() => InboundGate::Vouched,
             g => g,
         };
-        let vouched = || !self.log.audit_required() || self.vouched_shows(peer, account_key, d);
+        let vouched = || !self.audit_required() || self.vouched_shows(peer, account_key, d);
         match gate {
             InboundGate::Open => true,
             InboundGate::Log => self.log_shows(peer, account_key, d),
@@ -1191,6 +1203,13 @@ impl OwnKeys {
                     && vouched()
             }
         }
+    }
+
+    /// Whether new trust material must come from the part of the key log an
+    /// auditor vouched for: an auditor is configured (`auditors =`) or
+    /// pinned, or has cosigned this copy ([`crate::kt::LogState::audit_required`]).
+    pub fn audit_required(&self) -> bool {
+        self.audit_configured || self.log.audit_required()
     }
 
     /// Whether the part of the key log an auditor vouched for has `peer`

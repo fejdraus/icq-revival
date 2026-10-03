@@ -2201,4 +2201,31 @@ next"]);
             assert!(out.windows(4).any(|w| w == addr), "observe leaves it");
         }
     }
+
+    /// Third audit of 2026-10, finding 4: every SNAC that hands the client a
+    /// peer's address - a Locate user info reply, a message's sender, chat
+    /// users, the ICQ random chat partner and the rest - reaches it without
+    /// one while encrypting, at the same length; observe mode leaves them.
+    #[test]
+    fn peer_addresses_are_zeroed_in_every_user_info_carrier_while_encrypting() {
+        let addr = [192u8, 168, 1, 20];
+        let has_addr = |b: &[u8]| {
+            b.windows(4).any(|w| w == addr) || b.windows(12).any(|w| w == b"192.168.1.20")
+        };
+        for (what, payload) in direct::tests::address_carriers(true) {
+            if what == "own user info" {
+                // The user's own external address stays.
+                continue;
+            }
+            let f = frame(FLAP_CHANNEL_SNAC, 2, &payload);
+            let (mut r, mut out) = opened(Direction::Inbound);
+            r.push_crypto(&f, &mut Fake::new(), 1, &encrypt(), &mut out);
+            assert_eq!(out.len(), hello().len() + f.len(), "{what}: same length");
+            assert!(!has_addr(&out), "{what}");
+            let mut r = StreamRewriter::new(Direction::Inbound);
+            let mut out = Vec::new();
+            r.push(&[hello(), f.clone()].concat(), &Policy::observe(), &mut out);
+            assert!(has_addr(&out), "{what}: observe leaves it");
+        }
+    }
 }

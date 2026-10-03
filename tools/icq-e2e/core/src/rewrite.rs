@@ -235,18 +235,42 @@ fn keep_direct_off(dir: Direction, payload: &[u8], s: &snac::Snac, p: &mut Proce
     false
 }
 
-/// The contacts' DC info zeroed in a "buddy arrived" payload, for
-/// [`keep_direct_off`]'s callers.
-fn contacts_dc_off(payload: &[u8], s: &snac::Snac, p: &mut Processed) {
-    if let Some(body) = crate::direct::strip_contacts_dc(s.body) {
-        let header_len = payload.len() - s.body.len();
-        p.payload = Some([&payload[..header_len], &body[..]].concat());
+/// Runs `inner` on an inbound SNAC with every peer address in its user info
+/// zeroed while encrypting ([`crate::direct::strip_user_info_dc`]: the DC
+/// info and external address of buddy arrived, a Locate user info reply, a
+/// message's sender, chat users and the rest; third audit of 2026-10,
+/// finding 4), and passes the zeroed SNAC on unless `inner` changed or
+/// dropped it. Anything else goes to `inner` as it is.
+fn addresses_off(
+    dir: Direction,
+    payload: &[u8],
+    encrypting: bool,
+    inner: impl FnOnce(&[u8]) -> Processed,
+) -> Processed {
+    if dir != Direction::Inbound || !encrypting {
+        return inner(payload);
     }
+    let Some((zeroed, what)) = crate::direct::strip_user_info_dc(payload) else {
+        return inner(payload);
+    };
+    let mut p = inner(&zeroed);
+    if p.payload.is_none() && !p.drop {
+        p.payload = Some(zeroed);
+    }
+    p.lines
+        .push(format!("IN {what}: direct connection address left out"));
+    p
 }
 
 /// Looks at one SNAC payload travelling in `dir` and returns what to send in
 /// its place and what to log.
 pub fn process(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
+    addresses_off(dir, payload, policy.mode == Mode::Encrypt, |payload| {
+        process_snac(dir, payload, policy)
+    })
+}
+
+fn process_snac(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
     let mut p = Processed::default();
     let Some(s) = snac::parse(payload) else {
         return p;
@@ -263,9 +287,6 @@ pub fn process(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
     match (dir, s.food_group, s.sub_group) {
         (Direction::Inbound, snac::FOOD_BUDDY, snac::BUDDY_ARRIVED) => {
             p.e2e_contacts = caps::contacts(s.body);
-            if encrypting {
-                contacts_dc_off(payload, &s, &mut p);
-            }
             return p;
         }
         // The capability goes out in every mode, not only harness. It is how a
@@ -377,6 +398,18 @@ pub fn process_crypto(
     crypto: &mut dyn Crypto,
     now: u64,
 ) -> Processed {
+    let encrypting = crypto.encrypts();
+    addresses_off(dir, payload, encrypting, |payload| {
+        process_crypto_snac(dir, payload, crypto, now)
+    })
+}
+
+fn process_crypto_snac(
+    dir: Direction,
+    payload: &[u8],
+    crypto: &mut dyn Crypto,
+    now: u64,
+) -> Processed {
     let mut p = Processed::plain();
     let Some(s) = snac::parse(payload) else {
         return p;
@@ -435,9 +468,6 @@ pub fn process_crypto(
         (Direction::Inbound, snac::FOOD_OSERVICE, snac::OSERVICE_USER_INFO) => return p,
         (Direction::Inbound, snac::FOOD_BUDDY, snac::BUDDY_ARRIVED) => {
             p.e2e_contacts = caps::contacts(s.body);
-            if encrypting {
-                contacts_dc_off(payload, &s, &mut p);
-            }
             return p;
         }
         _ => {}
