@@ -90,6 +90,19 @@ pub trait Crypto {
     /// message, which is what the heartbeat counts.
     fn since_control(&self, peer: &str) -> u32;
 
+    /// Whether `peer`'s policy requires encryption (`/e2e on` or verified),
+    /// for the protection gate (`gate.rs`) to decide a call or a file
+    /// transfer by. `None` when it cannot be told - no state, or a stand-in
+    /// state - which the gate takes as "protected". No default: every
+    /// engine says what it knows.
+    fn strictness(&self, peer: &str) -> Option<bool>;
+
+    /// A note for the chat with `peer`: the gate's refusal of a call or a
+    /// transfer. Dropped by an engine that shows no notes.
+    fn note(&mut self, peer: &str, text: String) {
+        let _ = (peer, text);
+    }
+
     /// The SIP message of a call with `peer` (ICBM channel 6) passing in
     /// `dir`, with `calls_encrypt=on` (`callneg.rs`). Returns the control
     /// containers to put on the wire to `peer` *before* that message; the
@@ -195,6 +208,16 @@ impl Crypto for Disabled {
 
     fn since_control(&self, _peer: &str) -> u32 {
         0
+    }
+
+    /// `e2e=off` encrypts no call or transfer; the gate never asks it, as
+    /// calls and files are encrypted only in encrypt mode.
+    fn strictness(&self, _peer: &str) -> Option<bool> {
+        Some(false)
+    }
+
+    fn note(&mut self, peer: &str, text: String) {
+        self.notes.push(Note::to(peer, text));
     }
 }
 
@@ -2245,6 +2268,19 @@ impl Crypto for Engine {
 
     fn since_control(&self, peer: &str) -> u32 {
         self.counted.get(&sign::ident(peer)).copied().unwrap_or(0)
+    }
+
+    /// Unknown while locked out: the keys in memory are a stand-in, and the
+    /// contact's real setting is in the state file this engine cannot read.
+    fn strictness(&self, peer: &str) -> Option<bool> {
+        if self.locked_out.is_some() {
+            return None;
+        }
+        Some(self.peer_info(peer).strict)
+    }
+
+    fn note(&mut self, peer: &str, text: String) {
+        self.queue(Note::to(peer, text));
     }
 
     fn call_sip(

@@ -63,18 +63,31 @@ Only a `/e2e` command is still taken out of the chat and answered with
 never reaches the contact as text. With only the encryption row (`tls = off`)
 the connection to the server is plain and the chat says so at every sign-on.
 
-**Fail closed when the add-on is missing.** With the TLS row ticked (and
-"automatic connection and voice calls use your server" too), the patch also
-points the client's own sign-in at ports that do not work in plaintext, so a
-client whose add-on is gone - the DLL deleted, renamed, or not loaded - cannot
-sign in at all instead of signing in unencrypted:
+**Fail closed when the add-on is missing.** With any protecting row ticked -
+the TLS row, or the messages row on its own - and "automatic connection and
+voice calls use your server" too, the patch also points the client's own
+sign-in at guard ports that do not work in plaintext, so a client whose
+add-on is gone or broken - the DLL deleted, renamed, not loaded, or failing
+to start - cannot sign in at all instead of signing in unprotected (fourth
+review of `docs/e2e/AUDIT-2026-10.md`, finding G):
 
-| Client | Setting | TLS row off | TLS row on | Add-on maps it to |
-|--------|---------|-------------|------------|-------------------|
-| 6.5 | `MCore.dll`: the default of `ServerPort` (an immediate next to `login.icq.com`) | 5190 | 5194 | 5194, ALPN `oscar` |
-| 7.2 | `AppConfig.xml`: `aimcc.connect.host.port` (getChallenge, clientLogin) | 8082 | 5195 | 5194, ALPN `http/1.1` |
-| 7.2 | `AppConfig.xml`: `aimcc.connect.bossRedirect.port` (startOSCARSession) | 8082 | 5195 | 5194, ALPN `http/1.1` |
-| 7.2 | `AppConfig.xml`: `aimcc.connect.skipSources` (new line) | absent | 4063266 (0x3E0022) | - |
+| Client | Setting | No protecting row | A protecting row | Add-on maps it to (TLS on) | Add-on maps it to (`tls = off`) |
+|--------|---------|-------------------|------------------|----------------------------|---------------------------------|
+| 6.5 | `MCore.dll`: the default of `ServerPort` (an immediate next to `login.icq.com`) | 5190 | 5194 | 5194, ALPN `oscar` | 5190, plain |
+| 7.2 | `AppConfig.xml`: `aimcc.connect.host.port` (getChallenge, clientLogin) | 8082 | 5195 | 5194, ALPN `http/1.1` | 8082, plain |
+| 7.2 | `AppConfig.xml`: `aimcc.connect.bossRedirect.port` (startOSCARSession) | 8082 | 5195 | 5194, ALPN `http/1.1` | 8082, plain |
+| 7.2 | `AppConfig.xml`: `aimcc.connect.skipSources` (new line) | absent | 4063266 (0x3E0022) | - | - |
+
+With `tls = off` the add-on maps the guard ports to the server's plain ports
+on the same host (`route.rs`, `GUARD_PORTS`); only the add-on does that, so
+the guard holds for an install that encrypts messages without TLS too. The
+server, seeing the client on its plain listener, hands out its plain host
+for BOS, which the add-on lets through as before.
+
+The add-on DLL the patch puts in must be the one it was built with:
+`Build-Patches.ps1` embeds the SHA-256 of the DLL it hands out in the patch
+exe (the resource `e2e-manifest.txt`), and the patch refuses any other file,
+whatever its version resource says.
 
 On 7.2 the ports alone do not hold on a client that has signed in before: ACC
 (`acccore.dll`) first tries the last connection that worked, which the client
@@ -99,10 +112,11 @@ earlier working. Unticking the
 row puts 5190/8082 back; Restore gives the original files byte for byte. The
 domain, the pages (8101, 8102), the key directory and the STUN server are not
 touched by this. A server typed by hand in the client's connection settings
-stays the user's, and is not fail-closed. The way out is the row:
-`tls = off` typed into the ini by hand (or `ICQE2E_TLS=off`) leaves the
-sign-in on 5194/5195, so such a client does not sign in either; untick the
-row and apply, and the message box says so.
+stays the user's, and is not fail-closed. `tls = off` typed into the ini by
+hand (or `ICQE2E_TLS=off`) makes the add-on take the guard ports to the
+plain ports, so such a client signs in without TLS (and the chat says so);
+a client without the add-on still does not. The way out of the guard is to
+untick the E2E rows and apply.
 
 The patch owns the `directory`, `server`, `e2e`, `tls`, `calls_encrypt` and
 `auditors` lines of the ini and keeps every other line (`tls_pin`, comments,
@@ -297,12 +311,22 @@ earlier build kept a file per contact for the button under
 ## How a message travels
 
 1. The loader's `DllMain(DLL_PROCESS_ATTACH)` pins the module and calls
-   `icqe2e_core::install`, which reads the settings and installs the hooks in
-   the networking module (`coolcore59.dll` on 7.2, `coolcore49.dll` on 6.5):
-   at once if it is already loaded, else from a loader notification
-   (`LdrRegisterDllNotification`) the moment it is mapped, before any of its
-   code runs. A polling thread stays as the fallback, and a second thread runs
-   the publish and refill steps that come due.
+   `icqe2e_core::install`, which under the loader lock only registers a loader
+   notification (`LdrRegisterDllNotification`), patches the networking module
+   (`coolcore59.dll` on 7.2, `coolcore49.dll` on 6.5) if it is already mapped,
+   and creates the bootstrap thread; the notification patches the module the
+   moment it is mapped, before any of its code runs. Patching is two-phase:
+   every import slot is found and checked first through a bounds-checked PE
+   reader (`pe.rs`), then all are written or none (a failed write puts back
+   the ones before it). The bootstrap thread runs once the loader lock is
+   released: it reads the settings, writes the log, polls for the module as
+   the fallback and settles the protection gate (`gate.rs`): ready, or fatal
+   when a hook the settings need is missing or the module never came. Until
+   it is ready a hooked call waits (up to 10 s) and is then refused; once
+   fatal, every `connect`, `send` and `recv` the hooks see is refused and a
+   message box says why. A second thread runs the publish and refill steps
+   that come due. `msimg32.dll` (6.5) resolves the genuine system32 exports
+   lazily, on first use or from the bootstrap thread, never in `DllMain`.
 2. The hooks replace that module's Winsock imports: `send`, `recv`, `connect`,
    `closesocket`, `WSAAsyncSelect`, `ioctlsocket`, `getpeername` and
    `accept` (the last for the peer connections of file transfers). The imports are by

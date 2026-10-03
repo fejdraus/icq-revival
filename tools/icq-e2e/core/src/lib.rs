@@ -41,10 +41,12 @@ pub mod engine;
 pub mod files;
 pub mod filesneg;
 pub mod filestream;
+pub mod gate;
 pub mod harness;
 pub mod icbm;
 pub mod keys;
 pub mod kt;
+pub mod pe;
 pub mod policy;
 pub mod rewrite;
 pub mod route;
@@ -66,14 +68,23 @@ pub mod hook;
 #[cfg(windows)]
 pub mod log;
 
-/// Installs the hooks. Idempotent; call once from DllMain on
-/// `DLL_PROCESS_ATTACH`. Returns immediately: the actual hooking happens on a
-/// worker thread that waits for the networking module to load.
+/// Starts the add-on. Idempotent; call once from DllMain on
+/// `DLL_PROCESS_ATTACH`. Only what is safe under the loader lock happens
+/// here (the loader notification, patching a networking module already
+/// mapped, creating the bootstrap thread); reading the settings, logging and
+/// everything else happen on the bootstrap thread once the lock is released
+/// ([`hook::start_from_loader`]). Until then the protection gate holds every
+/// hooked call ([`gate`]).
 #[cfg(windows)]
 pub fn install() {
-    let policy = config::Policy::from_env();
-    log::line(&format!("Phase 1 add-on loading: {}", policy.describe()));
-    hook::start(policy);
+    hook::start_from_loader(None);
+}
+
+/// [`install`], with `prewarm` run first on the bootstrap thread: a loader
+/// stub's own work that must stay out of `DllMain` (msimg32's real exports).
+#[cfg(windows)]
+pub fn install_with(prewarm: fn()) {
+    hook::start_from_loader(Some(prewarm));
 }
 
 /// Frame builders shared with the integration tests, for the socket tests.

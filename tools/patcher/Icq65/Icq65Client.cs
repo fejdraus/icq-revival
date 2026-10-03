@@ -1113,6 +1113,9 @@ namespace IcqRevival.Patch
                 return "no " + Path.GetFileName(E2eSource ?? E2eProbeShipped) + " next to the patch";
             }
             if (!IsOurE2e(E2eSource)) return Path.GetFileName(E2eSource) + " is not the E2E add-on";
+            // Its version resource is only a claim: the DLL must be the one
+            // this patch was built with (E2eManifest, in Common).
+            if (!E2eManifest.Knows(E2eSource)) return E2eManifest.Why(E2eSource);
             return null;
         }
 
@@ -1122,6 +1125,9 @@ namespace IcqRevival.Patch
             string path = At(E2eProbeFile);
             if (IsOurE2e(path))
             {
+                // One that is not on the patch's list is not taken for ours:
+                // Apply puts the listed one in its place.
+                if (!E2eManifest.Knows(path)) return E2eMissing() != null ? "unavailable" : "original";
                 if (E2eMissing() != null || SameFile(path, E2eSource)) return "patched";
                 return Ps.Eq(PatchFiles.Sha256(path), PatchFiles.Sha256(E2eSource)) ? "patched" : "original";
             }
@@ -1163,7 +1169,7 @@ namespace IcqRevival.Patch
             {
                 PatchFiles.Copy(E2eSource, path, true);
             }
-            if (!IsOurE2e(path)) return E2eProbeFile + " could not be put in - E2E add-on left out";
+            if (!IsOurE2e(path) || !E2eManifest.Knows(path)) return E2eProbeFile + " could not be put in - E2E add-on left out";
             WriteE2eIni(domain, e2e, tls, calls, files);
             if (e2e) return null;
             var left = new List<string>();
@@ -1225,14 +1231,16 @@ namespace IcqRevival.Patch
         //
         // The port of the sign-in is the default of ServerPort, registered next
         // to ServerHostName in the same function: 5190, an immediate stored on
-        // the stack (mov dword [esp+44h], 1446h). With the TLS row ticked as
-        // well it becomes E2eIni.TlsPort (5194), where the server speaks TLS
-        // only: the E2E add-on maps it to TLS, and a client without the add-on
-        // cannot sign in at all instead of signing in in plaintext (fail
-        // closed). The BOS host the server hands out next is the plain
-        // domain:5190, which the add-on maps to TLS as well; a client without
-        // it never gets that far. The other 5190 of MCore.dll is the port of
-        // ars.oscar.aol.com, not the sign-in, and stays.
+        // the stack (mov dword [esp+44h], 1446h). With any protecting E2E row
+        // ticked as well - TLS or the messages row - it becomes the guard port
+        // E2eIni.TlsPort (5194), where the server speaks TLS only: the E2E
+        // add-on maps it to TLS, or with tls=off to the plain 5190 on the same
+        // host, and a client without a working add-on cannot sign in at all
+        // instead of signing in unprotected (fail closed; fourth review,
+        // finding G). The BOS host the server hands out next follows the port
+        // the client came in on; a client without the add-on never gets that
+        // far. The other 5190 of MCore.dll is the port of ars.oscar.aol.com,
+        // not the sign-in, and stays.
         //
         // Two relays the client falls back to are named in MCore.dll too:
         //   ars.oscar.aol.com   the rendezvous proxy of a file transfer the
@@ -1364,21 +1372,35 @@ namespace IcqRevival.Patch
             return "login.icq.com";
         }
 
-        // The TLS row's part of MCore.dll: patched when the sign-in is ours and
-        // its port is the TLS one; missing - not counted in the row - when the
-        // sign-in is not ours, since the port follows the sign-in row.
+        // The guard port in MCore.dll follows the E2E rows: it is the guard
+        // port exactly when our DLL is in place and the ini has a protecting
+        // row on (E2eIni.GuardWanted). In step with that it counts in no row
+        // ("missing"), since it is the rows' consequence, not a row of its own;
+        // out of step it shows the TLS row as not applied until Apply puts it
+        // right. Missing too when the sign-in is not ours: the port follows
+        // the sign-in row.
         string SignInPortState(string domain)
         {
             if (SignInState(domain) != "patched") return "missing";
             uint port = PortAt(File.ReadAllBytes(At(SignIn.File)));
-            if (port == (uint)E2eIni.TlsPort) return "patched";
-            return port == SignIn.PortOriginal ? "original" : "other version";
+            if (port != (uint)E2eIni.TlsPort && port != SignIn.PortOriginal) return "other version";
+            return (port == (uint)E2eIni.TlsPort) == GuardWanted(domain) ? "missing" : "original";
         }
 
-        // Points the sign-in at the domain, on the TLS-only port when tls is
-        // set and on the original one otherwise. Gives a line for the report,
-        // or null when there was nothing to do.
-        string SetSignIn(string domain, bool tls)
+        // Whether the sign-in belongs on the guard port: our DLL in place and
+        // the ini - ours, for this domain - with a protecting row on.
+        bool GuardWanted(string domain)
+        {
+            if (E2eState() != "patched") return false;
+            string text = E2eIniIsOurs() ? E2eIniAt(At(E2eIniFile)) : null;
+            return text != null && E2eIni.Points(text, E2eDirectoryUrl(domain), domain) && E2eIni.GuardWanted(text);
+        }
+
+        // Points the sign-in at the domain, on the guard port when guard is
+        // set (a protecting E2E row is applied) and on the original one
+        // otherwise. Gives a line for the report, or null when there was
+        // nothing to do.
+        string SetSignIn(string domain, bool guard)
         {
             string state = SignInState(domain);
             if (state == "missing") return null;
@@ -1388,7 +1410,7 @@ namespace IcqRevival.Patch
 
             string path = At(SignIn.File);
             byte[] current = File.ReadAllBytes(path);
-            byte[] bytes = WithPort(current, tls ? (uint)E2eIni.TlsPort : SignIn.PortOriginal);
+            byte[] bytes = WithPort(current, guard ? (uint)E2eIni.TlsPort : SignIn.PortOriginal);
             if (state != "patched")
             {
                 for (int i = SignIn.Slot; i < SignIn.SlotEnd; i++) bytes[i] = 0;
@@ -1636,7 +1658,7 @@ namespace IcqRevival.Patch
             j.Assign("the tZers list", "tzers-player");
             j.Assign("the E2E add-on: end-to-end encryption", E2eIni.E2eJob);
             j.Assign("the E2E add-on: TLS to the server", E2eIni.TlsJob);
-            j.Assign("the E2E add-on: sign-in only over TLS", E2eIni.TlsJob);
+            j.Assign("the E2E add-on: sign-in only through the add-on", E2eIni.TlsJob);
             j.Assign("the E2E add-on: encryption of calls", E2eIni.CallsJob);
             j.Assign("the E2E add-on: encryption of file transfers", E2eIni.FilesJob);
             return j;
@@ -1658,7 +1680,7 @@ namespace IcqRevival.Patch
             foreach (CodeLink c in CodeLinks) add(c.What, c.File, CodeLinkState(c, domain));
             foreach (Strip st in Strips) add(st.What, PatchFiles.Leaf(st.File), StripState(st));
             add("sign-in", "MCore.dll, now " + SignInShown(), SignInState(domain));
-            add("the E2E add-on: sign-in only over TLS", SignIn.File, SignInPortState(domain));
+            add("the E2E add-on: sign-in only through the add-on", SignIn.File, SignInPortState(domain));
             string player = PlayerState();
             add("the tZers player", PlayerFile, player);
             add("the Flash type library", PlayerFile, TypeLibState());
@@ -1891,8 +1913,10 @@ namespace IcqRevival.Patch
             PatchSteps.Step("Sign-in server...");
             if (Jobs.IsWanted(skip, "sign-in"))
             {
-                // With the TLS row as well, on the port only the add-on reaches.
-                SetSignIn(domain, Jobs.IsWanted(skip, E2eIni.TlsJob));
+                // With a protecting E2E row as well - TLS or the messages row -
+                // and our DLL in place, on the guard port only the add-on
+                // reaches.
+                SetSignIn(domain, GuardWanted(domain));
             }
             else if (Ps.Contains(new[] { "patched", "another server" }, SignInState(domain)))
             {

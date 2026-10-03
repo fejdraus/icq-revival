@@ -45,6 +45,14 @@ pub const TLS_ONLY_HTTP_PORT: u16 = 5195;
 /// Ports that stand for the server's WebAPI (the 7.2 web sign-in): its plain
 /// port, and the one only the add-on can reach it on.
 pub const HTTP_PORTS: [u16; 2] = [8082, TLS_ONLY_HTTP_PORT];
+/// The guard ports and the server's plain ports they stand for with
+/// `tls=off` (fourth review, finding G). The patch points the client's
+/// sign-in at a guard port whenever any protecting row is ticked - the
+/// messages row too, not only TLS - so a client whose add-on is missing or
+/// broken cannot sign in at all: 5194 speaks only TLS and nothing listens on
+/// 5195. With TLS the add-on maps them to the TLS port; with `tls=off` it
+/// maps them to the plain ports on the same host, which only it does.
+pub const GUARD_PORTS: [(u16, u16); 2] = [(TLS_PORT, 5190), (TLS_ONLY_HTTP_PORT, 8082)];
 
 /// How long a resolution is trusted before it is made again.
 const CACHE_FOR: Duration = Duration::from_secs(300);
@@ -60,6 +68,8 @@ pub struct Ports {
     pub http: Vec<u16>,
     /// The TLS port.
     pub tls: u16,
+    /// Guard port and the plain port it stands for with `tls=off`.
+    pub guard: Vec<(u16, u16)>,
 }
 
 impl Ports {
@@ -69,7 +79,13 @@ impl Ports {
             flap: FLAP_PORTS.to_vec(),
             http: HTTP_PORTS.to_vec(),
             tls: TLS_PORT,
+            guard: GUARD_PORTS.to_vec(),
         }
+    }
+
+    /// The plain port a guard port stands for, if `port` is one.
+    pub fn plain_for_guard(&self, port: u16) -> Option<u16> {
+        self.guard.iter().find(|(g, _)| *g == port).map(|(_, p)| *p)
     }
 
     /// The ALPN a connection to `port` asks for, if the port is one of ours.
@@ -113,6 +129,17 @@ pub enum Target {
     ServerOtherPort,
     /// A server port, and the server's name does not resolve here, so it
     /// cannot be told whether this is the server: refused.
+    Unresolved,
+}
+
+/// What [`Route::guard`] makes of a `connect` with `tls=off`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Guard {
+    /// Not a guard port of the server: left alone.
+    NotGuard,
+    /// The server on a guard port: to this plain port instead.
+    Plain(u16),
+    /// A guard port, and the server's name does not resolve: refused.
     Unresolved,
 }
 
@@ -220,6 +247,21 @@ impl Route {
             }
             None if self.is_server(ip, false) => Target::ServerOtherPort,
             None => Target::Elsewhere,
+        }
+    }
+
+    /// What to do with a `connect` to `ip:port` with `tls=off`: a guard port
+    /// of the server goes to the plain port it stands for.
+    pub fn guard(&self, ip: Ipv4Addr, port: u16) -> Guard {
+        let Some(plain) = self.ports.plain_for_guard(port) else {
+            return Guard::NotGuard;
+        };
+        if self.is_server(ip, true) {
+            Guard::Plain(plain)
+        } else if !self.resolved() {
+            Guard::Unresolved
+        } else {
+            Guard::NotGuard
         }
     }
 
@@ -425,6 +467,28 @@ mod tests {
         assert_eq!(r.target(PEER, 40000), Target::Elsewhere);
         // The server on a port the add-on cannot secure is refused.
         assert_eq!(r.target(SERVER, 443), Target::ServerOtherPort);
+    }
+
+    /// Fourth review, finding G: with `tls=off` the guard ports of the
+    /// server go to its plain ports; anything else, and the guard ports of
+    /// other hosts, are left alone; an unresolved name is refused.
+    #[test]
+    fn guard_ports_go_to_the_plain_ports_with_tls_off() {
+        let r = route_with(
+            Arc::new(Mutex::new(vec![SERVER])),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        assert_eq!(r.guard(SERVER, 5194), Guard::Plain(5190));
+        assert_eq!(r.guard(SERVER, 5195), Guard::Plain(8082));
+        assert_eq!(r.guard(SERVER, 5190), Guard::NotGuard);
+        assert_eq!(r.guard(SERVER, 8082), Guard::NotGuard);
+        assert_eq!(r.guard(PEER, 5194), Guard::NotGuard);
+        let unresolved = route_with(
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        assert_eq!(unresolved.guard(SERVER, 5194), Guard::Unresolved);
+        assert_eq!(unresolved.guard(SERVER, 40000), Guard::NotGuard);
     }
 
     #[test]

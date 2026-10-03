@@ -16,6 +16,25 @@
 //! the hooks. A module that is already loaded is patched at once, and the old
 //! polling thread stays as the fallback.
 //!
+//! Patching is two-phase (fourth review, finding C): DISCOVER reads the
+//! module's imports through the bounds-checked [`crate::pe`] reader, finds
+//! every slot and checks that each is bound, changing nothing; COMMIT then
+//! writes all of them or, if one write fails, puts back every slot it wrote.
+//! Whether the hooks that went in are enough for the policy is the
+//! protection gate's call ([`crate::gate`]): a hook the policy needs that is
+//! missing makes the bootstrap `Fatal`, and the hooks in place then refuse
+//! every `connect`, `send` and `recv` they see.
+//!
+//! Only that patching runs under the loader lock (from the loader stub's
+//! `DllMain` and from the notification): no file is opened, nothing is
+//! loaded, nothing waits, and its log lines are kept in memory
+//! ([`log::defer`]). Everything else - reading `icq-e2e.ini`, logging, the
+//! polling fallback, the worker threads - happens on the bootstrap thread,
+//! which only starts once the loader lock is released (finding H). Until it
+//! has read the settings the gate is `Starting`, and a hooked `connect`,
+//! `send` or `recv` waits for it (up to [`BOOT_WAIT`]) and is refused if it
+//! does not come: nothing leaves before the add-on knows what to protect.
+//!
 //! Every `connect` is logged with its target, and the first bytes of each
 //! direction of each socket are classified (FLAP, HTTP, `CONNECT`, TLS, other)
 //! without changing them, so the log shows which connections the client makes.
@@ -89,8 +108,10 @@ use windows_sys::Win32::System::Threading::{CreateThread, GetCurrentProcess, Sle
 use windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 use crate::config::{Mode, Policy};
+use crate::gate::{self, Bootstrap, CryptoState, HookMask, Verdict};
 use crate::icbm::Direction;
 use crate::log;
+use crate::pe;
 use crate::session::{self, Session};
 use crate::stream::StreamRewriter;
 
@@ -117,6 +138,17 @@ const READ_CHUNK: usize = 16 * 1024;
 /// How long `send` keeps waiting for a full socket buffer to drain before it
 /// keeps the rest for the client's next `send`.
 const SEND_WAIT_MS: u32 = 30_000;
+/// How long a hooked call made while the add-on is still starting waits for
+/// it before it is refused.
+#[cfg(not(test))]
+const BOOT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+#[cfg(test)]
+const BOOT_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
+/// How long the bootstrap waits for the networking module before the add-on
+/// is given up as unable to protect anything.
+const INSTALL_WAIT_ATTEMPTS: u32 = 600;
+/// How long a state file that could not be opened is not tried again.
+const RETRY_STATE_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
 // Original function pointers, kept as raw addresses and transmuted on call.
 static ORIG_SEND: AtomicUsize = AtomicUsize::new(0);
@@ -142,14 +174,74 @@ static FIRST_RECV: AtomicBool = AtomicBool::new(false);
 static POLICY: AtomicPtr<Policy> = AtomicPtr::new(ptr::null_mut());
 
 fn policy() -> &'static Policy {
+    #[cfg(test)]
+    if let Some(p) = test_env::policy() {
+        return p;
+    }
     let p = POLICY.load(Ordering::Acquire);
     if !p.is_null() {
         // SAFETY: only ever a leaked box, never freed.
         return unsafe { &*p };
     }
-    set_policy_once(Policy::observe());
-    // SAFETY: as above; set by now, by this call or another thread's.
-    unsafe { &*POLICY.load(Ordering::Acquire) }
+    // Not read yet. Before the bootstrap has read it the gate is
+    // `Starting` and the hooks ask nothing else; whatever does gets observe
+    // without it being fixed, so the real policy still goes in when it is
+    // read (it used to be pinned to observe for good here).
+    static UNSET: std::sync::LazyLock<Policy> = std::sync::LazyLock::new(Policy::observe);
+    &UNSET
+}
+
+/// Whether the bootstrap has read the policy.
+fn policy_is_set() -> bool {
+    #[cfg(test)]
+    if test_env::policy().is_some() {
+        return true;
+    }
+    !POLICY.load(Ordering::Acquire).is_null()
+}
+
+/// Per-thread stand-ins for the process's settings, so the fault matrix can
+/// run many cases in one test process (each on its own thread).
+#[cfg(test)]
+mod test_env {
+    use super::*;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static POLICY: RefCell<Option<&'static Policy>> = const { RefCell::new(None) };
+        static DIRECTORY: RefCell<Option<Option<Arc<dyn crate::directory::DirectoryApi>>>> =
+            const { RefCell::new(None) };
+        static UIN: RefCell<Option<Option<String>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn policy() -> Option<&'static Policy> {
+        POLICY.with(|p| *p.borrow())
+    }
+
+    pub(super) fn directory() -> Option<Option<Arc<dyn crate::directory::DirectoryApi>>> {
+        DIRECTORY.with(|d| d.borrow().clone())
+    }
+
+    pub(super) fn uin() -> Option<Option<String>> {
+        UIN.with(|u| u.borrow().clone())
+    }
+
+    /// This thread's policy, key directory and account.
+    pub(super) fn set(
+        p: Policy,
+        dir: Option<Arc<dyn crate::directory::DirectoryApi>>,
+        uin: Option<&str>,
+    ) {
+        POLICY.with(|t| *t.borrow_mut() = Some(Box::leak(Box::new(p))));
+        DIRECTORY.with(|t| *t.borrow_mut() = Some(dir));
+        UIN.with(|t| *t.borrow_mut() = Some(uin.map(str::to_string)));
+    }
+
+    pub(super) fn clear() {
+        POLICY.with(|t| *t.borrow_mut() = None);
+        DIRECTORY.with(|t| *t.borrow_mut() = None);
+        UIN.with(|t| *t.borrow_mut() = None);
+    }
 }
 
 /// Sets the policy unless one is set already; whether this call set it.
@@ -173,21 +265,42 @@ fn disabled() -> &'static Mutex<crate::crypto::Disabled> {
     &D
 }
 
-/// Feeds bytes through a direction that has no session: the harness or
-/// passive path, or with `e2e=off` the path that only takes out `/e2e`
-/// commands. Nothing reads what that path finds about contacts or the account
-/// key, so it is dropped here rather than piling up.
-fn push_sessionless(rw: &mut StreamRewriter, bytes: &[u8], out: &mut Vec<u8>) -> Vec<String> {
-    if policy().mode != Mode::Plain {
-        return rw.push(bytes, policy(), out);
-    }
-    let lines = rw.push_crypto(
-        bytes,
-        &mut *lock(disabled()),
-        crate::crypto::unix_now(),
-        policy(),
-        out,
-    );
+/// The engine of encrypt mode while the account has no session
+/// ([`gate::Withheld`]): every message is held with a note, never sent in
+/// clear. One for the process; it holds the reason and the notes.
+fn withheld() -> &'static Mutex<gate::Withheld> {
+    static W: std::sync::LazyLock<Mutex<gate::Withheld>> =
+        std::sync::LazyLock::new(Default::default);
+    &W
+}
+
+/// Feeds bytes through a direction that has no session, as the gate says
+/// (fourth review, finding A): in encrypt mode the [`gate::Withheld`] engine,
+/// which holds every message and shows no container - never the plain
+/// rewriter, which would send the message as typed; with `e2e=off` the path
+/// that only takes out `/e2e` commands; the harness transform in harness
+/// mode. `why` is the crypto state's reason, for the notes. Nothing reads
+/// what these paths find about contacts or the account key, so it is dropped
+/// here rather than piling up.
+fn push_without_session(
+    rw: &mut StreamRewriter,
+    bytes: &[u8],
+    out: &mut Vec<u8>,
+    why: Option<String>,
+) -> Vec<String> {
+    let p = policy();
+    let now = crate::crypto::unix_now();
+    let lines = match p.mode {
+        Mode::Plain => rw.push_crypto(bytes, &mut *lock(disabled()), now, p, out),
+        Mode::Encrypt => {
+            let mut w = lock(withheld());
+            w.set_reason(why.unwrap_or_else(|| {
+                "end-to-end encryption is not available in this ICQ".to_string()
+            }));
+            rw.push_crypto(bytes, &mut *w, now, p, out)
+        }
+        Mode::Harness | Mode::Observe => return rw.push(bytes, p, out),
+    };
     let _ = (rw.take_contacts(), rw.take_announce());
     lines
 }
@@ -272,6 +385,11 @@ struct Sock {
     file_watch_off: AtomicBool,
     /// Accepted from a listening socket (a peer connected to us).
     accepted: AtomicBool,
+    /// Whether the gate's refusal of this socket was logged.
+    gate_noted: AtomicBool,
+    /// A guard port mapped to the server's plain port (`tls=off`): the port
+    /// the connection really goes to, and the one the client asked for.
+    remapped: OnceLock<(u16, u16)>,
 }
 
 impl Sock {
@@ -310,6 +428,8 @@ impl Sock {
             file_watch: Mutex::new(None),
             file_watch_off: AtomicBool::new(false),
             accepted: AtomicBool::new(false),
+            gate_noted: AtomicBool::new(false),
+            remapped: OnceLock::new(),
         }
     }
 }
@@ -320,6 +440,10 @@ impl Sock {
 /// nothing to publish to and no token will ever arrive, so the add-on stays
 /// passive and says so rather than pretending to be encrypted.
 fn directory() -> Option<Arc<dyn crate::directory::DirectoryApi>> {
+    #[cfg(test)]
+    if let Some(d) = test_env::directory() {
+        return d;
+    }
     if let Some(d) = lock(test_directory()).clone() {
         return Some(d);
     }
@@ -361,6 +485,10 @@ fn signed_on_slot() -> &'static Mutex<Option<String>> {
 /// the answer is remembered as soon as one is seen and never guessed: a device
 /// with a wrong identity would publish a key nobody can tie to this connection.
 fn signed_on_uin() -> Option<String> {
+    #[cfg(test)]
+    if let Some(u) = test_env::uin() {
+        return u;
+    }
     static CMDLINE: OnceLock<Option<String>> = OnceLock::new();
     CMDLINE
         .get_or_init(uin_from_command_line)
@@ -392,16 +520,39 @@ fn sessions_by_account() -> &'static Mutex<HashMap<String, Arc<Mutex<Session>>>>
     &S
 }
 
-/// The session for the account this process is signed on as, opening it the
-/// first time it is asked for.
-fn account_session() -> Option<Arc<Mutex<Session>>> {
-    let dir = directory()?;
-    let uin = signed_on_uin()?;
-    let mut sessions = lock(sessions_by_account());
-    if let Some(s) = sessions.get(&uin) {
-        return Some(s.clone());
+/// Sessions whose account turned out locked out (another process holds the
+/// state file), by the session's address.
+fn locked_sessions() -> &'static Mutex<std::collections::HashSet<usize>> {
+    static L: std::sync::LazyLock<Mutex<std::collections::HashSet<usize>>> =
+        std::sync::LazyLock::new(Default::default);
+    &L
+}
+
+/// Accounts whose state file could not be opened, with why and when; tried
+/// again after [`RETRY_STATE_AFTER`].
+fn failed_accounts() -> &'static Mutex<HashMap<String, (String, std::time::Instant)>> {
+    static F: std::sync::LazyLock<Mutex<HashMap<String, (String, std::time::Instant)>>> =
+        std::sync::LazyLock::new(Default::default);
+    &F
+}
+
+/// The session for `uin`, opening it the first time it is asked for; why
+/// there is none otherwise. A failure is said once and not retried for a
+/// minute, so a state file that cannot be read is not read on every frame.
+fn account_session(
+    dir: Arc<dyn crate::directory::DirectoryApi>,
+    uin: &str,
+) -> Result<Arc<Mutex<Session>>, String> {
+    if let Some((why, at)) = lock(failed_accounts()).get(uin) {
+        if at.elapsed() < RETRY_STATE_AFTER {
+            return Err(why.clone());
+        }
     }
-    match Session::open(dir, &policy().home, &uin) {
+    let mut sessions = lock(sessions_by_account());
+    if let Some(s) = sessions.get(uin) {
+        return Ok(s.clone());
+    }
+    match Session::open(dir, &policy().home, uin) {
         Ok(mut sess) => {
             sess.engine().set_calls_encrypt(policy().encrypts_calls());
             sess.engine()
@@ -410,21 +561,34 @@ fn account_session() -> Option<Arc<Mutex<Session>>> {
             sess.engine()
                 .set_files_required(policy().encrypts_files() && policy().files_required);
             sess.engine().set_auditors(policy().auditors.clone());
+            let locked = sess.locked_out().is_some();
             match sess.locked_out() {
                 Some(why) => log::line(&format!(
-                    "[ICQ E2E] encryption held for {uin}: {why}; its state file is                      locked by the other one, so messages are held, not sent in clear"
+                    "[ICQ E2E] encryption held for {uin}: {why}; its state file is \
+                     locked by the other one, so messages are held, not sent in clear"
                 )),
                 None => log::line(&format!(
                     "[ICQ E2E] device keys ready for {uin} (encrypt mode)"
                 )),
             }
             let s = Arc::new(Mutex::new(sess));
-            sessions.insert(uin, s.clone());
-            Some(s)
+            if locked {
+                lock(locked_sessions()).insert(Arc::as_ptr(&s) as usize);
+            }
+            sessions.insert(uin.to_string(), s.clone());
+            lock(failed_accounts()).remove(uin);
+            Ok(s)
         }
         Err(why) => {
-            log::line(&format!("[ICQ E2E] encryption off: {why}"));
-            None
+            let why = format!("the encryption keys of {uin} cannot be used ({why})");
+            let mut failed = lock(failed_accounts());
+            if !failed.contains_key(uin) {
+                log::line(&format!(
+                    "[ICQ E2E] {why}; messages are held with a note, never sent in clear"
+                ));
+            }
+            failed.insert(uin.to_string(), (why.clone(), std::time::Instant::now()));
+            Err(why)
         }
     }
 }
@@ -450,25 +614,92 @@ fn drain_pending_token(sock: &Sock) -> Vec<String> {
 }
 
 /// The `-uin` argument of the current process's command line, if it has one.
+///
+/// `GetCommandLineW` is UTF-16; it was read as a C string of bytes, which
+/// stopped at the first zero byte - after the first character - so `-uin`
+/// was never found (fourth review, finding F). It is now read as UTF-16 and
+/// split as `CommandLineToArgvW` does.
 fn uin_from_command_line() -> Option<String> {
-    // SAFETY: GetCommandLineW returns a pointer to a command line that is valid
-    // for the life of the process.
-    let wide = unsafe { windows_sys::Win32::System::Environment::GetCommandLineW() };
-    if wide.is_null() {
-        return None;
-    }
-    // SAFETY: the string is NUL-terminated and lives as long as the process.
-    let text = unsafe { std::ffi::CStr::from_ptr(wide.cast()) };
-    let text = text.to_string_lossy();
-    let mut parts = text.split_whitespace();
-    while let Some(arg) = parts.next() {
-        if arg.eq_ignore_ascii_case("-uin") || arg.eq_ignore_ascii_case("/uin") {
-            let v = parts.next()?;
-            // A UIN is decimal; a UIN that is not a number is not one.
-            return v.parse::<u64>().ok().map(|n| n.to_string());
+    // SAFETY: GetCommandLineW returns a NUL-terminated string that is valid
+    // for the life of the process; it is read up to its NUL, at most 32767
+    // units (the limit of a command line).
+    let units = unsafe {
+        let wide = windows_sys::Win32::System::Environment::GetCommandLineW();
+        if wide.is_null() {
+            return None;
+        }
+        let mut n = 0usize;
+        while n < 32_767 && *wide.add(n) != 0 {
+            n += 1;
+        }
+        std::slice::from_raw_parts(wide, n)
+    };
+    uin_from_args(&split_command_line(&String::from_utf16_lossy(units)))
+}
+
+/// A command line split into arguments by the rules of
+/// `CommandLineToArgvW`: white space separates, double quotes group,
+/// `2n` backslashes before a quote are `n` backslashes and the quote still
+/// groups, `2n+1` are `n` and a literal quote; other backslashes are kept.
+fn split_command_line(line: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut cur = String::new();
+    let mut in_arg = false;
+    let mut quoted = false;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                let mut n = 1;
+                while chars.peek() == Some(&'\\') {
+                    chars.next();
+                    n += 1;
+                }
+                if chars.peek() == Some(&'"') {
+                    cur.extend(std::iter::repeat_n('\\', n / 2));
+                    if n % 2 == 1 {
+                        chars.next();
+                        cur.push('"');
+                    }
+                } else {
+                    cur.extend(std::iter::repeat_n('\\', n));
+                }
+                in_arg = true;
+            }
+            '"' => {
+                if quoted && chars.peek() == Some(&'"') {
+                    chars.next();
+                    cur.push('"');
+                } else {
+                    quoted = !quoted;
+                }
+                in_arg = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if in_arg {
+                    args.push(std::mem::take(&mut cur));
+                    in_arg = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                in_arg = true;
+            }
         }
     }
-    None
+    if in_arg {
+        args.push(cur);
+    }
+    args
+}
+
+/// The UIN after `-uin` or `/uin`; a UIN is decimal, anything else is none.
+fn uin_from_args(args: &[String]) -> Option<String> {
+    let at = args
+        .iter()
+        .position(|a| a.eq_ignore_ascii_case("-uin") || a.eq_ignore_ascii_case("/uin"))?;
+    let v = args.get(at + 1)?;
+    v.parse::<u64>().ok().map(|n| n.to_string())
 }
 
 fn sockets() -> &'static Mutex<HashMap<Socket, Arc<Sock>>> {
@@ -492,41 +723,56 @@ fn existing_sock(s: Socket) -> Option<Arc<Sock>> {
     lock(sockets()).get(&s).cloned()
 }
 
-/// Points this socket at the account's session, opening that session the
-/// first time any connection asks for it.
+/// A session as the gate sees it: locked out, or ready.
+fn state_of(s: Arc<Mutex<Session>>) -> CryptoState<Arc<Mutex<Session>>> {
+    if lock(locked_sessions()).contains(&(Arc::as_ptr(&s) as usize)) {
+        CryptoState::LockedOut(s)
+    } else {
+        CryptoState::Ready(s)
+    }
+}
+
+/// This socket's crypto state, pointing it at the account's session the
+/// first time there is one (fourth review, finding A).
 ///
-/// Deliberately lazy and deliberately silent when it cannot: a client whose
-/// account is not known yet simply has no session and the bytes pass through
-/// as before. Failing to open the state file is said out loud, because that is
-/// a device that must not go on encrypting as if it were the one whose keys it
-/// could not read.
-fn ensure_session(sock: &Sock) {
-    if lock(&sock.session).is_some() || policy().mode != Mode::Encrypt {
-        return;
+/// Every way of not having a session is a state with a reason, never a
+/// silent "no session" that the bytes pass through as typed: no key
+/// directory, an account not known yet, a state file that cannot be read.
+/// The gate then holds the messages ([`push_without_session`]).
+fn ensure_session(sock: &Sock) -> CryptoState<Arc<Mutex<Session>>> {
+    if let Some(s) = lock(&sock.session).clone() {
+        return state_of(s);
     }
-    if directory().is_none() {
-        return;
+    if policy().mode != Mode::Encrypt {
+        return CryptoState::Unavailable("end-to-end encryption is off".to_string());
     }
-    if signed_on_uin().is_none() {
+    let Some(dir) = directory() else {
+        return CryptoState::Unavailable(
+            "no key directory is configured for it (no directory= in icq-e2e.ini)".to_string(),
+        );
+    };
+    let Some(uin) = signed_on_uin() else {
         // Nothing known yet. The server's own user info (`0x0001/0x000F`) says
         // which account this is, and it has not arrived; saying so once beats
         // a silent no-op that looks like the add-on is not running.
         if !sock.waited_for_uin.swap(true, Ordering::AcqRel) {
             log::line(
                 "[ICQ E2E] no UIN yet: no -uin on the command line and no \
-                 user info (0x0001/0x000F) seen yet; waiting for it",
+                 user info (0x0001/0x000F) seen yet; messages wait for it",
             );
         }
-        return;
-    }
-    let Some(sess) = account_session() else {
-        return;
+        return CryptoState::WaitingForIdentity;
     };
-    *lock(&sock.session) = Some(sess);
+    let sess = match account_session(dir, &uin) {
+        Ok(s) => s,
+        Err(why) => return CryptoState::Unavailable(why),
+    };
+    *lock(&sock.session) = Some(sess.clone());
     // A MOTD token that arrived before the account was known goes in now.
     for line in drain_pending_token(sock) {
         log::line(&line);
     }
+    state_of(sess)
 }
 
 fn log_lines(sock: &Sock, lines: Vec<String>) {
@@ -694,10 +940,45 @@ unsafe fn orig_recv() -> RecvFn {
 
 // --- hook bodies ------------------------------------------------------------
 
+/// Whether the protection gate lets traffic through the hooked sockets now
+/// (fourth review, findings D and H): `Err` with the reason when it does
+/// not. While the add-on is still starting the call waits for it, up to
+/// [`BOOT_WAIT`], so a `connect` made in the first moments is held rather
+/// than let out before the add-on knows what to protect - and refused if
+/// the bootstrap does not come.
+fn admitted() -> Result<(), String> {
+    let g = gate::current();
+    let mut boot = g.bootstrap();
+    if boot == Bootstrap::Starting {
+        boot = g.wait(BOOT_WAIT);
+    }
+    match gate::admit(policy(), &boot) {
+        Verdict::Block(why) => Err(why),
+        _ => Ok(()),
+    }
+}
+
+/// Logs, once per socket, that the gate refused it.
+fn refused_by_gate(s: Socket, what: &str, why: &str) {
+    let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+        let sock = sock_for(s);
+        if !sock.gate_noted.swap(true, Ordering::AcqRel) {
+            log::line(&format!(
+                "socket {s}: {what} refused (fail closed): the add-on cannot protect this ICQ: {why}"
+            ));
+        }
+    }));
+}
+
 /// What comes before everything else in `send` and `recv`: a socket refused
 /// for good (fail closed), and the cases a TLS socket answers itself (`MSG_OOB`,
 /// empty buffers). `None` lets the call go on.
 unsafe fn tls_gate(s: Socket, buf: *const u8, len: i32, flags: i32, outbound: bool) -> Option<i32> {
+    if let Err(why) = admitted() {
+        refused_by_gate(s, if outbound { "send" } else { "recv" }, &why);
+        SetLastError(tlsio::WSAECONNRESET);
+        return Some(SOCKET_ERROR);
+    }
     let r = panic::catch_unwind(AssertUnwindSafe(|| {
         let sock = sock_for(s);
         let data = (outbound && len > 0 && !buf.is_null())
@@ -751,17 +1032,38 @@ unsafe fn tls_gate(s: Socket, buf: *const u8, len: i32, flags: i32, outbound: bo
 /// good (every later call on it fails the same way, see `tlsio::blocked`), and
 /// the user is told why. The client reconnects on a fresh socket.
 fn fail_closed(s: Socket, what: &str) -> i32 {
+    close_for_good(
+        s,
+        &format!("the add-on's {what} hook failed"),
+        format!(
+            "[ICQ E2E] The connection was closed: the add-on hit an internal error in its {what} hook, and nothing is sent or shown unprotected because of it. The client reconnects on its own."
+        ),
+    )
+}
+
+/// A FLAP stream that lost its framing after it was recognised (fourth
+/// review, finding B): what follows is not let through raw, the connection
+/// is reset.
+fn reset_broken_stream(s: Socket) -> i32 {
+    close_for_good(
+        s,
+        "its FLAP framing broke after it was recognised",
+        "[ICQ E2E] The connection was closed: its data stopped making sense to the add-on, and nothing more of it is sent or shown unchecked. The client reconnects on its own.".to_string(),
+    )
+}
+
+/// Refuses socket `s` for good: this call and every later one fail with
+/// `WSAECONNRESET` (`tlsio::blocked` checks the flag first), the log says
+/// why once, and `note` goes into the chat.
+fn close_for_good(s: Socket, why: &str, note: String) -> i32 {
     let _ = panic::catch_unwind(AssertUnwindSafe(|| {
         let sock = sock_for(s);
         if sock.blocked.swap(true, Ordering::AcqRel) {
             return;
         }
         log::line(&format!(
-            "socket {s}: reset (fail closed): the add-on's {what} hook failed;              nothing of this connection goes past it unprotected"
+            "socket {s}: reset (fail closed): {why}; nothing of this connection goes past it unprotected"
         ));
-        let note = format!(
-            "[ICQ E2E] The connection was closed: the add-on hit an internal error in its {what} hook, and nothing is sent or shown unprotected because of it. The client reconnects on its own."
-        );
         let session = lock(&sock.session).clone();
         match session {
             Some(sess) => {
@@ -772,6 +1074,11 @@ fn fail_closed(s: Socket, what: &str) -> i32 {
             None if policy().mode == Mode::Plain => {
                 if let Ok(mut d) = disabled().try_lock() {
                     d.say(note);
+                }
+            }
+            None if policy().mode == Mode::Encrypt => {
+                if let Ok(mut w) = withheld().try_lock() {
+                    w.say(note);
                 }
             }
             None => {}
@@ -861,13 +1168,21 @@ unsafe extern "system" fn hook_recv(s: Socket, buf: *mut u8, len: i32, flags: i3
 
 unsafe extern "system" fn hook_connect(s: Socket, name: *const u8, namelen: i32) -> i32 {
     let orig: ConnectFn = std::mem::transmute(ORIG_CONNECT.load(Ordering::Acquire));
-    // A panic while deciding must not let a server connection out in
-    // plaintext: with TLS active it is refused.
+    // Before anything is decided: whether the add-on is in place at all.
+    if let Err(why) = admitted() {
+        refused_by_gate(s, "connect", &why);
+        SetLastError(tlsio::WSAECONNREFUSED);
+        return SOCKET_ERROR;
+    }
+    // A panic while deciding must not let a connection out unmapped in a
+    // policy that protects anything: it is refused (the gate's rule, not a
+    // fallback of this hook's own).
     let plan = panic::catch_unwind(AssertUnwindSafe(|| tlsio::plan_connect(s, name, namelen)))
         .unwrap_or_else(|_| {
-            match panic::catch_unwind(|| matches!(*tlsio::setup(), tlsio::Setup::Active(_))) {
-                Ok(false) => tlsio::ConnectPlan::Plain,
-                _ => tlsio::ConnectPlan::Refuse(tlsio::WSAECONNREFUSED),
+            if gate::protecting(policy()) {
+                tlsio::ConnectPlan::Refuse(tlsio::WSAECONNREFUSED)
+            } else {
+                tlsio::ConnectPlan::Plain
             }
         });
     // A handle carries one connection. An entry left from an earlier one
@@ -894,6 +1209,13 @@ unsafe extern "system" fn hook_connect(s: Socket, name: *const u8, namelen: i32)
         tlsio::ConnectPlan::Tls { conn, addr } => {
             let _ = panic::catch_unwind(AssertUnwindSafe(|| {
                 let _ = sock_for(s).tls.set(conn.clone());
+            }));
+            let r = orig(s, addr.as_ptr(), addr.len() as i32);
+            (r, GetLastError())
+        }
+        tlsio::ConnectPlan::Remap { addr, original } => {
+            let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+                let _ = sock_for(s).remapped.set(*original);
             }));
             let r = orig(s, addr.as_ptr(), addr.len() as i32);
             (r, GetLastError())
@@ -956,7 +1278,7 @@ unsafe extern "system" fn hook_closesocket(s: Socket) -> i32 {
 /// `accept`: a peer connected to a port the client listens on - for these
 /// clients, a file transfer's direct or reverse stage. The new socket is
 /// looked at for a transfer it belongs to (`hook_files.rs`); the call itself
-/// is the original's.
+/// is the original's. Its data is the gate's business on `send` and `recv`.
 unsafe extern "system" fn hook_accept(s: Socket, addr: *mut u8, addrlen: *mut i32) -> Socket {
     let orig: AcceptFn = std::mem::transmute(ORIG_ACCEPT.load(Ordering::Acquire));
     let new = orig(s, addr, addrlen);
@@ -984,8 +1306,9 @@ unsafe extern "system" fn hook_async_select(s: Socket, hwnd: usize, msg: u32, ev
     orig(s, hwnd, msg, events)
 }
 
-/// `getpeername` on a socket mapped to the TLS port reports the port the
-/// client asked for, so nothing in the client sees the mapping.
+/// `getpeername` on a socket mapped to the TLS port, or to a guard port's
+/// plain port, reports the port the client asked for, so nothing in the
+/// client sees the mapping.
 unsafe extern "system" fn hook_getpeername(s: Socket, name: *mut u8, namelen: *mut i32) -> i32 {
     let orig: PeerNameFn = std::mem::transmute(ORIG_GETPEERNAME.load(Ordering::Acquire));
     let r = orig(s, name, namelen);
@@ -995,14 +1318,17 @@ unsafe extern "system" fn hook_getpeername(s: Socket, name: *mut u8, namelen: *m
             let Some(sock) = existing_sock(s) else {
                 return;
             };
-            let Some(conn) = sock.tls.get() else {
-                return;
-            };
             let sa = std::slice::from_raw_parts_mut(name, 4);
-            if u16::from_le_bytes([sa[0], sa[1]]) == 2 {
-                let port = tlsio::original_port(conn, u16::from_be_bytes([sa[2], sa[3]]));
-                sa[2..4].copy_from_slice(&port.to_be_bytes());
+            if u16::from_le_bytes([sa[0], sa[1]]) != 2 {
+                return;
             }
+            let reported = u16::from_be_bytes([sa[2], sa[3]]);
+            let port = match (sock.tls.get(), sock.remapped.get()) {
+                (Some(conn), _) => tlsio::original_port(conn, reported),
+                (None, Some((to, from))) if *to == reported => *from,
+                _ => return,
+            };
+            sa[2..4].copy_from_slice(&port.to_be_bytes());
         }));
         SetLastError(err);
     }
@@ -1069,26 +1395,37 @@ fn harness_send(s: Socket, data: &[u8], flags: i32) -> i32 {
     maybe_panic(s);
     first_bytes_note(Direction::Outbound, s, data.len());
     let sock = sock_for(s);
-    ensure_session(&sock);
+    let crypto = ensure_session(&sock);
     let mut side = lock(&sock.out);
     if side.rw.is_raw() && side.pending.is_empty() {
         return transport_send(&sock, s, data, flags);
     }
     let OutSide { rw, pending } = &mut *side;
-    let session = lock(&sock.session).clone();
-    let lines = match session {
+    // The message class goes where the gate says: through the account's
+    // session, or held by the engine that stands in without keys.
+    let lines = match crypto.session() {
         Some(sess) => session::pump(
             rw,
             Direction::Outbound,
-            &mut lock(&sess),
+            &mut lock(sess),
             data,
             crate::crypto::unix_now(),
             policy(),
             pending,
         ),
-        None => push_sessionless(rw, data, pending),
+        None => push_without_session(rw, data, pending, crypto.why_not()),
     };
+    if let Some(uin) = rw.take_sign_on_uin() {
+        remember_signed_on_uin(uin);
+    }
     log_lines(&sock, lines);
+    if rw.is_broken() {
+        // Nothing of this connection goes on: not what was rewritten before
+        // the bad header in this call either.
+        pending.clear();
+        drop(side);
+        return reset_broken_stream(s);
+    }
     if rw.carries_messages() {
         sock.messages.store(true, Ordering::Release);
     }
@@ -1112,8 +1449,9 @@ fn harness_send(s: Socket, data: &[u8], flags: i32) -> i32 {
     }
 }
 
-/// Puts the notes the session has waiting into this connection's inbound
-/// bytes and tells the client there is something to read.
+/// Puts the notes waiting for the chat into this connection's inbound
+/// bytes and tells the client there is something to read: the session's,
+/// or those of the engine that stands in without one, and the gate's own.
 ///
 /// The inbound side is only tried, never waited for: a `recv` holding it is
 /// about to emit the notes itself after the frame it is reading. The lock
@@ -1121,14 +1459,11 @@ fn harness_send(s: Socket, data: &[u8], flags: i32) -> i32 {
 fn deliver_notes(sock: &Sock, s: Socket) {
     // Only the connection the chats are on: the one that got the token or
     // carried a message. A service connection's client would not show it.
-    let plain = policy().mode == Mode::Plain;
-    if !(plain || policy().mode == Mode::Encrypt) || !sock.messages.load(Ordering::Acquire) {
+    let mode = policy().mode;
+    if !matches!(mode, Mode::Plain | Mode::Encrypt) || !sock.messages.load(Ordering::Acquire) {
         return;
     }
     let sess = lock(&sock.session).clone();
-    if sess.is_none() && !plain {
-        return;
-    }
     let Ok(mut side) = sock.inb.try_lock() else {
         return;
     };
@@ -1137,12 +1472,29 @@ fn deliver_notes(sock: &Sock, s: Socket) {
         return;
     }
     let mut lines = Vec::new();
+    let gate_notes = gate::current().take_notes();
     let put = match &sess {
         Some(sess) => {
             let mut g = lock(sess);
+            for n in gate_notes {
+                g.engine().say(n);
+            }
             rw.put_notes(g.engine(), policy(), ready, &mut lines)
         }
-        None => rw.put_notes(&mut *lock(disabled()), policy(), ready, &mut lines),
+        None if mode == Mode::Plain => {
+            let mut d = lock(disabled());
+            for n in gate_notes {
+                d.say(n);
+            }
+            rw.put_notes(&mut *d, policy(), ready, &mut lines)
+        }
+        None => {
+            let mut w = lock(withheld());
+            for n in gate_notes {
+                w.say(n);
+            }
+            rw.put_notes(&mut *w, policy(), ready, &mut lines)
+        }
     };
     drop(side);
     log_lines(sock, lines);
@@ -1351,20 +1703,28 @@ fn harness_recv(s: Socket, buf: *mut u8, len: usize, flags: i32) -> i32 {
             let n = transport_recv(&sock, s, tmp.as_mut_ptr(), tmp.len(), flags & !MSG_PEEK);
             if n > 0 {
                 first_bytes_note(Direction::Inbound, s, n as usize);
+                let crypto = ensure_session(&sock);
                 let InSide { rw, ready, .. } = &mut *side;
-                let session = lock(&sock.session).clone();
-                let mut lines = match session {
+                let mut lines = match crypto.session() {
                     Some(sess) => session::pump(
                         rw,
                         Direction::Inbound,
-                        &mut lock(&sess),
+                        &mut lock(sess),
                         &tmp[..n as usize],
                         crate::crypto::unix_now(),
                         policy(),
                         ready,
                     ),
-                    None => push_sessionless(rw, &tmp[..n as usize], ready),
+                    None => push_without_session(rw, &tmp[..n as usize], ready, crypto.why_not()),
                 };
+                if rw.is_broken() {
+                    // What was rewritten before the bad header goes too: the
+                    // connection is reset, and the client reconnects.
+                    ready.clear();
+                    log_lines(&sock, lines);
+                    drop(side);
+                    return reset_broken_stream(s);
+                }
                 // The stream read the token and our own account out of the
                 // OService SNACs whether or not a session exists yet; without
                 // a session it has nowhere to put them, so they wait here.
@@ -1384,7 +1744,7 @@ fn harness_recv(s: Socket, buf: *mut u8, len: usize, flags: i32) -> i32 {
                 if rw.carries_messages() {
                     sock.messages.store(true, Ordering::Release);
                 }
-                ensure_session(&sock);
+                let _ = ensure_session(&sock);
                 lines.extend(drain_pending_token(&sock));
                 tlsio::say_if_opted_out(&sock);
                 log_lines(&sock, lines);
@@ -1483,7 +1843,7 @@ fn poll_worker() {
             .cloned()
             .collect();
         for sock in waiting {
-            ensure_session(&sock);
+            let _ = ensure_session(&sock);
             for line in drain_pending_token(&sock) {
                 log::line(&line);
             }
@@ -1516,29 +1876,153 @@ fn poll_worker() {
     }
 }
 
-/// Installs the hooks. Safe to call more than once; only the first install
-/// takes effect. Called from each loader's DllMain with the policy read from
-/// the environment.
+/// What the loader stub asks to be run first on the bootstrap thread (its
+/// own work that must stay out of `DllMain`).
+static PREWARM: AtomicUsize = AtomicUsize::new(0);
+
+/// Starts the add-on from the loader stub's `DllMain` (fourth review,
+/// finding H). Only what is safe under the loader lock happens here:
 ///
-/// Three ways in, the first one that finds the networking module wins:
+/// 1. the loader notification is registered (`LdrRegisterDllNotification`,
+///    looked up in ntdll, which is always loaded): the networking module is
+///    patched the moment it is mapped, before any of its code runs;
+/// 2. a networking module that is already mapped is patched at once;
+/// 3. the bootstrap thread is created. It runs once the loader lock is
+///    released and does everything else: `prewarm` (the loader's own lazy
+///    work), reading `icq-e2e.ini`, logging, the polling fallback, settling
+///    the gate.
 ///
-/// 1. at once, if the module is already mapped (it is part of the static
-///    import graph that was loaded with the loader);
-/// 2. a loader notification, which patches the module the moment it is mapped
-///    and its imports bound, before any of its code runs;
-/// 3. the old polling thread, as the fallback when the notification cannot be
-///    registered or fires before the imports are bound.
-pub fn start(p: Policy) {
-    let encrypting = p.mode == Mode::Encrypt;
-    set_policy_once(p);
-    install_now_if_loaded();
-    calls_io::start();
-    filesio::start();
-    register_dll_notification();
-    if encrypting {
-        spawn(poll_thread);
+/// Patching is memory work only (the PE reader, `VirtualProtect`, writes of
+/// the import slots); nothing is loaded, no file is opened, nothing waits,
+/// and log lines are kept in memory until the bootstrap thread writes them.
+/// Until the bootstrap has read the policy the gate is `Starting`, and a
+/// hooked call waits for it and is refused if it does not come, so no
+/// `connect` can leave before the add-on knows what to protect. Safe to call
+/// more than once; only the first call does anything.
+pub fn start_from_loader(prewarm: Option<fn()>) {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::AcqRel) {
+        return;
     }
-    spawn(install_thread);
+    if let Some(f) = prewarm {
+        PREWARM.store(f as usize, Ordering::Release);
+    }
+    register_dll_notification();
+    install_now_if_loaded();
+    spawn(bootstrap_thread);
+}
+
+/// The bootstrap: everything the loader lock must not see.
+unsafe extern "system" fn bootstrap_thread(_: *mut core::ffi::c_void) -> u32 {
+    let _ = panic::catch_unwind(|| {
+        let f = PREWARM.load(Ordering::Acquire);
+        if f != 0 {
+            // SAFETY: only ever a `fn()` stored by `start_from_loader`.
+            let f: fn() = std::mem::transmute::<usize, fn()>(f);
+            f();
+        }
+        log::flush_deferred();
+        let p = Policy::from_env();
+        log::line(&format!("Phase 1 add-on loading: {}", p.describe()));
+        let encrypting = p.mode == Mode::Encrypt;
+        set_policy_once(p);
+        // A networking module patched before the policy was known is
+        // settled now; one that was not is waited for below.
+        gate::current().settle(policy());
+        calls_io::start();
+        filesio::start();
+        if encrypting {
+            spawn(poll_thread);
+        }
+        wait_for_install();
+    });
+    if gate::current().bootstrap() == Bootstrap::Starting {
+        // A panic above must not leave the hooks waiting for good.
+        gate::current().fail("the add-on failed while starting".to_string());
+    }
+    log::flush_deferred();
+    0
+}
+
+/// The polling fallback, then the gate's verdict on the install: `Ready`, or
+/// `Fatal` with the reason - said in the log and, in a policy that protects
+/// anything, in a message box: from then on every `connect`, `send` and
+/// `recv` the hooks see is refused (finding D).
+fn wait_for_install() {
+    let g = gate::current();
+    if g.install_outcome().is_none() {
+        log::line("install worker running; searching for the networking module (coolcore5x/4x)");
+        log_named_lookups();
+        let mut warned = false;
+        let mut last_reason = None;
+        for attempt in 0..INSTALL_WAIT_ATTEMPTS {
+            if matches!(g.install_outcome(), Some(Ok(_))) {
+                break;
+            }
+            match find_networking_module(attempt == 0) {
+                Some((name, base)) => {
+                    match install_into(&name, base, "polling", true) {
+                        Ok(_) => break,
+                        Err(why) => last_reason = Some(why),
+                    }
+                    log::flush_deferred();
+                }
+                None if !warned => {
+                    log::line("networking module not loaded yet; waiting for it");
+                    warned = true;
+                }
+                None if attempt % 100 == 0 && attempt > 0 => log::line(&format!(
+                    "still waiting for the networking module ({}s)",
+                    attempt / 10
+                )),
+                None => {}
+            }
+            // SAFETY: sleeping our own thread.
+            unsafe { Sleep(100) };
+        }
+        if g.install_outcome().is_none() {
+            g.installed(Err(last_reason.unwrap_or_else(|| {
+                "no coolcore5x/4x networking module appeared within 60 s".to_string()
+            })));
+        }
+    }
+    log::flush_deferred();
+    match g.settle(policy()) {
+        Bootstrap::Ready(mask) => log::line(&format!(
+            "protection gate: ready; hooks in place: {}{}",
+            mask.names().join(", "),
+            {
+                let missing = mask.missing(HookMask::ALL);
+                if missing.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " (not imported, not needed by this setup: {})",
+                        missing.names().join(", ")
+                    )
+                }
+            }
+        )),
+        Bootstrap::Fatal(why) => {
+            log::line(&format!(
+                "protection gate: FATAL: {why}; {}",
+                if gate::protecting(policy()) {
+                    "every connection, send and receive the hooks see is refused"
+                } else {
+                    "nothing in this setup is protected, so nothing is refused"
+                }
+            ));
+            if gate::protecting(policy()) {
+                tlsio::notice(
+                    &format!("fatal:{why}"),
+                    format!(
+                        "ICQ E2E: the add-on cannot protect this ICQ ({why}). The client is not allowed to connect without the protection it was set up with. Apply the patch again, or untick the E2E rows to go without it."
+                    ),
+                );
+            }
+        }
+        Bootstrap::Starting => {}
+    }
 }
 
 /// The thread entry point for [`poll_worker`], which takes no argument.
@@ -1561,14 +2045,15 @@ fn spawn(f: unsafe extern "system" fn(*mut core::ffi::c_void) -> u32) {
 /// The networking modules of the two clients, by file name.
 const NETWORKING_MODULES: [&str; 2] = ["coolcore59.dll", "coolcore49.dll"];
 
-/// Patches the networking module right away if it is already loaded.
+/// Patches the networking module right away if it is already loaded. Runs
+/// under the loader lock: memory work only, log lines deferred.
 fn install_now_if_loaded() {
     for name in NETWORKING_MODULES {
         let w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         // SAFETY: a NUL-terminated name; GetModuleHandleW takes no reference.
         let base = unsafe { GetModuleHandleW(w.as_ptr()) } as usize;
         if base != 0 {
-            install_into(name, base, "already loaded at start", true);
+            let _ = install_into(name, base, "already loaded at start", true);
             return;
         }
     }
@@ -1605,13 +2090,10 @@ type LdrRegisterDllNotificationFn = unsafe extern "system" fn(
 
 /// Asks the loader to call [`dll_notification`] for every DLL loaded from now
 /// on. `LdrRegisterDllNotification` is not in any import library, so it is
-/// looked up in ntdll by name.
+/// looked up in ntdll by name. Always registered: the call modules are
+/// patched from it too, and whether they are needed is known only once the
+/// bootstrap has read the policy. Runs under the loader lock; logs deferred.
 fn register_dll_notification() {
-    // With `calls_log=on` or `calls_encrypt=on` the call modules, loaded only
-    // when a call starts, are patched from the notification too.
-    if INSTALLED.load(Ordering::Acquire) && !policy().hooks_calls() {
-        return;
-    }
     let ntdll: Vec<u16> = "ntdll.dll"
         .encode_utf16()
         .chain(std::iter::once(0))
@@ -1622,21 +2104,21 @@ fn register_dll_notification() {
     unsafe {
         let h = GetModuleHandleW(ntdll.as_ptr());
         if h.is_null() {
-            log::line("loader notification: ntdll not found; relying on polling");
+            log::defer("loader notification: ntdll not found; relying on polling".to_string());
             return;
         }
         let Some(p) = windows_sys::Win32::System::LibraryLoader::GetProcAddress(
             h,
             c"LdrRegisterDllNotification".as_ptr().cast(),
         ) else {
-            log::line("loader notification: not available; relying on polling");
+            log::defer("loader notification: not available; relying on polling".to_string());
             return;
         };
         let register: LdrRegisterDllNotificationFn = std::mem::transmute(p);
         let mut cookie: *mut core::ffi::c_void = ptr::null_mut();
         let status = register(0, dll_notification, ptr::null_mut(), &mut cookie);
         if status < 0 {
-            log::line(&format!(
+            log::defer(format!(
                 "loader notification: registration failed ({status:#010x}); relying on polling"
             ));
         }
@@ -1644,10 +2126,10 @@ fn register_dll_notification() {
 }
 
 /// Runs inside the loader (under its lock) for each DLL that gets loaded. Does
-/// nothing but patch a networking module (or, with `calls_log=on` or
-/// `calls_encrypt=on`, a call
-/// module), and never waits for the install lock: whoever holds it is
-/// installing already.
+/// nothing but patch a networking module (or a call module), and never waits
+/// for the install lock: whoever holds it is installing already. A call
+/// module that loads before the bootstrap has read the policy is handed to a
+/// thread that waits for it.
 unsafe extern "system" fn dll_notification(
     reason: u32,
     data: *const LdrDllNotificationData,
@@ -1669,10 +2151,12 @@ unsafe extern "system" fn dll_notification(
             String::from_utf16_lossy(std::slice::from_raw_parts(u.buffer, u.length as usize / 2));
         if name.to_ascii_lowercase().starts_with("coolcore") {
             if !INSTALLED.load(Ordering::Acquire) {
-                install_into(&name, d.dll_base as usize, "on load", false);
+                let _ = install_into(&name, d.dll_base as usize, "on load", false);
             }
-        } else {
+        } else if policy_is_set() {
             calls_io::on_load(&name, d.dll_base as usize, "on load", true);
+        } else {
+            calls_io::later(&name);
         }
     }));
 }
@@ -1680,22 +2164,9 @@ unsafe extern "system" fn dll_notification(
 /// Serialises the three ways in, so a module is patched once.
 static INSTALL_LOCK: Mutex<()> = Mutex::new(());
 
-/// Patches `name` at `base`. With `wait` false the install lock is only tried.
-/// Returns true when the hooks are in (now or before).
-fn install_into(name: &str, base: usize, via: &str, wait: bool) -> bool {
-    let _guard = if wait {
-        lock(&INSTALL_LOCK)
-    } else {
-        match INSTALL_LOCK.try_lock() {
-            Ok(g) => g,
-            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return false,
-        }
-    };
-    if INSTALLED.load(Ordering::Acquire) {
-        return true;
-    }
-    let hooks = [
+/// The networking module's hooks.
+fn networking_hooks() -> [HookSpec; 8] {
+    [
         HookSpec::new("send", hook_send as SendFn as usize, &ORIG_SEND),
         HookSpec::new("recv", hook_recv as RecvFn as usize, &ORIG_RECV),
         HookSpec::new("connect", hook_connect as ConnectFn as usize, &ORIG_CONNECT),
@@ -1720,70 +2191,48 @@ fn install_into(name: &str, base: usize, via: &str, wait: bool) -> bool {
             &ORIG_GETPEERNAME,
         ),
         HookSpec::new("accept", hook_accept as AcceptFn as usize, &ORIG_ACCEPT),
-    ];
-    match patch_iat(base, &hooks, &resolve_ordinal) {
-        Ok(report) => {
-            if ORIG_SEND.load(Ordering::Acquire) != 0 && ORIG_RECV.load(Ordering::Acquire) != 0 {
-                INSTALLED.store(true, Ordering::Release);
-                log::line(&format!(
-                    "hooks installed in {name} at {base:#010x} ({via}): {report}; {}",
-                    policy().describe()
-                ));
-                true
-            } else {
-                log::line(&format!(
-                    "{name} ({via}): parsed but send/recv thunks were not patched ({report})"
-                ));
-                false
-            }
-        }
-        Err(reason) => {
-            log::line(&format!("{name} ({via}): could not patch: {reason}"));
-            false
-        }
-    }
+    ]
 }
 
-unsafe extern "system" fn install_thread(_: *mut core::ffi::c_void) -> u32 {
+/// Patches `name` at `base`: DISCOVER, then COMMIT all or nothing. With
+/// `wait` false (under the loader lock) the install lock is only tried.
+/// Records the hooks that went in with the gate and settles it if the
+/// policy is known. Its log lines are deferred: it may run under the loader
+/// lock.
+fn install_into(name: &str, base: usize, via: &str, wait: bool) -> Result<HookMask, String> {
+    let _guard = if wait {
+        lock(&INSTALL_LOCK)
+    } else {
+        match INSTALL_LOCK.try_lock() {
+            Ok(g) => g,
+            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                return Err("another thread is installing".to_string())
+            }
+        }
+    };
     if INSTALLED.load(Ordering::Acquire) {
-        return 0;
-    }
-    log::line("install worker running; searching for the networking module (coolcore5x/4x)");
-    // A quick sanity line comparing name-based lookups, since a wrong name/case
-    // or ANSI-vs-wide lookup would explain a module that is loaded but not found.
-    log_named_lookups();
-
-    // The networking module may not be loaded yet (load order). Poll for it,
-    // logging what happens at each stage.
-    let mut warned_not_loaded = false;
-    for attempt in 0..600u32 {
-        if INSTALLED.load(Ordering::Acquire) {
-            return 0;
+        if let Some(Ok(mask)) = gate::current().install_outcome() {
+            return Ok(mask);
         }
-        match find_networking_module(attempt == 0) {
-            Some((name, base)) => {
-                log::line(&format!(
-                    "networking module found by polling: {name} at base {base:#010x}"
-                ));
-                install_into(&name, base, "polling", true);
-                return 0;
-            }
-            None => {
-                if !warned_not_loaded {
-                    log::line("networking module not loaded yet; waiting for it");
-                    warned_not_loaded = true;
-                } else if attempt % 100 == 0 && attempt > 0 {
-                    log::line(&format!(
-                        "still waiting for the networking module ({}s)",
-                        attempt / 10
-                    ));
-                }
-            }
-        }
-        Sleep(100);
     }
-    log::line("gave up after 60s: no coolcore5x/4x module appeared among the loaded modules");
-    0
+    match patch_with(base, &networking_hooks(), &resolve_ordinal, &mut LiveThunks) {
+        Ok((mask, report)) => {
+            INSTALLED.store(true, Ordering::Release);
+            gate::current().installed(Ok(mask));
+            log::defer(format!(
+                "hooks installed in {name} at {base:#010x} ({via}): {report}"
+            ));
+            if policy_is_set() {
+                gate::current().settle(policy());
+            }
+            Ok(mask)
+        }
+        Err(reason) => {
+            log::defer(format!("{name} ({via}): could not patch: {reason}"));
+            Err(format!("{name} could not be patched: {reason}"))
+        }
+    }
 }
 
 /// Logs what name-based module lookups return, to catch a name/case or
@@ -1856,7 +2305,7 @@ fn find_networking_module(verbose: bool) -> Option<(String, usize)> {
     }
 }
 
-// --- import table patching --------------------------------------------------
+// --- import table patching: DISCOVER, then COMMIT ---------------------------
 
 /// The DLLs whose imports carry the Winsock functions we hook.
 const SOCKET_DLLS: [&str; 2] = ["wsock32.dll", "ws2_32.dll"];
@@ -1931,176 +2380,217 @@ fn resolve_ordinal(dll: &str, ordinal: u16) -> Option<String> {
     loaded.or_else(|| known_ordinal_name(dll, ordinal).map(str::to_string))
 }
 
-/// Reads the export table of the module at `base` and returns the name that
-/// exports `ordinal`, if it has one. PE32 and PE32+.
-unsafe fn export_name_by_ordinal(base: usize, ordinal: u16) -> Option<String> {
-    let rd16 = |off: usize| ptr::read_unaligned((base + off) as *const u16);
-    let rd32 = |off: usize| ptr::read_unaligned((base + off) as *const u32) as usize;
-    if rd16(0) != 0x5A4D {
-        return None;
-    }
-    let e_lfanew = rd32(0x3C);
-    if rd32(e_lfanew) != 0x0000_4550 {
-        return None;
-    }
-    let opt = e_lfanew + 0x18;
-    let data_dirs = match rd16(opt) {
-        0x010B => opt + 0x60,
-        0x020B => opt + 0x70,
-        _ => return None,
-    };
-    let export_rva = rd32(data_dirs);
-    if export_rva == 0 {
-        return None;
-    }
-    let ord_base = rd32(export_rva + 0x10);
-    let names = rd32(export_rva + 0x18);
-    let name_rvas = rd32(export_rva + 0x20);
-    let name_ords = rd32(export_rva + 0x24);
-    let index = (ordinal as usize).checked_sub(ord_base)?;
-    (0..names)
-        .find(|&i| rd16(name_ords + i * 2) as usize == index)
-        .map(|i| read_cstr(base + rd32(name_rvas + i * 4)))
+/// The image of a module loaded at `base`: `[base, base + SizeOfImage)`,
+/// read with the bounds-checked reader.
+///
+/// # Safety
+/// `base` is the base of a module mapped in this process (or of a buffer of
+/// at least `SizeOfImage` bytes, in the tests), and the image stays mapped
+/// for `'a`.
+unsafe fn loaded_image<'a>(base: usize) -> Result<pe::Image<'a>, pe::PeError> {
+    // The headers are in the first page of every mapped image.
+    let head = std::slice::from_raw_parts(base as *const u8, 0x1000);
+    let size = pe::Image::size_of_image(head)?;
+    pe::Image::parse(std::slice::from_raw_parts(base as *const u8, size))
 }
 
-/// Patches the module's import thunks for the hooked functions of the Winsock
-/// DLLs it imports ([`SOCKET_DLLS`]). An ordinal import is turned into a name
-/// with `resolve(dll, ordinal)`, so the same ordinal means what it means in the
-/// DLL it is imported from. Returns a report of what was patched, or an error
-/// reason.
+/// The name the export table of the module at `base` gives `ordinal`.
+///
+/// # Safety
+/// As [`loaded_image`].
+unsafe fn export_name_by_ordinal(base: usize, ordinal: u16) -> Option<String> {
+    loaded_image(base).ok()?.export_name(ordinal)
+}
+
+/// One slot DISCOVER found: where it is, what it holds, what goes there.
+struct PlannedSlot {
+    addr: usize,
+    current: u32,
+    hook: u32,
+    orig: &'static AtomicUsize,
+    label: String,
+}
+
+/// What COMMIT is to write, and what it amounts to.
+struct PatchPlan {
+    slots: Vec<PlannedSlot>,
+    mask: HookMask,
+    labels: Vec<String>,
+}
+
+/// DISCOVER: every slot of the module's Winsock imports ([`SOCKET_DLLS`])
+/// that one of `hooks` is for, each checked to be bound. Changes nothing. An
+/// ordinal import is turned into a name with `resolve(dll, ordinal)`, so the
+/// same ordinal means what it means in the DLL it is imported from.
+fn discover(
+    img: &pe::Image<'_>,
+    base: usize,
+    hooks: &[HookSpec],
+    resolve: &dyn Fn(&str, u16) -> Option<String>,
+) -> Result<PatchPlan, String> {
+    let dlls = img.imports().map_err(|e| e.to_string())?;
+    let mut dll_found = false;
+    let mut unbound: Vec<String> = Vec::new();
+    let mut plan = PatchPlan {
+        slots: Vec::new(),
+        mask: HookMask::NONE,
+        labels: Vec::new(),
+    };
+    for dll in &dlls {
+        // Names come from the INT; without one (a bound-only import) there
+        // is nothing to tell the slots apart by.
+        if !SOCKET_DLLS.iter().any(|d| dll.name.eq_ignore_ascii_case(d)) || !dll.has_lookup {
+            continue;
+        }
+        dll_found = true;
+        for t in &dll.thunks {
+            let (name, label) = match &t.import {
+                pe::Import::Name(n) => (Some(n.clone()), n.clone()),
+                pe::Import::Ordinal(o) => {
+                    let n = resolve(&dll.name, *o);
+                    let label = format!("{}#{o}", n.as_deref().unwrap_or("?"));
+                    (n, label)
+                }
+            };
+            let Some(h) = name.and_then(|n| hooks.iter().find(|h| h.name == n)) else {
+                continue;
+            };
+            if !t.is_bound() {
+                // The loader has not filled the slot yet: there is no
+                // original to keep, and it would write over the hook anyway.
+                unbound.push(label);
+                continue;
+            }
+            let addr = base
+                .checked_add(t.slot_rva)
+                .ok_or_else(|| "an import slot's address overflows".to_string())?;
+            plan.mask = plan.mask.with(HookMask::of(h.name));
+            plan.labels.push(label.clone());
+            plan.slots.push(PlannedSlot {
+                addr,
+                current: t.bound,
+                hook: h.hook as u32,
+                orig: h.orig,
+                label,
+            });
+        }
+    }
+    if !dll_found {
+        let seen: Vec<&str> = dlls.iter().map(|d| d.name.as_str()).collect();
+        return Err(format!(
+            "no Winsock DLL among the imports of the module; imports seen: [{}]",
+            seen.join(", ")
+        ));
+    }
+    if !unbound.is_empty() {
+        return Err(format!("imports not bound yet: [{}]", unbound.join(", ")));
+    }
+    if plan.slots.is_empty() {
+        return Err(
+            "Winsock imported but no send/recv/connect/closesocket thunk matched".to_string(),
+        );
+    }
+    Ok(plan)
+}
+
+/// Writes one import slot. The real one goes through `VirtualProtect`; the
+/// tests inject failures.
+trait ThunkWriter {
+    fn write(&mut self, addr: usize, value: u32) -> bool;
+}
+
+/// The slots of a loaded module: made writable, written in one aligned
+/// store (a thread calling through the slot sees the old or the new
+/// pointer, never half of each), and given their protection back.
+struct LiveThunks;
+
+impl ThunkWriter for LiveThunks {
+    fn write(&mut self, addr: usize, value: u32) -> bool {
+        let p = addr as *const core::ffi::c_void;
+        let mut old: PAGE_PROTECTION_FLAGS = 0;
+        // SAFETY: addr is an import slot DISCOVER found inside the image;
+        // its page is made writable for the one store and restored.
+        unsafe {
+            if VirtualProtect(p, 4, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
+                return false;
+            }
+            if addr % 4 == 0 {
+                (*(addr as *const std::sync::atomic::AtomicU32)).store(value, Ordering::SeqCst);
+            } else {
+                ptr::write_unaligned(addr as *mut u32, value);
+            }
+            let mut tmp: PAGE_PROTECTION_FLAGS = 0;
+            let _ = VirtualProtect(p, 4, old, &mut tmp);
+        }
+        true
+    }
+}
+
+/// COMMIT: the originals are kept first (a hook that runs the moment its
+/// slot is written finds its original), then every slot is written. If one
+/// write fails, every slot written so far is put back as it was and nothing
+/// counts as installed (fourth review, finding C: no half-patched module).
+fn commit(plan: &PatchPlan, w: &mut dyn ThunkWriter) -> Result<HookMask, String> {
+    for s in &plan.slots {
+        if s.current != s.hook {
+            s.orig.store(s.current as usize, Ordering::Release);
+        }
+    }
+    let mut written: Vec<&PlannedSlot> = Vec::new();
+    for s in &plan.slots {
+        if s.current == s.hook {
+            continue; // ours already
+        }
+        if w.write(s.addr, s.hook) {
+            written.push(s);
+            continue;
+        }
+        let mut stuck = Vec::new();
+        for d in written.iter().rev() {
+            if !w.write(d.addr, d.current) {
+                stuck.push(d.label.clone());
+            }
+        }
+        return Err(format!(
+            "the slot of {} could not be written; {} slot(s) written before it put back{}",
+            s.label,
+            written.len() - stuck.len(),
+            if stuck.is_empty() {
+                String::new()
+            } else {
+                format!(" ({} could not be: they keep the hook)", stuck.join(", "))
+            }
+        ));
+    }
+    Ok(plan.mask)
+}
+
+/// DISCOVER and COMMIT over the module at `base`: the hooks that went in and
+/// a report, or why none did.
+fn patch_with(
+    base: usize,
+    hooks: &[HookSpec],
+    resolve: &dyn Fn(&str, u16) -> Option<String>,
+    w: &mut dyn ThunkWriter,
+) -> Result<(HookMask, String), String> {
+    let plan = {
+        // SAFETY: base is a loaded module (or the tests' buffer); the slice
+        // is dropped before anything is written.
+        let img = unsafe { loaded_image(base) }.map_err(|e| e.to_string())?;
+        discover(&img, base, hooks, resolve)?
+    };
+    let mask = commit(&plan, w)?;
+    Ok((mask, format!("patched [{}]", plan.labels.join(", "))))
+}
+
+/// [`patch_with`] through `VirtualProtect`, with the report only (the tests).
+#[cfg(test)]
 fn patch_iat(
     base: usize,
     hooks: &[HookSpec],
     resolve: &dyn Fn(&str, u16) -> Option<String>,
 ) -> Result<String, String> {
-    // SAFETY: base is a loaded module; all reads are bounds-guarded by the PE
-    // structure and stay within the mapped image.
-    unsafe {
-        let rd32 = |off: usize| ptr::read_unaligned((base + off) as *const u32);
-        if rd32(0) & 0xFFFF != 0x5A4D {
-            return Err("no MZ signature".to_string());
-        }
-        let e_lfanew = ptr::read_unaligned((base + 0x3C) as *const u32) as usize;
-        if rd32(e_lfanew) != 0x0000_4550 {
-            return Err("no PE signature".to_string());
-        }
-        let magic = ptr::read_unaligned((base + e_lfanew + 0x18) as *const u16);
-        if magic != 0x010B {
-            return Err(format!("not PE32 (optional header magic {magic:#06x})"));
-        }
-        let import_rva = rd32(e_lfanew + 0x80) as usize;
-        if import_rva == 0 {
-            return Err("no import directory".to_string());
-        }
-        let mut imported_dlls: Vec<String> = Vec::new();
-        let mut dll_found = false;
-        let mut matched: Vec<String> = Vec::new();
-        let mut unbound: Vec<String> = Vec::new();
-        let mut desc = base + import_rva;
-        loop {
-            let name_rva = ptr::read_unaligned((desc + 12) as *const u32) as usize;
-            let first_thunk = ptr::read_unaligned((desc + 16) as *const u32) as usize;
-            if name_rva == 0 && first_thunk == 0 {
-                break;
-            }
-            let dll_name = read_cstr(base + name_rva);
-            imported_dlls.push(dll_name.clone());
-            let orig_thunk = ptr::read_unaligned(desc as *const u32) as usize;
-            // Names come from the INT; without one (a bound-only import) there
-            // is nothing to tell the slots apart by.
-            if SOCKET_DLLS.iter().any(|d| dll_name.eq_ignore_ascii_case(d)) && orig_thunk != 0 {
-                dll_found = true;
-                let mut i = 0usize;
-                loop {
-                    let int_entry = ptr::read_unaligned((base + orig_thunk + i * 4) as *const u32);
-                    if int_entry == 0 {
-                        break;
-                    }
-                    let (name, label) = if int_entry & 0x8000_0000 == 0 {
-                        let n = read_cstr(base + int_entry as usize + 2);
-                        (Some(n.clone()), n)
-                    } else {
-                        let ordinal = (int_entry & 0xFFFF) as u16;
-                        let n = resolve(&dll_name, ordinal);
-                        let label = format!("{}#{ordinal}", n.as_deref().unwrap_or("?"));
-                        (n, label)
-                    };
-                    let spec = name.and_then(|n| hooks.iter().find(|h| h.name == n));
-                    if let Some(h) = spec {
-                        let slot = base + first_thunk + i * 4;
-                        let bound = ptr::read_unaligned(slot as *const u32);
-                        if bound == int_entry {
-                            // The loader has not filled the slot yet: there is
-                            // no original to keep, and the loader would write
-                            // over the hook anyway.
-                            unbound.push(label);
-                        } else if write_thunk(slot, h.hook, h.orig) {
-                            matched.push(label);
-                        }
-                    }
-                    i += 1;
-                }
-            }
-            desc += 20;
-        }
-        if !dll_found {
-            return Err(format!(
-                "no Winsock DLL among the imports of the module; imports seen: [{}]",
-                imported_dlls.join(", ")
-            ));
-        }
-        if !unbound.is_empty() {
-            return Err(format!(
-                "imports not bound yet: [{}]{}",
-                unbound.join(", "),
-                if matched.is_empty() {
-                    String::new()
-                } else {
-                    format!("; patched [{}]", matched.join(", "))
-                }
-            ));
-        }
-        if matched.is_empty() {
-            return Err(
-                "Winsock imported but no send/recv/connect/closesocket thunk matched".to_string(),
-            );
-        }
-        Ok(format!("patched [{}]", matched.join(", ")))
-    }
-}
-
-/// Reads a NUL-terminated ASCII C string at `ptr` into a String.
-unsafe fn read_cstr(ptr: usize) -> String {
-    let mut out = Vec::new();
-    let mut i = 0usize;
-    loop {
-        let c = ptr::read_unaligned((ptr + i) as *const u8);
-        if c == 0 || i > 260 {
-            break;
-        }
-        out.push(c);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Saves the current thunk value into `orig_slot` and writes `hook` in its
-/// place. Returns true on success.
-unsafe fn write_thunk(slot: usize, hook: usize, orig_slot: &AtomicUsize) -> bool {
-    let current = ptr::read_unaligned(slot as *const u32) as usize;
-    if current == hook {
-        return true; // already ours
-    }
-    let addr = slot as *const core::ffi::c_void;
-    let mut old: PAGE_PROTECTION_FLAGS = 0;
-    if VirtualProtect(addr, 4, PAGE_EXECUTE_READWRITE, &mut old) == 0 {
-        return false;
-    }
-    orig_slot.store(current, Ordering::Release);
-    ptr::write_unaligned(slot as *mut u32, hook as u32);
-    let mut tmp: PAGE_PROTECTION_FLAGS = 0;
-    let _ = VirtualProtect(addr, 4, old, &mut tmp);
-    true
+    patch_with(base, hooks, resolve, &mut LiveThunks).map(|(_, r)| r)
 }
 
 /// The hooks driven from a process that is not a client: the test host and
@@ -2140,6 +2630,9 @@ pub mod testing {
             Ordering::Release,
         );
         ORIG_ACCEPT.store(WinSock::accept as *const () as usize, Ordering::Release);
+        // Every hook is "installed": the protection gate is ready.
+        gate::global().installed(Ok(HookMask::ALL));
+        gate::global().force(Bootstrap::Ready(HookMask::ALL));
         if first && encrypting {
             spawn(poll_thread);
         }
@@ -2266,14 +2759,14 @@ mod tests {
         rva as u32
     }
 
-    fn ordinal_entry(ordinal: u16) -> u32 {
+    pub(super) fn ordinal_entry(ordinal: u16) -> u32 {
         0x8000_0000 | ordinal as u32
     }
 
     /// Builds a minimal PE32 image whose single import descriptor points at
     /// `dll_name` with `entries` in the INT and recognisable bound addresses in
     /// the IAT.
-    fn synthetic_pe(dll_name: &str, entries: &[u32]) -> Vec<u8> {
+    pub(super) fn synthetic_pe(dll_name: &str, entries: &[u32]) -> Vec<u8> {
         const IMAGE_BASE_RVA: usize = 0x1000;
         let mut img = vec![0u8; 0x4000];
 
@@ -2284,8 +2777,12 @@ mod tests {
         // PE signature + COFF header (i386).
         img[0x80..0x84].copy_from_slice(&0x0000_4550u32.to_le_bytes());
         img[0x84..0x86].copy_from_slice(&0x014Cu16.to_le_bytes());
-        // Optional header magic PE32.
+        // Optional header magic PE32, SizeOfImage (the whole buffer: the
+        // reader never reads past it) and the number of data directories.
         img[0x80 + 0x18..0x80 + 0x1A].copy_from_slice(&0x010Bu16.to_le_bytes());
+        let len = img.len() as u32;
+        img[0x80 + 0x18 + 0x38..0x80 + 0x18 + 0x3C].copy_from_slice(&len.to_le_bytes());
+        img[0x80 + 0x18 + 0x5C..0x80 + 0x18 + 0x60].copy_from_slice(&16u32.to_le_bytes());
         // Import directory RVA -> data directory entry 1.
         let import_rva = IMAGE_BASE_RVA;
         img[0x80 + 0x80..0x80 + 0x84].copy_from_slice(&(import_rva as u32).to_le_bytes());
@@ -2316,9 +2813,9 @@ mod tests {
         img
     }
 
-    const IAT: usize = 0x1000 + 0x100;
+    pub(super) const IAT: usize = 0x1000 + 0x100;
 
-    fn iat_value(img: &[u8], i: usize) -> usize {
+    pub(super) fn iat_value(img: &[u8], i: usize) -> usize {
         let at = IAT + i * 4;
         u32::from_le_bytes(img[at..at + 4].try_into().unwrap()) as usize
     }
@@ -2947,5 +3444,729 @@ mod pending_token_tests {
             drain_pending_token(&sock).is_empty(),
             "a token is taken once; there is no second one to apply"
         );
+    }
+}
+
+/// Fourth review of 2026-10 (bootstrap and interception): two-phase
+/// patching with rollback, the UTF-16 command line, and the fault matrix
+/// through the real hook bodies over loopback sockets.
+#[cfg(test)]
+mod fourth_review {
+    use super::tests::{iat_value, ordinal_entry, synthetic_pe};
+    use super::*;
+    use crate::config::{Settings, TlsPolicy};
+    use crate::directory::MemoryDirectory;
+    use crate::route::{Ports, Route};
+    use crate::test_frames::*;
+    use std::io::{Read, Write};
+    use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
+    use std::os::windows::io::AsRawSocket;
+    use std::path::{Path, PathBuf};
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::Networking::WinSock;
+
+    // --- two-phase patching -----------------------------------------------
+
+    /// Writes the slots like `VirtualProtect` would, failing the `fail_at`th
+    /// write (1-based; 0 never).
+    struct FailingWriter {
+        fail_at: usize,
+        writes: usize,
+    }
+
+    impl ThunkWriter for FailingWriter {
+        fn write(&mut self, addr: usize, value: u32) -> bool {
+            self.writes += 1;
+            if self.writes == self.fail_at {
+                return false;
+            }
+            // SAFETY: addr is a slot of the test's own buffer.
+            unsafe { ptr::write_unaligned(addr as *mut u32, value) };
+            true
+        }
+    }
+
+    type Slots = [AtomicUsize; 5];
+    #[allow(clippy::declare_interior_mutable_const)]
+    const EMPTY: AtomicUsize = AtomicUsize::new(0);
+
+    fn specs(slots: &'static Slots) -> Vec<HookSpec> {
+        vec![
+            HookSpec::new("send", 0x1000_1000, &slots[0]),
+            HookSpec::new("recv", 0x1000_2000, &slots[1]),
+            HookSpec::new("connect", 0x1000_3000, &slots[2]),
+            HookSpec::new("closesocket", 0x1000_4000, &slots[3]),
+            HookSpec::new("accept", 0x1000_5000, &slots[4]),
+        ]
+    }
+
+    fn table(dll: &str, ordinal: u16) -> Option<String> {
+        known_ordinal_name(dll, ordinal).map(str::to_string)
+    }
+
+    /// Finding C: a write that fails half way puts back every slot written
+    /// before it, and nothing counts as installed; the old `patch_iat` left
+    /// the module half patched (and returned `Ok` when `VirtualProtect`
+    /// failed for a slot).
+    #[test]
+    fn a_failed_write_half_way_rolls_every_slot_back() {
+        let entries = [
+            ordinal_entry(4),
+            ordinal_entry(3),
+            ordinal_entry(16),
+            ordinal_entry(19),
+            ordinal_entry(1),
+        ];
+        for fail_at in 1..=5 {
+            let mut img = synthetic_pe("WSOCK32.dll", &entries);
+            let before: Vec<usize> = (0..5).map(|i| iat_value(&img, i)).collect();
+            let slots: &'static Slots = Box::leak(Box::new([EMPTY; 5]));
+            let mut w = FailingWriter { fail_at, writes: 0 };
+            let r = patch_with(img.as_mut_ptr() as usize, &specs(slots), &table, &mut w);
+            let err = r.expect_err("a failed write is no install");
+            assert!(err.contains("put back"), "{err}");
+            let after: Vec<usize> = (0..5).map(|i| iat_value(&img, i)).collect();
+            assert_eq!(
+                after, before,
+                "fail at write {fail_at}: every slot as it was"
+            );
+        }
+        // With no failure every slot is written, and the mask says which.
+        let mut img = synthetic_pe("WSOCK32.dll", &entries);
+        let slots: &'static Slots = Box::leak(Box::new([EMPTY; 5]));
+        let (mask, _) = patch_with(
+            img.as_mut_ptr() as usize,
+            &specs(slots),
+            &table,
+            &mut FailingWriter {
+                fail_at: 0,
+                writes: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            mask,
+            HookMask::SEND
+                .with(HookMask::RECV)
+                .with(HookMask::CONNECT)
+                .with(HookMask::CLOSE)
+                .with(HookMask::ACCEPT)
+        );
+        assert_eq!(iat_value(&img, 0), 0x1000_3000);
+        assert_eq!(slots[2].load(Ordering::Acquire), 0x7FFF_0000);
+    }
+
+    /// DISCOVER changes nothing when one slot is not bound yet, even if the
+    /// others are.
+    #[test]
+    fn discovery_changes_nothing_when_one_slot_is_unbound() {
+        let mut img = synthetic_pe("WSOCK32.dll", &[ordinal_entry(19), ordinal_entry(16)]);
+        let at = super::tests::IAT + 4;
+        img[at..at + 4].copy_from_slice(&ordinal_entry(16).to_le_bytes());
+        let slots: &'static Slots = Box::leak(Box::new([EMPTY; 5]));
+        let err = patch_with(
+            img.as_mut_ptr() as usize,
+            &specs(slots),
+            &table,
+            &mut FailingWriter {
+                fail_at: 0,
+                writes: 0,
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("not bound yet"), "{err}");
+        assert_eq!(iat_value(&img, 0), 0x7FFF_0000, "send untouched");
+        assert_eq!(slots[0].load(Ordering::Acquire), 0, "no original taken");
+    }
+
+    // --- the command line (finding F) -------------------------------------
+
+    #[test]
+    fn the_uin_is_read_from_a_utf16_command_line() {
+        let line = "\"C:\\Program Files (x86)\\ICQ7.2\\ICQ.exe\" -uin 123456 -tray";
+        assert_eq!(
+            uin_from_args(&split_command_line(line)).as_deref(),
+            Some("123456")
+        );
+        let units: Vec<u16> =
+            "\"C:\\Users\\\u{424}\u{451}\u{434}\u{43e}\u{440}\\ICQ\\ICQ.exe\" /UIN 777"
+                .encode_utf16()
+                .collect();
+        assert_eq!(
+            uin_from_args(&split_command_line(&String::from_utf16_lossy(&units))).as_deref(),
+            Some("777")
+        );
+        // What the old code read: the UTF-16 taken as a C string of bytes
+        // ends after the first character, so -uin was never seen.
+        let bytes: Vec<u8> = units
+            .iter()
+            .flat_map(|u| u.to_le_bytes())
+            .chain([0, 0])
+            .collect();
+        // SAFETY: a NUL-terminated buffer of our own.
+        let old = unsafe { std::ffi::CStr::from_ptr(bytes.as_ptr().cast()) };
+        assert_eq!(old.to_bytes(), b"\"");
+        // CommandLineToArgvW's quoting rules.
+        assert_eq!(
+            split_command_line(r#"a "b c" d\"e "f\\" g"#),
+            vec!["a", "b c", "d\"e", "f\\", "g"]
+        );
+        assert_eq!(
+            uin_from_args(&split_command_line("x -uin notanumber")),
+            None
+        );
+        assert_eq!(uin_from_args(&split_command_line("x -uin")), None);
+        assert_eq!(uin_from_args(&split_command_line("x")), None);
+    }
+
+    // --- the fault matrix -------------------------------------------------
+
+    /// Every internal failure, as the hooks meet it.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Fault {
+        Healthy,
+        NoDirectory,
+        NoUin,
+        UnreadableState,
+        CorruptState,
+        LockedState,
+        StillStarting,
+        Fatal,
+        RequiredHookMissing,
+        RolledBack,
+        PanicInSend,
+        PanicInRecv,
+        FlapDesync,
+        CallHooksMissing,
+        FileHooksMissing,
+    }
+
+    const FAULTS: [Fault; 15] = [
+        Fault::Healthy,
+        Fault::NoDirectory,
+        Fault::NoUin,
+        Fault::UnreadableState,
+        Fault::CorruptState,
+        Fault::LockedState,
+        Fault::StillStarting,
+        Fault::Fatal,
+        Fault::RequiredHookMissing,
+        Fault::RolledBack,
+        Fault::PanicInSend,
+        Fault::PanicInRecv,
+        Fault::FlapDesync,
+        Fault::CallHooksMissing,
+        Fault::FileHooksMissing,
+    ];
+
+    impl Fault {
+        /// Whether the add-on has no keys for the account.
+        fn no_keys(self) -> bool {
+            matches!(
+                self,
+                Fault::NoDirectory
+                    | Fault::NoUin
+                    | Fault::UnreadableState
+                    | Fault::CorruptState
+                    | Fault::LockedState
+            )
+        }
+
+        /// Whether the bootstrap refuses everything.
+        fn not_in_place(self) -> bool {
+            matches!(
+                self,
+                Fault::StillStarting
+                    | Fault::Fatal
+                    | Fault::RequiredHookMissing
+                    | Fault::RolledBack
+                    | Fault::FileHooksMissing
+            )
+        }
+
+        /// Whether the connection is reset by the fault itself.
+        fn resets(self) -> bool {
+            matches!(
+                self,
+                Fault::PanicInSend | Fault::PanicInRecv | Fault::FlapDesync
+            )
+        }
+    }
+
+    /// What the test sends, and the policy it needs.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Traffic {
+        /// A message to an automatic contact.
+        MessageAuto,
+        /// A message to a contact under `/e2e on`.
+        MessageOn,
+        /// A call's INVITE with `calls_encrypt=required`.
+        CallRequired,
+        /// A call's INVITE with `calls_encrypt=on` to a contact under
+        /// `/e2e on`.
+        CallStrict,
+        /// A call's INVITE with `calls_encrypt=on` to an automatic contact.
+        CallAuto,
+        /// A file proposal with `files_encrypt=required`.
+        FileRequired,
+    }
+
+    const TRAFFIC: [Traffic; 6] = [
+        Traffic::MessageAuto,
+        Traffic::MessageOn,
+        Traffic::CallRequired,
+        Traffic::CallStrict,
+        Traffic::CallAuto,
+        Traffic::FileRequired,
+    ];
+
+    const SECRET: &[u8] = b"SECRET-only-for-100002";
+    const INVITE: &[u8] = b"INVITE sip:100002@h SIP/2.0";
+
+    fn policy_for(t: Traffic, home: &Path) -> Policy {
+        let mut p = Policy::from_settings(Settings {
+            mode: Some("encrypt"),
+            e2e: Some("on"),
+            directory: Some("https://example.invalid/e2e/v1/"),
+            home: Some(home.to_str().unwrap()),
+            server: Some(""),
+            no_inject: Some("0"),
+            ..Default::default()
+        });
+        p.peers = None;
+        p.tls = TlsPolicy::NoServer;
+        p.calls_log = false;
+        p.files_log = false;
+        p.calls_encrypt = matches!(
+            t,
+            Traffic::CallRequired | Traffic::CallStrict | Traffic::CallAuto
+        );
+        p.calls_required = t == Traffic::CallRequired;
+        p.files_encrypt = t == Traffic::FileRequired;
+        p.files_required = t == Traffic::FileRequired;
+        p.auditors = None;
+        p
+    }
+
+    /// The gate a fault leaves.
+    fn gate_for(f: Fault, p: &Policy) -> &'static gate::Gate {
+        let g: &'static gate::Gate = Box::leak(Box::new(gate::Gate::new()));
+        match f {
+            Fault::StillStarting => {}
+            Fault::Fatal => g.fail("no coolcore5x/4x networking module appeared".into()),
+            Fault::RequiredHookMissing => {
+                g.installed(Ok(HookMask::ALL.missing(HookMask::CONNECT)));
+                g.settle(p);
+            }
+            Fault::RolledBack => {
+                g.installed(Err("VirtualProtect failed; every slot put back".into()));
+                g.settle(p);
+            }
+            Fault::FileHooksMissing => {
+                g.installed(Ok(HookMask::ALL.missing(HookMask::ACCEPT)));
+                g.settle(p);
+            }
+            _ => {
+                g.installed(Ok(HookMask::ALL));
+                g.settle(p);
+            }
+        }
+        if f == Fault::CallHooksMissing {
+            g.set_media(
+                1,
+                gate::MediaHooks::Failed("sipXmediaLib.dll not patched".into()),
+            );
+        }
+        g
+    }
+
+    fn sip_out(seq: u16) -> Vec<u8> {
+        let mut body = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        body.extend_from_slice(&crate::calls::CHANNEL_SIP.to_be_bytes());
+        body.push(6);
+        body.extend_from_slice(b"100002");
+        let sip = [INVITE, b"\r\nCall-ID: m\r\nCSeq: 1 INVITE\r\n\r\n"].concat();
+        body.extend_from_slice(&tlv(crate::calls::TLV_SIP, &sip));
+        data(seq, &snac(0x0004, 0x0006, &body))
+    }
+
+    fn file_out(seq: u16) -> Vec<u8> {
+        data(
+            seq,
+            &crate::direct::tests::rdv(
+                Direction::Outbound,
+                "100002",
+                crate::files::RDV_PROPOSE,
+                [9; 8],
+                crate::files::CAP_FILE_TRANSFER,
+            ),
+        )
+    }
+
+    fn contains(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    fn utf16be(s: &str) -> Vec<u8> {
+        s.encode_utf16().flat_map(u16::to_be_bytes).collect()
+    }
+
+    fn point_at_winsock() {
+        ORIG_SEND.store(WinSock::send as *const () as usize, Ordering::Release);
+        ORIG_RECV.store(WinSock::recv as *const () as usize, Ordering::Release);
+        ORIG_CONNECT.store(WinSock::connect as *const () as usize, Ordering::Release);
+        ORIG_IOCTL.store(
+            WinSock::ioctlsocket as *const () as usize,
+            Ordering::Release,
+        );
+        ORIG_GETPEERNAME.store(
+            WinSock::getpeername as *const () as usize,
+            Ordering::Release,
+        );
+    }
+
+    fn pair() -> (TcpStream, TcpStream, Socket) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (server, _) = l.accept().unwrap();
+        client.set_nonblocking(true).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_millis(60)))
+            .unwrap();
+        let s = client.as_raw_socket() as Socket;
+        (client, server, s)
+    }
+
+    /// Everything the server end can read now.
+    fn wire(server: &mut TcpStream) -> Vec<u8> {
+        let mut all = Vec::new();
+        let mut b = [0u8; 4096];
+        while let Ok(n) = server.read(&mut b) {
+            if n == 0 {
+                break;
+            }
+            all.extend_from_slice(&b[..n]);
+        }
+        all
+    }
+
+    /// Everything the client gets through the hooked `recv` now.
+    fn shown(s: Socket) -> Vec<u8> {
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let mut all = Vec::new();
+        while Instant::now() < deadline {
+            let mut b = vec![0u8; 4096];
+            // SAFETY: b is valid for the call.
+            let n = unsafe { hook_recv(s, b.as_mut_ptr(), b.len() as i32, 0) };
+            if n > 0 {
+                all.extend_from_slice(&b[..n as usize]);
+                continue;
+            }
+            // SAFETY: reads the thread's last error.
+            if n == 0 || unsafe { GetLastError() } != WSAEWOULDBLOCK {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        all
+    }
+
+    fn send(s: Socket, bytes: &[u8]) -> i32 {
+        // SAFETY: bytes is valid for the call.
+        unsafe { hook_send(s, bytes.as_ptr(), bytes.len() as i32, 0) }
+    }
+
+    struct Outcome {
+        wire: Vec<u8>,
+        shown: Vec<u8>,
+        sent: i32,
+    }
+
+    /// One case: a fresh account, its fault prepared, a connection through
+    /// the hooks that has opened both ways, then the traffic out and a
+    /// container in.
+    fn run(f: Fault, t: Traffic, n: usize) -> Outcome {
+        point_at_winsock();
+        let home: PathBuf = std::env::temp_dir().join(format!("icqe2e-matrix-{n}"));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let uin = format!("{}", 500_000 + n);
+        let dir: Arc<dyn crate::directory::DirectoryApi> = Arc::new(MemoryDirectory::new());
+        let mut _holder = None;
+        match f {
+            Fault::UnreadableState => {
+                std::fs::create_dir_all(home.join(format!("{uin}.state"))).unwrap();
+            }
+            Fault::CorruptState => {
+                std::fs::write(home.join(format!("{uin}.state")), b"\x00corrupt state\xFF")
+                    .unwrap();
+            }
+            Fault::LockedState => {
+                _holder = Some(Session::open(dir.clone(), &home, &uin).unwrap());
+            }
+            _ => {}
+        }
+        let p = policy_for(t, &home);
+        let g = gate_for(f, &p);
+        gate::use_for_this_thread(Some(g));
+        tlsio::TEST_SETUP.with(|s| *s.borrow_mut() = Some(Arc::new(tlsio::Setup::Inactive)));
+        test_env::set(
+            p,
+            (f != Fault::NoDirectory).then(|| dir.clone()),
+            (f != Fault::NoUin).then_some(uin.as_str()),
+        );
+
+        let (_client, mut server, s) = pair();
+        server.write_all(&hello(1)).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        let _ = shown(s);
+        let _ = send(s, &hello(1));
+        let _ = wire(&mut server);
+        if matches!(t, Traffic::MessageOn | Traffic::CallStrict) {
+            let _ = send(s, &out_ch1(2, "100002", 0, b"/e2e on"));
+            let _ = shown(s);
+        }
+        if f == Fault::PanicInSend {
+            lock(panic_sockets()).insert(s);
+        }
+        if f == Fault::PanicInRecv {
+            // The next read panics: the connection is refused for good
+            // before the traffic is sent.
+            lock(panic_sockets()).insert(s);
+            server.write_all(&in_ch1(2, "100002", 0, b"hello")).unwrap();
+            std::thread::sleep(Duration::from_millis(20));
+            let _ = shown(s);
+        }
+        let traffic = match t {
+            Traffic::MessageAuto | Traffic::MessageOn => out_ch1(3, "100002", 0, SECRET),
+            Traffic::CallRequired | Traffic::CallStrict | Traffic::CallAuto => sip_out(3),
+            Traffic::FileRequired => file_out(3),
+        };
+        let traffic = if f == Fault::FlapDesync {
+            [b"\x2A\x09 not a frame ".to_vec(), traffic].concat()
+        } else {
+            traffic
+        };
+        let sent = send(s, &traffic);
+        let mut shown_bytes = shown(s);
+        // A container from the contact, which must never reach the client
+        // undecrypted.
+        let armor = crate::container::armor(
+            &crate::container::Container {
+                flags: 0,
+                sender_device: 7,
+                wraps: Vec::new(),
+                ciphertext: vec![1, 2, 3, 4],
+            }
+            .to_bytes(),
+        );
+        let _ = server.write_all(&in_ch1(2, "100002", 0, armor.as_bytes()));
+        std::thread::sleep(Duration::from_millis(20));
+        shown_bytes.extend(shown(s));
+        assert!(
+            !contains(&shown_bytes, armor.as_bytes()),
+            "{f:?}/{t:?}: a container reached the client undecrypted"
+        );
+        let out = Outcome {
+            wire: wire(&mut server),
+            shown: shown_bytes,
+            sent,
+        };
+        lock(sockets()).remove(&s);
+        lock(panic_sockets()).remove(&s);
+        test_env::clear();
+        gate::use_for_this_thread(None);
+        tlsio::TEST_SETUP.with(|s| *s.borrow_mut() = None);
+        drop(_holder);
+        let _ = std::fs::remove_dir_all(&home);
+        out
+    }
+
+    /// The invariant (fourth review): for every internal failure x traffic,
+    /// nothing the policy requires to be protected crosses the boundary in
+    /// the clear because of the failure; control traffic passes exactly when
+    /// the add-on is in place; and when everything is healthy the
+    /// compatibility paths still work - a message to an automatic contact
+    /// without the add-on goes plain WITH a note, a call with an automatic
+    /// contact goes as it is when only the call hooks failed, with a note.
+    #[test]
+    fn no_internal_failure_lets_protected_traffic_out() {
+        let mut n = 0;
+        let mut ran = 0;
+        for f in FAULTS {
+            for t in TRAFFIC {
+                n += 1;
+                let o = run(f, t, n);
+                ran += 1;
+                let case = format!(
+                    "{f:?} / {t:?}: sent {} wire {:?} shown {:?}",
+                    o.sent,
+                    String::from_utf8_lossy(&o.wire),
+                    String::from_utf8_lossy(&o.shown)
+                );
+                let note = utf16be("[ICQ E2E]");
+                match t {
+                    Traffic::MessageAuto | Traffic::MessageOn => {
+                        let plain_ok = f == Fault::Healthy && t == Traffic::MessageAuto
+                            || f == Fault::CallHooksMissing && t == Traffic::MessageAuto;
+                        assert_eq!(contains(&o.wire, SECRET), plain_ok, "{case}");
+                        if plain_ok {
+                            assert!(
+                                contains(&o.shown, &utf16be("are sent unencrypted")),
+                                "compatibility: plain WITH a note: {case}"
+                            );
+                        }
+                    }
+                    Traffic::CallRequired | Traffic::CallStrict | Traffic::CallAuto => {
+                        let plain_ok = matches!(f, Fault::Healthy | Fault::CallHooksMissing)
+                            && t == Traffic::CallAuto
+                            || f == Fault::Healthy;
+                        assert_eq!(contains(&o.wire, INVITE), plain_ok, "{case}");
+                    }
+                    Traffic::FileRequired => {
+                        let proposal = &file_out(3)[6..];
+                        let plain_ok = matches!(f, Fault::Healthy | Fault::CallHooksMissing);
+                        assert_eq!(contains(&o.wire, proposal), plain_ok, "{case}");
+                    }
+                }
+                if f.not_in_place() || f.resets() {
+                    assert_eq!(o.sent, SOCKET_ERROR, "{case}");
+                    assert!(o.wire.is_empty(), "nothing at all: {case}");
+                }
+                let message = matches!(t, Traffic::MessageAuto | Traffic::MessageOn);
+                if message && (f.no_keys() || (f == Fault::Healthy && t == Traffic::MessageOn)) {
+                    assert!(contains(&o.shown, &note), "said in the chat: {case}");
+                }
+            }
+        }
+        assert_eq!(ran, FAULTS.len() * TRAFFIC.len());
+    }
+
+    // --- connect: TLS on, and the guard ports with tls=off ----------------
+
+    fn raw_socket() -> Socket {
+        // SAFETY: a plain TCP socket of our own (std has started Winsock).
+        unsafe { WinSock::socket(2, 1, 6) as Socket }
+    }
+
+    fn accepted_within(l: &TcpListener, ms: u64) -> bool {
+        l.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < deadline {
+            if l.accept().is_ok() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        false
+    }
+
+    fn with_setup<T>(setup: tlsio::Setup, f: Fault, body: impl FnOnce() -> T) -> T {
+        point_at_winsock();
+        tlsio::capture_notices();
+        let home = std::env::temp_dir().join("icqe2e-matrix-connect");
+        let mut p = policy_for(Traffic::MessageAuto, &home);
+        p.tls = TlsPolicy::Off {
+            server: "icq.example.org".into(),
+        };
+        let g = gate_for(f, &p);
+        gate::use_for_this_thread(Some(g));
+        tlsio::TEST_SETUP.with(|s| *s.borrow_mut() = Some(Arc::new(setup)));
+        test_env::set(p, None, None);
+        let r = body();
+        test_env::clear();
+        gate::use_for_this_thread(None);
+        tlsio::TEST_SETUP.with(|s| *s.borrow_mut() = None);
+        r
+    }
+
+    /// Finding G, in the add-on: with `tls=off` the guard port of the server
+    /// goes to its plain port, and `getpeername` reports the guard port;
+    /// with the add-on not in place nothing is connected at all.
+    #[test]
+    fn a_guard_port_goes_to_the_plain_port_only_through_the_add_on() {
+        for f in [
+            Fault::Healthy,
+            Fault::Fatal,
+            Fault::StillStarting,
+            Fault::RolledBack,
+        ] {
+            let plain = TcpListener::bind("127.0.0.1:0").unwrap();
+            let plain_port = plain.local_addr().unwrap().port();
+            let guard = TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            let route = Route::new(
+                "icq.example.org",
+                Ports {
+                    flap: Vec::new(),
+                    http: Vec::new(),
+                    tls: 0,
+                    guard: vec![(guard, plain_port)],
+                },
+                Box::new(|_| vec![Ipv4Addr::LOCALHOST]),
+            );
+            let setup = tlsio::Setup::OptedOut {
+                server: "icq.example.org".into(),
+                guard: Some(route),
+            };
+            let s = raw_socket();
+            let (r, peer) = with_setup(setup, f, || {
+                let (r, _) = testing::connect(s, SocketAddrV4::new(Ipv4Addr::LOCALHOST, guard));
+                (r, testing::peer_port(s))
+            });
+            let reached = accepted_within(&plain, 300);
+            if f == Fault::Healthy {
+                assert_eq!(r, 0, "{f:?}");
+                assert!(reached, "{f:?}: the plain port was reached");
+                assert_eq!(peer, Some(guard), "getpeername reports the guard port");
+            } else {
+                assert_eq!(r, SOCKET_ERROR, "{f:?}");
+                assert!(!reached, "{f:?}: nothing connected");
+            }
+            lock(sockets()).remove(&s);
+            // SAFETY: our own socket.
+            unsafe { WinSock::closesocket(s) };
+        }
+    }
+
+    /// With TLS on, a connection to the server never leaves in plain: a
+    /// failure of the add-on refuses it before the mapping is asked, and a
+    /// TLS client that cannot be made refuses it at the mapping.
+    #[test]
+    fn with_tls_on_no_connection_to_the_server_leaves_plain() {
+        for f in [Fault::Healthy, Fault::Fatal, Fault::StillStarting] {
+            let server = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = server.local_addr().unwrap().port();
+            let route = Route::new(
+                "icq.example.org",
+                Ports {
+                    flap: vec![port],
+                    http: Vec::new(),
+                    tls: port,
+                    guard: Vec::new(),
+                },
+                Box::new(|_| vec![Ipv4Addr::LOCALHOST]),
+            );
+            let setup = tlsio::Setup::Active(tlsio::Active {
+                route,
+                client: Err(crate::tls::TlsFailure::Setup(
+                    "no TLS client in this test".into(),
+                )),
+            });
+            let s = raw_socket();
+            let (r, err) = with_setup(setup, f, || {
+                testing::connect(s, SocketAddrV4::new(Ipv4Addr::LOCALHOST, port))
+            });
+            assert_eq!(r, SOCKET_ERROR, "{f:?}");
+            assert_eq!(err, tlsio::WSAECONNREFUSED, "{f:?}");
+            assert!(!accepted_within(&server, 200), "{f:?}: nothing connected");
+            lock(sockets()).remove(&s);
+            // SAFETY: our own socket.
+            unsafe { WinSock::closesocket(s) };
+        }
+        let _ = tlsio::take_notices();
     }
 }

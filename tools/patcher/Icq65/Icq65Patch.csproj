@@ -42,6 +42,14 @@
     <EmbeddedResource Include="..\Common\flower.png" LogicalName="flower.png" Link="Common\flower.png" />
   </ItemGroup>
 
+  <!-- The SHA-256 of the E2E add-on DLL this patch hands out, written by
+       tools\common\Build-Patches.ps1 (-p:E2eManifest=<file>) after it has
+       built the DLL: the patch puts in only that DLL (E2eManifest in Common).
+       Built without it, the patch accepts no add-on DLL. -->
+  <ItemGroup Condition="'$(E2eManifest)' != ''">
+    <EmbeddedResource Include="$(E2eManifest)" LogicalName="e2e-manifest.txt" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>

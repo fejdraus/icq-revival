@@ -337,6 +337,14 @@ add-on never saw `connect` for, while its peer is the server, is reset
 
 ### 3.5.1 Fail closed when the add-on is missing (the owner's call, 2026-10-02)
 
+**Changed by the fourth review of `AUDIT-2026-10.md` (finding G):** the guard
+ports below are written whenever any protecting row is ticked - the messages
+row on its own too, not only TLS - and with `tls = off` the add-on maps them
+to the server's plain ports on the same host (5194 to 5190, 5195 to 8082,
+`route.rs` `GUARD_PORTS`). So `tls = off` typed by hand now signs in without
+TLS through the add-on, and a client without a working add-on still cannot
+sign in. What follows is the TLS-row design as it was first written.
+
 Everything above holds while the add-on runs. If it does not - the DLL
 deleted, renamed or not loaded - a client patched for plain ports would sign in
 to `domain:5190` / `domain:8082` in plaintext without a word. So with the TLS

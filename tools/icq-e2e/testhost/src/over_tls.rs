@@ -738,6 +738,7 @@ impl Ctx {
                     flap: vec![self.plain_flap, self.server.port, unseen],
                     http: vec![self.plain_http, self.tls_only_http],
                     tls: tls_port,
+                    guard: Vec::new(),
                 },
                 Box::new(|_| vec![Ipv4Addr::LOCALHOST]),
             ),
@@ -826,7 +827,7 @@ pub fn run() -> bool {
     };
     hooks::set_tls(ctx.setup(ctx.server.port));
 
-    let scenarios: [(&str, Scenario); 18] = [
+    let scenarios: [(&str, Scenario); 19] = [
         (
             "6.5 sign-in: BUCP over TLS, server speaks first",
             bucp_sign_in,
@@ -868,6 +869,10 @@ pub fn run() -> bool {
         ),
         ("tls=off: today's bytes", tls_off_bytes),
         ("tls=off: the note in the chat", tls_off_note),
+        (
+            "tls=off: a guard port goes to the plain port",
+            tls_off_guard_port,
+        ),
         // Last: it switches the policy for the rest of the process.
         (
             "e2e=off: TLS only, the plain client's bytes, no key directory",
@@ -1640,6 +1645,7 @@ fn plain_server() -> (TcpListener, u16) {
 fn tls_off_bytes(ctx: &mut Ctx) -> Check {
     hooks::set_tls(Setup::OptedOut {
         server: SERVER.into(),
+        guard: None,
     });
     let result = (|| {
         let (l, port) = plain_server();
@@ -1673,11 +1679,55 @@ fn tls_off_bytes(ctx: &mut Ctx) -> Check {
     result
 }
 
+/// `tls=off` with a protecting row ticked (fourth review, finding G): the
+/// patch points the sign-in at a guard port nothing listens on in plain,
+/// and only the add-on maps it to the server's plain port. The client
+/// reaches the server, and `getpeername` reports the guard port it asked
+/// for.
+fn tls_off_guard_port(ctx: &mut Ctx) -> Check {
+    let (l, plain) = plain_server();
+    // A port nothing listens on: without the mapping the connect fails.
+    let guard = {
+        let g = TcpListener::bind("127.0.0.1:0").unwrap();
+        g.local_addr().unwrap().port()
+    };
+    hooks::set_tls(Setup::OptedOut {
+        server: SERVER.into(),
+        guard: Some(Route::new(
+            SERVER,
+            Ports {
+                flap: Vec::new(),
+                http: Vec::new(),
+                tls: 0,
+                guard: vec![(guard, plain)],
+            },
+            Box::new(|_| vec![Ipv4Addr::LOCALHOST]),
+        )),
+    });
+    let result = (|| {
+        let mut c = FakeClient::connect(guard, 512)?;
+        let (mut srv, _) = l.accept().map_err(|e| e.to_string())?;
+        srv.set_read_timeout(Some(WAIT)).unwrap();
+        c.pump("FD_CONNECT", |c| c.connected.is_some())?;
+        ensure(hooks::peer_port(c.s) == Some(guard), || {
+            "getpeername does not report the guard port".into()
+        })?;
+        srv.write_all(&server_hello()).unwrap();
+        c.pump("the hello", |c| c.got.len() >= 10)?;
+        ensure(c.take() == server_hello(), || "hello changed".into())?;
+        drop(srv);
+        ctx.no_notices()
+    })();
+    hooks::set_tls(ctx.setup(ctx.server.port));
+    result
+}
+
 /// `tls=off` on the BOS connection: the chat says the connection to the
 /// server is not encrypted.
 fn tls_off_note(ctx: &mut Ctx) -> Check {
     hooks::set_tls(Setup::OptedOut {
         server: SERVER.into(),
+        guard: None,
     });
     let result = (|| {
         let (l, port) = plain_server();
@@ -1815,6 +1865,7 @@ pub fn go_server(args: &[String]) -> bool {
                     flap: vec![5190, tls_port],
                     http: vec![8082],
                     tls: tls_port,
+                    guard: Vec::new(),
                 },
                 Box::new(|_| vec![Ipv4Addr::LOCALHOST]),
             ),

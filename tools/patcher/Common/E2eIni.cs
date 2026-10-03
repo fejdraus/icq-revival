@@ -196,15 +196,24 @@ namespace IcqRevival.Patch
             return string.Join("\r\n", result) + "\r\n";
         }
 
-        // The ports the patch points the client's own sign-in at when the TLS
-        // row is ticked: the TLS port itself for OSCAR, and for the ICQ 7.2 web
-        // sign-in a port the server never listens on. Without the add-on
-        // nothing there speaks the client's plain protocol, so a client whose
-        // add-on is missing cannot sign in at all, instead of signing in
-        // unencrypted (fail closed; docs\e2e\STAGE-TLS.md, 3.5). The add-on
-        // maps both to the TLS port (tools\icq-e2e\core\src\route.rs).
+        // The guard ports the patch points the client's own sign-in at when
+        // any protecting row is ticked - TLS, or the messages row on its own:
+        // the TLS port itself for OSCAR, and for the ICQ 7.2 web sign-in a
+        // port the server never listens on. Without the add-on nothing there
+        // speaks the client's plain protocol, so a client whose add-on is
+        // missing or broken cannot sign in at all, instead of signing in
+        // unprotected (fail closed; docs\e2e\STAGE-TLS.md, 3.5, and
+        // docs\e2e\AUDIT-2026-10.md, fourth review, finding G). The add-on
+        // maps both to the TLS port, or with tls=off to the server's plain
+        // ports 5190 and 8082 (tools\icq-e2e\core\src\route.rs, GUARD_PORTS).
         public const int TlsPort = 5194;
         public const int TlsOnlyWebPort = 5195;
+
+        // Whether the ini asks for the guard ports: a protecting row is on.
+        public static bool GuardWanted(string text)
+        {
+            return E2eOn(text) || TlsOn(text);
+        }
 
         const string FilesNeedE2e = "End-to-end encryption of file transfers needs end-to-end encryption of messages, which is not ticked: file transfers go as they are.";
 
@@ -225,8 +234,8 @@ namespace IcqRevival.Patch
             if (e2e) s.Add("End-to-end encryption is in place: the text of a message is encrypted to the recipient's device with keys from " + server + ", and only that device can read it. A contact without the add-on still gets the message in clear, and the add-on says so once per sign-on. Whether a chat is encrypted is said in the chat; type /e2e status there to ask.");
             else s.Add("Messages are not end-to-end encrypted: they go as they are typed, and the key directory is never asked. A /e2e command typed in a chat is answered there and never sent.");
             if (tls) s.Add("Every connection the client makes to " + server + " goes over TLS 1.3 (port " + TlsPort + ", which the server must have open); if it cannot be secured, the client is not let through in plaintext and the add-on says why.");
-            if (tls && signInPorts != null) s.Add("The client's own sign-in settings now point at " + signInPorts + ", which only the add-on can reach: while this row is ticked, a client without the add-on (" + (addOnFile ?? "its DLL") + " missing or renamed) cannot sign in at all instead of signing in unencrypted. Untick the row and apply to sign in without TLS.");
-            else if (!tls) s.Add("The connection to " + server + " is not encrypted, and the chat says so at every sign-on.");
+            if (!tls) s.Add("The connection to " + server + " is not encrypted, and the chat says so at every sign-on.");
+            if (signInPorts != null) s.Add("The client's own sign-in settings now point at " + signInPorts + ", which only the add-on can reach: while " + (tls && e2e ? "these rows are" : "this row is") + " ticked, a client without a working add-on (" + (addOnFile ?? "its DLL") + " missing, renamed or failing) cannot sign in at all instead of signing in unprotected." + (tls ? "" : " The add-on takes the sign-in to the server's plain ports, since TLS is off.") + " Untick the E2E rows and apply to sign in without the add-on.");
             if (calls && e2e) s.Add("Voice and video calls are encrypted end to end when the other side has the add-on with this row ticked too; any other call goes as it is and is never blocked. The call's chat says whether it was encrypted.");
             else if (calls) s.Add("End-to-end encryption of calls needs end-to-end encryption of messages, which is not ticked: calls go as they are.");
             else s.Add("Calls are not encrypted end to end: they go as they are.");

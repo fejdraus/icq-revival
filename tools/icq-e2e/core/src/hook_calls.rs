@@ -879,9 +879,20 @@ pub(super) fn on_load(name: &str, base: usize, via: &str, in_loader: bool) -> bo
         0 => specs::<0>(),
         _ => specs::<1>(),
     };
-    match patch_iat(base, &hooks, &resolve_ordinal) {
-        Ok(report) => {
-            log::line(&format!(
+    // DISCOVER and COMMIT, all or nothing (fourth review, finding C); the
+    // outcome goes to the protection gate, which refuses a call that must be
+    // encrypted while its media hooks are not in place (finding E).
+    let say = |line: String| {
+        if in_loader {
+            log::defer(line);
+        } else {
+            log::line(&line);
+        }
+    };
+    match patch_with(base, &hooks, &resolve_ordinal, &mut LiveThunks) {
+        Ok((_, report)) => {
+            gate::current().set_media(m, gate::MediaHooks::Ready);
+            say(format!(
                 "call hooks installed in {name} at {base:#010x} ({via}): {report}; {}",
                 if policy().encrypts_calls() {
                     "media of a call both add-ons agreed on is encrypted, all else untouched"
@@ -892,14 +903,43 @@ pub(super) fn on_load(name: &str, base: usize, via: &str, in_loader: bool) -> bo
             true
         }
         Err(reason) => {
-            log::line(&format!(
+            say(format!(
                 "call hooks: {name} ({via}): could not patch: {reason}"
             ));
             if in_loader && reason.contains("not bound") {
                 retry_later(m);
+            } else {
+                failed(m, &reason);
             }
             false
         }
+    }
+}
+
+/// The call module `m` could not be patched for good: the gate refuses the
+/// calls that must be encrypted, and the chat is told once.
+fn failed(m: usize, why: &str) {
+    gate::current().set_media(
+        m,
+        gate::MediaHooks::Failed(format!("{} could not be patched: {why}", CALL_MODULES[m])),
+    );
+    if policy().encrypts_calls() {
+        let now = now_ms() / 1000;
+        if gate::current().once(&format!("call-hooks:{m}"), now, 3600) {
+            gate::current().say(format!(
+                "{}The add-on could not take over the media of calls ({} could not be patched). A call with a contact under /e2e on or verified, or any call with calls_encrypt=required, is not let through; other calls go as they are and are not end-to-end encrypted.",
+                crate::policy::PREFIX,
+                CALL_MODULES[m]
+            ));
+        }
+    }
+}
+
+/// A call module that loaded before the bootstrap read the policy: patched
+/// from a thread of its own once the policy is known.
+pub(super) fn later(name: &str) {
+    if let Some(m) = module_index(name) {
+        retry_later(m);
     }
 }
 
@@ -909,6 +949,11 @@ fn retry_later(m: usize) {
     unsafe extern "system" fn retry(arg: *mut core::ffi::c_void) -> u32 {
         let m = arg as usize;
         let name = CALL_MODULES[m];
+        // The policy first: it says whether the module is hooked at all.
+        let _ = gate::current().wait(BOOT_WAIT);
+        if !policy().hooks_calls() {
+            return 0;
+        }
         let w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         for _ in 0..100 {
             let base = GetModuleHandleW(w.as_ptr()) as usize;
@@ -918,6 +963,7 @@ fn retry_later(m: usize) {
             Sleep(50);
         }
         log::line(&format!("call hooks: gave up patching {name}"));
+        failed(m, "its imports were never bound");
         0
     }
     // SAFETY: a plain function; the argument is an index, not a pointer.

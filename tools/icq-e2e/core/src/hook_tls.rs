@@ -70,8 +70,15 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 pub enum Setup {
     /// Nothing mapped: observe mode, or an ini without `server=`.
     Inactive,
-    /// `tls=off`: nothing mapped, and every sign-on is told so in the chat.
-    OptedOut { server: String },
+    /// `tls=off`: nothing goes over TLS, and every sign-on is told so in the
+    /// chat. The guard ports of the server go to its plain ports through
+    /// `guard` (fourth review, finding G): the patch points the sign-in at
+    /// them whenever a protecting row is ticked, so that a client without a
+    /// working add-on cannot sign in.
+    OptedOut {
+        server: String,
+        guard: Option<Route>,
+    },
     /// Connections to the server are wrapped in TLS.
     Active(Active),
 }
@@ -87,10 +94,27 @@ pub struct Active {
 
 static SETUP: RwLock<Option<Arc<Setup>>> = RwLock::new(None);
 
-/// The setup, built from the policy the first time it is asked for.
+#[cfg(test)]
+thread_local! {
+    /// A setup for this thread only (the fault matrix).
+    pub(super) static TEST_SETUP: std::cell::RefCell<Option<Arc<Setup>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The setup, built from the policy the first time it is asked for once the
+/// policy is read. Asked before that (nothing should: the gate holds every
+/// hooked call until then), it is inactive and not kept, so the real one is
+/// still built from the real policy.
 pub(super) fn setup() -> Arc<Setup> {
+    #[cfg(test)]
+    if let Some(s) = TEST_SETUP.with(|t| t.borrow().clone()) {
+        return s;
+    }
     if let Some(s) = SETUP.read().unwrap_or_else(|e| e.into_inner()).clone() {
         return s;
+    }
+    if !policy_is_set() {
+        return Arc::new(Setup::Inactive);
     }
     let mut w = SETUP.write().unwrap_or_else(|e| e.into_inner());
     if let Some(s) = w.clone() {
@@ -122,10 +146,12 @@ fn from_policy(p: &Policy) -> Setup {
         }
         TlsPolicy::Off { server } => {
             log::line(&format!(
-                "TLS: off by tls=off; the connections to {server} are not encrypted"
+                "TLS: off by tls=off; the connections to {server} are not encrypted; its guard ports {:?} go to its plain ports",
+                crate::route::GUARD_PORTS
             ));
             Setup::OptedOut {
                 server: server.clone(),
+                guard: Some(Route::system(server)),
             }
         }
         TlsPolicy::On { server, pins } => {
@@ -258,16 +284,21 @@ fn notice_text(server: &str, why: &Why) -> String {
 }
 
 /// Logs the notice and shows it once per run and reason, when the user can
-/// act on the failure. The box comes from a thread of its own: never the client's UI
-/// thread, and never the thread inside a hook.
+/// act on the failure.
 fn tell(server: &str, why: &Why) {
     if !why.tells_user() {
         // The network coming and going: the caller has logged the reason.
         return;
     }
-    let text = notice_text(server, why);
+    notice(&why.reason(), notice_text(server, why));
+}
+
+/// Logs `text` and shows it in a message box once per run and `key`. The box
+/// comes from a thread of its own: never the client's UI thread, and never
+/// the thread inside a hook.
+pub(super) fn notice(key: &str, text: String) {
     log::line(&format!("[ICQ E2E] {text}"));
-    if !lock(&SHOWN).insert(why.reason()) {
+    if !lock(&SHOWN).insert(key.to_string()) {
         return;
     }
     if let Some(v) = lock(&CAPTURE).as_mut() {
@@ -358,6 +389,10 @@ pub(super) enum ConnectPlan {
     Refuse(u32),
     /// Connect to this address instead, with TLS on the socket.
     Tls { conn: Arc<TlsConn>, addr: Vec<u8> },
+    /// Connect to this address instead, in plain: a guard port of the
+    /// server with `tls=off`. `original` is (the port it goes to, the port
+    /// the client asked for), for `getpeername`.
+    Remap { addr: Vec<u8>, original: (u16, u16) },
 }
 
 /// Decides what happens to a `connect` to `name`.
@@ -366,8 +401,13 @@ pub(super) enum ConnectPlan {
 /// `name` points to `namelen` readable bytes, or is null.
 pub(super) unsafe fn plan_connect(s: Socket, name: *const u8, namelen: i32) -> ConnectPlan {
     let setup = setup();
-    let Setup::Active(active) = &*setup else {
-        return ConnectPlan::Plain;
+    let active = match &*setup {
+        Setup::Active(active) => active,
+        Setup::OptedOut {
+            server,
+            guard: Some(route),
+        } => return plan_guard(s, name, namelen, server, route),
+        _ => return ConnectPlan::Plain,
     };
     if name.is_null() || namelen < 16 {
         return ConnectPlan::Plain;
@@ -420,6 +460,51 @@ pub(super) unsafe fn plan_connect(s: Socket, name: *const u8, namelen: i32) -> C
             hello_at: Mutex::new(None),
         }),
         addr,
+    }
+}
+
+/// With `tls=off`: a `connect` to a guard port of the server goes to the
+/// plain port it stands for (fourth review, finding G). Only the add-on does
+/// this, so a client without it cannot sign in through the guard ports.
+///
+/// # Safety
+/// As [`plan_connect`].
+unsafe fn plan_guard(
+    s: Socket,
+    name: *const u8,
+    namelen: i32,
+    server: &str,
+    route: &Route,
+) -> ConnectPlan {
+    if name.is_null() || namelen < 16 {
+        return ConnectPlan::Plain;
+    }
+    let sa = std::slice::from_raw_parts(name, namelen as usize);
+    if u16::from_le_bytes([sa[0], sa[1]]) != 2 {
+        return ConnectPlan::Plain;
+    }
+    let port = u16::from_be_bytes([sa[2], sa[3]]);
+    let ip = Ipv4Addr::new(sa[4], sa[5], sa[6], sa[7]);
+    match route.guard(ip, port) {
+        crate::route::Guard::NotGuard => ConnectPlan::Plain,
+        crate::route::Guard::Unresolved => {
+            log::line(&format!(
+                "connect: socket {s} -> {ip}:{port} refused (fail closed): a guard port, and {server} does not resolve"
+            ));
+            tell(server, &Why::Unresolved);
+            ConnectPlan::Refuse(WSAECONNREFUSED)
+        }
+        crate::route::Guard::Plain(plain) => {
+            log::line(&format!(
+                "connect: socket {s} -> {ip}:{port} is a guard port of {server}; to its plain port {plain} (tls=off)"
+            ));
+            let mut addr = sa.to_vec();
+            addr[2..4].copy_from_slice(&plain.to_be_bytes());
+            ConnectPlan::Remap {
+                addr,
+                original: (plain, port),
+            }
+        }
     }
 }
 
@@ -940,12 +1025,12 @@ pub(super) fn say_if_opted_out(sock: &Sock) {
         return;
     }
     let setup = setup();
-    let Setup::OptedOut { server } = &*setup else {
+    let Setup::OptedOut { server, .. } = &*setup else {
         return;
     };
     let sess = lock(&sock.session).clone();
-    let plain = policy().mode == Mode::Plain;
-    if sess.is_none() && !plain {
+    let mode = policy().mode;
+    if sess.is_none() && !matches!(mode, Mode::Plain | Mode::Encrypt) {
         return;
     }
     if sock.tls_off_said.swap(true, Ordering::AcqRel) {
@@ -958,7 +1043,10 @@ pub(super) fn say_if_opted_out(sock: &Sock) {
         Some(sess) => lock(&sess)
             .engine()
             .say(crate::policy::tls_off_note(server)),
-        None => lock(disabled()).say(crate::policy::tls_off_plain_note(server)),
+        None if mode == Mode::Plain => {
+            lock(disabled()).say(crate::policy::tls_off_plain_note(server))
+        }
+        None => lock(withheld()).say(crate::policy::tls_off_note(server)),
     }
 }
 

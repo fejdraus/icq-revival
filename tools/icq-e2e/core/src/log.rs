@@ -111,8 +111,45 @@ fn local_stamp() -> String {
     )
 }
 
+/// Lines said under the loader lock, waiting for a thread that may open the
+/// log file (fourth review, finding H).
+static DEFERRED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Keeps a line for later: what runs under the loader lock (the loader
+/// stub's `DllMain`, the loader notification) must not open or write a file.
+/// Only `OutputDebugStringA` is called now; the file gets the line, with the
+/// time it is written, from the next [`line`] or [`flush_deferred`].
+pub fn defer(msg: String) {
+    if let Ok(c) = CString::new(format!("[icq-e2e] {msg}")) {
+        // SAFETY: a valid NUL-terminated pointer for the duration of the call.
+        unsafe { OutputDebugStringA(c.as_ptr() as *const u8) };
+    }
+    if let Ok(mut d) = DEFERRED.lock() {
+        d.push(msg);
+    }
+}
+
+/// Writes the deferred lines to the file. Never call it under the loader
+/// lock.
+pub fn flush_deferred() {
+    let lines = match DEFERRED.lock() {
+        Ok(mut d) if !d.is_empty() => std::mem::take(&mut *d),
+        _ => return,
+    };
+    if let Ok(mut guard) = logger().lock() {
+        if let Some(file) = guard.file.as_mut() {
+            for msg in lines {
+                let _ = writeln!(file, "{} (deferred) {}", local_stamp(), msg);
+            }
+            let _ = file.flush();
+        }
+    }
+}
+
 /// Writes one line to OutputDebugString and, when configured, to the file.
+/// Lines deferred before it are written first.
 pub fn line(msg: &str) {
+    flush_deferred();
     // OutputDebugString first, so it works even if the file is unavailable.
     if let Ok(c) = CString::new(format!("[icq-e2e] {msg}")) {
         // SAFETY: a valid NUL-terminated pointer for the duration of the call.

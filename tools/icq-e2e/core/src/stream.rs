@@ -22,9 +22,17 @@
 //! A stream is taken for FLAP only if its first frame is a channel-1 frame
 //! starting with FLAP version `00 00 00 01` - how both sides of an OSCAR
 //! connection open - and every later header has the marker and a channel from 1
-//! to 5. Anything else (direct connections, file transfer, a proxy) turns the
-//! stream raw at once: bytes held so far are released unchanged, and from then
-//! on everything passes straight through.
+//! to 5. A stream whose opening is anything else (direct connections, file
+//! transfer, a proxy) turns raw at once: bytes held so far are released
+//! unchanged, and from then on everything passes straight through.
+//!
+//! A stream already recognised as FLAP never turns raw (fourth review,
+//! finding B): a header that is not FLAP after that is a broken stream, not
+//! another protocol. It turns [`State::Broken`]: the bytes from the bad
+//! header on are dropped, nothing more passes either way, and the hooks
+//! reset the connection ([`StreamRewriter::is_broken`]). Releasing them raw
+//! would hand the rest of the connection - messages included - past the
+//! rewriter.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -92,6 +100,9 @@ enum State {
     Flap,
     /// Not FLAP: everything passes through.
     Raw,
+    /// Was FLAP and lost its framing: nothing passes any more, and the
+    /// connection is to be reset.
+    Broken,
 }
 
 /// What the crypto path noticed while rewriting, for the layer that owns the
@@ -301,6 +312,12 @@ impl StreamRewriter {
         self.state == State::Raw
     }
 
+    /// Whether a stream recognised as FLAP lost its framing: nothing of it
+    /// passes any more, and the caller resets the connection.
+    pub fn is_broken(&self) -> bool {
+        self.state == State::Broken
+    }
+
     /// How many bytes are held waiting for the rest of a frame.
     pub fn held(&self) -> usize {
         self.buf.len()
@@ -356,6 +373,9 @@ impl StreamRewriter {
             out.extend_from_slice(bytes);
             return lines;
         }
+        if self.state == State::Broken {
+            return lines;
+        }
         let mut buf = std::mem::take(&mut self.buf);
         buf.extend_from_slice(bytes);
         let mut used = 0;
@@ -363,9 +383,21 @@ impl StreamRewriter {
             let rest = &buf[used..];
             match self.check_header(rest) {
                 Header::NeedMore => break,
-                Header::NotFlap => {
+                // Opening and not FLAP: another protocol, passed as it is.
+                Header::NotFlap if self.state == State::Opening => {
                     self.state = State::Raw;
                     out.extend_from_slice(rest);
+                    used = buf.len();
+                    break;
+                }
+                // FLAP before, not FLAP now: the stream is broken. What is
+                // left is dropped, never released past the rewriter.
+                Header::NotFlap => {
+                    self.state = State::Broken;
+                    lines.push(format!(
+                        "FLAP stream lost its framing ({} bytes after the last frame do not start a frame); the connection is reset",
+                        rest.len()
+                    ));
                     used = buf.len();
                     break;
                 }
@@ -384,8 +416,13 @@ impl StreamRewriter {
         lines
     }
 
-    /// Releases held bytes unchanged, for the end of the stream.
+    /// Releases held bytes unchanged, for the end of the stream; nothing of
+    /// a broken one.
     pub fn finish(&mut self, out: &mut Vec<u8>) {
+        if self.state == State::Broken {
+            self.buf.clear();
+            return;
+        }
         out.append(&mut self.buf);
     }
 }
@@ -460,15 +497,46 @@ impl StreamRewriter {
         // The key exchange of a call (`calls_encrypt=on`, callneg.rs): the
         // control messages for the peer go on the wire *before* the SIP
         // message they belong to, which goes on below exactly as it came.
+        // The protection gate decides first (fourth review, finding E): a
+        // call that must be encrypted and cannot be - the call hooks failed,
+        // or there is no state to tell the contact's policy by - has its
+        // signalling dropped both ways, so it is never set up.
         if policy.encrypts_calls() && may_add {
             if let (Some((peer, sip)), Some(c)) = (
                 crate::calls::sip_message(self.dir, payload),
                 ctx.as_deref_mut(),
             ) {
-                let containers = c.crypto.call_sip(self.dir, &peer, sip, c.now, lines);
-                if self.dir == Direction::Outbound {
-                    for container in containers {
-                        self.put_control(&peer, &container, out, lines);
+                let g = crate::gate::current();
+                let verdict = crate::gate::media(
+                    policy,
+                    &g.bootstrap(),
+                    &g.media(),
+                    c.crypto.strictness(&peer),
+                );
+                match verdict {
+                    crate::gate::Verdict::Block(why) => {
+                        self.refuse(frame, &peer, "call", &why, c, lines);
+                        return;
+                    }
+                    crate::gate::Verdict::Plain(why) => {
+                        if g.once(&format!("call-plain:{peer}"), c.now, 60) {
+                            c.crypto.note(
+                                &peer,
+                                format!(
+                                    "{}The call with {peer} is not end-to-end encrypted: {why}.",
+                                    crate::policy::PREFIX
+                                ),
+                            );
+                        }
+                        lines.push(format!("call with {peer} left as it is: {why}"));
+                    }
+                    _ => {
+                        let containers = c.crypto.call_sip(self.dir, &peer, sip, c.now, lines);
+                        if self.dir == Direction::Outbound {
+                            for container in containers {
+                                self.put_control(&peer, &container, out, lines);
+                            }
+                        }
                     }
                 }
             }
@@ -483,9 +551,37 @@ impl StreamRewriter {
                 if policy.files_log {
                     lines.push(rdv.log_line());
                 }
+                // The gate first, as for a call: a transfer that must be
+                // encrypted and cannot be never reaches the other side; a
+                // cancel always passes.
+                let mut keys_exchange = true;
+                if policy.encrypts_files() && may_add && rdv.kind != crate::files::RDV_CANCEL {
+                    if let Some(c) = ctx.as_deref_mut() {
+                        let g = crate::gate::current();
+                        match crate::gate::file(
+                            policy,
+                            &g.bootstrap(),
+                            c.crypto.strictness(&rdv.peer),
+                        ) {
+                            crate::gate::Verdict::Block(why) => {
+                                let peer = rdv.peer.clone();
+                                self.refuse(frame, &peer, "file transfer", &why, c, lines);
+                                return;
+                            }
+                            crate::gate::Verdict::Plain(why) => {
+                                keys_exchange = false;
+                                c.crypto.note(
+                                    &rdv.peer,
+                                    crate::policy::file_plain_note(&rdv.peer, &why),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 crate::filesneg::lock(&crate::filesneg::shared())
                     .observe(&rdv, crate::filesneg::now_ms());
-                if policy.encrypts_files() && may_add {
+                if policy.encrypts_files() && may_add && keys_exchange {
                     if let Some(c) = ctx.as_deref_mut() {
                         let containers = c.crypto.file_icbm(&rdv, c.now, lines);
                         if self.dir == Direction::Outbound {
@@ -624,6 +720,31 @@ impl StreamRewriter {
                     }
                 },
             }
+        }
+    }
+
+    /// Drops a call's or a file transfer's frame the protection gate refused
+    /// (`gate.rs`), with a note in the chat once a minute per contact. The
+    /// frame leaves the stream as a held message does.
+    fn refuse(
+        &mut self,
+        frame: &[u8],
+        peer: &str,
+        what: &str,
+        why: &str,
+        c: &mut Ctx<'_>,
+        lines: &mut Vec<String>,
+    ) {
+        self.removed(seq_of(frame));
+        lines.push(format!("{what} with {peer} not let through: {why}"));
+        if crate::gate::current().once(&format!("{what}:{peer}"), c.now, 60) {
+            c.crypto.note(
+                peer,
+                format!(
+                    "{}This {what} with {peer} was not let through: {why}. Nothing of it is sent or shown unencrypted.",
+                    crate::policy::PREFIX
+                ),
+            );
         }
     }
 
@@ -1120,12 +1241,53 @@ mod tests {
         assert!(r.is_raw());
     }
 
+    /// Fourth review, finding B. Replaces `desync_later_releases_held_bytes`,
+    /// which asserted that a stream already recognised as FLAP turned raw on
+    /// a bad header and released everything after it - the rest of the
+    /// connection, messages included, past the rewriter. Now: the frames
+    /// before go on, the bytes from the bad header on never do, nothing
+    /// later passes either, and the caller is told to reset the connection.
     #[test]
-    fn desync_later_releases_held_bytes() {
+    fn a_flap_stream_that_loses_its_framing_is_broken_not_raw() {
+        for garbage in [
+            b"\x2A\x09garbage".to_vec(),
+            b"plain text that is not a frame".to_vec(),
+        ] {
+            for dir in [Direction::Inbound, Direction::Outbound] {
+                let mut r = StreamRewriter::new(dir);
+                let before = frame(2, 101, b"a frame");
+                let s = [hello(), before.clone(), garbage.clone()].concat();
+                assert_eq!(run(&mut r, &s), [hello(), before].concat());
+                assert!(r.is_broken() && !r.is_raw());
+                // Nothing passes afterwards, not even a good frame.
+                assert!(run(&mut r, &frame(2, 102, b"later")).is_empty());
+                let mut out = Vec::new();
+                r.finish(&mut out);
+                assert!(out.is_empty(), "nothing is released at the end either");
+            }
+        }
+        // The opening is still free to be another protocol.
         let mut r = StreamRewriter::new(Direction::Inbound);
-        let s = [hello(), b"\x2A\x09garbage".to_vec()].concat();
-        assert_eq!(run(&mut r, &s), s);
-        assert!(r.is_raw());
+        assert_eq!(run(&mut r, b"OFT2"), b"OFT2");
+        assert!(r.is_raw() && !r.is_broken());
+    }
+
+    /// The same on the crypto path, with a container that would otherwise
+    /// reach the client undecrypted behind the bad header.
+    #[test]
+    fn a_broken_stream_hands_no_container_to_the_client() {
+        let (mut r, mut out) = opened(Direction::Inbound);
+        let mut c = Fake::new();
+        let container_text = container::armor(&any_container());
+        let bad = [
+            b"\x2A\x07".to_vec(),
+            in_message(3, "100002", &container_text, None),
+        ]
+        .concat();
+        let lines = r.push_crypto(&bad, &mut c, 1, &encrypt(), &mut out);
+        assert_eq!(out, hello(), "{lines:?}");
+        assert!(r.is_broken());
+        assert!(c.seen.is_empty(), "the container never reached the engine");
     }
 
     #[test]
@@ -1159,6 +1321,9 @@ mod tests {
         /// What `file_icbm` answers, and the rendezvous it was shown.
         file: Vec<Vec<u8>>,
         rdv_seen: Vec<(Direction, String)>,
+        /// What `strictness` answers; notes the gate asked for.
+        strict: Option<bool>,
+        gate_notes: Vec<String>,
     }
 
     impl Fake {
@@ -1173,6 +1338,8 @@ mod tests {
                 sip_seen: Vec::new(),
                 file: Vec::new(),
                 rdv_seen: Vec::new(),
+                strict: Some(false),
+                gate_notes: Vec::new(),
             }
         }
 
@@ -1252,6 +1419,15 @@ mod tests {
 
         fn since_control(&self, _peer: &str) -> u32 {
             0
+        }
+
+        /// An automatic contact unless a test says otherwise.
+        fn strictness(&self, _peer: &str) -> Option<bool> {
+            self.strict
+        }
+
+        fn note(&mut self, _peer: &str, text: String) {
+            self.gate_notes.push(text);
         }
 
         fn call_sip(
@@ -2227,5 +2403,162 @@ next"]);
             r.push(&[hello(), f.clone()].concat(), &Policy::observe(), &mut out);
             assert!(has_addr(&out), "{what}: observe leaves it");
         }
+    }
+
+    // ---- the protection gate (fourth review, findings A and E) ----
+
+    /// A gate for this thread with the call hooks in `media`.
+    fn gate_with_media(media: crate::gate::MediaHooks) {
+        let g: &'static crate::gate::Gate = Box::leak(Box::new(crate::gate::Gate::ready(
+            crate::gate::HookMask::ALL,
+        )));
+        g.set_media(1, media);
+        crate::gate::use_for_this_thread(Some(g));
+    }
+
+    fn sip_frame(dir: Direction, seq: u16) -> Vec<u8> {
+        let sip = b"INVITE sip:100002@h SIP/2.0\r\nCall-ID: g\r\nCSeq: 1 INVITE\r\n\r\n";
+        let mut body = vec![1, 2, 3, 4, 5, 6, 7, 8];
+        body.extend_from_slice(&crate::calls::CHANNEL_SIP.to_be_bytes());
+        body.push(6);
+        body.extend_from_slice(b"100002");
+        if dir == Direction::Inbound {
+            body.extend_from_slice(&[0, 0, 0, 0]);
+        }
+        snac::put_tlv(&mut body, crate::calls::TLV_SIP, sip);
+        let sub = match dir {
+            Direction::Outbound => snac::ICBM_MSG_TO_HOST,
+            Direction::Inbound => snac::ICBM_MSG_TO_CLIENT,
+        };
+        frame(2, seq, &snac_frame(snac::FOOD_ICBM, sub, 9, &body))
+    }
+
+    /// With calls encrypted, a call the gate refuses never reaches the other
+    /// side, either way: the call hooks failed and the contact requires
+    /// encryption (or `required`), or there is no state to tell the
+    /// contact's policy by. A contact who does not require it gets the call
+    /// as it is, with a note, and no key exchange claims it encrypted.
+    #[test]
+    fn a_call_the_gate_refuses_is_never_set_up() {
+        let failed = crate::gate::MediaHooks::Failed("not patched".into());
+        for dir in [Direction::Outbound, Direction::Inbound] {
+            if calls_sip_is_known(dir) {
+                for (media, strict, required, passes) in [
+                    (failed.clone(), Some(true), false, false),
+                    (failed.clone(), Some(false), true, false),
+                    (failed.clone(), Some(false), false, true),
+                    (crate::gate::MediaHooks::Ready, None, false, false),
+                    (crate::gate::MediaHooks::NotLoaded, None, false, false),
+                ] {
+                    gate_with_media(media.clone());
+                    let mut policy = encrypt();
+                    policy.calls_encrypt = true;
+                    policy.calls_required = required;
+                    let (mut r, _) = opened(dir);
+                    let mut c = Fake::new();
+                    c.strict = strict;
+                    c.call = vec![any_container()];
+                    let mut out = Vec::new();
+                    let f = sip_frame(dir, 2);
+                    let lines = r.push_crypto(&f, &mut c, 1, &policy, &mut out);
+                    let case = format!(
+                        "{dir:?} {media:?} strict={strict:?} required={required}: {lines:?}"
+                    );
+                    assert!(c.sip_seen.is_empty(), "no key exchange: {case}");
+                    if passes {
+                        assert_eq!(out, f, "{case}");
+                        assert!(
+                            c.gate_notes
+                                .iter()
+                                .any(|n| n.contains("not end-to-end encrypted")),
+                            "{case}"
+                        );
+                    } else {
+                        assert!(out.is_empty(), "nothing of the call: {case}");
+                        assert!(
+                            c.gate_notes.iter().any(|n| n.contains("not let through")),
+                            "{case}"
+                        );
+                    }
+                }
+            }
+        }
+        crate::gate::use_for_this_thread(None);
+    }
+
+    /// The SIP of a call is recognised in both directions by this build.
+    fn calls_sip_is_known(dir: Direction) -> bool {
+        crate::calls::sip_message(dir, &frames_of(&sip_frame(dir, 2))[0].1).is_some()
+    }
+
+    /// With files encrypted and no state to tell the contact's policy by, a
+    /// proposal never reaches the other side; a cancel does.
+    #[test]
+    fn a_file_proposal_without_keys_is_not_let_through_and_a_cancel_is() {
+        let mut policy = encrypt();
+        policy.files_encrypt = true;
+        for dir in [Direction::Outbound, Direction::Inbound] {
+            for (kind, passes) in [(RDV_PROPOSE, false), (RDV_CANCEL, true)] {
+                // A fresh gate: its note is said once a minute per contact.
+                gate_with_media(crate::gate::MediaHooks::NotLoaded);
+                let (mut r, _) = opened(dir);
+                let mut c = Fake::new();
+                c.strict = None;
+                let f = frame(
+                    FLAP_CHANNEL_SNAC,
+                    2,
+                    &direct::tests::rdv(dir, "100002", kind, [9; 8], CAP_FILE_TRANSFER),
+                );
+                let mut out = Vec::new();
+                let lines = r.push_crypto(&f, &mut c, 1, &policy, &mut out);
+                if passes {
+                    assert_eq!(out, f, "{dir:?}: {lines:?}");
+                } else {
+                    assert!(c.rdv_seen.is_empty(), "no key exchange: {lines:?}");
+                    assert!(out.is_empty(), "{dir:?}: {lines:?}");
+                    assert!(c.gate_notes.iter().any(|n| n.contains("not let through")));
+                }
+            }
+        }
+        crate::gate::use_for_this_thread(None);
+    }
+
+    /// The engine that stands in without keys, through the stream: the
+    /// message is held with a note, a container is not shown.
+    #[test]
+    fn without_keys_a_message_is_held_and_a_container_not_shown() {
+        let mut w = crate::gate::Withheld::new("the state file cannot be read".into());
+        let (mut out_side, mut in_side) = StreamRewriter::pair();
+        let mut wire = Vec::new();
+        out_side.push_crypto(&hello(), &mut w, 1, &encrypt(), &mut wire);
+        let mut secret = to_host_body("100002", "a secret only for 100002");
+        secret.truncate(secret.len());
+        let msg = frame(
+            FLAP_CHANNEL_SNAC,
+            2,
+            &snac_frame(snac::FOOD_ICBM, snac::ICBM_MSG_TO_HOST, 7, &secret),
+        );
+        out_side.push_crypto(&msg, &mut w, 1, &encrypt(), &mut wire);
+        assert_eq!(wire, hello(), "nothing of the message reached the wire");
+        let mut to_client = Vec::new();
+        in_side.push_crypto(&hello(), &mut w, 1, &encrypt(), &mut to_client);
+        let container_text = container::armor(&any_container());
+        in_side.push_crypto(
+            &in_message(2, "100002", &container_text, None),
+            &mut w,
+            1,
+            &encrypt(),
+            &mut to_client,
+        );
+        let shown = texts_of(&frames_of(&to_client));
+        assert!(
+            !shown.iter().any(|t| t.contains(&container_text)),
+            "{shown:?}"
+        );
+        assert!(shown.iter().any(|t| t.contains("NOT sent")), "{shown:?}");
+        assert!(
+            shown.iter().any(|t| t.contains("could not be read")),
+            "{shown:?}"
+        );
     }
 }
