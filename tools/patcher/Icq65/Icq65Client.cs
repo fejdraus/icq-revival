@@ -1428,6 +1428,81 @@ namespace IcqRevival.Patch
             return "the client signs in to " + domain + ":" + PortAt(bytes);
         }
 
+        // --- the old hosts in the code ----------------------------------------------
+        //
+        // Two files the rest of the patch does not touch keep old hosts in
+        // code, with no file to override them (CodeStrings, in Common, has how
+        // they are written over). They are recognised by the checksum of the
+        // original before a byte is written and always built again from it.
+        //   MReport.dll     the statistics and crash report ("SRP") the client
+        //                   posts to cb.icq.com - a third party today; goes
+        //                   nowhere, like StatsUrl of System.xml. With the links.
+        //   coolcore49.dll  the hosts of ICQ 6.5 voice and video calls: the SIP
+        //                   voice-quality server calls report to (sq.mediator),
+        //                   Apple's NAT lookup (snatmap.mac.com), the AOL HTTP
+        //                   relay (aimhttp.oscar.aol.com) and portal and web
+        //                   sign-in hosts. Calls between our clients go through
+        //                   the server's STUN/TURN; none of these is needed, so
+        //                   each goes nowhere. With the sign-in.
+        static readonly Dictionary<string, string> CodeHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "MReport.dll", "3575BBE4C6AD75FF0212BB6E67FD9B8D50C7E70E97BB690399CB56C000189D56" },
+            { "coolcore49.dll", "12CDDD3C62FF777F1738226FE0B4B36C8170E5E1C0C47FB5913F1A780DC5F450" },
+        };
+
+        static readonly CodeString[] CodeStringList =
+        {
+            CodeStrings.W("MReport.dll", "links", "cb.icq.com", CodeStrings.NoHost),
+            CodeStrings.W("MReport.dll", "links", "http://%s/cb/icqsrp/%d/srp.cb", "http://%s:9/icqsrp/%d/srp.cb"),
+
+            CodeStrings.A("coolcore49.dll", "sign-in", "sip:sq.mediator.aol.com", "sip:" + CodeStrings.NoHost),
+            CodeStrings.W("coolcore49.dll", "sign-in", "snatmap.mac.com", CodeStrings.NoHost),
+            CodeStrings.W("coolcore49.dll", "sign-in", "aimhttp.oscar.aol.com", CodeStrings.NoHost),
+            CodeStrings.W("coolcore49.dll", "sign-in", "start.aimpages.com", CodeStrings.NoHost),
+            CodeStrings.W("coolcore49.dll", "sign-in", "startpage.aol.com", CodeStrings.NoHost),
+            CodeStrings.Wi("coolcore49.dll", "sign-in", "my.screenname.aol.com", CodeStrings.NoHost),
+        };
+
+        static IEnumerable<string> CodeStringFiles { get { return CodeStrings.Files(CodeStringList); } }
+
+        string CodeStringSource(string file)
+        {
+            string path = At(file);
+            if (Ps.Eq(PatchFiles.Sha256(path), CodeHashes[file])) return path;
+            foreach (string suffix in AllSuffixes)
+            {
+                if (PatchFiles.Exists(path + suffix)) return path + suffix;
+            }
+            return path;
+        }
+
+        bool CodeStringOtherVersion(string file)
+        {
+            return PatchFiles.Exists(At(file)) && !Ps.Eq(PatchFiles.Sha256(CodeStringSource(file)), CodeHashes[file]);
+        }
+
+        string CodeStringState(string file, string part)
+        {
+            string path = At(file);
+            if (!PatchFiles.Exists(path)) return "missing";
+            if (CodeStringOtherVersion(file)) return "other version";
+            return CodeStrings.State(File.ReadAllBytes(path), CodeStringList.Where(s => Ps.Eq(s.File, file) && Ps.Eq(s.Part, part)));
+        }
+
+        string SetCodeStrings(string file, Func<string, bool> wanted)
+        {
+            string path = At(file);
+            if (!PatchFiles.Exists(path)) return null;
+            string source = CodeStringSource(file);
+            if (!Ps.Eq(PatchFiles.Sha256(source), CodeHashes[file])) return file + " is not the one from build 2024 - left as it is";
+            byte[] bytes = File.ReadAllBytes(source);
+            CodeStrings.Apply(bytes, CodeStringList.Where(s => Ps.Eq(s.File, file) && wanted(s.Part)));
+            if (bytes.SequenceEqual(File.ReadAllBytes(path))) return null;
+            PatchFiles.BackupOnce(path, Suffix);
+            File.WriteAllBytes(path, bytes);
+            return null;
+        }
+
         // --- the edits themselves ---------------------------------------------------
 
         static Match FindTag(string text, string id)
@@ -1680,6 +1755,14 @@ namespace IcqRevival.Patch
             foreach (CodeLink c in CodeLinks) add(c.What, c.File, CodeLinkState(c, domain));
             foreach (Strip st in Strips) add(st.What, PatchFiles.Leaf(st.File), StripState(st));
             add("sign-in", "MCore.dll, now " + SignInShown(), SignInState(domain));
+            foreach (string file in CodeStringFiles)
+            {
+                foreach (string part in new[] { "sign-in", "links" })
+                {
+                    string state = CodeStringState(file, part);
+                    if (state != "missing") add(part, file, state);
+                }
+            }
             add("the E2E add-on: sign-in only through the add-on", SignIn.File, SignInPortState(domain));
             string player = PlayerState();
             add("the tZers player", PlayerFile, player);
@@ -1774,12 +1857,19 @@ namespace IcqRevival.Patch
                     throw new InvalidOperationException(p.File + " is not the one from ICQ 6.5 build 2024; nothing was changed.");
                 }
             }
+            foreach (string file in CodeStringFiles)
+            {
+                if (CodeStringOtherVersion(file))
+                {
+                    throw new InvalidOperationException(file + " is not the one from ICQ 6.5 build 2024; nothing was changed.");
+                }
+            }
             string dir = At("ConfigFiles");
             List<string> configs = PatchFiles.FilesWithExtension(dir, ".xml");
             // Group-Object File: the edits of one file together, in the order
             // the files first come up.
             var groups = MarkupEdits.GroupBy(e => e.File, Ps.Keys).ToList();
-            PatchSteps.Start(7 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + CodeLinks.Length);
+            PatchSteps.Start(7 + CodePatches.Length + groups.Count + Removals.Length + configs.Count + CodeLinks.Length + CodeStringFiles.Count());
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -1909,6 +1999,13 @@ namespace IcqRevival.Patch
             if (e2eNote != null) notes.Add(e2eNote);
             // Whatever the selection: the lock button is gone for good.
             TakeDroppedLockFiles();
+
+            foreach (string file in CodeStringFiles)
+            {
+                PatchSteps.Step("Building " + file + "...");
+                string note = SetCodeStrings(file, part => Jobs.IsWanted(skip, part));
+                if (note != null) notes.Add(note);
+            }
 
             PatchSteps.Step("Sign-in server...");
             if (Jobs.IsWanted(skip, "sign-in"))

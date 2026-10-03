@@ -182,6 +182,33 @@ namespace IcqRevival.Patch
             { CodeFile, new[] {
                 "C13C75E223A985620904F04D86B1C12FD0A6F5735DFCC6C5E9FDA3F8C4708815",
                 "CA87B4009706449D4517C351E1503C5011BDB4DF6A146D499B3FC2BB31BB0BE5" } },
+            { MReport, new[] {
+                "200B9BF9C52E1D891EBEAAE7EBA1ACD957A03F92E1DEEA1EA3515A4D469FCF8C",
+                "207F8D38A956F21721B047B82F5E578A3394AD3FB8AE61220CB343B4D472639F" } },
+            { InstallMReport, new[] { "FBD457011226A038C972F5596B85309CB2B5A43E238D2C61890EBD0D0EDC05A5" } },
+            { MUICore, new[] {
+                "36A90559FC839648D5AAEC47121F45895D992F3F1A393F41658155A19E042339",
+                "BADCE26D9BABFD56557F13A7A7D091BD6FBE9659B0638BC27D8BBE0F24539DAF" } },
+            { MUICoreLib, new[] {
+                "3C7339712B9DA0D5AF2A7C9C186B0CB78BF17929908DCD992672CF3F4C87537C",
+                "223C99E0C98C2C37C584E18467C4EC0875DD1F231F5887F1499E2DB42130CAFA" } },
+            { AccCore, new[] {
+                "340F51EA69B36E3ED590A3B9AAE994B6C09979C66D1806DC1B3EF88778493885",
+                "E8095F52457BD54FD0D7FF0BA9141462068F3752894C6BE424F2CF924F8537A7" } },
+            { CoolCore, new[] {
+                "A9C291987E8647CA26E6AFF5CDABBEF622BD12AF8982ABB7E9FE9186A61E9128",
+                "70B20EEBFE38174E09912EF0F2F3936AEA4E8044A49D18F2F930ADD9AC8AF96E" } },
+            { IcqExe, new[] {
+                "96EC564D645CF32445441A951487CCAFE893C99DC24A8B2FFC379D77DCDBEA8E",
+                "588C2F8B82AB6C5E8FAC351B6F44A3AA630B64A319F5031D0FC8A769B1E2237D" } },
+            { PushStatus, new[] {
+                "4E6A9458B6352081A0F632D74A44E1200570050B5877701F6F55F8B4B7789714",
+                "5C0C28E1F58403626956AFB4BE2DBAF24A3E9FC30BDD0B0512B21716EAF24327" } },
+            { SmsXtra, new[] {
+                "79B5D3CEE3CDF4E732A88B73240E8A8962D43F3A796423DFE7CFECAF911D8767",
+                "54ECA5A281917D290BDDF6205032B9FE3D25B17ABFD2CADFC392CCD1AD9211C0" } },
+            { ExternalDomains, new[] { "30818B07AFC39214CD3523EE67388B32036D39FEBC965BAE19878952AA7F3CE7" } },
+            { XtraPreloader, new[] { "D45B1E24E3C5F13A7606226604774F3F988AA26444B9A5FB7C129EB41AB9E441" } },
         };
 
         // --- changes -----------------------------------------------------------------
@@ -392,7 +419,36 @@ namespace IcqRevival.Patch
             Linked(TzerListDe, "the tZers list", BuildTzerList),
             Linked(DataDtd, "page links", (t, d) => InEntity(t, "MsgSessionPanel.BirthdayMessageHTML", "http://greetings\\.icq\\.com", LinkTo(d, "/icq/greetings"))),
             Linked(DataDtd, "page links", (t, d) => InEntity(t, "ContentPanelSms.LearnMoreUrl", null, LinkTo(d, "/icq/stub/sms.html"))),
+            // "Install Flash": our download page, which has the tZers player.
+            Linked(DataDtd, "page links", (t, d) => InEntity(t, "MessageController.NoFlashInstalled", "http://www\\.macromedia\\.com/?", LinkTo(d, "/icq/download"))),
+            // What the client fetches by itself and the server has no stand-in
+            // for (see "the old hosts in the configuration"), and the pages of
+            // services that are gone.
+            On(DataDtd, Code, NoFlashDownload),
+            On(XtraPreloader, Code, NoFlashDownload),
+            On(PushStatus, Code, t => Regex.Replace(t, "(Icon=\")https?://o\\.(?:icq|aol)cdn\\.com", m => m.Groups[1].Value + Nowhere)),
+            Linked(SmsXtra, "page links", (t, d) => t.Replace("http://www.icq.com/support/sms_activation/", LinkTo(d, "/icq/stub/sms.html?"))),
+            On(ExternalDomains, Code, t => t.Replace("<domain name=\"facebook\" enable=\"true\"", "<domain name=\"facebook\" enable=\"false\"")),
         };
+
+        // --- the old hosts in the configuration ---------------------------------------
+        //
+        // The Flash control's download, which Internet Explorer fetches by
+        // itself when a page asks for the control and it is not installed
+        // (the media sharing window and the Xtraz preloader): it goes nowhere.
+        // The icons of the status-push services (Facebook, Twitter,
+        // Mekusharim) came from a CDN whose name no longer resolves. The
+        // Facebook chat integration (packages\Facebook, XMPP to
+        // chat.facebook.com) is switched off where the client lists it.
+        const string XtraPreloader = Theme + @"\IMAGES\XtraPreloader\connect.htm";
+        const string PushStatus = Config + @"\PushStatusServices.xml";
+        const string SmsXtra = Config + @"\SMSXtra.xml";
+        const string ExternalDomains = Config + @"\ExternalDomains.xml";
+
+        static string NoFlashDownload(string text)
+        {
+            return Regex.Replace(text, "https?://(?:fp)?download\\.macromedia\\.com(?=/pub/shockwave/)", Nowhere, RegexOptions.IgnoreCase);
+        }
 
         // --- advertising -----------------------------------------------------------------
         //
@@ -470,6 +526,28 @@ namespace IcqRevival.Patch
             new KeyValuePair<string, string>("MyXtraz.DevelopersSiteURL", XtrazStub),
             new KeyValuePair<string, string>("XtraController.XtraNotAvailableUrl",
                 XtrazStub + "?xtra_id=%XtraID%&amp;client_id=%ClientId%&amp;client_lsp_id=%PartnerId%&amp;build=%BuildNum%"),
+            // Services that are gone: a page of ours that says so.
+            new KeyValuePair<string, string>("DetailsDlg.AimHomePageLink", "/icq/stub/aim-profile"),
+            new KeyValuePair<string, string>("LS.Settings", "/icq/stub/lifestream"),
+            new KeyValuePair<string, string>("LS.People.photos", "/icq/stub/lifestream"),
+            new KeyValuePair<string, string>("LS.People.photo", "/icq/stub/lifestream"),
+            new KeyValuePair<string, string>("LS.People.Base", "/icq/stub/lifestream"),
+            new KeyValuePair<string, string>("BuddyFeed.viewBuddyFeedsLink", "/icq/stub/lifestream"),
+            new KeyValuePair<string, string>("FB.Registration", "/icq/stub/facebook"),
+            new KeyValuePair<string, string>("Facebook.DetachAccount", "/icq/stub/facebook"),
+            new KeyValuePair<string, string>("Brand.ChatPage", "/icq/stub/chat"),
+            new KeyValuePair<string, string>("Zlango.ZlangoTipsURL", "/icq/stub/zlango"),
+            new KeyValuePair<string, string>("Feedback.Link", "/icq/stub/feedback"),
+            new KeyValuePair<string, string>("MsgSessionDlg.MobileDownload", "/icq/download"),
+        };
+
+        // What the client fetches from links.xml by itself, with no page of
+        // ours behind it, goes nowhere: the ICQ.com single sign-on (which
+        // would be handed the session), the WIM buddy list of the Lifestream,
+        // and the counter of Xtra installs.
+        static readonly string[] NowhereLinks =
+        {
+            "ICQ.IcqOpenAuth", "Wim.BuddyListBase", "XtraController.UserXtraInstalHitUrl",
         };
 
         static string LinkTo(string domain, string path)
@@ -486,6 +564,14 @@ namespace IcqRevival.Patch
                 {
                     string tag = Regex.Replace(m.Value, "\\s+a=\"icqOpenAuth\"", "");
                     return Regex.Replace(tag, "(\\bd=\")[^\"]*(\")", d => d.Groups[1].Value + to + d.Groups[2].Value);
+                });
+            }
+            foreach (string key in NowhereLinks)
+            {
+                text = Regex.Replace(text, "<i\\s+c=\"" + Regex.Escape(key) + "\"[^>]*>", m =>
+                {
+                    string tag = Regex.Replace(m.Value, "\\s+a=\"icqOpenAuth\"", "");
+                    return Regex.Replace(tag, "(\\bd=\")https?://[^/\"]*", d => d.Groups[1].Value + Nowhere);
                 });
             }
             return text;
@@ -607,6 +693,9 @@ namespace IcqRevival.Patch
             new SentenceLink { Name = "SMS.dtd", Find = "http://www\\.icq\\.com/sms\\b", To = "/icq/stub/sms.html" },
             new SentenceLink { Name = "Errors.dtd", Find = "http://www\\.icq\\.com/sms\\b", To = "/icq/stub/sms.html" },
             new SentenceLink { Name = "common.dtd", Find = "http://www\\.icq\\.com/legal/privacy\\.html", To = "/icq/legal/" },
+            // "To download Flash now click here": our download page, which has
+            // the tZers player.
+            new SentenceLink { Name = "Errors.dtd", Find = "http://www\\.(?:macromedia|adobe)\\.com\\b/?", To = "/icq/download" },
         };
 
         static IEnumerable<Change> SentenceChanges()
@@ -824,96 +913,135 @@ namespace IcqRevival.Patch
         // built again from that original.
         const string CodeFile = "MCore.dll";
 
-        sealed class CodeString
-        {
-            public bool Wide;      // UTF-16, or ASCII
-            public string From;
-            public string To;      // no longer than From
-        }
+        // The rest of the old hosts in the code (CodeStrings, in Common, has
+        // how they are written over), each in the build that has it; see
+        // docs\OLD-HOSTS.md for what each one is:
+        //   MReport.dll (and the installer's copy)  the crash and statistics
+        //                         reporter ("SRP"), to cb.icq.com
+        //   MUICore.dll           the defaults of the self-update manifest and
+        //                         of the add-on package lists (AppConfig.xml
+        //                         and Packages.xml set them too), and the ad
+        //                         servers of Mail.ru and AOL
+        //   MUICoreLib.dll        the Lifestream settings page
+        //   acccore.dll           the buddy feed the client polls (Lifestream),
+        //                         the buddy updates page, the server a typed
+        //                         login.icq.com is turned into, and the
+        //                         defaults of the relays, STUN and BOS
+        //                         redirect AppConfig.xml sets
+        //   coolcore59.dll        the voice-quality server calls report to
+        //                         (SIP PUBLISH to sq.mediator), Apple's NAT
+        //                         lookup, and the AOL web sign-in that is
+        //                         handed the session token
+        //   ICQ.exe               the privacy link of the crash dialog
+        // The calls' ones go with the sign-in row, the rest with the links.
+        const string Code = "no old ICQ hosts";
+        const string MReport = "MReport.dll";
+        const string InstallMReport = @"install_dll\MReport.dll";
+        const string MUICore = "MUICore.dll";
+        const string MUICoreLib = "MUICoreLib.dll";
+        const string AccCore = "acccore.dll";
+        const string CoolCore = "coolcore59.dll";
+        const string IcqExe = "ICQ.exe";
 
-        static readonly CodeString[] CodeStrings =
+        static readonly CodeString[] CodeStringList =
         {
-            new CodeString { Wide = false, From = "http://cb.icq.com/cb/icqsrp/%ClientId%/srp.cb", To = Nowhere + "/icqsrp/%ClientId%/srp.cb" },
-            new CodeString { Wide = true, From = "http.proxy.icq.com", To = NoRelay },
-            new CodeString { Wide = true, From = "http://update.icq.com/cb/icq6/%DistId%/ConfigFiles/updates.xml", To = Nowhere + "/cb/icq6/%DistId%/ConfigFiles/updates.xml" },
-            new CodeString { Wide = true, From = "http://www.icq.com/register/email_activation/sendEmailActivation.php", To = Nowhere + "/register/email_activation/sendEmailActivation.php" },
+            CodeStrings.A(CodeFile, "sign-in", "http://cb.icq.com/cb/icqsrp/%ClientId%/srp.cb", Nowhere + "/icqsrp/%ClientId%/srp.cb"),
+            CodeStrings.W(CodeFile, "sign-in", "http.proxy.icq.com", NoRelay),
+            CodeStrings.W(CodeFile, "sign-in", "http://update.icq.com/cb/icq6/%DistId%/ConfigFiles/updates.xml", Nowhere + "/cb/icq6/%DistId%/ConfigFiles/updates.xml"),
+            CodeStrings.W(CodeFile, "sign-in", "http://www.icq.com/register/email_activation/sendEmailActivation.php", Nowhere + "/register/email_activation/sendEmailActivation.php"),
+
+            CodeStrings.W(MReport, Code, "cb.icq.com", CodeStrings.NoHost),
+            CodeStrings.W(MReport, Code, "http://%s/cb/icqsrp/%d/srp.cb", "http://%s:9/icqsrp/%d/srp.cb"),
+            CodeStrings.W(MReport, Code, "http://cb.icq.com/cb/icqsrp/10/srp.cb", Nowhere + "/icqsrp/10/srp.cb"),
+            CodeStrings.W(InstallMReport, Code, "cb.icq.com", CodeStrings.NoHost),
+            CodeStrings.W(InstallMReport, Code, "http://%s/cb/icqsrp/%d/srp.cb", "http://%s:9/icqsrp/%d/srp.cb"),
+
+            CodeStrings.W(MUICore, Code, "http://update.icq.com/cb/icq6/%DistId%/%PartnerId%/updates.xml", Nowhere + "/cb/icq6/%DistId%/%PartnerId%/updates.xml"),
+            CodeStrings.W(MUICore, Code, "http://update.icq.com/cb/icq6/packages", Nowhere + "/cb/icq6/packages"),
+            CodeStrings.W(MUICore, Code, "http://icq.openxtraz.com/gallery/packages", Nowhere + "/gallery/packages"),
+            CodeStrings.W(MUICore, Code, "http://openxtraz.icq.com/dev/packages", Nowhere + "/dev/packages"),
+            CodeStrings.W(MUICore, Code, "ad.mail.ru", CodeStrings.NoHost),
+            CodeStrings.W(MUICore, Code, "ar.atwola.com", CodeStrings.NoHost),
+            CodeStrings.W(MUICoreLib, Code, "http://lifestream.icq.com/settings?locale=", Nowhere + "/settings?locale="),
+
+            // Build 3525.
+            CodeStrings.W(AccCore, Code, "http://api.icq.net/buddyfeed/getUser", Nowhere + "/buddyfeed/getUser"),
+            CodeStrings.W(AccCore, Code, "http://api.icq.net/buddyfeed/getBuddylist", Nowhere + "/buddyfeed/getBuddylist"),
+            CodeStrings.W(AccCore, Code, "api.login.icq.net", CodeStrings.NoHost),
+            CodeStrings.W(AccCore, "sign-in", "ars.icq.com", CodeStrings.NoHost),
+            CodeStrings.W(AccCore, "sign-in", "http.proxy.icq.com", CodeStrings.NoHost),
+            CodeStrings.W(AccCore, "sign-in", "turn.icq.com", CodeStrings.NoHost),
+            CodeStrings.W(AccCore, "sign-in", "api.icq.net", CodeStrings.NoHost),
+            CodeStrings.W(AccCore, "sign-in", "login.icq.com", CodeStrings.NoHost),
+            // Build 3143.
+            CodeStrings.W(AccCore, Code, "http://api.oscar.aol.com/buddyfeed/getUser", Nowhere + "/buddyfeed/getUser"),
+            CodeStrings.W(AccCore, Code, "http://api.oscar.aol.com/buddyfeed/getBuddylist", Nowhere + "/buddyfeed/getBuddylist"),
+            CodeStrings.W(AccCore, "sign-in", "ars.oscar.aol.com", CodeStrings.NoHost),
+            CodeStrings.W(AccCore, "sign-in", "aimhttp.oscar.aol.com", CodeStrings.NoHost),
+            CodeStrings.W(AccCore, "sign-in", "turn.oscar.aol.com", CodeStrings.NoHost),
+            CodeStrings.W(AccCore, "sign-in", "api.oscar.aol.com", CodeStrings.NoHost),
+            // Both.
+            CodeStrings.W(AccCore, Code, "http://buddyupdates.aim.com/updates/%s", Nowhere + "/updates/%s"),
+
+            CodeStrings.W(CoolCore, "sign-in", "http.proxy.icq.com", CodeStrings.NoHost),
+            CodeStrings.A(CoolCore, "sign-in", "sip:sq.mediator.icq.com", "sip:" + CodeStrings.NoHost),
+            CodeStrings.A(CoolCore, "sign-in", "sip:sq.mediator.aol.com", "sip:" + CodeStrings.NoHost),
+            CodeStrings.W(CoolCore, "sign-in", "snatmap.mac.com", CodeStrings.NoHost),
+            CodeStrings.A(CoolCore, "sign-in", "https://api.login.aol.com", Nowhere),
+            // Build 3143's ACC/COOL auth and portal hosts; 3525 has none of
+            // these (it signs in through api.login.aol.com above).
+            CodeStrings.W(CoolCore, "sign-in", "http://my.screenname.aol.com/_cqr/login/login.psp", Nowhere + "/_cqr/login/login.psp"),
+            CodeStrings.W(CoolCore, "sign-in", "my.screenname.aol.com", CodeStrings.NoHost),
+            CodeStrings.W(CoolCore, "sign-in", "aimhttp.oscar.aol.com", CodeStrings.NoHost),
+            CodeStrings.W(CoolCore, "sign-in", "startpage.aol.com", CodeStrings.NoHost),
+            CodeStrings.W(CoolCore, "sign-in", "start.aimpages.com", CodeStrings.NoHost),
+
+            CodeStrings.W(IcqExe, Code, "http://www.icq.com/legal/privacy.html", Nowhere + "/legal/privacy.html"),
+            CodeStrings.W(IcqExe, Code, "<a href=\"http://www.icq.com/legal/privacy.html\">More about ICQ's privacy policy</a>",
+                "<a href=\"" + Nowhere + "/legal/privacy.html\">More about ICQ's privacy policy</a>"),
         };
 
-        // The bytes of the string as it is in the DLL: the text, then zeros
-        // to the length of the original with its terminator.
-        static byte[] CodeBlock(CodeString s, string text)
-        {
-            Encoding e = s.Wide ? Encoding.Unicode : Encoding.ASCII;
-            byte[] block = new byte[e.GetByteCount(s.From) + (s.Wide ? 2 : 1)];
-            byte[] t = e.GetBytes(text);
-            Array.Copy(t, block, t.Length);
-            return block;
-        }
+        static IEnumerable<string> CodeFiles { get { return CodeStrings.Files(CodeStringList); } }
 
-        // Where the block is, at an offset of its alignment.
-        static List<int> FindBlock(byte[] bytes, byte[] block, int align)
+        // The original of a file: the file itself when it is one - also when
+        // the client has put it back over a patched one - and its backup
+        // otherwise.
+        string CodeSource(string file)
         {
-            var found = new List<int>();
-            for (int i = 0; i + block.Length <= bytes.Length; i += align)
-            {
-                if (bytes[i] != block[0]) continue;
-                int k = 1;
-                while (k < block.Length && bytes[i + k] == block[k]) k++;
-                if (k == block.Length) found.Add(i);
-            }
-            return found;
-        }
-
-        // The original of MCore.dll: the file itself when it is one - also
-        // when the client has put it back over a patched one - and its
-        // backup otherwise.
-        string CodeSource()
-        {
-            string path = At(CodeFile);
-            if (Ps.Contains(Originals[CodeFile], PatchFiles.Sha256(path))) return path;
+            string path = At(file);
+            if (Ps.Contains(Originals[file], PatchFiles.Sha256(path))) return path;
             return PatchFiles.Exists(path + Suffix) ? path + Suffix : path;
         }
 
-        // original / patched / other version / missing. Part of the sign-in
-        // row: a client patched before shows that row partly applied.
-        string CodeState()
+        bool CodeIsOtherVersion(string file)
         {
-            string path = At(CodeFile);
-            if (!PatchFiles.Exists(path)) return "missing";
-            if (!Ps.Contains(Originals[CodeFile], PatchFiles.Sha256(CodeSource()))) return "other version";
-            byte[] bytes = File.ReadAllBytes(path);
-            bool all = true;
-            foreach (CodeString s in CodeStrings)
-            {
-                int align = s.Wide ? 2 : 1;
-                int from = FindBlock(bytes, CodeBlock(s, s.From), align).Count;
-                int to = FindBlock(bytes, CodeBlock(s, s.To), align).Count;
-                if (from + to != 1) return "other version";
-                if (from == 1) all = false;
-            }
-            return all ? "patched" : "original";
+            return PatchFiles.Exists(At(file)) && !Ps.Contains(Originals[file], PatchFiles.Sha256(CodeSource(file)));
         }
 
-        // Makes MCore.dll match the selection, built again from its original.
-        // A line for the report when it could not be done, or null.
-        string SetCode(bool wanted)
+        // original / patched / partly / other version / missing, of the
+        // strings of one file that one part claims.
+        string CodeState(string file, string part)
         {
-            string path = At(CodeFile);
+            string path = At(file);
+            if (!PatchFiles.Exists(path)) return "missing";
+            if (CodeIsOtherVersion(file)) return "other version";
+            return CodeStrings.State(File.ReadAllBytes(path), CodeStringList.Where(s => Ps.Eq(s.File, file) && Ps.Eq(s.Part, part)));
+        }
+
+        // Makes one file match the selection, built again from its original.
+        // A line for the report when it could not be done, or null.
+        string SetCode(string file, Func<string, bool> wanted)
+        {
+            string path = At(file);
             if (!PatchFiles.Exists(path)) return null;
-            string source = CodeSource();
-            if (!Ps.Contains(Originals[CodeFile], PatchFiles.Sha256(source))) return CodeFile + " is not the one from build 3143 or 3525 - left as it is";
+            string source = CodeSource(file);
+            if (!Ps.Contains(Originals[file], PatchFiles.Sha256(source))) return file + " is not the one from build 3143 or 3525 - left as it is";
             // An original the client has put back is the backup from now on.
             if (source == path && PatchFiles.Exists(path + Suffix)) PatchFiles.Copy(path, path + Suffix, true);
             byte[] bytes = File.ReadAllBytes(source);
-            if (wanted)
+            if (!CodeStrings.Apply(bytes, CodeStringList.Where(s => Ps.Eq(s.File, file) && wanted(s.Part))))
             {
-                foreach (CodeString s in CodeStrings)
-                {
-                    List<int> at = FindBlock(bytes, CodeBlock(s, s.From), s.Wide ? 2 : 1);
-                    if (at.Count != 1) return CodeFile + ": \"" + s.From + "\" is not there once - left as it is";
-                    byte[] to = CodeBlock(s, s.To);
-                    Array.Copy(to, 0, bytes, at[0], to.Length);
-                }
+                return file + ": an address is there more than once - left as it is";
             }
             if (bytes.SequenceEqual(File.ReadAllBytes(path))) return null;
             PatchFiles.BackupOnce(path, Suffix);
@@ -1683,7 +1811,14 @@ namespace IcqRevival.Patch
                     add(c.Part, where, state);
                 }
             }
-            add("sign-in", CodeFile, CodeState());
+            foreach (string file in CodeFiles)
+            {
+                foreach (string part in new[] { "sign-in", Code })
+                {
+                    string state = CodeState(file, part);
+                    if (state != "missing") add(part, file, state);
+                }
+            }
             foreach (Removal r in Removals) add(r.What, r.Path, RemovalState(r));
             string player = PlayerState();
             add("the tZers player", PlayerFile, player);
@@ -1767,12 +1902,15 @@ namespace IcqRevival.Patch
                     throw new InvalidOperationException(f.Key + " is not the one from ICQ 7.2 build 3143 or 3525; nothing was changed.");
                 }
             }
-            if (CodeState() == "other version")
+            foreach (string file in CodeFiles)
             {
-                throw new InvalidOperationException(CodeFile + " is not the one from ICQ 7.2 build 3143 or 3525; nothing was changed.");
+                if (CodeIsOtherVersion(file))
+                {
+                    throw new InvalidOperationException(file + " is not the one from ICQ 7.2 build 3143 or 3525; nothing was changed.");
+                }
             }
 
-            PatchSteps.Start(6 + files.Count + Removals.Length);
+            PatchSteps.Start(5 + files.Count + CodeFiles.Count() + Removals.Length);
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -1798,9 +1936,12 @@ namespace IcqRevival.Patch
                 }
             }
 
-            PatchSteps.Step("Building " + CodeFile + "...");
-            string codeNote = SetCode(wanted("sign-in"));
-            if (codeNote != null) notes.Add(codeNote);
+            foreach (string file in CodeFiles)
+            {
+                PatchSteps.Step("Building " + PatchFiles.Leaf(file) + "...");
+                string codeNote = SetCode(file, part => wanted(part));
+                if (codeNote != null) notes.Add(codeNote);
+            }
 
             foreach (Removal r in Removals)
             {

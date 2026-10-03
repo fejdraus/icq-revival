@@ -239,6 +239,90 @@ namespace IcqRevival.Patch
                 What = "help on public and private mode" },
         };
 
+        // --- the old hosts in the code --------------------------------------------------
+        //
+        // Hosts built into programs the rest of the patch does not touch
+        // (CodeStrings, in Common, has how they are written over). Each file is
+        // recognised by the checksum of its original before a byte is written,
+        // and built again from it, so a change comes out byte-exact:
+        //   ICQCool.dll    the hardcoded fallback login IP 205.188.147.46 (the
+        //                  old AOL/ICQ login server), and Email Express's
+        //                  @pager.icq.com
+        //   DBAdmin.exe    the fallback login IP 205.188.252.121 and the
+        //                  cb.icq.com datafile bundles (banners, channels)
+        //   ICQFTLib.dll   the file-transfer rendezvous relay rars.oscar.aol.com
+        //                  (our server and TURN carry transfers instead)
+        //   ICQSmLib.dll   a.root-servers.net, a hardcoded DNS probe
+        //   icqsrp.exe     the statistics/registration reporter ("SRP") posting
+        //                  to the sign-in host under /cb/...srp.cb
+        // The login IPs, the relay and the DNS probe go with the sign-in; the
+        // stats and datafile bundles with the links.
+        static readonly Dictionary<string, string> CodeHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "ICQCool.dll", "76DB4E062442A173B7CBD01E6B13B7EAB0AAB50B5D0B98359F016499971F4D94" },
+            { "DBAdmin.exe", "C215FDB0505B3789453B91433BAAB5D8960F9EACEE22D8428F1F9923EA67221F" },
+            { "ICQFTLib.dll", "D81738642AC110DF18D10D0E87E4F04302A08B63C65DC85926C3EA155750A20D" },
+            { "ICQSmLib.dll", "6123AB42B88D17E8D03247CCD8ABAD5CA4DD90751B05F6538024BDEADF9BB85D" },
+            { "icqsrp.exe", "EAF496AF954F2364470EBDD1241D4323FFD3AF5819BDFAFD817DB1D3868F040F" },
+        };
+
+        // A host inside a longer ASCII string (a URL or e-mail): matched with
+        // no terminator, so the path after it stays but is cut off by the zeros
+        // the replacement leaves - the string becomes http://127.0.0.1 and the
+        // connection is refused on the client's own machine.
+        static CodeString Ai(string file, string part, string host)
+        {
+            return new CodeString { File = file, Part = part, Infix = true, From = host, To = CodeStrings.NoHost };
+        }
+
+        static readonly CodeString[] CodeStringList =
+        {
+            // 203.0.113.0 is from TEST-NET-3 (RFC 5737), a documentation range
+            // that routes nowhere, used where a bare IP must stay an IP.
+            CodeStrings.A("ICQCool.dll", "sign-in", "205.188.147.46", "203.0.113.0"),
+            Ai("ICQCool.dll", "links", "pager.icq.com"),
+            CodeStrings.A("DBAdmin.exe", "sign-in", "205.188.252.121", "203.0.113.0"),
+            Ai("DBAdmin.exe", "links", "cb.icq.com"),
+            CodeStrings.A("ICQFTLib.dll", "sign-in", "Rars.oscar.aol.com", CodeStrings.NoHost),
+            CodeStrings.A("ICQSmLib.dll", "sign-in", "a.root-servers.net", CodeStrings.NoHost),
+            Ai("icqsrp.exe", "links", "web.icq.com"),
+        };
+
+        static IEnumerable<string> CodeStringFiles { get { return CodeStrings.Files(CodeStringList); } }
+
+        string CodeStringSource(string file)
+        {
+            string path = PatchFiles.Join(Root, file);
+            if (Ps.Eq(PatchFiles.Sha256(path), CodeHashes[file])) return path;
+            return PatchFiles.Exists(path + BinSuffix) ? path + BinSuffix : path;
+        }
+
+        bool CodeStringOtherVersion(string file)
+        {
+            return PatchFiles.Exists(PatchFiles.Join(Root, file)) && !Ps.Eq(PatchFiles.Sha256(CodeStringSource(file)), CodeHashes[file]);
+        }
+
+        string CodeStringState(string file, string part)
+        {
+            string path = PatchFiles.Join(Root, file);
+            if (!PatchFiles.Exists(path)) return "missing";
+            if (CodeStringOtherVersion(file)) return "other version";
+            return CodeStrings.State(File.ReadAllBytes(path), CodeStringList.Where(s => Ps.Eq(s.File, file) && Ps.Eq(s.Part, part)));
+        }
+
+        void SetCodeStrings(string file, ICollection<string> skip)
+        {
+            string path = PatchFiles.Join(Root, file);
+            if (!PatchFiles.Exists(path)) return;
+            string source = CodeStringSource(file);
+            if (!Ps.Eq(PatchFiles.Sha256(source), CodeHashes[file])) return;
+            byte[] bytes = File.ReadAllBytes(source);
+            CodeStrings.Apply(bytes, CodeStringList.Where(s => Ps.Eq(s.File, file) && Jobs.IsWanted(skip, s.Part)));
+            if (bytes.SequenceEqual(File.ReadAllBytes(path))) return;
+            BackupBin(path);
+            File.WriteAllBytes(path, bytes);
+        }
+
         // --- links ----------------------------------------------------------------------
 
         static readonly string[] LinkFiles =
@@ -899,6 +983,14 @@ namespace IcqRevival.Patch
             if (!Ps.IsTrue(shown)) shown = "(not set)";
             add("Sign-in server", "sign-in", "ICQ signs in to your server", "now " + shown, SignInState(domain, SavedBase()));
             foreach (string f in TranslationFiles()) add("Language", "uk:" + f, "uk:" + f, f, TranslationState(f));
+            foreach (string file in CodeStringFiles)
+            {
+                foreach (string part in new[] { "sign-in", "links" })
+                {
+                    string state = CodeStringState(file, part);
+                    if (state != "missing") add("", part, part, file, state);
+                }
+            }
             return Jobs.Merge(items);
         }
 
@@ -914,8 +1006,15 @@ namespace IcqRevival.Patch
                     "\n\nThe code patches are tied to exact offsets in that build. Applying them to " +
                     "another version would overwrite unrelated code, so nothing was changed.");
             }
+            foreach (string file in CodeStringFiles)
+            {
+                if ((Jobs.IsWanted(skip, "sign-in") || Jobs.IsWanted(skip, "links")) && CodeStringOtherVersion(file))
+                {
+                    throw new InvalidOperationException(file + " does not match ICQ Pro 2003b build 3916; nothing was changed.");
+                }
+            }
             List<string> binaries = BinaryFiles();
-            PatchSteps.Start(binaries.Count + 4);
+            PatchSteps.Start(binaries.Count + CodeStringFiles.Count() + 4);
             PatchSteps.Step("Checking the client...");
             List<PatchItem> before = Items(domain);
 
@@ -927,6 +1026,11 @@ namespace IcqRevival.Patch
                 if (BuildBinary(rel, domain, skip, tooLong)) changed = true;
             }
             if (changed) ClearPluginCache();
+            foreach (string file in CodeStringFiles)
+            {
+                PatchSteps.Step("Building " + file + "...");
+                SetCodeStrings(file, skip);
+            }
             PatchSteps.Step("Links in DataFiles...");
 
             string b = Base(domain);
@@ -978,7 +1082,7 @@ namespace IcqRevival.Patch
         public int RestoreAll()
         {
             int done = 0;
-            List<string> binaries = BinaryFiles();
+            List<string> binaries = Ps.Unique(BinaryFiles().Concat(CodeStringFiles));
             PatchSteps.Start(binaries.Count + LinkFiles.Length + 1);
             foreach (string f in binaries)
             {
