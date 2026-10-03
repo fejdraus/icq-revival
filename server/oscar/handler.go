@@ -437,7 +437,7 @@ func (rt Handler) ICBMAddParameters(ctx context.Context, instance *state.Session
 		return err
 	}
 	rt.LogRequest(ctx, inFrame, inBody)
-	rt.ICBMService.AddParameters(ctx, instance, inBody)
+	rt.AddParameters(ctx, instance, inBody)
 	return nil
 }
 

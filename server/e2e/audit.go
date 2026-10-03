@@ -405,7 +405,7 @@ func (a *Auditor) get(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return nil, err
@@ -501,7 +501,7 @@ func (a *Auditor) Step(ctx context.Context, st *AuditState) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNoContent {
 		why, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("POST log/cosignature: %s %s", resp.Status, strings.TrimSpace(string(why)))

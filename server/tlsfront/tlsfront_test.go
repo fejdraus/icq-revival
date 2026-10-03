@@ -153,7 +153,7 @@ func handshake(t *testing.T, serverCfg, clientCfg *tls.Config) handshakeResult {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 
 	serverDone := make(chan handshakeResult, 1)
 	go func() {
@@ -162,7 +162,7 @@ func handshake(t *testing.T, serverCfg, clientCfg *tls.Config) handshakeResult {
 			serverDone <- handshakeResult{serverErr: err}
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		tc := tls.Server(conn, serverCfg)
 		err = Handshake(context.Background(), tc)
 		serverDone <- handshakeResult{serverErr: err, serverState: tc.ConnectionState()}
@@ -170,7 +170,7 @@ func handshake(t *testing.T, serverCfg, clientCfg *tls.Config) handshakeResult {
 
 	conn, err := net.DialTimeout("tcp", ln.Addr().String(), 5*time.Second)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	client := tls.Client(conn, clientCfg)
 	_ = client.SetDeadline(time.Now().Add(5 * time.Second))
 	clientErr := client.Handshake()
@@ -299,8 +299,8 @@ func TestConnListener(t *testing.T) {
 	assert.Equal(t, addr, l.Addr())
 
 	a, b := net.Pipe()
-	defer a.Close()
-	defer b.Close()
+	defer func() { _ = a.Close() }()
+	defer func() { _ = b.Close() }()
 
 	delivered := make(chan error, 1)
 	go func() { delivered <- l.Deliver(a) }()

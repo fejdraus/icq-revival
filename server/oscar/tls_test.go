@@ -195,7 +195,7 @@ func TestServer_TLSListener_ALPN(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			assert.Equal(t, uint16(tls.VersionTLS13), conn.ConnectionState().Version)
 
 			if tc.wantFLAPHello {
@@ -210,7 +210,7 @@ func TestServer_TLSListener_ALPN(t *testing.T) {
 				require.NoError(t, err)
 				resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
 				require.NoError(t, err)
-				defer resp.Body.Close()
+				defer func() { _ = resp.Body.Close() }()
 				body, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
 				assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -240,7 +240,7 @@ func TestServer_TLSListener_EndpointAndChannelBinding(t *testing.T) {
 
 	conn, err := fx.dialTLS(&tls.Config{NextProtos: []string{tlsfront.ALPNOSCAR}})
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	_, _ = conn.Read(make([]byte, 1)) // the handler ran
 
 	got := <-seenCh
@@ -260,7 +260,7 @@ func TestServer_TLSListener_CertificateReload(t *testing.T) {
 	servedSerial := func(cfg *tls.Config) string {
 		conn, err := fx.dialTLS(cfg)
 		require.NoError(t, err)
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		return conn.ConnectionState().PeerCertificates[0].SerialNumber.String()
 	}
 
@@ -281,7 +281,7 @@ func TestServer_TLSListener_SilentClientTimesOut(t *testing.T) {
 
 	conn, err := net.Dial("tcp", fx.addr)
 	require.NoError(t, err)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// say nothing: the server gives up after the handshake deadline
 	_ = conn.SetReadDeadline(time.Now().Add(tlsfront.HandshakeTimeout + 5*time.Second))
