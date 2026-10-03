@@ -416,14 +416,27 @@ impl StreamRewriter {
         lines
     }
 
-    /// Releases held bytes unchanged, for the end of the stream; nothing of
-    /// a broken one.
-    pub fn finish(&mut self, out: &mut Vec<u8>) {
-        if self.state == State::Broken {
-            self.buf.clear();
-            return;
+    /// The end of the stream: what is held is the start of a frame that
+    /// never came whole (fifth audit of 2026-10, finding 3). Returns how many
+    /// bytes were dropped.
+    ///
+    /// - `Raw`: nothing is held (every byte passed at once); anything that
+    ///   were would go on as it is, since the stream is not FLAP.
+    /// - `Opening`: the first bytes of a stream not yet recognised - the
+    ///   start of a sign-on, or of another protocol - are dropped. No FLAP
+    ///   frame can be in them, and nothing after them is coming.
+    /// - `Flap`: a partial frame is dropped, never handed on: it has not been
+    ///   through the rewriter, and its header and the start of its payload -
+    ///   the start of a message - would reach the other side as they are.
+    /// - `Broken`: nothing passes.
+    pub fn finish(&mut self, out: &mut Vec<u8>) -> usize {
+        if self.state == State::Raw {
+            out.append(&mut self.buf);
+            return 0;
         }
-        out.append(&mut self.buf);
+        let dropped = self.buf.len();
+        self.buf.clear();
+        dropped
     }
 }
 
@@ -614,7 +627,9 @@ impl StreamRewriter {
             return;
         }
         let processed = match ctx.as_mut() {
-            Some(c) => rewrite::process_crypto(self.dir, payload, c.crypto, c.now),
+            Some(c) => {
+                rewrite::process_crypto_for(self.dir, payload, c.crypto, c.now, policy.tls.server())
+            }
             None => rewrite::process(self.dir, payload, policy),
         };
         lines.extend(processed.lines);
@@ -654,7 +669,16 @@ impl StreamRewriter {
                     );
                     self.put_frame(&with_payload(frame, &p), Seq::Own, out);
                 }
-                _ => {
+                // A stand-in that does not fit: never the original instead
+                // (fifth audit of 2026-10, finding 4).
+                Some(_) => {
+                    lines.push(
+                        "frame dropped: its stand-in would exceed 64 KiB, and the original may not go"
+                            .to_string(),
+                    );
+                    self.removed(seq_of(frame));
+                }
+                None => {
                     lines.push("frame kept: ICQE2E_NO_INJECT is set".to_string());
                     self.put_frame(frame, Seq::Own, out);
                 }
@@ -683,6 +707,36 @@ impl StreamRewriter {
             match processed.payload {
                 Some(p) if p.len() <= u16::MAX as usize => {
                     self.put_frame(&with_payload(frame, &p), Seq::Own, out);
+                }
+                // On the crypto path a rewrite is what protects the frame -
+                // an encrypted message, a decrypted one, a control message's
+                // carrier - so the original never goes in its place: the
+                // frame is dropped with a note (fifth audit of 2026-10,
+                // finding 4). The harness keeps its old behaviour.
+                Some(p) if ctx.is_some() => {
+                    lines.push(format!(
+                        "frame would exceed 64 KiB ({} bytes) after the add-on's rewrite; dropped, the original is not sent in its place",
+                        p.len()
+                    ));
+                    self.removed(seq_of(frame));
+                    // As for any container taken out: the server's answer to
+                    // it goes too.
+                    if let Some(id) = processed.ack_request {
+                        self.hide(id, lines);
+                    }
+                    if let Some(c) = ctx.as_deref_mut() {
+                        let who = peer.clone().unwrap_or_else(|| NOTE_SENDER.to_string());
+                        let what = match self.dir {
+                            Direction::Outbound => format!(
+                                "The message to {who} was NOT sent: encrypted, it would not fit in one frame. Nothing was sent unencrypted; send it in shorter parts."
+                            ),
+                            Direction::Inbound => format!(
+                                "A message from {who} was not shown: once decrypted it would not fit in one frame. Nothing undecrypted was shown in its place."
+                            ),
+                        };
+                        c.crypto
+                            .note(&who, format!("{}{what}", crate::policy::PREFIX));
+                    }
                 }
                 Some(_) => {
                     lines.push("frame would exceed 64 KiB; sent unchanged".to_string());
@@ -1290,14 +1344,53 @@ mod tests {
         assert!(c.seen.is_empty(), "the container never reached the engine");
     }
 
+    /// Fifth audit of 2026-10, finding 3. Replaces
+    /// `finish_releases_a_partial_frame`, which asserted that the end of the
+    /// stream handed a partial frame on as it was - a frame that never went
+    /// through the rewriter, with the start of a message in it. Now: in a
+    /// FLAP stream, or one still opening, what is held is dropped; a raw
+    /// stream holds nothing and passes everything; a broken one passes
+    /// nothing.
     #[test]
-    fn finish_releases_a_partial_frame() {
+    fn finish_hands_on_no_partial_frame() {
+        // Still opening: the start of a sign-on.
         let mut r = StreamRewriter::new(Direction::Inbound);
         let partial = &frame(1, 1, &[0, 0, 0, 1, 9, 9])[..8];
         assert!(run(&mut r, partial).is_empty());
         let mut out = Vec::new();
-        r.finish(&mut out);
-        assert_eq!(out, partial);
+        assert_eq!(r.finish(&mut out), partial.len());
+        assert!(out.is_empty(), "the opening's partial frame is dropped");
+
+        // FLAP: a message cut short, in both directions, harness and crypto.
+        for dir in [Direction::Inbound, Direction::Outbound] {
+            let mut r = StreamRewriter::new(dir);
+            let msg = match dir {
+                Direction::Outbound => out_message(2, "100002", "secret words"),
+                Direction::Inbound => in_message(2, "100002", "secret words", None),
+            };
+            let cut = msg.len() - 4;
+            assert_eq!(
+                run(&mut r, &[hello(), msg[..cut].to_vec()].concat()),
+                hello()
+            );
+            let mut out = Vec::new();
+            assert_eq!(r.finish(&mut out), cut);
+            assert!(out.is_empty(), "{dir:?}: the partial frame never goes on");
+
+            let (mut r, _) = opened(dir);
+            let mut out = Vec::new();
+            r.push_crypto(&msg[..cut], &mut Fake::new(), 1, &encrypt(), &mut out);
+            assert!(out.is_empty());
+            assert_eq!(r.finish(&mut out), cut);
+            assert!(out.is_empty(), "{dir:?}: nor on the crypto path");
+        }
+
+        // Raw: everything passed at once, nothing held, nothing to drop.
+        let mut r = StreamRewriter::new(Direction::Inbound);
+        assert_eq!(run(&mut r, b"OFT2 data"), b"OFT2 data");
+        let mut out = Vec::new();
+        assert_eq!(r.finish(&mut out), 0);
+        assert!(out.is_empty());
     }
 
     // ---- the crypto path ----
@@ -1424,6 +1517,17 @@ mod tests {
         /// An automatic contact unless a test says otherwise.
         fn strictness(&self, _peer: &str) -> Option<bool> {
             self.strict
+        }
+
+        /// Refused exactly when the contact is not an automatic one, as the
+        /// engine does.
+        fn plain_inbound(&mut self, peer: &str, _now: u64) -> Option<String> {
+            if self.strict == Some(false) {
+                return None;
+            }
+            let n = format!("unencrypted message from {peer} not shown");
+            self.gate_notes.push(n.clone());
+            Some(n)
         }
 
         fn note(&mut self, _peer: &str, text: String) {
@@ -2560,5 +2664,359 @@ next"]);
             shown.iter().any(|t| t.contains("could not be read")),
             "{shown:?}"
         );
+    }
+
+    // ---- fifth audit of 2026-10 ----
+
+    /// A channel-4 message as the server relays it.
+    fn in_ch4(seq: u16, sender: &str, msg_type: u8, text: &[u8]) -> Vec<u8> {
+        use crate::test_frames as tf;
+        let mut d = 100002u32.to_le_bytes().to_vec();
+        d.push(msg_type);
+        d.push(0);
+        let mut t = text.to_vec();
+        t.push(0);
+        d.extend_from_slice(&(t.len() as u16).to_le_bytes());
+        d.extend_from_slice(&t);
+        let tlvs = tf::tlv(icbm::TLV_ICQ_DATA, &d);
+        tf::data(
+            seq,
+            &tf::snac(0x0004, 0x0007, &tf::to_client_body(sender, 4, &tlvs)),
+        )
+    }
+
+    /// Every way the server can hand the client a contact's words without a
+    /// container, and two that carry no words.
+    fn unencrypted_frames(
+        text: &[u8],
+    ) -> (Vec<(&'static str, Vec<u8>)>, Vec<(&'static str, Vec<u8>)>) {
+        use crate::test_frames as tf;
+        let with_type2 = |t: u8| {
+            let mut svc = tf::type2_svc(text);
+            svc[45] = t;
+            let tlvs = tf::tlv(0x0005, &tf::ch2_fragment(tf::CAP_SERVER_RELAY, &svc));
+            tf::data(
+                2,
+                &tf::snac(0x0004, 0x0007, &tf::to_client_body("100002", 2, &tlvs)),
+            )
+        };
+        let offline = |t: u8| {
+            let mut f = tf::offline_reply(2, 100002, text);
+            f[40] = t;
+            f
+        };
+        let shown = vec![
+            (
+                "ch1",
+                in_message(2, "100002", std::str::from_utf8(text).unwrap(), Some(5)),
+            ),
+            ("ch2 plain", tf::in_ch2(2, "100002", text)),
+            ("ch2 url", with_type2(icbm::MSG_TYPE_URL)),
+            ("ch4 plain", in_ch4(2, "100002", icbm::MSG_TYPE_PLAIN, text)),
+            ("ch4 url", in_ch4(2, "100002", icbm::MSG_TYPE_URL, text)),
+            ("offline plain", tf::offline_reply(2, 100002, text)),
+            ("offline url", offline(icbm::MSG_TYPE_URL)),
+        ];
+        let not_words = vec![
+            ("ch2 plugin", with_type2(0x1A)),
+            ("ch4 authorization request", in_ch4(2, "100002", 0x06, text)),
+        ];
+        (shown, not_words)
+    }
+
+    fn contains(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// Fifth audit of 2026-10, finding 1, on every inbound text path: an
+    /// unencrypted message in a protected contact's name never reaches the
+    /// client - live on channels 1, 2 and 4, or offline - and the chat is
+    /// told; for an automatic contact it passes as it came; what carries no
+    /// words (a plugin message, an authorization request) passes either way.
+    /// With `ICQE2E_NO_INJECT` the frame stays with the add-on's words in
+    /// place of the text.
+    #[test]
+    fn an_unencrypted_message_in_a_protected_contacts_name_is_shown_on_no_path() {
+        let forged = b"FORGED by the server";
+        let (shown, not_words) = unencrypted_frames(forged);
+        for (what, f) in &shown {
+            for strict in [Some(true), None] {
+                let (mut r, _) = opened(Direction::Inbound);
+                let mut c = Fake::new();
+                c.strict = strict;
+                let mut out = Vec::new();
+                let lines = r.push_crypto(f, &mut c, 1, &encrypt(), &mut out);
+                assert!(!contains(&out, forged), "{what} {strict:?}: {lines:?}");
+                assert!(
+                    c.gate_notes.iter().any(|n| n.contains("not shown")),
+                    "{what}: {lines:?}"
+                );
+                // NO_INJECT: same frame count, the text is the add-on's.
+                let mut no_inject = encrypt();
+                no_inject.inject = false;
+                let (mut r, _) = opened(Direction::Inbound);
+                let mut out = Vec::new();
+                let lines = r.push_crypto(f, &mut c, 1, &no_inject, &mut out);
+                assert!(!contains(&out, forged), "{what} no-inject: {lines:?}");
+                assert!(
+                    contains(&out, b"was not shown"),
+                    "{what} no-inject: {lines:?}"
+                );
+            }
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut out = Vec::new();
+            r.push_crypto(f, &mut Fake::new(), 1, &encrypt(), &mut out);
+            assert_eq!(&out, f, "{what}: an automatic contact's passes as it came");
+        }
+        for (what, f) in &not_words {
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut c = Fake::new();
+            c.strict = Some(true);
+            let mut out = Vec::new();
+            r.push_crypto(f, &mut c, 1, &encrypt(), &mut out);
+            assert_eq!(&out, f, "{what}: no words, passes");
+        }
+    }
+
+    /// The same through the engine that stands in without keys: the
+    /// contact's policy cannot be told, so it counts as protected.
+    #[test]
+    fn without_keys_an_unencrypted_message_is_not_shown_either() {
+        let mut w = crate::gate::Withheld::new("the state file cannot be read".into());
+        let (mut r, _) = opened(Direction::Inbound);
+        let mut out = Vec::new();
+        r.push_crypto(
+            &in_message(2, "100002", "FORGED", None),
+            &mut w,
+            1,
+            &encrypt(),
+            &mut out,
+        );
+        assert!(!contains(&out, b"FORGED"));
+        let shown = texts_of(&frames_of(&out));
+        assert!(
+            shown
+                .iter()
+                .any(|t| t.contains("was not shown") && t.contains("state file")),
+            "{shown:?}"
+        );
+    }
+
+    /// The tZer the server writes for ICQ 7.2 out of a 6.5 one is shown from
+    /// a protected (verified) contact too; the same with text appended, with
+    /// a foreign URL, or with no server configured is text, and dropped.
+    #[test]
+    fn the_servers_tzer_form_is_shown_from_a_protected_contact_and_nothing_like_it() {
+        use crate::test_frames as tf;
+        let frame = |doc: &str| {
+            let tlvs = tf::tlv(0x0002, &crate::tzer::tests::fragments(doc));
+            tf::data(
+                2,
+                &tf::snac(0x0004, 0x0007, &tf::to_client_body("100002", 1, &tlvs)),
+            )
+        };
+        let mut policy = encrypt();
+        policy.tls = crate::config::TlsPolicy::On {
+            server: "icq.example.org".into(),
+            pins: Vec::new(),
+        };
+        let doc = crate::tzer::tests::DOC;
+        let run_with = |f: &[u8], policy: &Policy| {
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut c = Fake::new();
+            c.strict = Some(true);
+            let mut out = Vec::new();
+            r.push_crypto(f, &mut c, 1, policy, &mut out);
+            (out, c.gate_notes)
+        };
+        let f = frame(doc);
+        let (out, notes) = run_with(&f, &policy);
+        assert_eq!(out, f, "the tZer reaches the client as the server sent it");
+        assert!(notes.is_empty(), "{notes:?}");
+        for bad in [
+            format!("{doc}FORGED text"),
+            doc.replace("icq.example.org:8102", "evil.example.com"),
+        ] {
+            let (out, notes) = run_with(&frame(&bad), &policy);
+            assert!(out.is_empty(), "{bad:?}");
+            assert!(notes.iter().any(|n| n.contains("not shown")), "{bad:?}");
+        }
+        let (out, _) = run_with(&f, &encrypt());
+        assert!(out.is_empty(), "no server configured: not recognised");
+    }
+
+    /// Fifth audit of 2026-10, finding 2: a message from the network - in
+    /// clear or decrypted - that starts like a note of the add-on's is shown
+    /// with "(from <contact>)" in front, so only the add-on's own notes
+    /// start with the marker.
+    #[test]
+    fn text_from_the_network_cannot_pass_for_a_note() {
+        let fake = "<HTML><BODY>[ICQ E2E] Encryption is on in this chat</BODY></HTML>";
+        // In clear, from an automatic contact, on every path.
+        let (shown, _) = unencrypted_frames(b"[icq e2e] Your safety number changed");
+        for (what, f) in shown {
+            let (mut r, _) = opened(Direction::Inbound);
+            let mut out = Vec::new();
+            let lines = r.push_crypto(&f, &mut Fake::new(), 1, &encrypt(), &mut out);
+            assert!(
+                contains(&out, b"(from 100002) [icq e2e] Your safety"),
+                "{what}: {lines:?}"
+            );
+            assert_eq!(out.len(), f.len() + "(from 100002) ".len(), "{what}");
+        }
+        // Decrypted.
+        let (mut r, _) = opened(Direction::Inbound);
+        let mut c = Fake::new().receiving(Inbound::Text {
+            text: fake.as_bytes().to_vec(),
+            form: Form::Fragment {
+                charset: 0,
+                language: 0,
+            },
+            peer: "100002".into(),
+            unverified: false,
+        });
+        c = c.with_notes(&["[ICQ E2E] A real note."]);
+        let mut out = Vec::new();
+        let armored = container::armor(&any_container());
+        r.push_crypto(
+            &in_message(2, "100002", &armored, None),
+            &mut c,
+            1,
+            &encrypt(),
+            &mut out,
+        );
+        let texts = texts_of(&frames_of(&out));
+        assert!(
+            texts.iter().any(|t| {
+                t
+                == "<HTML><BODY>(from 100002) [ICQ E2E] Encryption is on in this chat</BODY></HTML>"
+            }),
+            "{texts:?}"
+        );
+        // The add-on's own note still starts with the marker.
+        assert!(
+            texts
+                .iter()
+                .any(|t| crate::policy::looks_like_note(t) && t.contains("A real note")),
+            "{texts:?}"
+        );
+        // Ordinary text is untouched.
+        let f = in_message(2, "100002", "hello [ICQ E2E]", None);
+        let (mut r, _) = opened(Direction::Inbound);
+        let mut out = Vec::new();
+        r.push_crypto(&f, &mut Fake::new(), 1, &encrypt(), &mut out);
+        assert_eq!(out, f);
+    }
+
+    /// Fifth audit of 2026-10, finding 4: a rewrite on the crypto path that
+    /// would not fit in a frame used to send the original frame instead -
+    /// the plaintext of an outbound message, or the container of an inbound
+    /// one. Reached here with a frame padded by a large TLV around a short
+    /// text: the client's own messages never come near it (the container is
+    /// at most `MAX_TEXT` bytes, and a decrypted text is shorter than its
+    /// container).
+    #[test]
+    fn a_rewrite_too_large_for_a_frame_never_sends_the_original() {
+        use crate::test_frames as tf;
+        let pad = vec![0x55u8; 60_000];
+        // Outbound: a short secret, padded, encrypted into 7000 bytes.
+        let mut tlvs = tf::tlv(0x0002, &tf::ch1_fragments(0, b"the secret"));
+        tlvs.extend(tf::tlv(0x7777, &pad));
+        let f = tf::data(
+            2,
+            &tf::snac(0x0004, 0x0006, &tf::to_host_body("100002", 1, &tlvs)),
+        );
+        assert!(f.len() < 65_536);
+        let (mut r, _) = opened(Direction::Outbound);
+        let mut c = Fake::new().sending(Outbound::Encrypted("x".repeat(7000)));
+        let mut out = Vec::new();
+        let lines = r.push_crypto(&f, &mut c, 1, &encrypt(), &mut out);
+        assert!(!contains(&out, b"the secret"), "{lines:?}");
+        assert!(out.is_empty(), "nothing of it goes: {lines:?}");
+        assert!(
+            c.gate_notes.iter().any(|n| n.contains("NOT sent")),
+            "{lines:?}"
+        );
+        // Inbound: a container, padded, decrypted into more than it was.
+        let armored = container::armor(&any_container());
+        let mut tlvs = tf::tlv(0x0002, &tf::ch1_fragments(0, armored.as_bytes()));
+        tlvs.extend(tf::tlv(0x7777, &pad));
+        let f = tf::data(
+            2,
+            &tf::snac(0x0004, 0x0007, &tf::to_client_body("100002", 1, &tlvs)),
+        );
+        let (mut r, _) = opened(Direction::Inbound);
+        let mut c = Fake::new().receiving(Inbound::Text {
+            text: vec![b'a'; 6000],
+            form: Form::Fragment {
+                charset: 0,
+                language: 0,
+            },
+            peer: "100002".into(),
+            unverified: false,
+        });
+        let mut out = Vec::new();
+        let lines = r.push_crypto(&f, &mut c, 1, &encrypt(), &mut out);
+        assert!(!contains(&out, armored.as_bytes()), "{lines:?}");
+        assert!(!contains(&out, &pad[..64]), "{lines:?}");
+        assert!(
+            c.gate_notes.iter().any(|n| n.contains("not shown")),
+            "{lines:?}"
+        );
+    }
+
+    /// Fifth audit of 2026-10, finding 5: while a call module is not loaded
+    /// and patched, a call that must be encrypted is not set up - one
+    /// patched module no longer counts for both - and once every module the
+    /// client has is patched (the other absent), it goes to the key
+    /// exchange.
+    #[test]
+    fn a_strict_call_waits_for_every_call_module_to_be_patched() {
+        use crate::gate::MediaHooks;
+        for dir in [Direction::Outbound, Direction::Inbound] {
+            if !calls_sip_is_known(dir) {
+                continue;
+            }
+            for (media, strict, keyed) in [
+                (
+                    [MediaHooks::Ready, MediaHooks::NotLoaded],
+                    Some(true),
+                    false,
+                ),
+                (
+                    [MediaHooks::NotLoaded, MediaHooks::NotLoaded],
+                    Some(true),
+                    false,
+                ),
+                (
+                    [MediaHooks::NotLoaded, MediaHooks::Ready],
+                    Some(false),
+                    false,
+                ),
+                ([MediaHooks::Ready, MediaHooks::Absent], Some(true), true),
+                ([MediaHooks::Ready, MediaHooks::Ready], Some(true), true),
+            ] {
+                let g: &'static crate::gate::Gate = Box::leak(Box::new(crate::gate::Gate::ready(
+                    crate::gate::HookMask::ALL,
+                )));
+                g.set_media(0, media[0].clone());
+                g.set_media(1, media[1].clone());
+                crate::gate::use_for_this_thread(Some(g));
+                let mut policy = encrypt();
+                policy.calls_encrypt = true;
+                let (mut r, _) = opened(dir);
+                let mut c = Fake::new();
+                c.strict = strict;
+                let mut out = Vec::new();
+                let f = sip_frame(dir, 2);
+                let lines = r.push_crypto(&f, &mut c, 1, &policy, &mut out);
+                let case = format!("{dir:?} {media:?} {strict:?}: {lines:?}");
+                assert_eq!(!c.sip_seen.is_empty(), keyed, "{case}");
+                if strict == Some(true) && !keyed {
+                    assert!(out.is_empty(), "never set up: {case}");
+                }
+            }
+        }
+        crate::gate::use_for_this_thread(None);
     }
 }

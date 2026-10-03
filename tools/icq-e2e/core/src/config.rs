@@ -63,6 +63,13 @@
 //!   `e2e-kt-auditor -print-key` prints them (docs/e2e/KEY-TRANSPARENCY.md).
 //!   Given, exactly these auditors are trusted, whatever the server names;
 //!   absent or empty, the ones the server names are pinned on first use.
+//! - `ICQE2E_SECURITY_POPUPS` - overrides the `security_popups=` line of
+//!   `icq-e2e.ini`. On by default: the security events of [`crate::alert`]
+//!   (a safety number, a verification, a verified contact's key change, a
+//!   broken or unaudited key log, an unencrypted message in a protected
+//!   contact's name) are also shown in a Windows box of the add-on's own,
+//!   which no message from the network can imitate. `off` leaves them in the
+//!   chat and the log only.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -126,6 +133,10 @@ pub struct Policy {
     pub auditors: Option<Vec<String>>,
     /// Keys on the `auditors=` line that do not read, for the log.
     pub auditors_unread: Vec<String>,
+    /// `security_popups=`: security events are also shown in a Windows box
+    /// of the add-on's own, which the network cannot forge ([`crate::alert`],
+    /// fifth audit of 2026-10, finding 2). On unless the line says off.
+    pub security_popups: bool,
 }
 
 /// What `server=`, `tls=` and `tls_pin=` say (STAGE-TLS 3.5).
@@ -265,7 +276,7 @@ impl Settings<'_> {
 /// `tbdiag.dll`, and on 6.5 it is `msimg32.dll`. Asking the process for the
 /// main module gets the executable itself, which is the folder the patch uses.
 #[cfg(windows)]
-fn client_folder() -> PathBuf {
+pub(crate) fn client_folder() -> PathBuf {
     use windows_sys::Win32::System::LibraryLoader::GetModuleFileNameW;
     let mut buf = [0u16; 260];
     // A module whose path does not fit is not the client's own folder, and a
@@ -280,7 +291,7 @@ fn client_folder() -> PathBuf {
 }
 
 #[cfg(not(windows))]
-fn client_folder() -> PathBuf {
+pub(crate) fn client_folder() -> PathBuf {
     PathBuf::from(".")
 }
 
@@ -305,6 +316,7 @@ impl Policy {
             files_required: false,
             auditors: None,
             auditors_unread: Vec::new(),
+            security_popups: true,
         }
     }
 
@@ -325,6 +337,7 @@ impl Policy {
             files_required: false,
             auditors: None,
             auditors_unread: Vec::new(),
+            security_popups: true,
         }
     }
 
@@ -388,6 +401,7 @@ impl Policy {
             files_log: env("ICQE2E_FILES_LOG"),
             files_encrypt: env("ICQE2E_FILES_ENCRYPT"),
             auditors: env("ICQE2E_AUDITORS").filter(|a| !a.trim().is_empty()),
+            security_popups: env("ICQE2E_SECURITY_POPUPS"),
         })
     }
 
@@ -450,6 +464,13 @@ impl Policy {
             files_required: required(files_encrypt.as_deref()),
             auditors,
             auditors_unread,
+            // Only a clear "off" turns them off, like `e2e=`.
+            security_popups: e2e_on(
+                raw.security_popups
+                    .clone()
+                    .or_else(|| ini("security_popups"))
+                    .as_deref(),
+            ),
         }
     }
 
@@ -515,8 +536,13 @@ impl Policy {
                 self.auditors_unread.join(",")
             ),
         };
+        let popups = if self.security_popups {
+            ""
+        } else {
+            ", security_popups=off (security events only in the chat and the log)"
+        };
         format!(
-            "{what}{peers}, directory={}, frames={}, {}, home={}{}{}{}{}{auditors}",
+            "{what}{peers}, directory={}, frames={}, {}, home={}{}{}{}{}{auditors}{popups}",
             self.directory.as_deref().unwrap_or("unset"),
             if self.inject {
                 "may be added"
@@ -590,6 +616,7 @@ struct Raw {
     files_log: Option<String>,
     files_encrypt: Option<String>,
     auditors: Option<String>,
+    security_popups: Option<String>,
 }
 
 /// Whether a switch that is off unless asked for (`calls_log=`) is on: only a
@@ -670,6 +697,7 @@ mod tests {
             files_log: None,
             files_encrypt: None,
             auditors: None,
+            security_popups: None,
         })
     }
 
@@ -1309,5 +1337,43 @@ tls = off
         assert!(TlsPolicy::parse(Some("icq.example.org"), Some("off"), None)
             .describe()
             .contains("opted out"));
+    }
+
+    /// Fifth audit of 2026-10, finding 2: the security boxes are on unless
+    /// the ini says off in so many words.
+    #[test]
+    fn security_popups_are_on_unless_switched_off() {
+        let dir = std::env::temp_dir().join("icqe2e-ini-popups-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let ini = dir.join("icq-e2e.ini");
+        let path = ini.to_str().unwrap();
+        let read = |text: &str| {
+            std::fs::write(&ini, text).unwrap();
+            policy(Settings {
+                ini_path: Some(path),
+                ..Default::default()
+            })
+        };
+        for text in [
+            "",
+            "security_popups =\n",
+            "security_popups = on\n",
+            "security_popups = maybe\n",
+        ] {
+            let p = read(text);
+            assert!(p.security_popups, "{text:?}");
+            assert!(!p.describe().contains("security_popups"), "{text:?}");
+        }
+        for text in [
+            "security_popups = off\n",
+            "SECURITY_POPUPS=0\n",
+            "security_popups = no\n",
+        ] {
+            let p = read(text);
+            assert!(!p.security_popups, "{text:?}");
+            assert!(p.describe().contains("security_popups=off"), "{text:?}");
+        }
+        assert!(Policy::observe().security_popups && Policy::harness().security_popups);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

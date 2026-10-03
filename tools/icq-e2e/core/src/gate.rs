@@ -159,9 +159,13 @@ pub enum Bootstrap {
 /// The call modules' hooks.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MediaHooks {
-    /// Not loaded yet (they load when a call starts).
+    /// Not loaded and patched yet. With `calls_encrypt` the bootstrap loads
+    /// and patches them before any call (fifth audit of 2026-10, finding 5);
+    /// until then a call that must be encrypted is not let through.
     NotLoaded,
     Ready,
+    /// The client has no such module (ICQ 6.5 has no `sipXmediaLib.dll`).
+    Absent,
     Failed(String),
 }
 
@@ -287,7 +291,15 @@ pub fn media(p: &Policy, boot: &Bootstrap, hooks: &MediaHooks, strict: Option<bo
         MediaHooks::Failed(why) => Verdict::Plain(format!(
             "the add-on could not take over the call's media ({why}), so the call is not end-to-end encrypted"
         )),
-        _ => Verdict::Protect,
+        // The call modules are not patched yet: their first datagrams could
+        // leave before the hooks are in (fifth audit of 2026-10, finding 5).
+        MediaHooks::NotLoaded | MediaHooks::Absent if required => Verdict::Block(
+            "the call modules are not loaded and patched yet, so the call's media could leave unencrypted".to_string(),
+        ),
+        MediaHooks::NotLoaded | MediaHooks::Absent => Verdict::Plain(
+            "the call modules are not loaded and patched yet, so the call is not end-to-end encrypted".to_string(),
+        ),
+        MediaHooks::Ready => Verdict::Protect,
     }
 }
 
@@ -364,10 +376,13 @@ impl Gate {
         }
     }
 
-    /// A gate that is ready with `mask` (the tests and the test host).
+    /// A gate that is ready with `mask`, its call modules patched (the tests
+    /// and the test host).
     pub fn ready(mask: HookMask) -> Gate {
         let g = Gate::new();
         g.force(Bootstrap::Ready(mask));
+        g.set_media(0, MediaHooks::Ready);
+        g.set_media(1, MediaHooks::Ready);
         g
     }
 
@@ -446,17 +461,12 @@ impl Gate {
         }
     }
 
-    /// The call modules together: failed if one failed, ready if one is.
+    /// The call modules together: failed if one failed; not loaded while one
+    /// the client has is not patched yet; ready once every module the
+    /// client has is (fifth audit of 2026-10, finding 5: one patched module
+    /// used to make both count as ready).
     pub fn media(&self) -> MediaHooks {
-        let m = lock(&self.media);
-        if let Some(f) = m.iter().find(|s| matches!(s, MediaHooks::Failed(_))) {
-            return f.clone();
-        }
-        if m.contains(&MediaHooks::Ready) {
-            MediaHooks::Ready
-        } else {
-            MediaHooks::NotLoaded
-        }
+        combine(&lock(&self.media)[..])
     }
 
     /// Queues a note for the chat last used.
@@ -478,6 +488,20 @@ impl Gate {
         }
         said.push((key.to_string(), now));
         true
+    }
+}
+
+/// The call modules' states as one: [`Gate::media`].
+pub fn combine(m: &[MediaHooks]) -> MediaHooks {
+    if let Some(f) = m.iter().find(|s| matches!(s, MediaHooks::Failed(_))) {
+        return f.clone();
+    }
+    if m.contains(&MediaHooks::NotLoaded) {
+        MediaHooks::NotLoaded
+    } else if m.contains(&MediaHooks::Ready) {
+        MediaHooks::Ready
+    } else {
+        MediaHooks::Absent
     }
 }
 
@@ -529,6 +553,8 @@ pub fn use_for_this_thread(g: Option<&'static Gate>) {
 pub struct Withheld {
     why: String,
     notes: Vec<Note>,
+    /// When a warning about an unencrypted message was last put in a chat.
+    plain_said: std::collections::HashMap<String, u64>,
 }
 
 impl Withheld {
@@ -619,6 +645,18 @@ impl Crypto for Withheld {
     /// Unknown: there is no state to tell a contact's policy by.
     fn strictness(&self, _peer: &str) -> Option<bool> {
         None
+    }
+
+    /// Unknown, so protected (fifth audit of 2026-10, finding 1): no
+    /// unencrypted message is shown while there are no keys, as no message
+    /// is sent.
+    fn plain_inbound(&mut self, peer: &str, now: u64) -> Option<String> {
+        let why = format!(
+            "the add-on cannot read its settings for {peer}: {}",
+            self.why.trim_end_matches('.')
+        );
+        crate::crypto::plain_dropped(&mut self.plain_said, &mut self.notes, peer, &why, now);
+        Some(why)
     }
 
     fn note(&mut self, peer: &str, text: String) {
@@ -730,6 +768,9 @@ mod tests {
         RolledBack,
         NetworkingModuleNeverLoaded,
         CallHooksMissing,
+        /// The call modules not loaded and patched yet (fifth audit of
+        /// 2026-10, finding 5).
+        CallModulesNotPatched,
         FileHooksMissing,
     }
 
@@ -810,6 +851,7 @@ mod tests {
                 ok,
                 MediaHooks::Failed("sipXmediaLib.dll imports not patched".into()),
             ),
+            Failure::CallModulesNotPatched => (ready, ok, MediaHooks::NotLoaded),
             Failure::FileHooksMissing => {
                 g.installed(Ok(HookMask::ALL.missing(HookMask::ACCEPT)));
                 (g.settle(p), ok, MediaHooks::Ready)
@@ -833,6 +875,7 @@ mod tests {
             Failure::RolledBack,
             Failure::NetworkingModuleNeverLoaded,
             Failure::CallHooksMissing,
+            Failure::CallModulesNotPatched,
             Failure::FileHooksMissing,
         ]
     }
@@ -880,7 +923,7 @@ mod tests {
                     let call = media(&p, &boot, &hooks, strict);
                     if p.encrypts_calls() {
                         let required = p.calls_required || strict != Some(false);
-                        let hooks_ok = !matches!(hooks, MediaHooks::Failed(_));
+                        let hooks_ok = hooks == MediaHooks::Ready;
                         if required && !(installed && hooks_ok && strict.is_some()) {
                             assert!(
                                 matches!(call, Verdict::Block(_)),
@@ -890,7 +933,12 @@ mod tests {
                         if !installed {
                             assert!(!call.lets_plain_through(), "{mode} / {f:?}: call {call:?}");
                         }
-                        if matches!(f, Failure::CallHooksMissing) && !required {
+                        if matches!(
+                            f,
+                            Failure::CallHooksMissing | Failure::CallModulesNotPatched
+                        ) && !required
+                            && strict.is_some()
+                        {
                             assert!(
                                 matches!(call, Verdict::Plain(_)),
                                 "compatibility: a non-strict call goes plain with a note"
@@ -938,5 +986,50 @@ mod tests {
         assert_eq!(w.account_key(), None);
         assert_eq!(w.strictness("100002"), None);
         assert!(w.encrypts(), "messages go through it, so it can hold them");
+        // Fifth audit of 2026-10, finding 1: no unencrypted message is
+        // shown either, with one warning a minute in the chat.
+        let why = w.plain_inbound("100002", 100).expect("refused");
+        assert!(why.contains("state file"), "{why}");
+        let n = w.take_note().unwrap();
+        assert!(n.text.contains("was not shown"), "{}", n.text);
+        assert!(w.plain_inbound("100002", 130).is_some());
+        assert!(w.take_note().is_none(), "within the minute: not said again");
+        assert!(w.plain_inbound("100002", 161).is_some());
+        assert!(w.take_note().is_some());
+    }
+
+    /// Fifth audit of 2026-10, finding 5: the call modules count as ready
+    /// only once every one the client has is patched; one patched module
+    /// used to make both count.
+    #[test]
+    fn the_call_modules_are_ready_only_when_every_one_present_is() {
+        use MediaHooks::*;
+        let failed = Failed("x".into());
+        for (m, want) in [
+            ([Ready, Ready], Ready),
+            ([Ready, Absent], Ready),
+            ([Absent, Ready], Ready),
+            ([Ready, NotLoaded], NotLoaded),
+            ([NotLoaded, Ready], NotLoaded),
+            ([NotLoaded, NotLoaded], NotLoaded),
+            ([Absent, Absent], Absent),
+            ([Ready, failed.clone()], failed.clone()),
+            ([failed.clone(), NotLoaded], failed.clone()),
+        ] {
+            assert_eq!(combine(&m), want, "{m:?}");
+        }
+        let p = policy(|p| p.calls_encrypt = true);
+        let boot = Bootstrap::Ready(HookMask::ALL);
+        for hooks in [NotLoaded, Absent] {
+            assert!(matches!(
+                media(&p, &boot, &hooks, Some(true)),
+                Verdict::Block(_)
+            ));
+            assert!(matches!(
+                media(&p, &boot, &hooks, Some(false)),
+                Verdict::Plain(_)
+            ));
+        }
+        assert_eq!(media(&p, &boot, &Ready, Some(true)), Verdict::Protect);
     }
 }

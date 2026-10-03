@@ -41,7 +41,24 @@ The plan is `docs/e2e/STAGE-3-CLIENT-CRYPTO.md`, the design is
   user confirms (see "Safety numbers"). Nothing is said the first time a
   contact is seen: like Signal, the first key is trusted on first use.
 - Notes from the add-on itself are marked `[ICQ E2E]` and arrive as messages
-  from the contact the chat is with.
+  from the contact the chat is with. A message from the network - in clear or
+  decrypted - that starts like one (any case, spacing, HTML, entities or
+  look-alike letters) is shown with `(from <uin>)` in front, so only the
+  add-on's own notes start with the marker. The security events among them
+  are also shown in a Windows box of the add-on's own (`security_popups`,
+  see "Settings").
+- An unencrypted message in the name of a protected contact - under
+  `/e2e on`, verified, or seen encrypting before - is never shown: the chat
+  gets "WARNING: a message that was not end-to-end encrypted arrived in
+  <uin>'s name and was not shown" (once a minute per contact) and the box
+  says it too. This covers live messages on channels 1, 2 and 4 and offline
+  messages. A contact never seen encrypting (no add-on) is shown as before;
+  `/e2e off` in the chat shows that contact's unencrypted messages again (and
+  sends yours unencrypted); `/e2e plain` is about sending only. Without
+  usable keys (no state file, locked out) every contact counts as protected.
+  One exception: a tZer exactly as the server writes it for ICQ 7.2 out of
+  a 6.5 one (`core/src/tzer.rs`: a known tZer on the `server =` host's
+  `/icq/tzers/`, nothing else in it) is shown, since it carries no text.
 
 ## Two jobs, two rows
 
@@ -290,6 +307,7 @@ earlier build kept a file per contact for the button under
 | `stream.rs` | One direction of a socket as a stream of FLAP frames. Adds, removes and renumbers frames when the crypto path needs it. |
 | `session.rs` | One signed-on session: owns the engine, its state file, the publish and refill steps. |
 | `crypto.rs` | The `Crypto` trait the stream drives, and `Engine`/`Publisher` over the directory. |
+| `alert.rs` | Security alerts in a Windows box of the add-on's own (`security_popups`): rate-limited, from a thread of their own, never blocking a hook. |
 | `keys.rs` | The Olm account and sessions, one-time and fallback keys, the state that survives a restart. |
 | `container.rs` | The container: envelope, AEAD, padding, and the ASCII armor that carries it in the message text. |
 | `directory.rs` | The key directory API, over WinHTTP or in memory for tests. |
@@ -392,6 +410,7 @@ Environment variables, read when ICQ starts:
 | `ICQE2E_FILES_LOG` | Overrides `files_log =` of the ini (see "File transfer observation" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is off. |
 | `ICQE2E_FILES_ENCRYPT` | Overrides `files_encrypt =` of the ini (see "File encryption" below). `on`/`1`/`true`/`yes` is on; anything else, or nothing, is **off** (the default). |
 | `ICQE2E_AUDITORS` | Overrides `auditors =` of the ini: the key log's auditors to trust, their verifier keys comma-separated as `e2e-kt-auditor -print-key` prints them. Given, exactly these are trusted; absent or empty, the server's are pinned on first use. A key that does not read is left out and named in the start-up line. |
+| `ICQE2E_SECURITY_POPUPS` | Overrides `security_popups =` of the ini (on by default; add `security_popups = off` by hand to switch it off - the patch keeps the line). On, the security events - the answers to `/e2e safety`, `/e2e verify`, `/e2e unverify`, `/e2e accept`, a verified contact's key change, a broken or unaudited key log, an unencrypted message in a protected contact's name that was not shown - are also shown in a Windows box of the add-on's own (at most once a minute per event, at most three open), which no message from the network can imitate. Off: only in the chat and the log. |
 | `ICQE2E_LOG` | File to append the log to (local-time stamps). Lines also go to `OutputDebugString`. Unset: `%LOCALAPPDATA%\icqe2e\icqe2e.log`. |
 
 At start-up the log says where it looked for the ini and whether it was there:

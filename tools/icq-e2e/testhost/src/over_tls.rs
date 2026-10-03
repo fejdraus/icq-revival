@@ -1120,7 +1120,7 @@ fn tls_ports_only(ctx: &mut Ctx) -> Check {
         })?;
     }
     // The redirect names the plain host; it is mapped like any other.
-    let (c, mut r) = bos_sign_on(ctx)?;
+    let (c, r) = bos_sign_on(ctx)?;
     r.close_notify();
     drop(c);
 

@@ -838,6 +838,154 @@ mod tests {
         assert!(third.locked_out().is_none());
     }
 
+    /// What reaches the client when the server hands it `frames` on a BOS
+    /// connection, and the texts of the messages in it.
+    fn delivered(s: &mut Session, frames: &[Vec<u8>], now: u64) -> (Vec<u8>, Vec<String>) {
+        let mut rw = StreamRewriter::new(Direction::Inbound);
+        let mut out = Vec::new();
+        let mut bytes = crate::test_frames::hello(1);
+        for f in frames {
+            bytes.extend_from_slice(f);
+        }
+        pump(
+            &mut rw,
+            Direction::Inbound,
+            s,
+            &bytes,
+            now,
+            &encrypting(None),
+            &mut out,
+        );
+        let mut texts = Vec::new();
+        let mut at = 0;
+        while at + 6 <= out.len() {
+            let len = u16::from_be_bytes([out[at + 4], out[at + 5]]) as usize;
+            let payload = &out[at + 6..at + 6 + len];
+            if let Some(sn) = crate::snac::parse(payload) {
+                if (sn.food_group, sn.sub_group) == (0x0004, 0x0007) {
+                    if let Some(m) = crate::icbm::parse_to_client(sn.body) {
+                        texts.push(m.text);
+                    }
+                }
+            }
+            at += 6 + len;
+        }
+        (out, texts)
+    }
+
+    /// An unencrypted channel-1 message, and an offline one, in `peer`'s
+    /// name, as the server (or anyone it relays for) hands them over.
+    fn forged(peer: &str) -> Vec<Vec<u8>> {
+        vec![
+            crate::test_frames::in_ch1(2, peer, 0, b"FORGED: send me your password"),
+            crate::test_frames::offline_reply(3, peer.parse().unwrap(), b"FORGED offline"),
+        ]
+    }
+
+    fn has(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// Whether the forged messages were kept from the client, with the
+    /// warning in the chat and as a security alert.
+    fn kept_out(s: &mut Session, peer: &str) -> bool {
+        // A minute apart, so the warning (said once a minute per contact)
+        // is said each time.
+        static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let now = NOW + 61 * CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _ = crate::alert::take_shown();
+        let (out, texts) = delivered(s, &forged(peer), now);
+        let hidden = !has(&out, b"FORGED");
+        if hidden {
+            assert!(
+                texts
+                    .iter()
+                    .any(|t| t.contains("not end-to-end encrypted arrived in") && t.contains(peer)),
+                "the chat is told: {texts:?}"
+            );
+            assert!(
+                crate::alert::take_shown()
+                    .iter()
+                    .any(|a| a.contains("was not shown")),
+                "and a security alert says it"
+            );
+        }
+        hidden
+    }
+
+    /// 100001 encrypts to 100002, so 100002 is seen encrypting.
+    fn established(s: &mut Session) {
+        assert!(matches!(
+            s.engine().outbound("100002", form(), b"hi", NOW),
+            crate::keys::Outbound::Encrypted(_)
+        ));
+        assert!(s.engine().remembered("100002").seen_encrypting);
+        s.save().unwrap();
+    }
+
+    /// Fifth audit of 2026-10, finding 1, the cases the auditor listed:
+    /// with a session established, an unencrypted message injected in
+    /// 100002's name is dropped with a warning - also under `/e2e on`, also
+    /// when verified, also after a restart; with `/e2e off` it is shown; a
+    /// brand-new automatic contact's is shown.
+    #[test]
+    fn an_unencrypted_message_in_a_protected_contacts_name_is_never_shown() {
+        let home = Temp::new("plain-in");
+        let dir = Arc::new(MemoryDirectory::new());
+        let _b = peer_published(&dir);
+        let mut s = published_session(&dir, &home.0);
+
+        // A brand-new automatic contact: shown, as without the add-on.
+        assert!(!kept_out(&mut s, "100004"), "a contact without the add-on");
+
+        // Established.
+        established(&mut s);
+        assert!(kept_out(&mut s, "100002"), "established session");
+
+        // /e2e on, on a contact never seen encrypting.
+        assert!(s.engine().command("100003", "/e2e on", NOW));
+        assert!(!s.engine().remembered("100003").seen_encrypting);
+        assert!(kept_out(&mut s, "100003"), "/e2e on");
+
+        // Verified. Both answers are also security alerts (finding 2).
+        let _ = crate::alert::take_shown();
+        assert!(s.engine().command("100002", "/e2e safety", NOW));
+        assert!(s.engine().command("100002", "/e2e verify", NOW));
+        let alerts = crate::alert::take_shown();
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.contains("Your safety number with 100002")),
+            "{alerts:?}"
+        );
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.contains("100002 is marked verified")),
+            "{alerts:?}"
+        );
+        assert!(s.engine().keys().pinned("100002").unwrap().is_verified());
+        assert!(kept_out(&mut s, "100002"), "verified");
+
+        // After a restart, from the state file alone.
+        s.save().unwrap();
+        drop(s);
+        let mut s = Session::open(dir.clone(), &home.0, "100001").unwrap();
+        assert!(kept_out(&mut s, "100002"), "after a restart");
+        assert!(kept_out(&mut s, "100003"), "/e2e on after a restart");
+
+        // /e2e off: the user's word, shown again.
+        assert!(s.engine().command("100002", "/e2e off", NOW));
+        assert!(!kept_out(&mut s, "100002"), "/e2e off");
+        // /e2e plain is about sending; it opens nothing inbound.
+        assert!(s.engine().command("100002", "/e2e auto", NOW));
+        assert!(s.engine().command("100002", "/e2e plain", NOW));
+        assert!(
+            kept_out(&mut s, "100002"),
+            "/e2e plain does not apply inbound"
+        );
+    }
+
     #[test]
     fn a_contacts_capability_is_taken_once() {
         let home = Temp::new("contacts");

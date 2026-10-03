@@ -235,6 +235,42 @@ pub const CAP_ICQ_SERVER_RELAY: [u8; 16] = [
 
 /// ICQ message type of a plain text message.
 pub const MSG_TYPE_PLAIN: u8 = 0x01;
+/// ICQ message type of a URL with its description.
+pub const MSG_TYPE_URL: u8 = 0x04;
+/// ICQ message type of a list of contacts.
+pub const MSG_TYPE_CONTACTS: u8 = 0x13;
+
+/// The plain text message type alone: what the add-on encrypts and puts
+/// back.
+pub const PLAIN_ONLY: &[u8] = &[MSG_TYPE_PLAIN];
+/// The ICQ message types whose text a client shows in the chat as the
+/// contact's words, whichever channel carries them (fifth audit of 2026-10,
+/// finding 1). Authorization requests and replies, "you were added", plugin
+/// messages (tZers, Xtraz) and away-message requests are not among them.
+pub const SHOWN_TYPES: &[u8] = &[MSG_TYPE_PLAIN, MSG_TYPE_URL, MSG_TYPE_CONTACTS];
+
+/// ICBM channel 4: an old-style ICQ message, `uin:u32 type:u8 flags:u8
+/// len:u16 text` little-endian in TLV `0x0005`. The add-on sends none; the
+/// server relays what another client sends.
+pub const CHANNEL_ICQ: u16 = 0x0004;
+/// The TLV of a channel-4 message.
+pub const TLV_ICQ_DATA: u16 = 0x0005;
+
+/// The text of a channel-4 message whose type is one of `types`, and the
+/// type.
+pub fn ch4_text(data: &[u8], types: &[u8]) -> Option<(u8, TextAt)> {
+    let msg_type = *data.get(4)?;
+    if !types.contains(&msg_type) {
+        return None;
+    }
+    let len_at = 6;
+    let len = u16::from_le_bytes([*data.get(len_at)?, *data.get(len_at + 1)?]) as usize;
+    let start = len_at + 2;
+    if start + len > data.len() {
+        return None;
+    }
+    Some((msg_type, TextAt { len_at, start, len }))
+}
 
 /// Where the text of a message sits in a larger little-endian structure: the
 /// offset of its u16 length, and the text itself (trailing NUL included).
@@ -266,13 +302,19 @@ impl TextAt {
 /// colours and a capability string after it. Other message types (plugins,
 /// away-message requests, ...) give `None`.
 pub fn type2_plain_text(svc: &[u8]) -> Option<TextAt> {
+    type2_text(svc, PLAIN_ONLY)
+}
+
+/// As [`type2_plain_text`], for any of the message `types` (their text sits
+/// in the same place).
+pub fn type2_text(svc: &[u8], types: &[u8]) -> Option<TextAt> {
     let le16 = |at: usize| -> Option<usize> {
         Some(u16::from_le_bytes([*svc.get(at)?, *svc.get(at + 1)?]) as usize)
     };
-    let mut at = 2 + le16(0)?;
-    at += 2 + le16(at)?;
+    let mut at = 2usize.checked_add(le16(0)?)?;
+    at = at.checked_add(2 + le16(at)?)?;
     let msg_type = *svc.get(at)?;
-    if msg_type != MSG_TYPE_PLAIN {
+    if !types.contains(&msg_type) {
         return None;
     }
     let len_at = at + 6;
@@ -293,9 +335,19 @@ pub fn offline_text(env: &[u8]) -> Option<(TextAt, u32)> {
     offline_block(env, &[ICQ_REQ_OFFLINE_REPLY, ICQ_REQ_OFFLINE_MSG])
 }
 
+/// The text of an offline message the server hands over (a reply) whose
+/// message type is one of `types`, and the sender's UIN.
+pub fn offline_reply_text(env: &[u8], types: &[u8]) -> Option<(TextAt, u32)> {
+    offline_block_typed(env, &[ICQ_REQ_OFFLINE_REPLY], types)
+}
+
 /// As [`offline_text`], but for the given request types, so the caller can tell
 /// a reply from a send without parsing twice.
 fn offline_block(env: &[u8], req_types: &[u16]) -> Option<(TextAt, u32)> {
+    offline_block_typed(env, req_types, PLAIN_ONLY)
+}
+
+fn offline_block_typed(env: &[u8], req_types: &[u16], types: &[u8]) -> Option<(TextAt, u32)> {
     if env.len() < 2 {
         return None;
     }
@@ -312,7 +364,7 @@ fn offline_block(env: &[u8], req_types: &[u16]) -> Option<(TextAt, u32)> {
     r.skip(2 + 1 + 1 + 1 + 1)?; // year(u16), month, day, hour, minute
     let msg_type = r.u8()?;
     let _flags = r.u8()?;
-    if msg_type != MSG_TYPE_PLAIN {
+    if !types.contains(&msg_type) {
         return None;
     }
     let len_at = 2 + r.pos;

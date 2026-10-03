@@ -1756,8 +1756,16 @@ fn harness_recv(s: Socket, buf: *mut u8, len: usize, flags: i32) -> i32 {
             }
             if n == 0 {
                 let InSide { rw, ready, eof } = &mut *side;
-                rw.finish(ready);
+                let dropped = rw.finish(ready);
                 *eof = true;
+                if dropped > 0 {
+                    log_lines(
+                        &sock,
+                        vec![format!(
+                            "end of stream with {dropped} byte(s) of an unfinished frame: dropped, never handed to the client"
+                        )],
+                    );
+                }
                 if side.ready.is_empty() {
                     return 0;
                 }
@@ -1926,10 +1934,14 @@ unsafe extern "system" fn bootstrap_thread(_: *mut core::ffi::c_void) -> u32 {
         log::line(&format!("Phase 1 add-on loading: {}", p.describe()));
         let encrypting = p.mode == Mode::Encrypt;
         set_policy_once(p);
+        crate::alert::enable(policy().security_popups);
+        // The call modules are loaded and patched before the gate opens, so
+        // no call can start before their hooks are in (fifth audit of
+        // 2026-10, finding 5).
+        calls_io::start();
         // A networking module patched before the policy was known is
         // settled now; one that was not is waited for below.
         gate::current().settle(policy());
-        calls_io::start();
         filesio::start();
         if encrypting {
             spawn(poll_thread);
@@ -3302,12 +3314,14 @@ mod socket_tests {
         assert!(avail as usize >= next.len() - 3, "FIONREAD said {avail}");
         assert_eq!(read(s, next.len() - 3, 1024), next[3..]);
 
-        // At the end of the stream a partial frame is released as it was, then
-        // the end is reported.
+        // At the end of the stream a partial frame is dropped, never handed
+        // to the client, and the end is reported (fifth audit of 2026-10,
+        // finding 3: it used to be released as it was).
         let partial = &in_ch1(4, "1", 0, b"cut short")[..8];
         server.write_all(partial).unwrap();
         server.shutdown(Shutdown::Write).unwrap();
-        assert_eq!(read(s, usize::MAX, 64), partial);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(hooked_recv(s, 64), Some(Vec::new()));
         assert_eq!(hooked_recv(s, 64), Some(Vec::new()));
     }
 
@@ -3638,10 +3652,13 @@ mod fourth_review {
         PanicInRecv,
         FlapDesync,
         CallHooksMissing,
+        /// The call modules not loaded and patched yet (fifth audit of
+        /// 2026-10, finding 5).
+        CallModulesNotPatched,
         FileHooksMissing,
     }
 
-    const FAULTS: [Fault; 15] = [
+    const FAULTS: [Fault; 16] = [
         Fault::Healthy,
         Fault::NoDirectory,
         Fault::NoUin,
@@ -3656,6 +3673,7 @@ mod fourth_review {
         Fault::PanicInRecv,
         Fault::FlapDesync,
         Fault::CallHooksMissing,
+        Fault::CallModulesNotPatched,
         Fault::FileHooksMissing,
     ];
 
@@ -3770,6 +3788,12 @@ mod fourth_review {
                 g.installed(Ok(HookMask::ALL));
                 g.settle(p);
             }
+        }
+        // The bootstrap loads and patches the call modules before the gate
+        // opens; this fault is the state before that.
+        if f != Fault::CallModulesNotPatched {
+            g.set_media(0, gate::MediaHooks::Ready);
+            g.set_media(1, gate::MediaHooks::Ready);
         }
         if f == Fault::CallHooksMissing {
             g.set_media(
@@ -4008,7 +4032,8 @@ mod fourth_review {
                 match t {
                     Traffic::MessageAuto | Traffic::MessageOn => {
                         let plain_ok = f == Fault::Healthy && t == Traffic::MessageAuto
-                            || f == Fault::CallHooksMissing && t == Traffic::MessageAuto;
+                            || matches!(f, Fault::CallHooksMissing | Fault::CallModulesNotPatched)
+                                && t == Traffic::MessageAuto;
                         assert_eq!(contains(&o.wire, SECRET), plain_ok, "{case}");
                         if plain_ok {
                             assert!(
@@ -4018,14 +4043,19 @@ mod fourth_review {
                         }
                     }
                     Traffic::CallRequired | Traffic::CallStrict | Traffic::CallAuto => {
-                        let plain_ok = matches!(f, Fault::Healthy | Fault::CallHooksMissing)
-                            && t == Traffic::CallAuto
+                        let plain_ok = matches!(
+                            f,
+                            Fault::Healthy | Fault::CallHooksMissing | Fault::CallModulesNotPatched
+                        ) && t == Traffic::CallAuto
                             || f == Fault::Healthy;
                         assert_eq!(contains(&o.wire, INVITE), plain_ok, "{case}");
                     }
                     Traffic::FileRequired => {
                         let proposal = &file_out(3)[6..];
-                        let plain_ok = matches!(f, Fault::Healthy | Fault::CallHooksMissing);
+                        let plain_ok = matches!(
+                            f,
+                            Fault::Healthy | Fault::CallHooksMissing | Fault::CallModulesNotPatched
+                        );
                         assert_eq!(contains(&o.wire, proposal), plain_ok, "{case}");
                     }
                 }

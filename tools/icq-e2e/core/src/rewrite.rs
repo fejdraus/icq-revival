@@ -398,9 +398,22 @@ pub fn process_crypto(
     crypto: &mut dyn Crypto,
     now: u64,
 ) -> Processed {
+    process_crypto_for(dir, payload, crypto, now, None)
+}
+
+/// [`process_crypto`] knowing the server's domain (`server =` of the ini),
+/// which is where the tZers the server hands out live
+/// ([`crate::tzer::is_served_tzer`]). Without it no tZer is recognised.
+pub fn process_crypto_for(
+    dir: Direction,
+    payload: &[u8],
+    crypto: &mut dyn Crypto,
+    now: u64,
+    server: Option<&str>,
+) -> Processed {
     let encrypting = crypto.encrypts();
     addresses_off(dir, payload, encrypting, |payload| {
-        process_crypto_snac(dir, payload, crypto, now)
+        process_crypto_snac(dir, payload, crypto, now, server)
     })
 }
 
@@ -409,6 +422,7 @@ fn process_crypto_snac(
     payload: &[u8],
     crypto: &mut dyn Crypto,
     now: u64,
+    server: Option<&str>,
 ) -> Processed {
     let mut p = Processed::plain();
     let Some(s) = snac::parse(payload) else {
@@ -475,12 +489,26 @@ fn process_crypto_snac(
     let Some(kind) = kind_of(dir, s.food_group, s.sub_group) else {
         return p;
     };
-    let Some(msg) = decode(kind, s.body) else {
+    let header_len = payload.len() - s.body.len();
+    let msg = decode(kind, s.body);
+    if let Some(m) = &msg {
+        p.lines.push(m.log_line());
+    }
+    // Inbound, anything that is not an armoured container and that the
+    // client shows as the contact's words - on any channel, and offline -
+    // is unauthenticated text: asked about once, in one place (fifth audit
+    // of 2026-10, finding 1).
+    if dir == Direction::Inbound
+        && !msg
+            .as_ref()
+            .is_some_and(|m| container::find_armor(&m.text).is_some())
+    {
+        return plain_in(kind, payload, header_len, s.body, crypto, now, server, p);
+    }
+    let Some(msg) = msg else {
         return p;
     };
-    p.lines.push(msg.log_line());
 
-    let header_len = payload.len() - s.body.len();
     match dir {
         // A command typed in the chat is the user talking to the add-on: it is
         // answered with a note and never reaches the contact (CHECKLIST 10.2).
@@ -554,7 +582,19 @@ fn process_crypto_snac(
                 Inbound::Text { text, form, .. } => {
                     // The sender's own bytes go back into the fragment, with the
                     // charset restored from the envelope: the reader sees the
-                    // message exactly as it was written, nothing added to it.
+                    // message exactly as it was written, nothing added to it -
+                    // unless it starts like a note of the add-on's, which only
+                    // the add-on may write (fifth audit of 2026-10, finding 2).
+                    let text = match crate::policy::unmark(&msg.peer, charset_of(form), &text) {
+                        Some(t) => {
+                            p.lines.push(format!(
+                                "{} starts like a note of the add-on's: shown as the contact's",
+                                msg.log_line()
+                            ));
+                            t
+                        }
+                        None => text,
+                    };
                     match put_text(kind, s.body, &text, form) {
                         Ok(Some(body)) => {
                             p.payload = Some([&payload[..header_len], &body[..]].concat());
@@ -666,11 +706,169 @@ fn put_text(
     text: &[u8],
     form: Form,
 ) -> Result<Option<Vec<u8>>, &'static str> {
-    let charset = match form {
+    let charset = charset_of(form);
+    rewrite_body(kind, body, move |_, _| Some((charset, text.to_vec())))
+}
+
+/// The charset a decrypted text is in.
+fn charset_of(form: Form) -> u16 {
+    match form {
         Form::Fragment { charset, .. } => charset,
         Form::EightBit => text::CHARSET_LATIN1,
+    }
+}
+
+/// An inbound message that is not an armoured container (fifth audit of
+/// 2026-10, findings 1 and 2). If the client would show its text as the
+/// contact's words ([`shown_text`]): the engine says whether an
+/// unauthenticated message may be shown in that contact's name
+/// ([`Crypto::plain_inbound`]); refused, the frame is dropped - with
+/// `ICQE2E_NO_INJECT` it stays with the add-on's words in place of the
+/// text. Shown, text that starts like a note of the add-on's gets
+/// "(from <contact>)" in front of it. Anything else passes as it is.
+fn plain_in(
+    kind: Kind,
+    payload: &[u8],
+    header_len: usize,
+    body: &[u8],
+    crypto: &mut dyn Crypto,
+    now: u64,
+    server: Option<&str>,
+    mut p: Processed,
+) -> Processed {
+    let Some((peer, form)) = shown_text(kind, body) else {
+        return p;
     };
-    rewrite_body(kind, body, move |_, _| Some((charset, text.to_vec())))
+    // A tZer exactly as the server writes it for ICQ 7.2 carries no words of
+    // the contact's: shown for a protected contact too. Anything that
+    // deviates from that form is text.
+    if let (Some(server), Some(frags)) = (server, ch1_frags(kind, body)) {
+        if crate::tzer::is_served_tzer(frags, server) {
+            p.lines.push(format!(
+                "IN  peer={peer} {form}: a tZer of the server's, shown"
+            ));
+            return p;
+        }
+    }
+    if let Some(why) = crypto.plain_inbound(&peer, now) {
+        p.drop = true;
+        p.payload = None;
+        p.ack_request = ack_request(kind, body);
+        let instead = format!(
+            "{}(an unencrypted message in {peer}'s name was not shown: {why})",
+            crate::policy::PREFIX
+        );
+        if let Ok(Some(b)) = rewrite_shown(kind, body, |_, _| {
+            Some((text::CHARSET_ASCII, instead.as_bytes().to_vec()))
+        }) {
+            p.withheld = Some([&payload[..header_len], &b[..]].concat());
+        }
+        p.lines.push(format!(
+            "IN  peer={peer} {form}: not end-to-end encrypted and not shown: {why}"
+        ));
+        return p;
+    }
+    let unmark =
+        |charset: u16, t: &[u8]| crate::policy::unmark(&peer, charset, t).map(|t| (charset, t));
+    if let Ok(Some(b)) = rewrite_shown(kind, body, unmark) {
+        p.payload = Some([&payload[..header_len], &b[..]].concat());
+        p.lines.push(format!(
+            "IN  peer={peer} {form}: starts like a note of the add-on's: shown as the contact's"
+        ));
+    }
+    p
+}
+
+/// Who an inbound message is from and on which path, when the client shows
+/// its text in the chat as the contact's words: channel 1, a channel-2
+/// server-relay message or a channel-4 message of one of
+/// [`icbm::SHOWN_TYPES`], or an offline message of one of them. `None` for
+/// everything else (a rendezvous of another kind, a plugin message, an
+/// authorization request, ...).
+fn shown_text(kind: Kind, body: &[u8]) -> Option<(String, &'static str)> {
+    match kind {
+        Kind::ToClient => {
+            let head = icbm_head_len(kind, body)?;
+            let channel = u16::from_be_bytes([*body.get(8)?, *body.get(9)?]);
+            let name_len = *body.get(10)? as usize;
+            let peer = String::from_utf8_lossy(body.get(11..11 + name_len)?).into_owned();
+            let tlvs = snac::read_tlvs(&body[head..]);
+            let form = match channel {
+                icbm::CHANNEL_IM => {
+                    let frags = snac::find_tlv(&tlvs, icbm::TLV_AOL_IM_DATA)?;
+                    ch1_has_text(frags).then_some("ch1")?
+                }
+                icbm::CHANNEL_RENDEZVOUS => {
+                    let frag = snac::find_tlv(&tlvs, icbm::TLV_RENDEZVOUS_DATA)?;
+                    const HEAD: usize = 2 + 8 + 16;
+                    if frag.len() < HEAD || frag[10..HEAD] != icbm::CAP_ICQ_SERVER_RELAY {
+                        return None;
+                    }
+                    let inner = snac::read_tlvs(&frag[HEAD..]);
+                    let svc = snac::find_tlv(&inner, icbm::RDV_TLV_SVC_DATA)?;
+                    icbm::type2_text(svc, icbm::SHOWN_TYPES)?;
+                    "ch2/type2"
+                }
+                icbm::CHANNEL_ICQ => {
+                    let data = snac::find_tlv(&tlvs, icbm::TLV_ICQ_DATA)?;
+                    icbm::ch4_text(data, icbm::SHOWN_TYPES)?;
+                    "ch4"
+                }
+                _ => return None,
+            };
+            (!peer.is_empty()).then_some((peer, form))
+        }
+        Kind::Offline => {
+            let tlvs = snac::read_tlvs(body);
+            let env = snac::find_tlv(&tlvs, icbm::ICQ_TLV_DATA)?;
+            let (_, sender) = icbm::offline_reply_text(env, icbm::SHOWN_TYPES)?;
+            Some((sender.to_string(), "offline"))
+        }
+        Kind::ToHost | Kind::OfflineOut => None,
+    }
+}
+
+/// The fragment list (TLV `0x0002`) of an inbound channel-1 message.
+fn ch1_frags(kind: Kind, body: &[u8]) -> Option<&[u8]> {
+    if kind != Kind::ToClient {
+        return None;
+    }
+    let head = icbm_head_len(kind, body)?;
+    if u16::from_be_bytes([*body.get(8)?, *body.get(9)?]) != icbm::CHANNEL_IM {
+        return None;
+    }
+    let (tlvs, _) = snac::split_tlvs(&body[head..]);
+    tlvs.iter()
+        .find(|t| t.tag == icbm::TLV_AOL_IM_DATA)
+        .map(|t| t.value)
+}
+
+/// Whether a channel-1 fragment list has a message fragment (id 1).
+fn ch1_has_text(frags: &[u8]) -> bool {
+    let mut r = Reader::new(frags);
+    while r.remaining() >= 4 {
+        let (Some(id), Some(_version), Some(len)) = (r.u8(), r.u8(), r.u16()) else {
+            return false;
+        };
+        let Some(payload) = r.bytes(len as usize) else {
+            return false;
+        };
+        if id == 1 && payload.len() >= 4 {
+            return true;
+        }
+    }
+    false
+}
+
+/// [`rewrite_body`] for the text of an inbound message the client shows as
+/// the contact's words ([`shown_text`]): every type of
+/// [`icbm::SHOWN_TYPES`], channel 4 included.
+fn rewrite_shown(
+    kind: Kind,
+    body: &[u8],
+    f: impl Fn(u16, &[u8]) -> Option<Replaced> + Copy,
+) -> Result<Option<Vec<u8>>, Refusal> {
+    rewrite_typed(kind, body, f, icbm::SHOWN_TYPES)
 }
 
 /// Rebuilds a message SNAC body with transformed text; `Ok(None)` when there is
@@ -681,12 +879,23 @@ fn rewrite_body(
     body: &[u8],
     f: impl Fn(u16, &[u8]) -> Option<Replaced> + Copy,
 ) -> Result<Option<Vec<u8>>, Refusal> {
+    rewrite_typed(kind, body, f, icbm::PLAIN_ONLY)
+}
+
+/// [`rewrite_body`] for the ICQ message `types` of channel 2, channel 4 and
+/// offline messages (channel 1 has no types).
+fn rewrite_typed(
+    kind: Kind,
+    body: &[u8],
+    f: impl Fn(u16, &[u8]) -> Option<Replaced> + Copy,
+    types: &'static [u8],
+) -> Result<Option<Vec<u8>>, Refusal> {
     // Both directions of an offline message carry their text in the same TLV
     // of the same little-endian block, so the same rewrite serves each.
     if kind == Kind::Offline || kind == Kind::OfflineOut {
         return rewrite_tlv_block(body, |tag, value| {
             if tag == icbm::ICQ_TLV_DATA {
-                rewrite_offline(value, f)
+                rewrite_offline(value, f, types)
             } else {
                 Ok(None)
             }
@@ -698,10 +907,23 @@ fn rewrite_body(
     let channel = u16::from_be_bytes([body[8], body[9]]);
     let rest = rewrite_tlv_block(&body[head..], |tag, value| match (channel, tag) {
         (icbm::CHANNEL_IM, icbm::TLV_AOL_IM_DATA) => rewrite_ch1(value, f),
-        (icbm::CHANNEL_RENDEZVOUS, icbm::TLV_RENDEZVOUS_DATA) => rewrite_ch2(value, f),
+        (icbm::CHANNEL_RENDEZVOUS, icbm::TLV_RENDEZVOUS_DATA) => rewrite_ch2(value, f, types),
+        (icbm::CHANNEL_ICQ, icbm::TLV_ICQ_DATA) => rewrite_ch4(value, f, types),
         _ => Ok(None),
     })?;
     Ok(rest.map(|r| [&body[..head], &r[..]].concat()))
+}
+
+/// Channel 4: `uin:u32 type:u8 flags:u8 len:u16 text` little-endian.
+fn rewrite_ch4(
+    data: &[u8],
+    f: impl Fn(u16, &[u8]) -> Option<Replaced> + Copy,
+    types: &[u8],
+) -> Result<Option<Vec<u8>>, Refusal> {
+    let Some((_, at)) = icbm::ch4_text(data, types) else {
+        return Ok(None);
+    };
+    replace_at(data, &at, f, |t| at.replace(data, t))
 }
 
 /// The length of an ICBM body before its message TLVs: cookie, channel, screen
@@ -842,6 +1064,7 @@ fn rewrite_ch1(
 fn rewrite_ch2(
     frag: &[u8],
     f: impl Fn(u16, &[u8]) -> Option<Replaced> + Copy,
+    types: &[u8],
 ) -> Result<Option<Vec<u8>>, Refusal> {
     const HEAD: usize = 2 + 8 + 16;
     if frag.len() < HEAD || frag[10..HEAD] != icbm::CAP_ICQ_SERVER_RELAY {
@@ -851,7 +1074,7 @@ fn rewrite_ch2(
         if tag != icbm::RDV_TLV_SVC_DATA {
             return Ok(None);
         }
-        let Some(at) = icbm::type2_plain_text(svc) else {
+        let Some(at) = icbm::type2_text(svc, types) else {
             return Ok(None);
         };
         replace_at(svc, &at, f, |t| at.replace(svc, t))
@@ -864,8 +1087,14 @@ fn rewrite_ch2(
 fn rewrite_offline(
     env: &[u8],
     f: impl Fn(u16, &[u8]) -> Option<Replaced> + Copy,
+    types: &[u8],
 ) -> Result<Option<Vec<u8>>, Refusal> {
-    let Some((at, _)) = icbm::offline_text(env) else {
+    let found = if types == icbm::PLAIN_ONLY {
+        icbm::offline_text(env)
+    } else {
+        icbm::offline_reply_text(env, types)
+    };
+    let Some((at, _)) = found else {
         return Ok(None);
     };
     replace_at(env, &at, f, |t| icbm::replace_offline_text(env, &at, t))

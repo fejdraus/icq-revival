@@ -426,6 +426,216 @@ pub fn plain_allowed(setting: Setting) -> bool {
     setting != Setting::On
 }
 
+// --- unencrypted messages in a contact's name (fifth audit of 2026-10) --------
+
+/// Why a contact's unencrypted message is not shown, or `None` when it may
+/// be: the second half of the central invariant - if a contact is
+/// protected, the client never shows a message in their name that did not
+/// pass end-to-end authentication (finding 1).
+///
+/// - switched off by hand (`/e2e off`): shown;
+/// - automatic, never seen encrypting and not verified: shown (a contact
+///   without the add-on);
+/// - switched on by hand, seen encrypting, or verified: not shown.
+///
+/// `rem` is `None` when the contact's settings cannot be read (no state, a
+/// locked-out or stand-in engine): not shown, as the gate does with a call
+/// or a file it cannot decide. `/e2e plain` is about sending and does not
+/// apply here.
+pub fn plain_inbound_refusal(
+    peer: &str,
+    rem: Option<Remembered>,
+    verified: bool,
+) -> Option<String> {
+    let Some(rem) = rem else {
+        return Some(format!(
+            "the add-on cannot read its settings for {peer} in this ICQ"
+        ));
+    };
+    if rem.setting == Setting::Off {
+        return None;
+    }
+    if verified {
+        Some(format!("{peer} is verified"))
+    } else if rem.setting == Setting::On {
+        Some(format!(
+            "encryption is on for {peer} in this chat (/e2e on)"
+        ))
+    } else if rem.seen_encrypting {
+        Some(format!("{peer} has used encryption before"))
+    } else {
+        None
+    }
+}
+
+/// The note for an unencrypted message in `peer`'s name that was not shown.
+pub fn plain_dropped_note(peer: &str, why: &str) -> String {
+    let why = why.trim_end_matches('.');
+    format!(
+        "{PREFIX}WARNING: a message that was not end-to-end encrypted arrived in {peer}'s name and was not shown ({why}). The server or the network can write such a message; {peer}'s own add-on encrypts what it sends. If {peer} really wrote without encryption (another client, or encryption off on their side), ask them to switch it on. Typing /e2e off here shows their unencrypted messages again, and sends yours unencrypted too."
+    )
+}
+
+/// What a message from the network that starts like a note gets in front of
+/// it, so that only the add-on can put a real-looking note in the chat
+/// (finding 2).
+pub fn from_peer_prefix(peer: &str) -> String {
+    let peer: String = peer
+        .chars()
+        .filter(|c| !matches!(c, '<' | '>' | '&' | '"'))
+        .collect();
+    format!("(from {peer}) ")
+}
+
+/// The marker, folded the way [`looks_like_note`] folds text.
+const MARKER_FOLDED: &str = "[icqe2e]";
+
+/// A character as [`looks_like_note`] compares it: case folded, full-width
+/// forms and the Cyrillic and Greek look-alikes of the marker's letters
+/// taken as the Latin ones (also as Latin-1 shows the CP1251 bytes of the
+/// Cyrillic ones, since 8-bit text is decoded as Latin-1 here). `None` for a
+/// character that does not show: whitespace, zero-width and format
+/// characters.
+fn fold(c: char) -> Option<char> {
+    if c.is_whitespace()
+        || matches!(
+            c,
+            '\u{00AD}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}'
+        )
+    {
+        return None;
+    }
+    let c = match c as u32 {
+        // Full-width ASCII.
+        0xFF01..=0xFF5E => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
+        _ => c,
+    };
+    Some(match c {
+        'І' | 'і' | 'Ι' | 'ι' | 'Ӏ' | '²' | '³' | 'ı' | 'l' | '|' | '1' => 'i',
+        'С' | 'с' | 'Ϲ' | 'ϲ' | 'Ñ' | 'ñ' => 'c',
+        'Е' | 'е' | 'Ε' | 'ε' | 'Å' | 'å' => 'e',
+        '［' => '[',
+        '］' => ']',
+        c => c.to_ascii_lowercase(),
+    })
+}
+
+/// `&#NN;` and `&#xNN;` turned into their characters.
+fn numeric_entities(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find("&#") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 2..];
+        let (hex, digits) = match after.strip_prefix(['x', 'X']) {
+            Some(h) => (true, h),
+            None => (false, after),
+        };
+        let end = digits.find(';');
+        let parsed = end.and_then(|e| {
+            let n = &digits[..e];
+            (!n.is_empty() && n.len() <= 8)
+                .then(|| u32::from_str_radix(n, if hex { 16 } else { 10 }).ok())
+                .flatten()
+                .and_then(char::from_u32)
+                .map(|c| (c, e))
+        });
+        match parsed {
+            Some((c, e)) => {
+                out.push(c);
+                rest = &digits[e + 1..];
+            }
+            None => {
+                out.push_str("&#");
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether `text`, as a client shows it, starts with something that reads
+/// as the note marker `[ICQ E2E]`: in any case, with any whitespace or
+/// invisible characters in it, wrapped in HTML, written with entities, or
+/// with look-alike letters.
+pub fn looks_like_note(text: &str) -> bool {
+    let shown = numeric_entities(&plain_text(&numeric_entities(text)));
+    let folded: String = shown
+        .chars()
+        .filter_map(fold)
+        .take(MARKER_FOLDED.chars().count())
+        .collect();
+    folded == MARKER_FOLDED
+}
+
+/// Where the text a client shows first starts in `units` (bytes of an 8-bit
+/// charset, or UCS-2 code units): after the leading whitespace, tags and
+/// `&nbsp;`.
+fn shown_start(units: &[u16]) -> usize {
+    let is = |i: usize, c: char| units.get(i) == Some(&(c as u16));
+    let mut i = 0;
+    loop {
+        while units
+            .get(i)
+            .is_some_and(|&u| matches!(u, 0x20 | 0x09 | 0x0A | 0x0D | 0xA0))
+        {
+            i += 1;
+        }
+        if is(i, '<') {
+            match units[i..].iter().position(|&u| u == '>' as u16) {
+                Some(p) => i += p + 1,
+                None => return i,
+            }
+            continue;
+        }
+        let nbsp: Vec<u16> = "&nbsp;".encode_utf16().collect();
+        if units[i..].len() >= nbsp.len()
+            && units[i..i + nbsp.len()]
+                .iter()
+                .zip(&nbsp)
+                .all(|(a, b)| (*a as u8 as char).to_ascii_lowercase() as u16 == *b && *a < 0x80)
+        {
+            i += nbsp.len();
+            continue;
+        }
+        return i;
+    }
+}
+
+/// A message text from the network (unencrypted, or as decrypted) in
+/// `charset`, made unable to pass for a note of the add-on's (finding 2):
+/// when it starts like one ([`looks_like_note`]), "(from <peer>) " is put in
+/// front of what shows first, in the same charset. `None` when it does not
+/// start like a note, and is left as it is.
+pub fn unmark(peer: &str, charset: u16, raw: &[u8]) -> Option<Vec<u8>> {
+    if !looks_like_note(&crate::text::decode(charset, raw)) {
+        return None;
+    }
+    let prefix = from_peer_prefix(peer);
+    let out = if charset == crate::text::CHARSET_UNICODE {
+        let units: Vec<u16> = raw
+            .chunks_exact(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+        let at = shown_start(&units);
+        let mut v: Vec<u16> = units[..at].to_vec();
+        v.extend(prefix.encode_utf16());
+        v.extend_from_slice(&units[at..]);
+        let mut b: Vec<u8> = v.iter().flat_map(|u| u.to_be_bytes()).collect();
+        // An odd trailing byte stays where it was.
+        if raw.len() % 2 == 1 {
+            b.push(raw[raw.len() - 1]);
+        }
+        b
+    } else {
+        let units: Vec<u16> = raw.iter().map(|&b| b as u16).collect();
+        let at = shown_start(&units);
+        [&raw[..at], prefix.as_bytes(), &raw[at..]].concat()
+    };
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,9 +728,109 @@ mod tests {
             safety_note("100002", "12345 12345", false),
             publish_failed_note("the key directory could not be reached: timeout."),
             ready_note(),
+            plain_dropped_note("100002", "100002 is verified"),
         ] {
             assert!(n.is_ascii(), "{n}");
             assert!(n.starts_with(PREFIX), "{n}");
         }
+    }
+
+    /// Fifth audit of 2026-10, finding 1: the rule, as a table.
+    #[test]
+    fn an_unencrypted_message_is_refused_exactly_for_a_protected_contact() {
+        let r = |setting, seen| Remembered {
+            setting,
+            seen_encrypting: seen,
+        };
+        let cases = [
+            (Some(r(Setting::Auto, false)), false, false),
+            (Some(r(Setting::Auto, true)), false, true),
+            (Some(r(Setting::Auto, false)), true, true),
+            (Some(r(Setting::On, false)), false, true),
+            (Some(r(Setting::On, true)), true, true),
+            (Some(r(Setting::Off, true)), false, false),
+            (Some(r(Setting::Off, true)), true, false),
+            (None, false, true),
+        ];
+        for (rem, verified, refused) in cases {
+            assert_eq!(
+                plain_inbound_refusal("100002", rem, verified).is_some(),
+                refused,
+                "{rem:?} verified={verified}"
+            );
+        }
+    }
+
+    /// Finding 2: text from the network that starts like a note, in any of
+    /// the ways a client would show the same thing.
+    #[test]
+    fn the_note_marker_is_recognised_in_every_disguise() {
+        for t in [
+            "[ICQ E2E] Encryption is on",
+            "[icq e2e] x",
+            "  [ I C Q   E 2 E ]x",
+            "<HTML><BODY dir=\"ltr\"><FONT face=\"Arial\">[ICQ E2E] hi</FONT></BODY></HTML>",
+            "&nbsp;[ICQ&nbsp;E2E]",
+            "&#91;ICQ E2E&#93; spoofed",
+            "&#x5B;ICQ E2E&#x5D;",
+            "\u{200B}[ICQ\u{200D} E2E]",
+            "\u{FF3B}ICQ E2E\u{FF3D}",
+            "[\u{0406}\u{0421}Q \u{0415}2\u{0415}]",
+            "[ICQ\u{a0}E2E]",
+        ] {
+            assert!(looks_like_note(t), "{t:?}");
+        }
+        for t in [
+            "",
+            "hello [ICQ E2E]",
+            "(from 100002) [ICQ E2E] x",
+            "[ICQ] E2E",
+            "[ICQ E2",
+            "<HTML><BODY>ICQ E2E</BODY></HTML>",
+        ] {
+            assert!(!looks_like_note(t), "{t:?}");
+        }
+    }
+
+    #[test]
+    fn a_marker_from_the_network_is_shown_as_the_contacts_in_every_charset() {
+        let peer = "100002";
+        // 8-bit, plain.
+        let got = unmark(peer, crate::text::CHARSET_ASCII, b"[ICQ E2E] fake").unwrap();
+        assert_eq!(got, b"(from 100002) [ICQ E2E] fake");
+        // 8-bit, HTML: after the leading tags, so the client renders it.
+        let html = b"<HTML><BODY><FONT size=2> [icq e2e] fake</FONT></BODY></HTML>";
+        let got = unmark(peer, crate::text::CHARSET_LATIN1, html).unwrap();
+        assert_eq!(
+            String::from_utf8(got).unwrap(),
+            "<HTML><BODY><FONT size=2> (from 100002) [icq e2e] fake</FONT></BODY></HTML>"
+        );
+        // UCS-2.
+        let ucs: Vec<u8> = "<HTML><BODY>&nbsp;[ICQ E2E] x</BODY></HTML>"
+            .encode_utf16()
+            .flat_map(|u| u.to_be_bytes())
+            .collect();
+        let got = unmark(peer, crate::text::CHARSET_UNICODE, &ucs).unwrap();
+        let shown = crate::text::decode(crate::text::CHARSET_UNICODE, &got);
+        assert_eq!(
+            shown,
+            "<HTML><BODY>&nbsp;(from 100002) [ICQ E2E] x</BODY></HTML>"
+        );
+        // Whatever the disguise, the result no longer reads as a note.
+        for t in [
+            "&#91;ICQ E2E&#93; x",
+            "\u{200B}[ICQ E2E]",
+            "<b></b>[ICQ E2E]",
+        ] {
+            let got = unmark(peer, crate::text::CHARSET_ASCII, t.as_bytes()).unwrap();
+            let s = String::from_utf8(got).unwrap();
+            assert!(!looks_like_note(&s), "{s:?}");
+            assert!(plain_text(&s).contains("(from 100002)"), "{s:?}");
+        }
+        // Ordinary text is left alone.
+        assert_eq!(
+            unmark(peer, crate::text::CHARSET_ASCII, b"hi [ICQ E2E]"),
+            None
+        );
     }
 }

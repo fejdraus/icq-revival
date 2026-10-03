@@ -5,8 +5,10 @@
 //! With either switch on the loader notification that patches the networking
 //! module also patches the two modules a call runs in, the moment either is
 //! mapped: `sipXtapi.dll` (6.5 and 7.2: SIP, STUN/TURN, ICE, and on 6.5 the
-//! GIPS engine itself) and `sipXmediaLib.dll` (7.2: the GIPS engine). Both are
-//! loaded only when a call starts. Their Winsock imports are by ordinal, from
+//! GIPS engine itself) and `sipXmediaLib.dll` (7.2: the GIPS engine). The
+//! client loads them when a call starts; with `calls_encrypt` the bootstrap
+//! loads and patches them before the gate opens ([`preload`]), so their
+//! hooks are in before any call. Their Winsock imports are by ordinal, from
 //! `wsock32.dll` or `ws2_32.dll`, and are matched by name exactly as for the
 //! networking module.
 //!
@@ -48,6 +50,7 @@
 use super::*;
 
 use std::net::Ipv4Addr;
+use std::os::windows::ffi::OsStrExt;
 
 use windows_sys::Win32::Networking::WinSock;
 use windows_sys::Win32::System::SystemInformation::GetTickCount64;
@@ -982,13 +985,98 @@ fn retry_later(m: usize) {
     }
 }
 
-/// At start: patches a call module that is somehow loaded already, and learns
-/// the server's addresses (so they show as `server` in the log) on a thread of
-/// its own, away from the loader lock.
+/// What loading a call module ahead of calls came to.
+pub(super) enum Loaded {
+    /// Loaded (or already loaded) at this base.
+    At(usize),
+    /// The client has no such module.
+    Absent,
+    Failed(String),
+}
+
+/// Loads the call modules and patches them before any call can start, from
+/// the bootstrap thread, outside the loader lock (fifth audit of 2026-10,
+/// finding 5). They used to be patched only when the client loaded them for
+/// its first call - and, when the loader notification came before their
+/// imports were bound, by a thread polling every 50 ms, while the module's
+/// own code may already have run: the first media of that call could leave
+/// before its hooks were in. Loaded here and kept loaded (the reference is
+/// never given back, so they are never unloaded and loaded unpatched again),
+/// every module the client has is `Ready` before it signs on, and the gate
+/// refuses a call that must be encrypted while one is not
+/// ([`gate::media`]).
+pub(super) fn preload() {
+    if !policy().encrypts_calls() {
+        return;
+    }
+    preload_with(&load_module, &|m, base| {
+        on_load(CALL_MODULES[m], base, "loaded ahead of calls", false)
+    });
+}
+
+/// [`preload`], with the loading and the patching given (the tests).
+pub(super) fn preload_with(load: &dyn Fn(usize) -> Loaded, patch: &dyn Fn(usize, usize) -> bool) {
+    for (m, name) in CALL_MODULES.iter().enumerate() {
+        match load(m) {
+            Loaded::Absent => {
+                gate::current().set_media(m, gate::MediaHooks::Absent);
+                log::line(&format!(
+                    "call hooks: {name} is not part of this client; nothing to patch"
+                ));
+            }
+            Loaded::Failed(why) => {
+                failed(m, &format!("it could not be loaded ahead of calls ({why})"))
+            }
+            Loaded::At(base) => {
+                // On failure `on_load` has told the gate already.
+                patch(m, base);
+            }
+        }
+    }
+}
+
+/// Loads call module `m` from the client's own folder, by full path.
+fn load_module(m: usize) -> Loaded {
+    let name = CALL_MODULES[m];
+    let w: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: a NUL-terminated name.
+    let base = unsafe { GetModuleHandleW(w.as_ptr()) } as usize;
+    if base != 0 {
+        return Loaded::At(base);
+    }
+    let path = crate::config::client_folder().join(name);
+    if !path.is_file() {
+        return Loaded::Absent;
+    }
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: a NUL-terminated path; the module is kept loaded for good.
+    let h = unsafe {
+        windows_sys::Win32::System::LibraryLoader::LoadLibraryExW(
+            wide.as_ptr(),
+            ptr::null_mut(),
+            windows_sys::Win32::System::LibraryLoader::LOAD_WITH_ALTERED_SEARCH_PATH,
+        )
+    };
+    if h.is_null() {
+        // SAFETY: no arguments.
+        return Loaded::Failed(format!("LoadLibrary error {}", unsafe { GetLastError() }));
+    }
+    Loaded::At(h as usize)
+}
+
+/// At start: loads and patches the call modules ahead of calls when calls
+/// are encrypted ([`preload`]), patches one that is somehow loaded already,
+/// and learns the server's addresses (so they show as `server` in the log)
+/// on a thread of its own, away from the loader lock.
 pub(super) fn start() {
     if !policy().hooks_calls() {
         return;
     }
+    preload();
     if policy().calls_log {
         log::line(
             "calls_log=on: call media and signalling are observed (classes, sizes, \
@@ -1127,6 +1215,106 @@ mod tests {
         );
         let closed_b = lock(calls::tracker()).close(sb_raw);
         assert!(closed_b[0].contains("IN  <- loopback:"), "{}", closed_b[0]);
+    }
+
+    /// Fifth audit of 2026-10, finding 5: the call modules are loaded and
+    /// patched ahead of calls, each patched as soon as it is loaded, and a
+    /// call that must be encrypted is refused by the gate until every module
+    /// the client has is patched. A module the client lacks (6.5 has no
+    /// `sipXmediaLib.dll`) does not hold calls up; one that cannot be loaded
+    /// fails like one that cannot be patched.
+    #[test]
+    fn the_call_modules_are_patched_before_a_strict_call_is_let_through() {
+        use std::cell::RefCell;
+        let p = crate::config::Policy::from_settings(crate::config::Settings {
+            mode: Some("encrypt"),
+            directory: Some("https://example.invalid"),
+            home: Some(" "),
+            ..Default::default()
+        });
+        let mut p = p;
+        p.calls_encrypt = true;
+        p.inject = true;
+        let verdict = |g: &gate::Gate, strict: bool| {
+            gate::media(&p, &g.bootstrap(), &g.media(), Some(strict))
+        };
+        let fresh = || -> &'static gate::Gate {
+            let g: &'static gate::Gate = Box::leak(Box::new(gate::Gate::new()));
+            g.force(gate::Bootstrap::Ready(HookMask::ALL));
+            gate::use_for_this_thread(Some(g));
+            g
+        };
+
+        // 7.2: both modules.
+        let g = fresh();
+        assert!(
+            matches!(verdict(g, true), gate::Verdict::Block(_)),
+            "before"
+        );
+        let events = RefCell::new(Vec::new());
+        preload_with(
+            &|m| {
+                events.borrow_mut().push(format!("load {m}"));
+                Loaded::At(0x1000_0000 + m)
+            },
+            &|m, base| {
+                assert_eq!(base, 0x1000_0000 + m);
+                events.borrow_mut().push(format!("patch {m}"));
+                // What `on_load` does once the module is patched.
+                gate::current().set_media(m, gate::MediaHooks::Ready);
+                true
+            },
+        );
+        assert_eq!(
+            *events.borrow(),
+            ["load 0", "patch 0", "load 1", "patch 1"],
+            "each module is patched as soon as it is loaded"
+        );
+        assert_eq!(verdict(g, true), gate::Verdict::Protect);
+
+        // 6.5: no sipXmediaLib.dll.
+        let g = fresh();
+        preload_with(
+            &|m| {
+                if m == 1 {
+                    Loaded::Absent
+                } else {
+                    Loaded::At(1)
+                }
+            },
+            &|m, _| {
+                gate::current().set_media(m, gate::MediaHooks::Ready);
+                true
+            },
+        );
+        assert_eq!(g.media(), gate::MediaHooks::Ready);
+        assert_eq!(verdict(g, true), gate::Verdict::Protect);
+
+        // One module patched, the other not yet: not ready.
+        let g = fresh();
+        g.set_media(0, gate::MediaHooks::Ready);
+        assert!(matches!(verdict(g, true), gate::Verdict::Block(_)));
+        assert!(matches!(verdict(g, false), gate::Verdict::Plain(_)));
+
+        // A module that cannot be loaded.
+        let g = fresh();
+        preload_with(
+            &|m| {
+                if m == 1 {
+                    Loaded::Failed("LoadLibrary error 193".into())
+                } else {
+                    Loaded::At(1)
+                }
+            },
+            &|m, _| {
+                gate::current().set_media(m, gate::MediaHooks::Ready);
+                true
+            },
+        );
+        assert!(matches!(g.media(), gate::MediaHooks::Failed(_)));
+        assert!(matches!(verdict(g, true), gate::Verdict::Block(_)));
+        assert!(matches!(verdict(g, false), gate::Verdict::Plain(_)));
+        gate::use_for_this_thread(None);
     }
 
     #[test]

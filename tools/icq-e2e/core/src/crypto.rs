@@ -97,6 +97,16 @@ pub trait Crypto {
     /// engine says what it knows.
     fn strictness(&self, peer: &str) -> Option<bool>;
 
+    /// Whether a message in `peer`'s name that did not come through end-to-
+    /// end encryption may be shown: `None` when it may, otherwise the reason
+    /// for the log, with the warning queued for the chat and raised as a
+    /// security alert (both rate-limited). The one decision every inbound
+    /// text path asks - live messages on channels 1, 2 and 4, and offline
+    /// messages (fifth audit of 2026-10, finding 1): if a contact is
+    /// protected, nothing unauthenticated is shown in their name. No
+    /// default: an engine that cannot tell the contact's policy refuses.
+    fn plain_inbound(&mut self, peer: &str, now: u64) -> Option<String>;
+
     /// A note for the chat with `peer`: the gate's refusal of a call or a
     /// transfer. Dropped by an engine that shows no notes.
     fn note(&mut self, peer: &str, text: String) {
@@ -216,9 +226,43 @@ impl Crypto for Disabled {
         Some(false)
     }
 
+    /// `e2e=off`: nothing is encrypted on this install, so nothing is
+    /// protected and every message is shown as it came.
+    fn plain_inbound(&mut self, _peer: &str, _now: u64) -> Option<String> {
+        None
+    }
+
     fn note(&mut self, peer: &str, text: String) {
         self.notes.push(Note::to(peer, text));
     }
+}
+
+/// How often the warning about unencrypted messages in one contact's name
+/// is put in the chat: once in this many seconds, however many come (each
+/// is logged).
+pub const PLAIN_DROPPED_EVERY: u64 = 60;
+
+/// Queues the warning for an unencrypted message in `peer`'s name that was
+/// not shown, at most once per [`PLAIN_DROPPED_EVERY`] per contact, and
+/// raises the security alert. Shared by the engines. Returns the note.
+pub fn plain_dropped(
+    said: &mut HashMap<String, u64>,
+    notes: &mut Vec<Note>,
+    peer: &str,
+    why: &str,
+    now: u64,
+) -> String {
+    let note = policy::plain_dropped_note(peer, why);
+    let key = sign::ident(peer);
+    let due = said
+        .get(&key)
+        .is_none_or(|at| now.saturating_sub(*at) >= PLAIN_DROPPED_EVERY);
+    if due {
+        said.insert(key.clone(), now);
+        notes.push(Note::to(peer, note.clone()));
+    }
+    crate::alert::raise(&format!("plain:{key}"), &note, now);
+    note
 }
 
 /// After this many messages to one contact without a control message of our
@@ -656,6 +700,9 @@ pub struct Engine {
     /// account's state file (audit 2026-10, finding 6). Every message is
     /// then held, never sent in clear, and nothing is published.
     locked_out: Option<String>,
+    /// When the warning about an unencrypted message in a contact's name
+    /// was last put in the chat ([plain_dropped]).
+    plain_said: HashMap<String, u64>,
 }
 
 impl Engine {
@@ -690,6 +737,7 @@ impl Engine {
             persist: None,
             unsaved: HashSet::new(),
             locked_out: None,
+            plain_said: HashMap::new(),
         }
     }
 
@@ -1035,7 +1083,7 @@ impl Engine {
         // resetlog` (audit 2026-10, finding 4): the copy is frozen as it was
         // last trusted, and nothing the server says now changes it.
         if let Some(why) = self.keys.log.broken.clone() {
-            self.note_once(None, "kt:broken".into(), policy::log_broken_note(&why));
+            self.alert_once("kt:broken", policy::log_broken_note(&why), now);
             self.log_status = LogStatus::Broken(why);
             self.set_inbound_gate(now);
             return true;
@@ -1082,7 +1130,7 @@ impl Engine {
     /// The key log does not add up: said once, and, if we had trusted it
     /// before, remembered as broken for good (audit 2026-10, finding 4).
     fn log_broke(&mut self, why: &str) {
-        self.note_once(None, "kt:broken".into(), policy::log_broken_note(why));
+        self.alert_once("kt:broken", policy::log_broken_note(why), unix_now());
         self.log_status = LogStatus::Broken(why.to_string());
         if self.keys.log.was_trusted() && self.keys.log.broken.is_none() {
             self.keys.log.broken = Some(why.to_string());
@@ -1184,7 +1232,7 @@ impl Engine {
             Err(kt::AuditError::NoAuditor) => AuditStatus::None,
             Err(kt::AuditError::Net(e)) => AuditStatus::Failed(e),
             Err(kt::AuditError::Stale(why)) => {
-                self.note_once(None, "kt:stale".into(), policy::audit_stale_note(&why));
+                self.alert_once("kt:stale", policy::audit_stale_note(&why), now);
                 AuditStatus::Stale(why)
             }
             Err(kt::AuditError::SplitView(why)) => {
@@ -1501,13 +1549,24 @@ impl Engine {
         self.notes.push(note);
     }
 
-    /// Queues a note once per sign-on, keyed by `key`.
-    fn note_once(&mut self, peer: Option<&str>, key: String, text: String) {
+    /// Queues a note once per sign-on, keyed by `key`; whether it did.
+    fn note_once(&mut self, peer: Option<&str>, key: String, text: String) -> bool {
         if self.said.insert(key) {
             self.queue(Note {
                 peer: peer.map(str::to_string),
                 text,
             });
+            return true;
+        }
+        false
+    }
+
+    /// [`Self::note_once`] for an event about the key log that the user
+    /// must be able to trust: also raised as a security alert (fifth audit
+    /// of 2026-10, finding 2).
+    fn alert_once(&mut self, key: &str, text: String, now: u64) {
+        if self.note_once(None, key.to_string(), text.clone()) {
+            crate::alert::raise(&format!("{key}:{text}"), &text, now);
         }
     }
 
@@ -1830,6 +1889,13 @@ impl Engine {
         let key = format!("pin:{}", sign::ident(peer));
         if let Some(note) = self.keys.said.remove(&key) {
             self.changed = true;
+            // A verified contact's key changed (or a protected contact's was
+            // replaced by the operator): messages to them are held, and the
+            // user hears it where the network cannot write (fifth audit of
+            // 2026-10, finding 2).
+            if self.keys.pinned(peer).is_some_and(|p| p.held) {
+                crate::alert::raise(&format!("pin:{note}"), &note, unix_now());
+            }
             self.queue(Note::to(peer, note));
         }
     }
@@ -1970,6 +2036,14 @@ impl Crypto for Engine {
         // A command that looked the contact up may have found their safety
         // number changed; that is said first.
         self.drain_pin_notes(peer);
+        // What decides whom to trust is also shown where the network cannot
+        // write (fifth audit of 2026-10, finding 2).
+        if matches!(
+            cmd,
+            Command::Safety | Command::Verify | Command::Unverify | Command::Accept
+        ) {
+            crate::alert::raise(&format!("cmd:{note}"), &note, now);
+        }
         self.queue(Note::to(peer, note));
         true
     }
@@ -2277,6 +2351,27 @@ impl Crypto for Engine {
             return None;
         }
         Some(self.peer_info(peer).strict)
+    }
+
+    /// Fifth audit of 2026-10, finding 1: protected - switched on by hand,
+    /// seen encrypting, or verified (also a verified contact whose key
+    /// changed and is held) - means nothing unauthenticated is shown in the
+    /// contact's name; `/e2e off` shows it; a contact never seen encrypting
+    /// is shown, as without the add-on. Locked out, the contact's settings
+    /// are in a state file this engine cannot read: refused.
+    fn plain_inbound(&mut self, peer: &str, now: u64) -> Option<String> {
+        let why = match &self.locked_out {
+            Some(locked) => format!("the add-on cannot read its settings for {peer}: {locked}"),
+            None => {
+                let verified = self
+                    .keys
+                    .pinned(peer)
+                    .is_some_and(|p| p.is_verified() || p.held);
+                policy::plain_inbound_refusal(peer, Some(self.remembered(peer)), verified)?
+            }
+        };
+        plain_dropped(&mut self.plain_said, &mut self.notes, peer, &why, now);
+        Some(why)
     }
 
     fn note(&mut self, peer: &str, text: String) {
@@ -3646,6 +3741,52 @@ mod tests {
         }
     }
 
+    /// Fifth audit of 2026-10, finding 2: a verified contact's key change,
+    /// and what the user answers to it, are also security alerts - the chat
+    /// note alone can be imitated by any message in the contact's name.
+    #[test]
+    fn a_verified_contacts_key_change_is_a_security_alert() {
+        let (dir, a, b) = two_published();
+        let mut e = running(&dir, a);
+        safety_of(&mut e, "100002");
+        assert!(e.command("100002", "/e2e verify", NOW));
+        notes(&mut e);
+        let _ = crate::alert::take_shown();
+        reset_contact(&dir, &b);
+        assert!(matches!(
+            e.outbound("100002", form(), b"after", NOW),
+            Outbound::Refused(_)
+        ));
+        let alerts = crate::alert::take_shown();
+        assert!(
+            alerts
+                .iter()
+                .any(|a| a.contains("has changed") && a.contains("verification is cleared")),
+            "{alerts:?}"
+        );
+        assert!(e.command("100002", "/e2e accept", NOW));
+        let alerts = crate::alert::take_shown();
+        assert!(
+            alerts.iter().any(|a| a.contains("without verifying it")),
+            "{alerts:?}"
+        );
+        // An unverified contact's change is said in the chat only.
+        let (dir, a, b) = two_published();
+        let mut e = running(&dir, a);
+        safety_of(&mut e, "100002");
+        notes(&mut e);
+        let _ = crate::alert::take_shown();
+        reset_contact(&dir, &b);
+        let _ = e.outbound("100002", form(), b"after", NOW);
+        assert!(notes(&mut e).iter().any(|n| n.text.contains("has changed")));
+        assert!(crate::alert::take_shown().is_empty());
+        // With security_popups off nothing is raised.
+        crate::alert::enable_for_this_thread(false);
+        assert!(e.command("100002", "/e2e safety", NOW + 120));
+        assert!(crate::alert::take_shown().is_empty());
+        crate::alert::enable_for_this_thread(true);
+    }
+
     #[test]
     fn accept_does_nothing_without_a_hold() {
         let (dir, a, _) = two_published();
@@ -4315,6 +4456,11 @@ mod tests {
             .filter(|n| n.text.contains("WARNING: the key log was rewritten"))
             .count();
         assert_eq!(warned, 1, "{n:?}");
+        // Also where the network cannot write (fifth audit of 2026-10,
+        // finding 2).
+        assert!(crate::alert::take_shown()
+            .iter()
+            .any(|a| a.contains("WARNING: the key log was rewritten")));
         assert!(matches!(e.log_trust(), kt::Trust::BrokenAfterTrust(_)));
         // The copy that was good is kept, frozen.
         assert_eq!(e.keys().log.size, 6);
@@ -4488,6 +4634,9 @@ mod tests {
             let n = notes(&mut e);
             let warned: Vec<_> = n.iter().filter(|n| n.text.contains("Warning:")).collect();
             assert_eq!(warned.len(), 1, "{n:?}");
+            assert!(crate::alert::take_shown()
+                .iter()
+                .any(|a| a.contains("Warning:") && a.contains("auditor")));
             let want = if when.is_some() {
                 "last vouched for it 120 minutes ago"
             } else {
