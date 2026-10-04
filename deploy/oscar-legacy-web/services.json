@@ -410,13 +410,19 @@
   },
   "_contact": "An e-mail address or a web page for questions about this server, shown on /icq/about and /icq/legal. Empty: no contact line. CONTACT in the environment overrides it.",
   "contact": "",
-  "_downloads": "Where the patches are published, listed on /icq/download. The files are served by this server from /icq/files/ (DOWNLOADS_DIR, built by tools/make-downloads.py). A value that is empty or starts with TODO is shown as not published yet.",
+  "_downloads": "Where the patches are published, listed on /icq/download. The files are served by this server from /icq/files/ (DOWNLOADS_DIR, built by tools/make-downloads.py). A value that is empty or starts with TODO is shown as not published yet. The *Installer entries are the clients' original installers on the Internet Archive (not hosted here), each with the SHA-256 the patches were tested with (*InstallerSha256); an installer without an address (empty or TODO) is left off the page.",
   "downloads": {
     "icq2003bPatch": "/icq/files/icq-2003b-patch.exe",
     "icq65Patch": "/icq/files/icq-65-patch.zip",
     "icq72Patch": "/icq/files/icq-72-patch.zip",
     "mirandaPlugin": "/icq/files/icq-revival-miranda.zip",
-    "mirandaSource": "/icq/files/icq-revival-miranda-src.zip"
+    "mirandaSource": "/icq/files/icq-revival-miranda-src.zip",
+    "icq2003bInstaller": "https://archive.org/download/tucows_193867_ICQ_Pro/icqpro2003b.exe",
+    "icq2003bInstallerSha256": "04b789e32b5b82982af7ce5e54c63630d262d3c7ba3d6ca294f0ae9fa10e8edf",
+    "icq65Installer": "https://archive.org/download/icq-6-5-2024-install_icq65/icq-6-5-2024-install_icq65.exe",
+    "icq65InstallerSha256": "20195f60f61e2f19882487f93372b56c89f2be0da39b5d51a1ed30dbbd3495fe",
+    "icq72Installer": "TODO",
+    "icq72InstallerSha256": "1ff4b3dde48c0163bb663f2fe2e38faecb8957867dca45927a8166ddaef8154a"
   },
   "_oscarHost": "The server address for clients, shown in the \"how to start\" guide. Leave empty to drop that section.",
   "oscarHost": "icq.example.com"

@@ -920,6 +920,10 @@ const I18N = {
     dlIcq2003b: 'the ICQ 2003b patch',
     dlIcq65: 'the ICQ 6.5 patch',
     dlIcq72: 'the ICQ 7.2 patch',
+    dlInstaller: 'original installer (Internet Archive)',
+    dlInstallerNote: 'The original installers are copies on the Internet Archive, '
+      + 'unchanged. Check that the file\'s SHA-256 is the one shown: the patches were '
+      + 'tested with exactly that file. Install the client, then apply our patch.',
     dlMiranda: 'our ICQ plugin (32 and 64 bit)',
     dlByHand: 'nothing: set the server by hand',
     dlOthers: 'AIM 5.x and other OSCAR clients',
@@ -1345,6 +1349,10 @@ const I18N = {
     dlIcq2003b: 'патч для ICQ 2003b',
     dlIcq65: 'патч для ICQ 6.5',
     dlIcq72: 'патч для ICQ 7.2',
+    dlInstaller: 'оригінальний інсталятор (Internet Archive)',
+    dlInstallerNote: 'Оригінальні інсталятори — це незмінені копії в Internet Archive. '
+      + 'Перевірте, що SHA-256 файлу збігається з указаним: патчі перевірено саме з '
+      + 'цим файлом. Встановіть клієнт, а потім застосуйте наш патч.',
     dlMiranda: 'наш плагін ICQ (32 і 64 біти)',
     dlByHand: 'нічого: сервер вказується вручну',
     dlOthers: 'AIM 5.x та інші клієнти OSCAR',
@@ -2514,6 +2522,18 @@ function downloadLink(key, t, label = t.dlGet) {
   return `<a href="${escapeHtml(url)}">${label}</a>`;
 }
 
+// A client's original installer from the config (key) with the SHA-256 the
+// patches were tested with (key + 'Sha256'). Unlike a patch, an installer
+// without an address is not mentioned at all.
+function installerLink(key, t) {
+  const downloads = config.downloads || {};
+  const url = String(downloads[key] || '').trim();
+  if (!url || /^todo/i.test(url)) return '';
+  const hash = String(downloads[key + 'Sha256'] || '').trim();
+  return `<br><span class="dim"><a href="${escapeHtml(url)}">${t.dlInstaller}</a>`
+    + (hash ? `<br>SHA-256: <code>${escapeHtml(hash)}</code>` : '') + '</span>';
+}
+
 // The links at the foot of every information page, minus the page itself.
 function infoLinks(self, u) {
   const t = u.t;
@@ -2648,6 +2668,12 @@ function downloadPage(u) {
     <td valign="top">${needs}</td>
     <td valign="top" nowrap>${link}</td></tr>`;
   const host = config.oscarHost ? escapeHtml(config.oscarHost) : '';
+  const installers = {
+    icq2003b: installerLink('icq2003bInstaller', t),
+    icq65: installerLink('icq65Installer', t),
+    icq72: installerLink('icq72Installer', t),
+  };
+  const anyInstaller = Object.values(installers).some(Boolean);
 
   return page(t.dlTitle, `
     ${logoBlock()}
@@ -2659,9 +2685,10 @@ function downloadPage(u) {
         <th>${t.dlClient}</th><th>${t.dlBuild}</th><th>${t.dlNeeds}</th><th></th>
       </tr></thead>
       <tbody>
-        ${row('<b>ICQ Pro 2003b</b>', '3916', t.dlIcq2003b, downloadLink('icq2003bPatch', t))}
-        ${row('<b>ICQ 6.5</b>', '2024', t.dlIcq65, downloadLink('icq65Patch', t))}
-        ${row('<b>ICQ 7.2</b>', '3143', t.dlIcq72, downloadLink('icq72Patch', t))}
+        ${row('<b>ICQ Pro 2003b</b>', '3916', t.dlIcq2003b + installers.icq2003b,
+          downloadLink('icq2003bPatch', t))}
+        ${row('<b>ICQ 6.5</b>', '2024', t.dlIcq65 + installers.icq65, downloadLink('icq65Patch', t))}
+        ${row('<b>ICQ 7.2</b>', '3143', t.dlIcq72 + installers.icq72, downloadLink('icq72Patch', t))}
         ${row('<b>Miranda NG</b>', '0.96.7', t.dlMiranda, downloadLink('mirandaPlugin', t)
           // The plugins are GPLv2: their source sits right under the binaries.
           + `<br><span class="dim">${downloadLink('mirandaSource', t, t.dlSource)}</span>`)}
@@ -2670,6 +2697,7 @@ function downloadPage(u) {
       </tbody>
     </table>
     </div>
+    ${anyInstaller ? `<p><span class="dim">${t.dlInstallerNote}</span></p>` : ''}
 
     <h2>${t.dlHow}</h2>
     ${bullets(t.dlHowSteps(host))}

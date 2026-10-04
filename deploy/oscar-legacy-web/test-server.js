@@ -23,7 +23,8 @@ function freePort() {
 
 // A copy of the service in a temporary folder: its code, data and pages.
 // withRuffle=false leaves out the player, as a machine without it would be.
-function stage(withRuffle) {
+// downloads, when given, is merged over the config's downloads.
+function stage(withRuffle, downloads) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-web-'));
   for (const f of fs.readdirSync(HERE)) {
     if (/\.test\.js$/.test(f) || !/\.(js|json|py|xml)$/.test(f)) continue;
@@ -33,6 +34,12 @@ function stage(withRuffle) {
     fs.cpSync(path.join(HERE, d), path.join(dir, d), { recursive: true });
   }
   for (const f of ['ui.js', 'flower.png', 'logo-page.png']) fs.copyFileSync(path.join(SHARED, f), path.join(dir, f));
+  if (downloads) {
+    const file = path.join(dir, 'services.json');
+    const cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+    cfg.downloads = { ...cfg.downloads, ...downloads };
+    fs.writeFileSync(file, JSON.stringify(cfg));
+  }
   if (withRuffle) {
     // Only the loader: the pages decide by it whether a player is there.
     fs.mkdirSync(path.join(dir, 'ruffle'));
@@ -41,8 +48,8 @@ function stage(withRuffle) {
   return dir;
 }
 
-async function start(withRuffle = true) {
-  const dir = stage(withRuffle);
+async function start(withRuffle = true, { downloads } = {}) {
+  const dir = stage(withRuffle, downloads);
   const port = await freePort();
   const child = spawn(process.execPath, ['server.js'], {
     cwd: dir,
