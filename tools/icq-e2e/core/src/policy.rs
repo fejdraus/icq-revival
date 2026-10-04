@@ -286,15 +286,15 @@ pub enum Held {
     NotYet(String),
 }
 
-/// What a held message's note ends with in a chat under `/e2e on`: only
-/// the user's own switch lets messages go unencrypted (`/e2e plain` does
-/// not, 10.8).
+/// What a held message's note ends with in a chat under `/e2e on`: the
+/// user's own switch lets messages go unencrypted, and `/e2e plain` a single
+/// one (the owner's decision of 2026-10-04, 10.8).
 fn on_hold_way_out(peer: &str) -> String {
-    format!("Encryption is on in this chat (/e2e on), so messages to {peer} only ever go encrypted and are held otherwise: type /e2e auto to send unencrypted whenever {peer} cannot receive encrypted messages, or /e2e off to switch encryption off in this chat.")
+    format!("Encryption is on in this chat (/e2e on), so messages to {peer} only ever go encrypted and are held otherwise: type /e2e plain to send a single message unencrypted (for example to tell {peer} to switch to a client with encryption), /e2e auto to send unencrypted whenever {peer} cannot receive encrypted messages, or /e2e off to switch encryption off in this chat.")
 }
 
 /// The note for a message that was held. `on`: the chat is under `/e2e on`,
-/// where `/e2e plain` does nothing and the way out is `/e2e auto` or
+/// where the way out is `/e2e plain` for one message, `/e2e auto` or
 /// `/e2e off`.
 pub fn held_note(peer: &str, why: &Held, on: bool) -> String {
     match why {
@@ -486,12 +486,6 @@ pub fn file_blocked_note(peer: &str, why: &str, required: bool, verified: bool) 
 pub fn file_failed_note(peer: &str, why: &str) -> String {
     let why = why.trim_end_matches('.');
     format!("{PREFIX}The encrypted file transfer with {peer} was stopped: {why}. Nothing of it was passed on unencrypted; send the file again.")
-}
-
-/// Whether `/e2e plain` may open a message held for this reason. A contact
-/// switched on by hand never gets clear text (10.8).
-pub fn plain_allowed(setting: Setting) -> bool {
-    setting != Setting::On
 }
 
 // --- unencrypted messages in a contact's name (fifth audit of 2026-10) --------
@@ -782,13 +776,6 @@ mod tests {
         assert!(r.strict());
         r.setting = Setting::Off;
         assert!(!r.strict());
-    }
-
-    #[test]
-    fn plain_is_refused_only_when_switched_on_by_hand() {
-        assert!(plain_allowed(Setting::Auto));
-        assert!(plain_allowed(Setting::Off));
-        assert!(!plain_allowed(Setting::On));
     }
 
     #[test]

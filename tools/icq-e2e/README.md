@@ -186,11 +186,11 @@ stream, so the contact never gets it, and answers with a note in that chat.
 
 | Command | What it does |
 |---|---|
-| `/e2e on` | Only encrypted, held otherwise - until `/e2e auto` or `/e2e off`. Nothing ever goes to the contact in clear: without their keys, with the key directory unreachable, with this add-on's keys not published yet, or while they are signed in with a client without the add-on, the message is held and the chat says why and that `/e2e auto` or `/e2e off` lets it go unencrypted. Their unencrypted messages are not shown; calls and files go only encrypted; a tZer is shown only when announced. |
+| `/e2e on` | Only encrypted, held otherwise - until `/e2e auto` or `/e2e off`. Nothing ever goes to the contact in clear: without their keys, with the key directory unreachable, with this add-on's keys not published yet, or while they are signed in with a client without the add-on, the message is held and the chat says why and that `/e2e plain` lets a single one go unencrypted, `/e2e auto` or `/e2e off` all of them. Their unencrypted messages are not shown; calls and files go only encrypted; a tZer is shown only when announced. |
 | `/e2e off` | Never encrypted: messages go in clear and their unencrypted messages are shown. An encrypted message from them is still read, and gives one hint. |
 | `/e2e auto` | The default: encrypted whenever their client can - ordinary text with a note while they use a client without the add-on. The manual on/off is forgotten; whether the contact was seen encrypting is kept, so downgrade protection stays. |
 | `/e2e status` | The setting - "on (only encrypted; held otherwise)", "auto (encrypted whenever their client can)" or "off" - whether the contact was seen encrypting, their signed devices in the key directory, their current client, and what the next message will do. |
-| `/e2e plain` | The next message goes in clear, once - for a contact that encrypted before and now shows no keys. Refused when encryption is on by hand. |
+| `/e2e plain` | The next text message to the contact goes in clear, once - for a contact that encrypted before and now shows no keys, or under `/e2e on` to tell the contact the chat is not encrypted or to switch to a client with encryption. After it the chat says "This message to <uin> went unencrypted (/e2e plain). Encryption is required again." Calls, files, tZers and what is shown of the contact's unencrypted messages are not affected. A pending `/e2e plain` is dropped by `/e2e on`, `/e2e auto`, `/e2e off` and by a restart (it is kept in memory only). |
 | `/e2e safety` | The safety number with this contact - 60 digits in twelve groups of five, as Signal shows it - whether the contact is verified, and how to compare. |
 | `/e2e verify` | Marks the contact verified, for the number `/e2e safety` showed last in this sign-on (the key behind it, not the contact). Refused if the number was not shown, or changed since. |
 | `/e2e unverify` | Takes the verification back. |
@@ -234,8 +234,8 @@ is never silent.
 with "The message to <uin> was NOT sent: <uin> is signed in with a client
 without end-to-end encryption, which could not read it", followed by how to let
 it go (`/e2e auto` to send unencrypted whenever they cannot receive encrypted
-messages, `/e2e off` to switch encryption off in the chat; `/e2e plain` does
-nothing under `/e2e on`), and their unencrypted messages are dropped with the
+messages, `/e2e off` to switch encryption off in the chat, `/e2e plain` to send a
+single message unencrypted - for example to ask them to switch clients), and their unencrypted messages are dropped with the
 usual warning naming them and the reason. `/e2e status` shows which client the
 contact is on ("their current client: ...").
 

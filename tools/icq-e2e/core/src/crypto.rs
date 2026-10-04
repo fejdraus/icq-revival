@@ -2233,7 +2233,7 @@ impl Crypto for Engine {
                 self.plain_once.remove(&p);
                 self.shown.insert(p, Status::On);
                 let mut note = format!(
-                    "{pre}Encryption is on in this chat (/e2e on): messages to {peer} only ever go encrypted - when that is not possible they are held, not sent, until you type /e2e auto or /e2e off - and unencrypted messages in {peer}'s name are not shown."
+                    "{pre}Encryption is on in this chat (/e2e on): messages to {peer} only ever go encrypted - when that is not possible they are held, not sent, until you type /e2e auto or /e2e off (/e2e plain sends a single one unencrypted) - and unencrypted messages in {peer}'s name are not shown."
                 );
                 if self.other_client(peer) {
                     note.push_str(&format!(
@@ -2273,10 +2273,15 @@ impl Crypto for Engine {
             }
             Command::Status => self.describe(peer, now),
             Command::Plain => {
+                // Under `/e2e on` too (the owner's decision, 2026-10-04): one
+                // message, to say the chat is not encrypted or to ask the
+                // contact to switch clients. Only text; calls, files and
+                // tZers are not touched, nor what is shown inbound.
                 let rem = self.remembered(peer);
-                if !policy::plain_allowed(rem.setting) {
+                if rem.setting == Setting::On {
+                    self.plain_once.insert(p);
                     format!(
-                        "{pre}/e2e plain does nothing here: encryption is on in this chat by your choice, so nothing goes to {peer} unencrypted. Type /e2e off first."
+                        "{pre}The next message to {peer} goes unencrypted, once: the server can read it. After it encryption is required again (/e2e on)."
                     )
                 } else if rem.setting == Setting::Off {
                     format!(
@@ -2371,10 +2376,17 @@ impl Crypto for Engine {
                     }
                     ClearWhy::OtherClient => self.say_other_client(peer, now),
                     ClearWhy::Plain => {
-                        let n = format!(
-                            "{}This message to {peer} was sent unencrypted, as asked with /e2e plain.",
-                            policy::PREFIX
-                        );
+                        let n = if self.remembered(peer).setting == Setting::On {
+                            format!(
+                                "{}This message to {peer} went unencrypted (/e2e plain). Encryption is required again.",
+                                policy::PREFIX
+                            )
+                        } else {
+                            format!(
+                                "{}This message to {peer} was sent unencrypted, as asked with /e2e plain.",
+                                policy::PREFIX
+                            )
+                        };
                         self.queue(Note::to(peer, n.clone()));
                         n
                     }
@@ -3773,14 +3785,47 @@ mod tests {
             other => panic!("{other:?}"),
         }
         notes(&mut e);
-        // Not even with /e2e plain (10.8).
+        // /e2e plain lets exactly one message through, said both ways
+        // (10.8, the owner's decision of 2026-10-04).
         assert!(e.command("100009", "/e2e plain", NOW));
-        assert!(notes(&mut e)[0].text.contains("does nothing here"));
+        let n = notes(&mut e);
+        assert!(
+            n[0].text
+                .contains("next message to 100009 goes unencrypted, once")
+                && n[0].text.contains("encryption is required again (/e2e on)"),
+            "{n:?}"
+        );
+        match e.outbound("100009", form(), b"switch clients", NOW) {
+            Outbound::Clear { text, note } => {
+                assert_eq!(text, "switch clients");
+                assert!(
+                    note.contains("went unencrypted (/e2e plain)")
+                        && note.contains("Encryption is required again"),
+                    "{note}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(notes(&mut e).len(), 1);
+        match e.outbound("100009", form(), b"hi", NOW) {
+            Outbound::Refused(note) => assert!(note.contains("/e2e plain"), "{note}"),
+            other => panic!("the one after it is held again: {other:?}"),
+        }
+        notes(&mut e);
+        // A pending /e2e plain is dropped by /e2e on, and by a restart.
+        assert!(e.command("100009", "/e2e plain", NOW));
+        assert!(e.command("100009", "/e2e on", NOW));
         assert!(matches!(
             e.outbound("100009", form(), b"hi", NOW),
             Outbound::Refused(_)
         ));
-        // Only switching it off sends clear text.
+        assert!(e.command("100009", "/e2e plain", NOW));
+        let mut e = restarted(&dir, &e);
+        assert!(matches!(
+            e.outbound("100009", form(), b"hi", NOW),
+            Outbound::Refused(_)
+        ));
+        // Only switching it off sends clear text for good.
         assert!(e.command("100009", "/e2e off", NOW));
         assert!(matches!(
             e.outbound("100009", form(), b"hi", NOW),
@@ -4047,17 +4092,12 @@ mod tests {
             assert_eq!(n.len(), 1, "{n:?}");
             assert!(!n[0].contains("went unencrypted"), "{n:?}");
         }
-        // Not even /e2e plain lets one through (10.8).
+        // /e2e plain arms one message; while it is pending, calls, files,
+        // tZers and what is shown inbound stay as strict as before.
         assert!(e.command("100002", "/e2e plain", NOW));
-        assert!(texts_of(&mut e)[0].contains("does nothing here"));
-        assert!(matches!(
-            e.outbound("100002", form(), b"plain?", NOW),
-            Outbound::Refused(_)
-        ));
-        notes(&mut e);
-
-        // Their unencrypted message is not shown: a warning naming them and
-        // why.
+        assert!(texts_of(&mut e)[0].contains("goes unencrypted, once"));
+        // Their unencrypted message is not shown (a pending /e2e plain is
+        // about sending only): a warning naming them and why.
         let why = e.plain_inbound("100002", NOW).expect("dropped");
         assert!(why.contains("(/e2e on)"), "{why}");
         let n = texts_of(&mut e);
@@ -4071,6 +4111,20 @@ mod tests {
         assert!(e.call_me("100002", NOW).is_err());
         assert!(notes(&mut e).is_empty(), "nothing went unencrypted");
         assert!(e.tzer_notice("100002", [7; 16], NOW).is_none());
+        // The armed message goes; the one after it is held again.
+        match e.outbound("100002", form(), b"use the new ICQ", NOW) {
+            Outbound::Clear { text, note } => {
+                assert_eq!(text, "use the new ICQ");
+                assert!(note.contains("Encryption is required again"), "{note}");
+            }
+            other => panic!("{other:?}"),
+        }
+        notes(&mut e);
+        assert!(matches!(
+            e.outbound("100002", form(), b"plain?", NOW),
+            Outbound::Refused(_)
+        ));
+        notes(&mut e);
 
         // /e2e status says it.
         assert!(e.command("100002", "/e2e status", NOW));
