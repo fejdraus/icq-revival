@@ -1,5 +1,13 @@
 # Stage 2 - Client: pass-through rewrite harness (DESIGN.md Phase 1)
 
+> **Historical completed stage plan.** This records the plan and decisions
+> of a development stage that is finished. It is kept for history and
+> rationale and is **not a specification of the current add-on**; later
+> stages and the audits changed several of its rules, and its "decisions
+> already made" are not current requirements. For current behaviour and
+> security rules use `tools/icq-e2e/README.md`, `docs/e2e/CHECKLIST.md`,
+> `docs/e2e/AUDIT-2026-10.md` and the source and tests.
+
 Self-contained task for one session. Client add-on only (`tools/icq-e2e`, Rust,
 i686), plus the wording of the two patches' opt-in row. No server change, no
 crypto.

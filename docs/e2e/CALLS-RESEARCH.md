@@ -1,10 +1,16 @@
-# Encrypted voice and video calls - research
+# Encrypted voice and video calls - implementation research and design record
 
-Status: research (2026-10-02). Stage C0, the observation spike, is built
-(section 8). Stages C1-C3 - key agreement, media encryption, policy and
-notes - are built behind `calls_encrypt = on`, **off by default** (section
-9). Neither has run on a live call yet: the owner's live test (sections 8.1
-and 9.4) is the next step. Sections 1-6 are static analysis of the import,
+Status (2026-10-04): **implemented, security-reviewed, live-tested in part.**
+Stage C0, the observation spike, is built (section 8). Stages C1-C3 - key
+agreement, media encryption, policy and notes - are built behind
+`calls_encrypt = on`, **off by default** (section 9), and are covered by the
+audits in `AUDIT-2026-10.md`. Live: voice calls between ICQ 6.5 and ICQ 7.2
+with the add-on on both sides worked on the direct path. Not yet run live:
+the rest of the C4 matrix (section 6) - forced TURN, video, packet loss, a
+long call, a peer without the add-on. One live call showed no inbound media
+on one side; the cause (most likely no microphone on the other side) is not
+confirmed. The original research below (2026-10-02) is kept as the
+rationale; its "not yet run" notes are superseded by this status. Sections 1-6 are static analysis of the import,
 export and string tables of the shipped DLLs and of their configuration;
 native code paths were not reversed.
 

@@ -1,7 +1,12 @@
-# Encrypted file transfer - research
+# Encrypted file transfer - implementation research and design record
 
-Status: research (2026-10-03); stages F0 and F2-F4 **built, off by default,
-not yet run on a live transfer** (section 9). F1 (the rendezvous proxy on the
+Status (2026-10-04): **implemented, security-reviewed, live-tested between
+ICQ 6.5 and ICQ 7.2.** Stages F0 and F2-F4 are built behind
+`files_encrypt = on`, off by default (section 9), and are covered by the
+audits in `AUDIT-2026-10.md`; a transfer between ICQ 6.5 and ICQ 7.2 with the
+add-on on both sides worked live. The original research below (2026-10-03)
+is kept as the rationale; its "not yet run" notes are superseded by this
+status. F1 (the rendezvous proxy on the
 server) and F5 (the file name) are not built. The research itself: static
 analysis of the import, export and string tables of the shipped DLLs and of
 their configuration, plus the Go server and the add-on source; native code
