@@ -47,7 +47,7 @@ use std::time::Duration;
 
 use crate::files::{self, ArsRead, OftRead, Watch};
 use crate::filesneg::{self, FileTable, Found};
-use crate::filestream::{FilePipe, Phase, Role};
+use crate::filestream::{FilePipe, Phase, PreambleReader, Role};
 
 const SD_BOTH: i32 = 2;
 
@@ -118,7 +118,7 @@ pub(super) struct FileConn {
 fn phase_code(p: Phase) -> u8 {
     match p {
         Phase::Connecting => 0,
-        Phase::Ars => 1,
+        Phase::Preamble => 1,
         Phase::Hello => 2,
         Phase::Encrypted => 3,
         Phase::Plain => 4,
@@ -198,7 +198,11 @@ fn make(
         role,
         stage: if via_proxy { "proxy" } else { found.stage },
         how,
-        pipe: Mutex::new(FilePipe::new(found.cookie, role, via_proxy)),
+        pipe: Mutex::new(FilePipe::new(
+            found.cookie,
+            role,
+            via_proxy.then_some(files::ars_preamble as PreambleReader),
+        )),
         read: Mutex::new(()),
         wire: Mutex::new(Vec::new()),
         connecting: AtomicBool::new(!connected),

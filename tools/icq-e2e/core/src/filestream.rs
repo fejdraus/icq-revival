@@ -34,8 +34,11 @@
 //!   anything after the final record - the connection is closed and the
 //!   client's transfer fails. Nothing is ever passed on that was not
 //!   authenticated, and nothing goes out unencrypted.
-//! - Through the rendezvous proxy the ARS frames (`INIT_SEND`, `ACK`,
-//!   `INIT_RECV`, `READY`) pass untouched; the hello starts after `READY`.
+//! - Through a relay, the relay's own frames come first and pass untouched
+//!   ([`Preamble`]); the hello starts after the last of them. Which bytes are
+//!   relay frames is the protocol's business: the caller hands the pipe a
+//!   [`PreambleReader`] (for OSCAR, the rendezvous proxy's ARS frames,
+//!   `INIT_SEND`, `ACK`, `INIT_RECV`, `READY`: `files::ars_preamble`).
 //!
 //! Hello (118 bytes): `"IQFT" | version | role | cookie hash (8) | ephemeral
 //! key (32) | device id (4) | device key (32) | connection number (4) | nonce
@@ -419,8 +422,8 @@ pub enum Event {
 pub enum Phase {
     /// The connect is in progress.
     Connecting,
-    /// Through the proxy, before `READY`: ARS frames pass untouched.
-    Ars,
+    /// Through a relay, before its last frame: its frames pass untouched.
+    Preamble,
     /// The hellos are being exchanged; the client's bytes are held.
     Hello,
     /// Records both ways.
@@ -431,13 +434,34 @@ pub enum Phase {
     Failed,
 }
 
+/// What the start of the bytes from the wire is, before the hellos, on a
+/// connection through a relay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Preamble {
+    /// A whole relay frame of `len` bytes, passed to the client untouched;
+    /// `name` is for the log. `last`: the hellos start after it.
+    Frame {
+        len: usize,
+        name: &'static str,
+        last: bool,
+    },
+    /// Not enough bytes to tell, or the rest of the frame is still to come.
+    NeedMore,
+    /// Not the relay speaking: the hellos start here.
+    Not,
+}
+
+/// Reads the relay frame at the start of the bytes from the wire. Supplied by
+/// the protocol the transfer runs on; the pipe knows no relay's format.
+pub type PreambleReader = fn(&[u8]) -> Preamble;
+
 /// One data connection of a transfer: what goes to the socket, what goes to
 /// the client.
 pub struct FilePipe {
     pub cookie: [u8; 8],
     role: Role,
     phase: Phase,
-    via_proxy: bool,
+    preamble: Option<PreambleReader>,
     since_ms: u64,
     to_wire: Vec<u8>,
     from_wire: Vec<u8>,
@@ -463,14 +487,14 @@ impl FilePipe {
     /// A pipe for a connection of the transfer `cookie`. `connected`: the
     /// connection is up already (accepted, or found by its first bytes);
     /// otherwise call [`Self::connected`] when the connect completes.
-    /// `via_proxy`: the connection goes to the rendezvous proxy, whose ARS
-    /// frames come first.
-    pub fn new(cookie: [u8; 8], role: Role, via_proxy: bool) -> FilePipe {
+    /// `preamble`: the connection goes through a relay, whose frames this
+    /// reads and which come first; `None` for a direct connection.
+    pub fn new(cookie: [u8; 8], role: Role, preamble: Option<PreambleReader>) -> FilePipe {
         FilePipe {
             cookie,
             role,
             phase: Phase::Connecting,
-            via_proxy,
+            preamble,
             since_ms: 0,
             to_wire: Vec::new(),
             from_wire: Vec::new(),
@@ -495,7 +519,7 @@ impl FilePipe {
     /// must be encrypted and was not agreed): closed from the start, so no
     /// byte passes either way.
     pub fn refused(cookie: [u8; 8], role: Role, why: &str) -> FilePipe {
-        let mut p = FilePipe::new(cookie, role, false);
+        let mut p = FilePipe::new(cookie, role, None);
         p.phase = Phase::Failed;
         p.failure = Some(why.to_string());
         p
@@ -513,14 +537,14 @@ impl FilePipe {
         self.failure.as_deref()
     }
 
-    /// The connection is up: through the proxy the ARS frames come first,
+    /// The connection is up: through a relay its frames come first,
     /// otherwise the hellos start.
     pub fn connected(&mut self, ks: &mut dyn KeySource, now_ms: u64) {
         if self.phase != Phase::Connecting {
             return;
         }
-        if self.via_proxy {
-            self.phase = Phase::Ars;
+        if self.preamble.is_some() {
+            self.phase = Phase::Preamble;
         } else {
             self.begin_hello(ks, now_ms);
         }
@@ -591,7 +615,7 @@ impl FilePipe {
         self.plain_out += data.len() as u64;
         match self.phase {
             Phase::Failed => return Err(self.failure.clone().unwrap_or_default()),
-            Phase::Ars | Phase::Plain => self.to_wire.extend_from_slice(data),
+            Phase::Preamble | Phase::Plain => self.to_wire.extend_from_slice(data),
             Phase::Hello | Phase::Connecting => self.held.extend_from_slice(data),
             Phase::Encrypted => {
                 if self.final_sent {
@@ -625,25 +649,22 @@ impl FilePipe {
             }
             match self.phase {
                 Phase::Connecting | Phase::Failed => return,
-                Phase::Ars => match crate::files::ars_frame(&self.from_wire) {
-                    crate::files::ArsRead::Frame(f) => {
-                        let frame: Vec<u8> = self.from_wire.drain(..f.len).collect();
-                        self.give(&frame);
-                        ks.report(
-                            &self.cookie,
-                            Event::Log(format!(
-                                "proxy {} passed",
-                                crate::files::ars_name(f.command)
-                            )),
-                        );
-                        if f.command == crate::files::ARS_READY {
-                            self.begin_hello(ks, now_ms);
+                Phase::Preamble => {
+                    let read = self.preamble.expect("a pipe in the preamble has a reader");
+                    match read(&self.from_wire) {
+                        Preamble::Frame { len, name, last } => {
+                            let frame: Vec<u8> = self.from_wire.drain(..len).collect();
+                            self.give(&frame);
+                            ks.report(&self.cookie, Event::Log(format!("proxy {name} passed")));
+                            if last {
+                                self.begin_hello(ks, now_ms);
+                            }
                         }
+                        Preamble::NeedMore => return,
+                        // Not the relay speaking: the hello logic decides.
+                        Preamble::Not => self.begin_hello(ks, now_ms),
                     }
-                    crate::files::ArsRead::NeedMore => return,
-                    // Not the proxy speaking: the hello logic decides.
-                    crate::files::ArsRead::Not => self.begin_hello(ks, now_ms),
-                },
+                }
                 Phase::Hello => {
                     if !self.hello_in(ks) {
                         return;
@@ -1201,8 +1222,8 @@ pub(crate) mod tests {
             let mut ka = Fixed::with(offerer_has_answer.then(|| agreement(1)));
             ka.from_hello = Some(agreement(1));
             let mut kb = Fixed::with(Some(agreement(1)));
-            let mut a = FilePipe::new(C, Role::Offerer, false);
-            let mut b = FilePipe::new(C, Role::Answerer, false);
+            let mut a = FilePipe::new(C, Role::Offerer, None);
+            let mut b = FilePipe::new(C, Role::Answerer, None);
             // B connects to A: A accepted, B's connect completed.
             a.connected(&mut ka, 0);
             b.connected(&mut kb, 0);
@@ -1256,7 +1277,7 @@ pub(crate) mod tests {
         let prompt = crate::files::oft_build(crate::files::OFT_PROMPT, &C, 5, 0, "x");
         // Nothing comes: after the wait, the held bytes go as they were.
         let mut k = Fixed::with(None);
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 1000);
         a.write(&prompt, &mut k, 1000).unwrap();
         assert!(!a.wants_write());
@@ -1270,7 +1291,7 @@ pub(crate) mod tests {
         assert!(k.said(|e| matches!(e, Event::Plain(w) if w.contains("no key hello within"))));
         // The peer's first bytes are its client's: plain at once.
         let mut k = Fixed::with(None);
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 0);
         a.write(&prompt, &mut k, 0).unwrap();
         a.feed(b"OFT2...", &mut k, 2);
@@ -1279,7 +1300,7 @@ pub(crate) mod tests {
         assert_eq!(read_all(&mut a), b"OFT2...");
         // Two bytes that may start a hello say nothing yet.
         let mut k = Fixed::with(None);
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 0);
         a.feed(b"IQ", &mut k, 1);
         assert_eq!(a.phase(), Phase::Hello);
@@ -1288,7 +1309,7 @@ pub(crate) mod tests {
         assert_eq!(read_all(&mut a), b"IQx");
         // A decline through the chat: plain at the next tick, no wait.
         let mut k = Fixed::with(None);
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 0);
         a.write(&prompt, &mut k, 0).unwrap();
         k.plain = Some("declined".into());
@@ -1296,7 +1317,7 @@ pub(crate) mod tests {
         assert_eq!((a.phase(), a.take_wire()), (Phase::Plain, prompt.clone()));
         // An answer through the chat while waiting: the offerer speaks.
         let mut k = Fixed::with(None);
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 0);
         k.ag = Some(agreement(1));
         a.tick(&mut k, 10);
@@ -1319,7 +1340,7 @@ pub(crate) mod tests {
         let blocked = |k: &Fixed| k.said(|e| matches!(e, Event::Blocked(_)));
         // Nothing comes within the wait.
         let mut k = strict();
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 1000);
         a.write(&prompt, &mut k, 1000).unwrap();
         a.tick(&mut k, 1000 + HELLO_WAIT_MS);
@@ -1332,7 +1353,7 @@ pub(crate) mod tests {
         assert!(blocked(&k) && !k.said(|e| matches!(e, Event::Plain(_))));
         // The peer's first bytes are no hello.
         let mut k = strict();
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 0);
         a.write(&prompt, &mut k, 0).unwrap();
         a.feed(b"OFT2...", &mut k, 2);
@@ -1342,7 +1363,7 @@ pub(crate) mod tests {
         assert!(blocked(&k));
         // A decline through the chat.
         let mut k = strict();
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 0);
         a.write(&prompt, &mut k, 0).unwrap();
         k.plain = Some("declined".into());
@@ -1350,7 +1371,7 @@ pub(crate) mod tests {
         assert_eq!((a.phase(), a.take_wire()), (Phase::Failed, Vec::new()));
         // A few bytes, then the end of the stream.
         let mut k = strict();
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 0);
         a.feed(b"IQ", &mut k, 1);
         a.end_of_input(&mut k);
@@ -1358,7 +1379,7 @@ pub(crate) mod tests {
         assert_eq!(a.plaintext_len(), 0);
         // And an answer in time still encrypts.
         let mut k = strict();
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 0);
         k.ag = Some(agreement(1));
         a.tick(&mut k, 10);
@@ -1372,7 +1393,7 @@ pub(crate) mod tests {
         let prompt = crate::files::oft_build(crate::files::OFT_PROMPT, &C, 5, 0, "x");
         // The answerer gets plain OFT2 instead of a hello.
         let mut k = Fixed::with(Some(agreement(1)));
-        let mut b = FilePipe::new(C, Role::Answerer, false);
+        let mut b = FilePipe::new(C, Role::Answerer, None);
         b.connected(&mut k, 0);
         b.feed(&prompt, &mut k, 1);
         assert_eq!(b.phase(), Phase::Failed);
@@ -1382,8 +1403,8 @@ pub(crate) mod tests {
         // A hello made with other keys.
         let mut ka = Fixed::with(Some(agreement(1)));
         let mut kb = Fixed::with(Some(agreement(2)));
-        let mut a = FilePipe::new(C, Role::Offerer, false);
-        let mut b = FilePipe::new(C, Role::Answerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
+        let mut b = FilePipe::new(C, Role::Answerer, None);
         a.connected(&mut ka, 0);
         b.connected(&mut kb, 0);
         pass(&mut b, &mut a, &mut ka, 1);
@@ -1392,8 +1413,8 @@ pub(crate) mod tests {
         // A hello for another transfer.
         let mut ka = Fixed::with(Some(agreement(1)));
         let mut kb = Fixed::with(Some(agreement(1)));
-        let mut a = FilePipe::new(C, Role::Offerer, false);
-        let mut b = FilePipe::new([8; 8], Role::Answerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
+        let mut b = FilePipe::new([8; 8], Role::Answerer, None);
         a.connected(&mut ka, 0);
         b.connected(&mut kb, 0);
         pass(&mut b, &mut a, &mut ka, 1);
@@ -1402,8 +1423,8 @@ pub(crate) mod tests {
         for cut in [false, true] {
             let mut ka = Fixed::with(Some(agreement(1)));
             let mut kb = Fixed::with(Some(agreement(1)));
-            let mut a = FilePipe::new(C, Role::Offerer, false);
-            let mut b = FilePipe::new(C, Role::Answerer, false);
+            let mut a = FilePipe::new(C, Role::Offerer, None);
+            let mut b = FilePipe::new(C, Role::Answerer, None);
             a.connected(&mut ka, 0);
             b.connected(&mut kb, 0);
             pass(&mut b, &mut a, &mut ka, 1);
@@ -1423,12 +1444,12 @@ pub(crate) mod tests {
         }
         // An offerer that went plain by the wait and then sees a hello.
         let mut k = Fixed::with(None);
-        let mut a = FilePipe::new(C, Role::Offerer, false);
+        let mut a = FilePipe::new(C, Role::Offerer, None);
         a.connected(&mut k, 0);
         a.tick(&mut k, HELLO_WAIT_MS);
         assert_eq!(a.phase(), Phase::Plain);
         let mut kb = Fixed::with(Some(agreement(1)));
-        let mut b = FilePipe::new(C, Role::Answerer, false);
+        let mut b = FilePipe::new(C, Role::Answerer, None);
         b.connected(&mut kb, 0);
         pass(&mut b, &mut a, &mut k, HELLO_WAIT_MS + 1);
         assert_eq!(a.phase(), Phase::Failed);
@@ -1441,18 +1462,18 @@ pub(crate) mod tests {
         use crate::files::{ars_build, ARS_ACK, ARS_INIT_RECV, ARS_INIT_SEND, ARS_READY};
         let mut ka = Fixed::with(Some(agreement(1)));
         let mut kb = Fixed::with(Some(agreement(1)));
-        let mut a = FilePipe::new(C, Role::Offerer, true);
-        let mut b = FilePipe::new(C, Role::Answerer, true);
+        let mut a = FilePipe::new(C, Role::Offerer, Some(crate::files::ars_preamble));
+        let mut b = FilePipe::new(C, Role::Answerer, Some(crate::files::ars_preamble));
         a.connected(&mut ka, 0);
         b.connected(&mut kb, 0);
-        assert_eq!((a.phase(), b.phase()), (Phase::Ars, Phase::Ars));
+        assert_eq!((a.phase(), b.phase()), (Phase::Preamble, Phase::Preamble));
         let init = ars_build(ARS_INIT_SEND, &[1, b'a', 7, 7, 7, 7, 7, 7, 7, 7]);
         a.write(&init, &mut ka, 1).unwrap();
         assert_eq!(a.take_wire(), init, "INIT_SEND as the client wrote it");
         let ack = ars_build(ARS_ACK, &[0, 9, 1, 2, 3, 4]);
         a.feed(&ack, &mut ka, 2);
         assert_eq!(read_all(&mut a), ack);
-        assert_eq!(a.phase(), Phase::Ars);
+        assert_eq!(a.phase(), Phase::Preamble);
         let initr = ars_build(ARS_INIT_RECV, &[1, b'b', 0, 9, 7, 7, 7, 7, 7, 7, 7, 7]);
         b.write(&initr, &mut kb, 3).unwrap();
         assert_eq!(b.take_wire(), initr);
@@ -1469,6 +1490,54 @@ pub(crate) mod tests {
         assert_eq!(a.phase(), Phase::Encrypted);
     }
 
+    /// The pipe knows no relay format: any reader the protocol supplies
+    /// works. Here a made-up relay of 3-byte frames `R` `n` `x`, where `x` =
+    /// `!` marks the last: the frames pass untouched, the hello follows the
+    /// last one, and bytes before it that are not a frame start the hellos.
+    #[test]
+    fn any_relay_preamble_passes_and_the_hello_follows_its_last_frame() {
+        fn relay(b: &[u8]) -> Preamble {
+            match b {
+                [] | [b'R'] | [b'R', _] => Preamble::NeedMore,
+                [b'R', _, x, ..] => Preamble::Frame {
+                    len: 3,
+                    name: "test",
+                    last: *x == b'!',
+                },
+                _ => Preamble::Not,
+            }
+        }
+        let mut ka = Fixed::with(Some(agreement(1)));
+        let mut kb = Fixed::with(Some(agreement(1)));
+        let mut a = FilePipe::new(C, Role::Offerer, Some(relay));
+        let mut b = FilePipe::new(C, Role::Answerer, Some(relay));
+        a.connected(&mut ka, 0);
+        b.connected(&mut kb, 0);
+        assert_eq!((a.phase(), b.phase()), (Phase::Preamble, Phase::Preamble));
+        // Split across reads: nothing passes until the frame is whole.
+        a.feed(b"R1", &mut ka, 1);
+        assert!(read_all(&mut a).is_empty());
+        a.feed(b".", &mut ka, 2);
+        assert_eq!(read_all(&mut a), b"R1.");
+        assert_eq!(a.phase(), Phase::Preamble);
+        b.feed(b"R2!", &mut kb, 3);
+        assert_eq!(read_all(&mut b), b"R2!");
+        assert_eq!(b.phase(), Phase::Hello);
+        let mut wire = b"R2!".to_vec();
+        wire.extend_from_slice(&b.take_wire());
+        a.feed(&wire, &mut ka, 4);
+        assert_eq!(read_all(&mut a), b"R2!");
+        assert!(a.take_wire().starts_with(HELLO_MAGIC));
+        assert_eq!(a.phase(), Phase::Encrypted);
+
+        // Bytes that are not a relay frame: the hellos start at once.
+        let mut c = FilePipe::new(C, Role::Answerer, Some(relay));
+        let mut kc = Fixed::with(Some(agreement(1)));
+        c.connected(&mut kc, 0);
+        c.feed(b"X", &mut kc, 1);
+        assert_ne!(c.phase(), Phase::Preamble);
+    }
+
     /// A resumed transfer is a new connection: new numbers, new nonces, new
     /// keys - the same cookie, never the same key stream.
     #[test]
@@ -1477,8 +1546,8 @@ pub(crate) mod tests {
         let mut ka = Fixed::with(Some(agreement(1)));
         let mut kb = Fixed::with(Some(agreement(1)));
         for _ in 0..2 {
-            let mut a = FilePipe::new(C, Role::Offerer, false);
-            let mut b = FilePipe::new(C, Role::Answerer, false);
+            let mut a = FilePipe::new(C, Role::Offerer, None);
+            let mut b = FilePipe::new(C, Role::Answerer, None);
             a.connected(&mut ka, 0);
             b.connected(&mut kb, 0);
             pass(&mut b, &mut a, &mut ka, 1);

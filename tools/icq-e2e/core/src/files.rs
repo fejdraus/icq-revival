@@ -344,6 +344,22 @@ pub enum ArsRead {
     Not,
 }
 
+/// The rendezvous proxy's ARS frames as the preamble of an encrypted file
+/// stream ([`crate::filestream::Preamble`]): they pass untouched, and the
+/// hellos start after `READY`.
+pub fn ars_preamble(b: &[u8]) -> crate::filestream::Preamble {
+    use crate::filestream::Preamble;
+    match ars_frame(b) {
+        ArsRead::Frame(f) => Preamble::Frame {
+            len: f.len,
+            name: ars_name(f.command),
+            last: f.command == ARS_READY,
+        },
+        ArsRead::NeedMore => Preamble::NeedMore,
+        ArsRead::Not => Preamble::Not,
+    }
+}
+
 /// Reads the ARS frame at the start of `b`.
 pub fn ars_frame(b: &[u8]) -> ArsRead {
     if b.len() < 4 {

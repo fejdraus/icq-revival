@@ -1520,8 +1520,8 @@ mod tests {
     }
 
     fn pipes_talk(a: &mut FileTable, b: &mut FileTable) -> (FilePipe, FilePipe) {
-        let mut pa = FilePipe::new(C, Role::Offerer, false);
-        let mut pb = FilePipe::new(C, Role::Answerer, false);
+        let mut pa = FilePipe::new(C, Role::Offerer, None);
+        let mut pb = FilePipe::new(C, Role::Answerer, None);
         pa.connected(a, T0);
         pb.connected(b, T0);
         let w = pb.take_wire();
@@ -1772,7 +1772,7 @@ mod tests {
                 .len(),
             1
         );
-        let mut pa = FilePipe::new(C, Role::Offerer, false);
+        let mut pa = FilePipe::new(C, Role::Offerer, None);
         pa.connected(&mut a, T0);
         pa.write(b"OFT2 prompt", &mut a, T0).unwrap();
         pa.tick(&mut a, T0 + filestream::HELLO_WAIT_MS);
@@ -1815,7 +1815,7 @@ mod tests {
             let r = rdv(Direction::Outbound, B, 1, 5190);
             a.observe(&r, T0);
             assert_eq!(a.icbm(&r, info, &mut go(me(A, 1, 1)), T0).len(), 1);
-            let mut pa = FilePipe::new(C, Role::Offerer, false);
+            let mut pa = FilePipe::new(C, Role::Offerer, None);
             pa.connected(&mut a, T0);
             pa.write(b"OFT2 prompt", &mut a, T0).unwrap();
             pa.tick(&mut a, T0 + filestream::HELLO_WAIT_MS);
@@ -1870,7 +1870,7 @@ mod tests {
             "a blocked transfer's sockets are still looked at"
         );
         // A pipe made anyway (it was already waiting) closes at once.
-        let mut pa = FilePipe::new(C, Role::Offerer, false);
+        let mut pa = FilePipe::new(C, Role::Offerer, None);
         pa.connected(&mut a, T0);
         pa.write(b"OFT2 prompt", &mut a, T0).unwrap_err();
         assert_eq!(pa.phase(), Phase::Failed);
@@ -1914,7 +1914,7 @@ mod tests {
         let r = rdv(Direction::Outbound, B, 1, 5190);
         a.observe(&r, T0);
         a.icbm(&r, PeerInfo::default(), &mut go(me(A, 1, 1)), T0);
-        let mut pa = FilePipe::new(C, Role::Offerer, false);
+        let mut pa = FilePipe::new(C, Role::Offerer, None);
         pa.connected(&mut a, T0);
         pa.write(b"OFT2 prompt", &mut a, T0).unwrap();
         pa.tick(&mut a, T0 + filestream::HELLO_WAIT_MS);
@@ -1945,7 +1945,7 @@ mod tests {
         let r = rdv(Direction::Outbound, B, 1, 5190);
         a.observe(&r, T0);
         let offer = a.icbm(&r, strict(), &mut go(me(A, 1, 1)), T0);
-        let mut early = FilePipe::new(C, Role::Offerer, false);
+        let mut early = FilePipe::new(C, Role::Offerer, None);
         early.connected(&mut a, T0);
         early.write(b"OFT2 prompt", &mut a, T0).unwrap();
         early.feed(b"OFT2 not a hello", &mut a, T0);
@@ -1964,7 +1964,7 @@ mod tests {
         // Agreed (not strict): the outsider's connection fails closed and
         // the transfer stays keyed.
         let (mut a, mut b) = agreed();
-        let mut early = FilePipe::new(C, Role::Offerer, false);
+        let mut early = FilePipe::new(C, Role::Offerer, None);
         early.connected(&mut a, T0);
         early.take_wire();
         early.feed(b"OFT2 not a hello", &mut a, T0);
