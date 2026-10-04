@@ -69,26 +69,26 @@ func TestClassicText(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ct, err := newClassicText(tt.codePage)
+			ct, err := NewClassicText(tt.codePage)
 			assert.NoError(t, err)
-			assert.Equal(t, tt.wantIn, ct.in(tt.in))
-			assert.Equal(t, tt.wantOut, ct.out(tt.out))
+			assert.Equal(t, tt.wantIn, ct.In(tt.in))
+			assert.Equal(t, tt.wantOut, ct.Out(tt.out))
 		})
 	}
 }
 
 func TestClassicText_UnknownCodePage(t *testing.T) {
-	_, err := newClassicText("no-such-code-page")
+	_, err := NewClassicText("no-such-code-page")
 	assert.Error(t, err)
 }
 
 func TestClassicText_Structs(t *testing.T) {
-	ct, err := newClassicText("windows-1251")
+	ct, err := NewClassicText("windows-1251")
 	assert.NoError(t, err)
 
 	// A request: every text field converted in place.
 	req := wire.ICQ_0x07D0_0x03EA_DBQueryMetaReqSetBasicInfo{FirstName: sergeyCP1251, Nickname: "Serg", CountryCode: 804}
-	ct.inAll(&req)
+	ct.InAll(&req)
 	assert.Equal(t, "Сергій", req.FirstName)
 	assert.Equal(t, "Serg", req.Nickname)
 	assert.Equal(t, uint16(804), req.CountryCode)
@@ -96,12 +96,12 @@ func TestClassicText_Structs(t *testing.T) {
 	// Search criteria are pointers to strings.
 	first := sergeyCP1251
 	criteria := state.ICQUserSearchCriteria{FirstName: &first}
-	ct.inAll(&criteria)
+	ct.InAll(&criteria)
 	assert.Equal(t, "Сергій", *criteria.FirstName)
 
 	// A reply: a converted copy, the original left alone.
 	reply := wire.ICQ_0x07DA_0x00C8_DBQueryMetaReplyBasicInfo{FirstName: "Сергій", City: "Kyiv"}
-	got := ct.outAll(reply).(wire.ICQ_0x07DA_0x00C8_DBQueryMetaReplyBasicInfo)
+	got := ct.OutAll(reply).(wire.ICQ_0x07DA_0x00C8_DBQueryMetaReplyBasicInfo)
 	assert.Equal(t, sergeyCP1251, got.FirstName)
 	assert.Equal(t, "Kyiv", got.City)
 	assert.Equal(t, "Сергій", reply.FirstName)

@@ -243,7 +243,7 @@ func (s *ICBMService) ChannelMsgToHost(ctx context.Context, instance *state.Sess
 		if instance.UIN() > 0 &&
 			(clientIM.ChannelID == wire.ICBMChannelIM || clientIM.ChannelID == wire.ICBMChannelMIME) &&
 			tlv.Tag == wire.ICBMTLVAOLIMData {
-			if !readsHTML(recipSess) {
+			if !ReadsHTML(recipSess) {
 				if transformedTLV, err := stripHTMLFromICBMTLV(tlv); err == nil {
 					tlv = transformedTLV
 				}
@@ -479,11 +479,11 @@ func (s *ICBMService) addExternalIP(ctx context.Context, instance *state.Session
 	return wire.NewTLVBE(tlv.Tag, frag), nil
 }
 
-// readsHTML reports whether recip reads HTML in ICQ messages: it announces
+// ReadsHTML reports whether recip reads HTML in ICQ messages: it announces
 // XHTML, or it is ICQ 6 or 7, which send and read HTML without announcing it.
 // Their smileys ride in the HTML (<FONT sml="...">, naming the set that draws
 // them), and ICQ 7 draws none from plain text.
-func readsHTML(recip *state.Session) bool {
+func ReadsHTML(recip *state.Session) bool {
 	return recip.HasCap(wire.CapXHTMLIM) || recip.HasCap(wire.CapICQ6HTML) || wire.HasICQ7Caps(recip.Caps())
 }
 
@@ -532,8 +532,14 @@ func stripHTMLFromICBMTLV(tlv wire.TLV) (wire.TLV, error) {
 				continue
 			}
 
-			// Strip HTML from message text
-			strippedText := stripHTML(msg.Text)
+			// Strip HTML from message text. UCS-2 text is stripped as text:
+			// its markup is not ASCII bytes the tokenizer can see.
+			var strippedText []byte
+			if msg.Charset == wire.ICBMMessageEncodingUnicode {
+				strippedText = encodeUTF16BE(string(stripHTML([]byte(decodeUTF16BE(msg.Text)))))
+			} else {
+				strippedText = stripHTML(msg.Text)
+			}
 			if !bytes.Equal(strippedText, msg.Text) {
 				msg.Text = strippedText
 

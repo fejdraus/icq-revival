@@ -4147,7 +4147,7 @@ func TestReadsHTML(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, readsHTML(newTestInstance("100001", tt.options...).Session()))
+			assert.Equal(t, tt.want, ReadsHTML(newTestInstance("100001", tt.options...).Session()))
 		})
 	}
 }

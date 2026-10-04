@@ -1,6 +1,7 @@
 package icq_legacy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/mk6i/open-oscar-server/config"
+	"github.com/mk6i/open-oscar-server/foodgroup"
 	"github.com/mk6i/open-oscar-server/state"
 	"github.com/mk6i/open-oscar-server/wire"
 )
@@ -47,6 +49,15 @@ type ICQLegacyService struct {
 	legacySessionManager *LegacySessionManager
 	logger               *slog.Logger
 	timeNow              func() time.Time
+	// text converts between the legacy clients' code page and the UTF-8 and
+	// UCS-2 of the rest of the server; see legacyText.
+	text legacyText
+}
+
+// SetClassicText sets the converter of the classic code page legacy clients
+// write in. The zero value passes their bytes through.
+func (s *ICQLegacyService) SetClassicText(t foodgroup.ClassicText) {
+	s.text = legacyText{cp: t}
 }
 
 // NewICQLegacyService creates a new ICQLegacyService with the given dependencies.
@@ -513,20 +524,7 @@ func (s *ICQLegacyService) ProcessMessage(ctx context.Context, session *LegacySe
 		FoodGroup: wire.ICBM,
 		SubGroup:  wire.ICBMChannelMsgToHost,
 	}
-	snac := wire.SNAC_0x04_0x06_ICBMChannelMsgToHost{
-		ChannelID:  wire.ICBMChannelICQ,
-		ScreenName: toScreenName.String(),
-		TLVRestBlock: wire.TLVRestBlock{
-			TLVList: wire.TLVList{
-				wire.NewTLVLE(wire.ICBMTLVData, wire.ICBMCh4Message{
-					UIN:         fromScreenName.UIN(),
-					MessageType: uint8(req.MsgType),
-					Message:     req.Message,
-				}),
-				wire.NewTLVBE(wire.ICBMTLVStore, []byte{}),
-			},
-		},
-	}
+	snac := s.messageToOSCAR(fromScreenName, toScreenName, req)
 	resp, err := s.icbmService.ChannelMsgToHost(ctx, session.Instance, frame, snac)
 	if err != nil {
 		s.logger.Error("ProcessMessage: failed to send to OSCAR client",
@@ -554,6 +552,51 @@ func (s *ICQLegacyService) ProcessMessage(ctx context.Context, session *LegacySe
 	return result, nil
 }
 
+// messageToOSCAR returns the ICBM that carries a legacy client's message to
+// an OSCAR client. A plain text message goes on channel 1 in UCS-2 (ASCII
+// when it is ASCII), read from the classic code page, so ICQ 6 and 7 and
+// every other OSCAR client show it - and the offline store keeps it in a form
+// any client reads back. The other types go on channel 4 as ICQ messages;
+// their fields go in UTF-8 to a client that reads Unicode (ICQ 6 and 7),
+// otherwise as the client wrote them. Without a code page every message goes
+// on channel 4 as sent.
+func (s *ICQLegacyService) messageToOSCAR(from, to state.IdentScreenName, req MessageRequest) wire.SNAC_0x04_0x06_ICBMChannelMsgToHost {
+	if req.MsgType == ICQLegacyMsgText {
+		if payload, ok := s.text.icbmFromLegacy(req.Message); ok {
+			return wire.SNAC_0x04_0x06_ICBMChannelMsgToHost{
+				ChannelID:  wire.ICBMChannelIM,
+				ScreenName: to.String(),
+				TLVRestBlock: wire.TLVRestBlock{
+					TLVList: wire.TLVList{
+						wire.NewTLVBE(wire.ICBMTLVAOLIMData, payload),
+						wire.NewTLVBE(wire.ICBMTLVStore, []byte{}),
+					},
+				},
+			}
+		}
+	}
+	text := req.Message
+	if s.text.cp.Converts() {
+		if sess := s.sessionRetriever.RetrieveSession(to); sess != nil && foodgroup.ReadsHTML(sess) {
+			text = s.text.fromLegacy(text)
+		}
+	}
+	return wire.SNAC_0x04_0x06_ICBMChannelMsgToHost{
+		ChannelID:  wire.ICBMChannelICQ,
+		ScreenName: to.String(),
+		TLVRestBlock: wire.TLVRestBlock{
+			TLVList: wire.TLVList{
+				wire.NewTLVLE(wire.ICBMTLVData, wire.ICBMCh4Message{
+					UIN:         from.UIN(),
+					MessageType: uint8(req.MsgType),
+					Message:     text,
+				}),
+				wire.NewTLVBE(wire.ICBMTLVStore, []byte{}),
+			},
+		},
+	}
+}
+
 // RegisterNewUser creates a new user account for legacy ICQ registration.
 // It generates a new unique UIN, creates the user record with the provided
 // profile information, and stores the password hash.
@@ -562,6 +605,9 @@ func (s *ICQLegacyService) RegisterNewUser(ctx context.Context, nickname, firstN
 	// Generate a new UIN
 	// For now, we'll use a simple approach: find the highest existing UIN and add 1
 	// In production, this should be more robust (e.g., use a sequence in the database)
+	nickname, firstName = s.text.cp.In(nickname), s.text.cp.In(firstName)
+	lastName, email = s.text.cp.In(lastName), s.text.cp.In(email)
+
 	newUIN, err := s.generateNewUIN(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("generating new UIN: %w", err)
@@ -646,12 +692,18 @@ func (s *ICQLegacyService) GetOfflineMessages(ctx context.Context, uin uint32) (
 			Timestamp: msg.Sent,
 		}
 
-		// Extract message text from OSCAR format
+		// Extract message text from OSCAR format, in the legacy client's
+		// code page
 		if payload, hasIM := msg.Message.Bytes(wire.ICBMTLVAOLIMData); hasIM {
-			msgText, err := wire.UnmarshalICBMMessageText(payload)
-			if err == nil {
+			if msgText, ok := s.text.icbmPayloadToLegacy(payload); ok {
 				legacyMsg.Message = msgText
 				legacyMsg.MsgType = ICQLegacyMsgText
+			}
+		} else if payload, hasICQ := msg.Message.Bytes(wire.ICBMTLVData); hasICQ && msg.Message.ChannelID == wire.ICBMChannelICQ {
+			ch4 := wire.ICBMCh4Message{}
+			if err := wire.UnmarshalLE(&ch4, bytes.NewBuffer(payload)); err == nil {
+				legacyMsg.Message = s.text.ch4ToLegacy(ch4)
+				legacyMsg.MsgType = uint16(ch4.MessageType)
 			}
 		}
 
@@ -697,10 +749,10 @@ func (s *ICQLegacyService) GetUserInfo(ctx context.Context, uin uint32) (*Legacy
 		if basicUser != nil {
 			return &LegacyUserSearchResult{
 				UIN:       uin,
-				Nickname:  basicUser.ICQInfo.Basic.Nickname,
-				FirstName: basicUser.ICQInfo.Basic.FirstName,
-				LastName:  basicUser.ICQInfo.Basic.LastName,
-				Email:     basicUser.ICQInfo.Basic.EmailAddress,
+				Nickname:  s.text.cp.Out(basicUser.ICQInfo.Basic.Nickname),
+				FirstName: s.text.cp.Out(basicUser.ICQInfo.Basic.FirstName),
+				LastName:  s.text.cp.Out(basicUser.ICQInfo.Basic.LastName),
+				Email:     s.text.cp.Out(basicUser.ICQInfo.Basic.EmailAddress),
 			}, nil
 		}
 		// Return minimal info
@@ -722,6 +774,11 @@ func (s *ICQLegacyService) GetFullUserInfo(ctx context.Context, uin uint32) (*st
 	if err != nil {
 		s.logger.Debug("GetFullUserInfo failed", "uin", uin, "err", err)
 		return nil, err
+	}
+	if user != nil {
+		u := *user
+		u.ICQInfo = s.text.cp.OutAll(u.ICQInfo).(state.ICQInfo)
+		user = &u
 	}
 	return user, nil
 }
@@ -765,7 +822,10 @@ func (s *ICQLegacyService) GetUserInfoForProtocol(ctx context.Context, targetUIN
 		}, nil
 	}
 
-	// Build the result from user data
+	// Build the result from user data, in the legacy client's code page
+	u := *user
+	u.ICQInfo = s.text.cp.OutAll(u.ICQInfo).(state.ICQInfo)
+	user = &u
 	result := &UserInfoResult{
 		// Basic fields
 		UIN:       targetUIN,
@@ -850,6 +910,7 @@ func (s *ICQLegacyService) SearchByUIN(ctx context.Context, uin uint32) (*Legacy
 // If email is provided, it takes priority over name-based search.
 // Returns a slice of matching users.
 func (s *ICQLegacyService) SearchByName(ctx context.Context, nick, first, last, email string) ([]LegacyUserSearchResult, error) {
+	nick, first, last, email = s.text.cp.In(nick), s.text.cp.In(first), s.text.cp.In(last), s.text.cp.In(email)
 	var users []state.User
 	var err error
 
@@ -889,6 +950,7 @@ func (s *ICQLegacyService) SearchByName(ctx context.Context, nick, first, last, 
 //
 // Results are limited to 40 users maximum, matching iserverd behavior.
 func (s *ICQLegacyService) WhitePagesSearch(ctx context.Context, criteria WhitePagesSearchCriteria) ([]LegacyUserSearchResult, error) {
+	s.text.cp.InAll(&criteria)
 	var allResults []state.User
 
 	// Start with basic name/email search if those criteria are provided
@@ -1304,6 +1366,7 @@ func (s *ICQLegacyService) NotifyUserOffline(ctx context.Context, uin uint32) er
 // UpdateBasicInfo updates a user's basic profile information (nickname, name, email, etc.).
 // This is used by V3/V5 handlers when processing META_SET_BASIC (0x03EA) commands.
 func (s *ICQLegacyService) UpdateBasicInfo(ctx context.Context, uin uint32, info state.ICQBasicInfo) error {
+	s.text.cp.InAll(&info)
 	screenName := state.NewIdentScreenName(strconv.FormatUint(uint64(uin), 10))
 	return s.userUpdater.SetBasicInfo(ctx, screenName, info)
 }
@@ -1311,6 +1374,7 @@ func (s *ICQLegacyService) UpdateBasicInfo(ctx context.Context, uin uint32, info
 // UpdateWorkInfo updates a user's work information (company, department, position, etc.).
 // This is used by V3/V5 handlers when processing META_SET_WORK (0x03F4) commands.
 func (s *ICQLegacyService) UpdateWorkInfo(ctx context.Context, uin uint32, info state.ICQWorkInfo) error {
+	s.text.cp.InAll(&info)
 	screenName := state.NewIdentScreenName(strconv.FormatUint(uint64(uin), 10))
 	return s.userUpdater.SetWorkInfo(ctx, screenName, info)
 }
@@ -1318,6 +1382,7 @@ func (s *ICQLegacyService) UpdateWorkInfo(ctx context.Context, uin uint32, info 
 // UpdateMoreInfo updates a user's additional profile information (homepage, birthday, languages, etc.).
 // This is used by V3/V5 handlers when processing META_SET_MORE (0x03FE) commands.
 func (s *ICQLegacyService) UpdateMoreInfo(ctx context.Context, uin uint32, info state.ICQMoreInfo) error {
+	s.text.cp.InAll(&info)
 	screenName := state.NewIdentScreenName(strconv.FormatUint(uint64(uin), 10))
 	return s.userUpdater.SetMoreInfo(ctx, screenName, info)
 }
@@ -1325,6 +1390,7 @@ func (s *ICQLegacyService) UpdateMoreInfo(ctx context.Context, uin uint32, info 
 // UpdateInterests updates a user's interests in the database.
 // Deprecated: Use SetInterests instead. This method is kept for backward compatibility.
 func (s *ICQLegacyService) UpdateInterests(ctx context.Context, uin uint32, info state.ICQInterests) error {
+	s.text.cp.InAll(&info)
 	screenName := state.NewIdentScreenName(strconv.FormatUint(uint64(uin), 10))
 	return s.userUpdater.SetInterests(ctx, screenName, info)
 }
@@ -1355,7 +1421,8 @@ func (s *ICQLegacyService) GetInterests(ctx context.Context, uin uint32) (*state
 		"count", user.ICQInfo.Interests.Count,
 	)
 
-	return &user.ICQInfo.Interests, nil
+	interests := s.text.cp.OutAll(user.ICQInfo.Interests).(state.ICQInterests)
+	return &interests, nil
 }
 
 // SetInterests saves the user's interests to the database.
@@ -1368,6 +1435,7 @@ func (s *ICQLegacyService) GetInterests(ctx context.Context, uin uint32) (*state
 //
 // Returns nil on success, or an error if the update fails.
 func (s *ICQLegacyService) SetInterests(ctx context.Context, uin uint32, interests state.ICQInterests) error {
+	s.text.cp.InAll(&interests)
 	screenName := state.NewIdentScreenName(strconv.FormatUint(uint64(uin), 10))
 
 	if err := s.userUpdater.SetInterests(ctx, screenName, interests); err != nil {
@@ -1413,7 +1481,8 @@ func (s *ICQLegacyService) GetAffiliations(ctx context.Context, uin uint32) (*st
 		"current_count", user.ICQInfo.Affiliations.CurrentCount,
 	)
 
-	return &user.ICQInfo.Affiliations, nil
+	affiliations := s.text.cp.OutAll(user.ICQInfo.Affiliations).(state.ICQAffiliations)
+	return &affiliations, nil
 }
 
 // SetAffiliations saves the user's affiliations to the database.
@@ -1426,6 +1495,7 @@ func (s *ICQLegacyService) GetAffiliations(ctx context.Context, uin uint32) (*st
 //
 // Returns nil on success, or an error if the update fails.
 func (s *ICQLegacyService) SetAffiliations(ctx context.Context, uin uint32, affiliations state.ICQAffiliations) error {
+	s.text.cp.InAll(&affiliations)
 	screenName := state.NewIdentScreenName(strconv.FormatUint(uint64(uin), 10))
 
 	if err := s.userUpdater.SetAffiliations(ctx, screenName, affiliations); err != nil {
@@ -1512,7 +1582,7 @@ func (s *ICQLegacyService) GetNotes(ctx context.Context, uin uint32) (string, er
 		"notes_len", len(user.ICQInfo.Notes.Notes),
 	)
 
-	return user.ICQInfo.Notes.Notes, nil
+	return s.text.cp.Out(user.ICQInfo.Notes.Notes), nil
 }
 
 // SetNotes saves the user's notes to the database.
@@ -1528,7 +1598,7 @@ func (s *ICQLegacyService) SetNotes(ctx context.Context, uin uint32, notes strin
 	screenName := state.NewIdentScreenName(strconv.FormatUint(uint64(uin), 10))
 
 	userNotes := state.ICQUserNotes{
-		Notes: notes,
+		Notes: s.text.cp.In(notes),
 	}
 
 	if err := s.userUpdater.SetUserNotes(ctx, screenName, userNotes); err != nil {
@@ -1679,7 +1749,8 @@ func (s *ICQLegacyService) GetHomepageCategory(ctx context.Context, uin uint32) 
 		"index", user.ICQInfo.HomepageCategory.Index,
 	)
 
-	return &user.ICQInfo.HomepageCategory, nil
+	hpcat := s.text.cp.OutAll(user.ICQInfo.HomepageCategory).(state.ICQHomepageCategory)
+	return &hpcat, nil
 }
 
 // SetHomepageCategory saves the user's homepage category to the database.
@@ -1692,6 +1763,7 @@ func (s *ICQLegacyService) GetHomepageCategory(ctx context.Context, uin uint32) 
 //
 // Returns nil on success, or an error if the update fails.
 func (s *ICQLegacyService) SetHomepageCategory(ctx context.Context, uin uint32, hpcat state.ICQHomepageCategory) error {
+	s.text.cp.InAll(&hpcat)
 	screenName := state.NewIdentScreenName(strconv.FormatUint(uint64(uin), 10))
 
 	if err := s.userUpdater.SetHomepageCategory(ctx, screenName, hpcat); err != nil {
@@ -1715,6 +1787,8 @@ func (s *ICQLegacyService) SetHomepageCategory(ctx context.Context, uin uint32, 
 // userToSearchResult converts a state.User to a LegacyUserSearchResult,
 // populating basic profile fields and checking online status.
 func (s *ICQLegacyService) userToSearchResult(user state.User) *LegacyUserSearchResult {
+	// in the legacy client's code page
+	user.ICQInfo = s.text.cp.OutAll(user.ICQInfo).(state.ICQInfo)
 	uin, _ := strconv.Atoi(user.IdentScreenName.String())
 
 	nickname := user.ICQInfo.Basic.Nickname

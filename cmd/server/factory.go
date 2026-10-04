@@ -37,6 +37,7 @@ import (
 // Container groups common dependencies together.
 type Container struct {
 	cfg                    config.Config
+	classicText            foodgroup.ClassicText
 	chatSessionManager     *state.InMemoryChatSessionManager
 	hmacCookieBaker        state.HMACCookieBaker
 	icbmSvc                *foodgroup.ICBMService
@@ -134,6 +135,10 @@ func MakeCommonDeps() (Container, error) {
 		c.sqLiteUserStore,
 	)
 	if err := c.icqService.SetClassicCodePage(c.cfg.ICQClassicCodePage); err != nil {
+		return c, fmt.Errorf("ICQ_CLASSIC_CODEPAGE: %w", err)
+	}
+	// The legacy UDP clients (ICQ 95 to 99b) write in the same code page.
+	if c.classicText, err = foodgroup.NewClassicText(c.cfg.ICQClassicCodePage); err != nil {
 		return c, fmt.Errorf("ICQ_CLASSIC_CODEPAGE: %w", err)
 	}
 	// Random chat picks a partner among the live sessions.
@@ -749,6 +754,8 @@ func ICQLegacy(deps Container) *icq_legacy.LegacyServer {
 		logger,
 	)
 
+	icqLegacyService.SetClassicText(deps.classicText)
+
 	// Create handlers (sender will be set after server creation)
 	v2PacketBuilder := icq_legacy.NewV2PacketBuilder()
 	v3PacketBuilder := icq_legacy.NewV3PacketBuilder(sessionManager, deps.cfg.ICQLegacy.DirectConnectionEnabled)
@@ -796,6 +803,7 @@ func ICQLegacy(deps Container) *icq_legacy.LegacyServer {
 	// Wire up OSCAR->legacy message bridge so OSCAR status notifications
 	// reach legacy clients via the session message pump
 	legacyBridge := icq_legacy.NewLegacyMessageBridge(sessionManager, dispatcher, deps.sqLiteUserStore, logger)
+	legacyBridge.SetClassicText(deps.classicText)
 
 	// Set the bridge on the session manager so it can start the OSCAR message
 	// pump for each new legacy session (converts BuddyArrived/Departed SNACs

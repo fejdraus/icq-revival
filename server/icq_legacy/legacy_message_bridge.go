@@ -3,7 +3,6 @@ package icq_legacy
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/mk6i/open-oscar-server/foodgroup"
 	"github.com/mk6i/open-oscar-server/wire"
 )
 
@@ -27,6 +27,9 @@ type LegacyMessageBridge struct {
 	dispatcher *ProtocolDispatcher
 	userFinder ICQUserFinder
 	logger     *slog.Logger
+	// text converts what OSCAR clients write into the legacy clients' code
+	// page; see legacyText.
+	text legacyText
 }
 
 // NewLegacyMessageBridge creates a new bridge for OSCAR->legacy message delivery.
@@ -39,6 +42,12 @@ func NewLegacyMessageBridge(sessions *LegacySessionManager, dispatcher *Protocol
 	}
 }
 
+// SetClassicText sets the converter of the classic code page legacy clients
+// write in. The zero value passes their bytes through.
+func (b *LegacyMessageBridge) SetClassicText(t foodgroup.ClassicText) {
+	b.text = legacyText{cp: t}
+}
+
 // SendMessage delivers a message to a legacy client identified by UIN.
 // Returns nil if the message was delivered, or an error if the user is not
 // online via legacy protocol (caller should fall through to offline storage).
@@ -47,9 +56,9 @@ func (b *LegacyMessageBridge) SendMessage(uin uint32, fromUIN uint32, msgType ui
 	if session == nil {
 		return fmt.Errorf("UIN %d not online via legacy protocol", uin)
 	}
-	// Convert message text from OSCAR encoding (UTF-8/Unicode) to legacy
-	// single-byte encoding that old ICQ clients can display.
-	converted := utf8ToLatin1(message)
+	// Convert message text from OSCAR encoding (UTF-8, maybe HTML) to plain
+	// text in the code page old ICQ clients display.
+	converted := b.text.messageToLegacy(message)
 	return b.dispatcher.SendOnlineMessage(session, fromUIN, msgType, converted)
 }
 
@@ -251,6 +260,11 @@ func (b *LegacyMessageBridge) buildLegacyAuthFields(uin uint32) (nick, firstName
 		lastName = user.ICQInfo.Basic.LastName
 		email = user.ICQInfo.Basic.EmailAddress
 	}
+	// in the client's code page first, so the limits count its bytes
+	nick = b.text.toLegacy(nick)
+	firstName = b.text.toLegacy(firstName)
+	lastName = b.text.toLegacy(lastName)
+	email = b.text.toLegacy(email)
 	if len(nick) > 20 {
 		nick = nick[:20]
 	}
@@ -269,18 +283,23 @@ func (b *LegacyMessageBridge) buildLegacyAuthFields(uin uint32) (nick, firstName
 // handleAuthRequest converts an OSCAR FeedbagRequestAuthorizeToClient (0x13,0x19)
 // into a legacy ICQ auth request message (type 0x06).
 func (b *LegacyMessageBridge) handleAuthRequest(session *LegacySession, msg wire.SNACMessage) {
-	body, ok := msg.Body.(wire.SNAC_0x13_0x18_FeedbagRequestAuthorizationToHost)
-	if !ok {
+	var screenName, reason string
+	switch body := msg.Body.(type) {
+	case wire.SNAC_0x13_0x19_FeedbagRequestAuthorizeToClient:
+		screenName, reason = body.ScreenName, body.Reason
+	case wire.SNAC_0x13_0x18_FeedbagRequestAuthorizationToHost:
+		screenName, reason = body.ScreenName, body.Reason
+	default:
 		return
 	}
 
-	fromUIN, ok := parseUIN(body.ScreenName)
+	fromUIN, ok := parseUIN(screenName)
 	if !ok {
 		return
 	}
 
 	nick, first, last, email := b.buildLegacyAuthFields(fromUIN)
-	reason := utf8ToLatin1(body.Reason)
+	reason = b.text.messageToLegacy(reason)
 	text := fmt.Sprintf("%s\xFE%s\xFE%s\xFE%s\xFE1\xFE%s", nick, first, last, email, reason)
 
 	b.logger.Debug("OSCAR->legacy auth request",
@@ -319,7 +338,7 @@ func (b *LegacyMessageBridge) handleAuthResponse(session *LegacySession, msg wir
 		text = fmt.Sprintf("%s\xFE%s\xFE%s\xFE%s\xFE", nick, first, last, email)
 	} else {
 		msgType = ICQLegacyMsgAuthDeny
-		reason := utf8ToLatin1(body.Reason)
+		reason := b.text.messageToLegacy(body.Reason)
 		text = fmt.Sprintf("%s\xFE%s\xFE%s\xFE%s\xFE%s", nick, first, last, email, reason)
 	}
 
@@ -389,12 +408,12 @@ func (b *LegacyMessageBridge) handleICBMMessage(session *LegacySession, msg wire
 			ch4Msg := wire.ICBMCh4Message{}
 			if err := wire.UnmarshalLE(&ch4Msg, bytes.NewBuffer(payload)); err == nil {
 				msgType = uint16(ch4Msg.MessageType)
-				text = ch4Msg.Message
+				text = b.text.ch4ToLegacy(ch4Msg)
 			}
 		}
 	} else {
 		// Fallback to channel 1 text extraction
-		text = extractAndConvertICBMText(clientMsg)
+		text = b.extractChannel1Text(clientMsg)
 		msgType = ICQLegacyMsgText
 	}
 
@@ -537,107 +556,18 @@ func oscarStatusToLegacy(oscarStatus uint32) uint32 {
 // Character encoding conversion
 // ---------------------------------------------------------------------------
 
-// extractAndConvertICBMText extracts message text from an OSCAR ICBM message,
-// handling charset conversion from OSCAR encoding to legacy-compatible text.
-//
-// OSCAR messages can use three charsets (ICBMCh1Message.Charset):
-//   - 0x0000 (ASCII): single-byte, no conversion needed
-//   - 0x0002 (Unicode): UCS-2 big-endian, must be converted to single-byte
-//   - 0x0003 (Latin-1): single-byte, no conversion needed
-//
-// Legacy ICQ clients (V2-V5) expect single-byte text. If the message is
-// Unicode, we convert to Latin-1 with best-effort transliteration for
-// characters outside the Latin-1 range.
-func extractAndConvertICBMText(clientMsg wire.SNAC_0x04_0x07_ICBMChannelMsgToClient) string {
-	switch clientMsg.ChannelID {
-	case wire.ICBMChannelIM:
-		return extractChannel1Text(clientMsg)
-	case wire.ICBMChannelICQ:
-		return extractChannel4Text(clientMsg)
-	default:
-		return ""
-	}
-}
-
-// extractChannel1Text extracts text from channel 1 (AIM IM) messages.
-// Format: TLV 0x0002 (AOLIMData) containing ICBM fragments.
-func extractChannel1Text(clientMsg wire.SNAC_0x04_0x07_ICBMChannelMsgToClient) string {
+// extractChannel1Text extracts the text of a channel 1 (IM) message - TLV
+// 0x0002 (AOLIMData) holding ICBM fragments - for a legacy client. The
+// charset the message names is read (0x0000 ASCII, 0x0002 UCS-2BE, 0x0003
+// Latin-1 or the classic code page), the markup of an HTML reader's message
+// is taken out and the text goes out in the legacy client's code page.
+func (b *LegacyMessageBridge) extractChannel1Text(clientMsg wire.SNAC_0x04_0x07_ICBMChannelMsgToClient) string {
 	payload, hasPayload := clientMsg.Bytes(wire.ICBMTLVAOLIMData)
 	if !hasPayload {
 		return ""
 	}
-
-	var frags []wire.ICBMCh1Fragment
-	if err := wire.UnmarshalBE(&frags, bytes.NewBuffer(payload)); err != nil {
-		return ""
-	}
-
-	for _, frag := range frags {
-		if frag.ID != 1 { // 1 = message text
-			continue
-		}
-
-		msg := wire.ICBMCh1Message{}
-		if err := wire.UnmarshalBE(&msg, bytes.NewBuffer(frag.Payload)); err != nil {
-			continue
-		}
-
-		switch msg.Charset {
-		case wire.ICBMMessageEncodingUnicode:
-			return ucs2BEToLatin1(msg.Text)
-		default:
-			text := string(msg.Text)
-			if strings.Contains(text, "<") {
-				return stripHTMLSimple(text)
-			}
-			return text
-		}
-	}
-
-	return ""
-}
-
-// extractChannel4Text extracts text from channel 4 (ICQ) messages.
-// Format: TLV 0x0005 (ICBMTLVData) containing ICBMCh4Message (little-endian).
-func extractChannel4Text(clientMsg wire.SNAC_0x04_0x07_ICBMChannelMsgToClient) string {
-	payload, hasPayload := clientMsg.Bytes(wire.ICBMTLVData)
-	if !hasPayload {
-		return ""
-	}
-
-	msg := wire.ICBMCh4Message{}
-	if err := wire.UnmarshalLE(&msg, bytes.NewBuffer(payload)); err != nil {
-		return ""
-	}
-
-	text := msg.Message
-	if strings.Contains(text, "<") {
-		return stripHTMLSimple(text)
-	}
+	text, _ := b.text.icbmPayloadToLegacy(payload)
 	return text
-}
-
-// ucs2BEToLatin1 converts UCS-2 big-endian encoded bytes to a Latin-1 string.
-// Characters outside the Latin-1 range (U+0000-U+00FF) are replaced with '?'.
-func ucs2BEToLatin1(data []byte) string {
-	if len(data) < 2 {
-		return ""
-	}
-
-	var result []byte
-	for i := 0; i+1 < len(data); i += 2 {
-		codepoint := binary.BigEndian.Uint16(data[i : i+2])
-		if codepoint == 0 {
-			continue // skip null
-		}
-		if codepoint <= 0xFF {
-			result = append(result, byte(codepoint))
-		} else {
-			result = append(result, '?') // outside Latin-1 range
-		}
-	}
-
-	return string(result)
 }
 
 // utf8ToLatin1 converts a UTF-8 string to Latin-1 (ISO 8859-1).
@@ -669,25 +599,6 @@ func isASCII(s string) bool {
 		}
 	}
 	return true
-}
-
-// stripHTMLSimple removes HTML tags from text. This is a minimal
-// implementation for the bridge - AIM clients send HTML-formatted messages
-// that legacy ICQ clients can't render.
-func stripHTMLSimple(s string) string {
-	var result strings.Builder
-	inTag := false
-	for _, r := range s {
-		switch {
-		case r == '<':
-			inTag = true
-		case r == '>':
-			inTag = false
-		case !inTag:
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
 }
 
 // Compile-time check that LegacyMessageBridge implements LegacyMessageSender.

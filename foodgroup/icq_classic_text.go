@@ -14,7 +14,7 @@ import (
 	"github.com/mk6i/open-oscar-server/state"
 )
 
-// classicText converts the text of the classic ICQ dialect - the 0x07D0
+// ClassicText converts the text of the classic ICQ dialect - the 0x07D0
 // requests of ICQ 99 to 2003, flat blocks of strings - to and from what the
 // server keeps.
 //
@@ -27,25 +27,28 @@ import (
 // A text that is already valid UTF-8 is taken as it is. Cyrillic, Greek and
 // the other single-byte code pages almost never form valid UTF-8, so this
 // tells the two apart; plain ASCII is the same in both.
-type classicText struct {
+//
+// The legacy UDP clients (ICQ 95 to 99b, server/icq_legacy) write in the
+// same code page and are converted with it too.
+type ClassicText struct {
 	enc encoding.Encoding // nil: bytes pass through unchanged
 }
 
-// newClassicText returns the converter for a code page named as in the
+// NewClassicText returns the converter for a code page named as in the
 // WHATWG encoding list, e.g. "windows-1251". An empty name converts nothing.
-func newClassicText(codePage string) (classicText, error) {
+func NewClassicText(codePage string) (ClassicText, error) {
 	if codePage == "" {
-		return classicText{}, nil
+		return ClassicText{}, nil
 	}
 	enc, err := htmlindex.Get(codePage)
 	if err != nil {
-		return classicText{}, fmt.Errorf("unknown code page %q: %w", codePage, err)
+		return ClassicText{}, fmt.Errorf("unknown code page %q: %w", codePage, err)
 	}
-	return classicText{enc: enc}, nil
+	return ClassicText{enc: enc}, nil
 }
 
-// in turns a text from a classic client into UTF-8.
-func (t classicText) in(s string) string {
+// In turns a text from a classic client into UTF-8.
+func (t ClassicText) In(s string) string {
 	if t.enc == nil || utf8.ValidString(s) {
 		return s
 	}
@@ -56,9 +59,9 @@ func (t classicText) in(s string) string {
 	return out
 }
 
-// out turns UTF-8 into the classic client's code page. A character the code
+// Out turns UTF-8 into the classic client's code page. A character the code
 // page lacks becomes '?'.
-func (t classicText) out(s string) string {
+func (t ClassicText) Out(s string) string {
 	if t.enc == nil || !utf8.ValidString(s) || isASCIIText(s) {
 		return s
 	}
@@ -74,24 +77,24 @@ func (t classicText) out(s string) string {
 	return b.String()
 }
 
-// inAll converts every string field of *v from the client, through nested
+// InAll converts every string field of *v from the client, through nested
 // structs and slices.
-func (t classicText) inAll(v any) {
+func (t ClassicText) InAll(v any) {
 	if t.enc != nil {
-		walkStrings(reflect.ValueOf(v).Elem(), t.in)
+		walkStrings(reflect.ValueOf(v).Elem(), t.In)
 	}
 }
 
-// outAll returns a copy of v, a struct, with every string field converted for
+// OutAll returns a copy of v, a struct, with every string field converted for
 // the client.
-func (t classicText) outAll(v any) any {
+func (t ClassicText) OutAll(v any) any {
 	if t.enc == nil || v == nil {
 		return v
 	}
 	src := reflect.ValueOf(v)
 	cp := reflect.New(src.Type()).Elem()
 	cp.Set(src)
-	walkStrings(cp, t.out)
+	walkStrings(cp, t.Out)
 	return cp.Interface()
 }
 
