@@ -76,65 +76,9 @@ pub fn parse<'a>(payload: &'a [u8]) -> Option<Snac<'a>> {
     })
 }
 
-/// A minimal big-endian cursor over a byte slice. Every read is checked; a read
-/// past the end returns `None` so callers stop rather than panic.
-pub struct Reader<'a> {
-    data: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Reader<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
-        Reader { data, pos: 0 }
-    }
-    pub fn remaining(&self) -> usize {
-        self.data.len().saturating_sub(self.pos)
-    }
-    pub fn u8(&mut self) -> Option<u8> {
-        let b = *self.data.get(self.pos)?;
-        self.pos += 1;
-        Some(b)
-    }
-    pub fn u16(&mut self) -> Option<u16> {
-        let hi = *self.data.get(self.pos)?;
-        let lo = *self.data.get(self.pos + 1)?;
-        self.pos += 2;
-        Some(u16::from_be_bytes([hi, lo]))
-    }
-    pub fn u32(&mut self) -> Option<u32> {
-        if self.pos + 4 > self.data.len() {
-            return None;
-        }
-        let v = u32::from_be_bytes([
-            self.data[self.pos],
-            self.data[self.pos + 1],
-            self.data[self.pos + 2],
-            self.data[self.pos + 3],
-        ]);
-        self.pos += 4;
-        Some(v)
-    }
-    pub fn bytes(&mut self, n: usize) -> Option<&'a [u8]> {
-        if self.pos + n > self.data.len() {
-            return None;
-        }
-        let s = &self.data[self.pos..self.pos + n];
-        self.pos += n;
-        Some(s)
-    }
-    /// A byte run prefixed by a u8 length (a "screen name" in ICBM).
-    pub fn len8(&mut self) -> Option<&'a [u8]> {
-        let n = self.u8()? as usize;
-        self.bytes(n)
-    }
-    pub fn skip(&mut self, n: usize) -> Option<()> {
-        if self.pos + n > self.data.len() {
-            return None;
-        }
-        self.pos += n;
-        Some(())
-    }
-}
+/// The byte cursor, kept here under its old path for the OSCAR parsers. It
+/// lives in [`crate::bytes`] because the IQE1 container reads with it too.
+pub use crate::bytes::Reader;
 
 /// One TLV: tag, and the value slice.
 #[derive(Debug, Clone, PartialEq, Eq)]

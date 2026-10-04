@@ -38,7 +38,7 @@ use base64::Engine as _;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::ChaCha20Poly1305;
 
-use crate::snac::Reader;
+use crate::bytes::Reader;
 
 pub const VERSION: u8 = 1;
 /// Olm (vodozemac): an X3DH-like handshake and the Double Ratchet.

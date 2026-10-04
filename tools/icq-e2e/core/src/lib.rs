@@ -30,6 +30,7 @@
 extern crate self as icqe2e_core;
 pub mod alert;
 pub mod authz;
+pub mod bytes;
 pub mod callmedia;
 pub mod callneg;
 pub mod calls;
