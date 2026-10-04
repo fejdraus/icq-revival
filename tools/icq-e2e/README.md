@@ -1,10 +1,12 @@
 # ICQ E2E add-on (end-to-end encryption)
 
-A native add-on for the classic ICQ 6.5 and 7.2 clients that **encrypts instant
-messages end to end** with Olm (the [vodozemac] Rust implementation, Apache-2.0).
-A message leaves the sender's client as an opaque container, travels through the
-ICQ server unreadable, and is opened on the recipient's device. The server never
-holds anything it could read.
+A native add-on for the classic ICQ 6.5 and 7.2 clients that **encrypts
+instant messages, file transfers and voice/video calls end to end** and wraps
+the client's server connections in TLS 1.3. Messages use Olm (the [vodozemac]
+Rust implementation, Apache-2.0); file and call encryption are separate patch
+options, off by default. A message leaves the sender's client as an opaque
+container, travels through the ICQ server unreadable, and is opened on the
+recipient's device. The server never holds anything it could read.
 
 The requirement list with its status is `docs/e2e/CHECKLIST.md`, and the
 audit record is `docs/e2e/AUDIT-2026-10.md`. The original design
