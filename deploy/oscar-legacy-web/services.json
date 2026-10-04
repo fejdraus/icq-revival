@@ -417,9 +417,9 @@
     "icq72Patch": "/icq/files/icq-72-patch.zip",
     "mirandaPlugin": "/icq/files/icq-revival-miranda.zip",
     "mirandaSource": "/icq/files/icq-revival-miranda-src.zip",
-    "icq2003bInstaller": "https://archive.org/download/tucows_193867_ICQ_Pro/icqpro2003b.exe",
+    "icq2003bInstaller": "https://archive.org/download/icqpro2003b_202610/icqpro2003b.exe",
     "icq2003bInstallerSha256": "04b789e32b5b82982af7ce5e54c63630d262d3c7ba3d6ca294f0ae9fa10e8edf",
-    "icq65Installer": "https://archive.org/download/icq-6-5-2024-install_icq65/icq-6-5-2024-install_icq65.exe",
+    "icq65Installer": "https://archive.org/download/icq-6-5-2024-install_icq65_202610/icq-6-5-2024-install_icq65.exe",
     "icq65InstallerSha256": "20195f60f61e2f19882487f93372b56c89f2be0da39b5d51a1ed30dbbd3495fe",
     "icq72Installer": "https://archive.org/download/icq-7-2-3143-install_icq7/icq-7-2-3143-install_icq7.exe",
     "icq72InstallerSha256": "1ff4b3dde48c0163bb663f2fe2e38faecb8957867dca45927a8166ddaef8154a"
