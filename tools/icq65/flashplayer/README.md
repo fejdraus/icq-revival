@@ -302,15 +302,6 @@ bytes. D3D12 aligns them to pointer size, which is 4 on 32-bit, so every DX12
 pipeline in this x86 DLL failed with `E_INVALIDARG`, WARP included. Drop the
 patch once wgpu fixes `RenderPipelineStateStream::add_object`.
 
-A second change turns DX12 suballocation off on WARP (`Microsoft Basic Render
-Driver`), as wgpu does for Intel Iris Xe (wgpu#3552): every buffer and texture
-is a committed resource of its own. In a virtual machine on WARP, ICQ 6.5
-showed Flash avatars zoomed in at random; the saved frames held one movie's
-shapes drawn with another movie's colours (one player's mesh data in
-another's), on a device all players share. Not reproduced on Windows 11's
-WARP; the owner's VM tells whether this is the cure. The test host's
-`axstress` mode looks for exactly that mix.
-
 ## When something fails
 
 No failure may crash the client:
@@ -582,6 +573,20 @@ to that file. It always writes the same lines to the debugger
 | `WGPU_DX12_COMPILER` | Passed to wgpu (`fxc`, `dynamicdxc`) |
 
 ## Known gaps
+
+- **ICQ 6.5 in a virtual machine on WARP: Flash avatars zoomed in at random**
+  (open, 2026-10-04). Which avatar, and where (contact list, chat, profile),
+  changes from run to run. The wrong picture is already in the frame the DLL
+  renders: saved frames held one movie's shapes drawn with another movie's
+  colours (one player's mesh data in another's, on the device all players
+  share). What is ruled out: ICQ's call order (`axreplay` and `axsession`
+  replay it, `axstress` ran some 17,000 frames, all clean on Windows 11's
+  WARP), the GPU backend as such (tZers on the same WARP are fine), and DX12
+  suballocation (turning it off on WARP did not help). Next candidate: a
+  device of its own per player, at about 1.2 s per open on WARP. With
+  `FLASHPLAYERCONTROL_LOG` set, each logged `Draw` gives the frame's colours
+  and the host's DC, and the first frames (then every 240th) are saved as BMP
+  files next to the log.
 
 - **The field cause of the empty first paint is inferred, not seen.** It
   comes from boxelyRenderer's code; the DLL now covers all channels and
