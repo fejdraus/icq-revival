@@ -1329,6 +1329,11 @@ impl Control {
                 dc_summary(hdc),
                 if ok != 0 { "ok" } else { "FAILED" }
             ));
+            if n <= 4 {
+                if let Some(path) = dump_frame(self.id, serial, &frame) {
+                    self.clog(&format!("Draw #{n}: frame saved to {path}"));
+                }
+            }
         }
         S_OK
     }
@@ -1373,7 +1378,49 @@ fn pixel_summary(bgra: &[u8]) -> String {
             brightest = brightest.max(px[0]).max(px[1]).max(px[2]);
         }
     }
-    format!("{visible} of {total} pixels visible (brightest {brightest})")
+    let mut counts: std::collections::HashMap<[u8; 4], usize> = std::collections::HashMap::new();
+    for px in bgra.chunks_exact(4) {
+        if counts.len() < 4096 || counts.contains_key(px) {
+            *counts.entry([px[0], px[1], px[2], px[3]]).or_default() += 1;
+        }
+    }
+    let common = counts
+        .iter()
+        .max_by_key(|(_, n)| **n)
+        .map(|(c, n)| format!("BGRA {:?} x{n}", c))
+        .unwrap_or_default();
+    format!(
+        "{visible} of {total} pixels visible (brightest {brightest}; {} colours, most common {common})",
+        counts.len()
+    )
+}
+
+/// With `FLASHPLAYERCONTROL_LOG` set, saves a frame as a 32-bit BMP next to
+/// the log (diagnostics: what the host is given to draw). Returns the path.
+fn dump_frame(control: u32, serial: u64, f: &crate::movie::Frame) -> Option<String> {
+    let log = std::env::var_os("FLASHPLAYERCONTROL_LOG")?;
+    let dir = std::path::Path::new(&log).parent()?.to_path_buf();
+    let path = dir.join(format!("fpc-control{control}-frame{serial}.bmp"));
+    let (w, h) = (f.width, f.height);
+    let data = (w * h * 4) as usize;
+    if f.pixels.len() < data {
+        return None;
+    }
+    let mut b = Vec::with_capacity(54 + data);
+    b.extend_from_slice(b"BM");
+    b.extend_from_slice(&((54 + data) as u32).to_le_bytes());
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&54u32.to_le_bytes());
+    b.extend_from_slice(&40u32.to_le_bytes());
+    b.extend_from_slice(&(w as i32).to_le_bytes());
+    // Negative height: rows top to bottom, as the frame holds them.
+    b.extend_from_slice(&(-(h as i32)).to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&32u16.to_le_bytes());
+    b.extend_from_slice(&[0u8; 24]);
+    b.extend_from_slice(&f.pixels[..data]);
+    std::fs::write(&path, b).ok()?;
+    Some(path.display().to_string())
 }
 
 /// What the host draws into, for the log: a screen DC or a memory DC, and for
