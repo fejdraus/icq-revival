@@ -1,4 +1,4 @@
-# End-to-end encryption add-on for ICQ 6.5 and ICQ 7.2
+# Historical initial design - ICQ 6.5 / 7.2 E2E add-on
 
 > **Historical document.** This is the initial design, written before any code.
 > It is kept for the reasoning behind the first choices; much of it has since
@@ -15,6 +15,15 @@
 >   directory, its log and the auditors
 > - `docs/e2e/STAGE-TLS.md` - the connection to the server
 > - `docs/e2e/CALLS-RESEARCH.md`, `docs/e2e/FILES-RESEARCH.md` - calls and files
+>
+> **Normative status.** Nothing below this notice specifies the current
+> implementation. Do not use it to implement, change or security-review the
+> add-on without checking the current source and the documents above. Some of
+> its rules were deliberately reversed later - for example, traffic is no
+> longer passed through unmodified when a hook is missing: a protected client
+> fails closed. Where this file disagrees with the code, the code, its tests,
+> `tools/icq-e2e/README.md`, `docs/e2e/CHECKLIST.md` and the audit record take
+> precedence. The rest of the file is kept unchanged as the project's history.
 
 Original status line: design only. No code in the repo, no commits. Read-only
 research against copies of the clients (never the live install). All findings
