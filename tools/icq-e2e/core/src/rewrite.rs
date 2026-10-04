@@ -477,7 +477,11 @@ fn process_crypto_snac(
             // open; it announced the account key only, so no client ever sent
             // the capability, and once messages followed the contact's current
             // client every contact looked like one without the add-on.
-            if encrypting {
+            // Only with keys, as for the account key below: an engine that
+            // holds messages ([`crate::gate::Withheld`] - another account
+            // signed on, a state file that cannot be used) cannot read what a
+            // contact would encrypt for it, so it announces nothing.
+            if encrypting && crypto.account_key().is_some() {
                 match caps::announce(&base) {
                     Announce::Added(body) => {
                         base = body;

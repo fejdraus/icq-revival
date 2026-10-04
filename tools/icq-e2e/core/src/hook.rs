@@ -1939,8 +1939,14 @@ fn poll_worker() {
                 log::line(&line);
             }
         }
-        let accounts: Vec<Arc<Mutex<Session>>> =
-            lock(sessions_by_account()).values().cloned().collect();
+        // After an account switch encryption is off for the rest of the
+        // process: the first account's session is not polled any more, so it
+        // does not keep publishing under a token whose connection is gone.
+        let accounts: Vec<Arc<Mutex<Session>>> = if account_switch().is_some() {
+            Vec::new()
+        } else {
+            lock(sessions_by_account()).values().cloned().collect()
+        };
         for sess in accounts {
             let Ok(mut s) = sess.try_lock() else {
                 // A frame is being handled with this session; try next time.

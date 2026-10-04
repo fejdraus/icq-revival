@@ -1666,6 +1666,8 @@ mod tests {
         /// tZer announcements `tzer_notice` hands out.
         vouched: Vec<Action>,
         notices: Vec<[u8; 16]>,
+        /// What `account_key` answers: none, unless a test gives it keys.
+        key: Option<[u8; 32]>,
     }
 
     impl Fake {
@@ -1684,7 +1686,14 @@ mod tests {
                 gate_notes: Vec::new(),
                 vouched: Vec::new(),
                 notices: Vec::new(),
+                key: None,
             }
+        }
+
+        /// An engine with an account key, as one with a session has.
+        fn with_keys(mut self) -> Self {
+            self.key = Some([7; 32]);
+            self
         }
 
         /// Answers every outbound message with `out`.
@@ -1728,7 +1737,7 @@ mod tests {
         }
 
         fn account_key(&self) -> Option<[u8; 32]> {
-            None
+            self.key
         }
 
         fn outbound(&mut self, peer: &str, _: Form, _: &[u8], _: u64) -> Outbound {
@@ -2700,7 +2709,7 @@ next"]);
         let (mut r, mut out) = opened(Direction::Outbound);
         r.push_crypto(
             &set_info_with_direct_im(),
-            &mut Fake::new(),
+            &mut Fake::new().with_keys(),
             1,
             &encrypt(),
             &mut out,
@@ -2727,6 +2736,19 @@ next"]);
             &mut out,
         );
         assert!(!names_e2e(&out), "e2e=off");
+
+        // Held (no keys: another account signed on, a state file that
+        // cannot be used): it could not read what a contact encrypts for it.
+        let mut r = StreamRewriter::new(Direction::Outbound);
+        let mut out = Vec::new();
+        r.push_crypto(
+            &[hello(), set_info_with_direct_im()].concat(),
+            &mut crate::gate::Withheld::new("held".into()),
+            1,
+            &encrypt(),
+            &mut out,
+        );
+        assert!(!names_e2e(&out), "held");
     }
 
     #[test]
