@@ -1320,11 +1320,13 @@ impl Control {
         if log_every(n) || size_changed || first_after_wait {
             let map = unsafe { windows_sys::Win32::Graphics::Gdi::GetMapMode(hdc) };
             self.clog(&format!(
-                "Draw #{n}: {from} {} (device {dw}x{dh}, map mode {map}), frame {serial} {}x{} {}, AlphaBlend {}",
+                "Draw #{n}: {from} {} (device {dw}x{dh}, map mode {map}), frame {serial} {}x{} {}, {}, into {}, AlphaBlend {}",
                 rect_str(&r),
                 frame.width,
                 frame.height,
                 if rendered { "rendered for this Draw" } else { "cached" },
+                pixel_summary(&frame.pixels),
+                dc_summary(hdc),
                 if ok != 0 { "ok" } else { "FAILED" }
             ));
         }
@@ -1354,6 +1356,50 @@ impl Control {
             HITRESULT_HIT
         } else {
             HITRESULT_OUTSIDE
+        }
+    }
+}
+
+/// What a frame holds, for the log: how many of its pixels are not fully
+/// transparent, and the brightest colour value among them. A frame that read
+/// back empty shows as "0 of N"; one drawn but invisible would not.
+fn pixel_summary(bgra: &[u8]) -> String {
+    let total = bgra.len() / 4;
+    let mut visible = 0usize;
+    let mut brightest = 0u8;
+    for px in bgra.chunks_exact(4) {
+        if px[3] != 0 {
+            visible += 1;
+            brightest = brightest.max(px[0]).max(px[1]).max(px[2]);
+        }
+    }
+    format!("{visible} of {total} pixels visible (brightest {brightest})")
+}
+
+/// What the host draws into, for the log: a screen DC or a memory DC, and for
+/// a memory DC the bitmap selected into it (size and bits per pixel).
+fn dc_summary(hdc: HDC) -> String {
+    use windows_sys::Win32::Graphics::Gdi::{
+        BITMAP, GetCurrentObject, GetObjectType, GetObjectW, OBJ_BITMAP, OBJ_DC, OBJ_MEMDC,
+    };
+    unsafe {
+        match GetObjectType(hdc as _) {
+            t if t == OBJ_DC as u32 => "a screen DC".to_string(),
+            t if t == OBJ_MEMDC as u32 => {
+                let bmp = GetCurrentObject(hdc, OBJ_BITMAP as u32);
+                let mut b: BITMAP = std::mem::zeroed();
+                if !bmp.is_null()
+                    && GetObjectW(bmp, size_of::<BITMAP>() as i32, &mut b as *mut _ as *mut _) != 0
+                {
+                    format!(
+                        "a memory DC ({}x{}, {} bpp)",
+                        b.bmWidth, b.bmHeight, b.bmBitsPixel
+                    )
+                } else {
+                    "a memory DC (no bitmap)".to_string()
+                }
+            }
+            t => format!("a DC of object type {t}"),
         }
     }
 }
