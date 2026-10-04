@@ -426,7 +426,26 @@ func TestICQLegacyService_ProcessContactList(t *testing.T) {
 			wantResult: &ContactListResult{
 				OnlineContacts: []ContactStatus{
 					{UIN: 22222, Online: false, Status: 0},
-					{UIN: 33333, Online: true, Status: ICQLegacyStatusOnline},
+					{UIN: 33333, Online: true, Status: ICQLegacyStatusOnline | ICQLegacyStatusFlagDCDisabled},
+				},
+			},
+		},
+		{
+			name: "legacy contact keeps its direct connection flags",
+			req: ContactListRequest{
+				UIN:      11111,
+				Contacts: []uint32{44444},
+			},
+			legacyMgr: &LegacySessionManager{
+				sessions: map[uint32]*LegacySession{
+					44444: newTestLegacySession(44444, func(s *LegacySession) {
+						s.Status = ICQLegacyStatusAway | ICQLegacyStatusFlagDCAuth
+					}),
+				},
+			},
+			wantResult: &ContactListResult{
+				OnlineContacts: []ContactStatus{
+					{UIN: 44444, Online: true, Status: ICQLegacyStatusAway | ICQLegacyStatusFlagDCAuth},
 				},
 			},
 		},

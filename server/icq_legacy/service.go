@@ -331,6 +331,9 @@ func (s *ICQLegacyService) ProcessContactList(ctx context.Context, instance *sta
 				userInfo := oscarSession.TLVUserInfo()
 				oscarStatusVal, _ := userInfo.Uint32BE(wire.OServiceUserInfoStatus)
 				status.Status = mapOSCARStatusToLegacy(oscarStatusVal)
+				if legacySession == nil {
+					status.Status = statusWithoutDirectConnection(status.Status)
+				}
 				status.Version = 0 // OSCAR client, not legacy
 				s.logger.Debug("ProcessContactList: contact online (OSCAR)",
 					"contact_uin", contactUIN,
@@ -434,7 +437,7 @@ func (s *ICQLegacyService) ProcessUserAdd(ctx context.Context, instance *state.S
 	oscarSession := s.sessionRetriever.RetrieveSession(targetScreenName)
 	if oscarSession != nil {
 		result.TargetOnline = true
-		result.TargetStatus = ICQLegacyStatusOnline
+		result.TargetStatus = statusWithoutDirectConnection(ICQLegacyStatusOnline)
 		result.TargetVersion = 0 // OSCAR client, not legacy
 		// For OSCAR clients, we don't send "you were added" via legacy protocol
 		// OSCAR has its own buddy notification mechanism
@@ -882,7 +885,7 @@ func (s *ICQLegacyService) GetUserInfoForProtocol(ctx context.Context, targetUIN
 	oscarSession := s.sessionRetriever.RetrieveSession(screenName)
 	if oscarSession != nil {
 		result.Online = true
-		result.Status = ICQLegacyStatusOnline
+		result.Status = statusWithoutDirectConnection(ICQLegacyStatusOnline)
 		s.logger.Debug("GetUserInfoForProtocol: user online (OSCAR)", "uin", targetUIN)
 	}
 

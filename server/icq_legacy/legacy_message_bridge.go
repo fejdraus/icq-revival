@@ -182,6 +182,10 @@ func (b *LegacyMessageBridge) handleBuddyArrived(session *LegacySession, msg wir
 
 	oscarStatus, _ := arrived.Uint32BE(wire.OServiceUserInfoStatus)
 	legacyStatus := oscarStatusToLegacy(oscarStatus)
+	if b.sessions.GetSession(uin) == nil {
+		// Signed on over OSCAR: a legacy client cannot connect to it.
+		legacyStatus = statusWithoutDirectConnection(legacyStatus)
+	}
 
 	b.logger.Debug("OSCAR->legacy buddy arrived",
 		"to_uin", session.UIN,
@@ -470,6 +474,20 @@ func parseUIN(screenName string) (uint32, bool) {
 // ---------------------------------------------------------------------------
 // Status mapping (OSCAR <-> legacy ICQ)
 // ---------------------------------------------------------------------------
+
+// statusWithoutDirectConnection returns the status a legacy client is given
+// for a user signed on over OSCAR. A legacy client can never open a direct
+// connection to an OSCAR client (and the E2E add-on of ICQ 6.5/7.2 refuses
+// direct IM anyway), so the user is flagged as taking no direct connections
+// and the "direct connection needs authorization / contacts only" flags are
+// dropped. Together with the zero IP, port, DC type and DC version the
+// packet builders send for users without a legacy session, this makes ICQ
+// 99b send through the server at once instead of trying a direct connection
+// and asking "Send Thru Server" after it fails.
+func statusWithoutDirectConnection(status uint32) uint32 {
+	status &^= ICQLegacyStatusFlagDCAuth | ICQLegacyStatusFlagDCCont
+	return status | ICQLegacyStatusFlagDCDisabled
+}
 
 // oscarStatusToLegacy converts OSCAR status flags to legacy ICQ status value.
 // The bit patterns are nearly identical between OSCAR and legacy ICQ, but we

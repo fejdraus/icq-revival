@@ -204,8 +204,11 @@ const (
 	ICQLegacyStatusFlagShowIP   uint32 = 0x00020000 // Show IP address
 	ICQLegacyStatusFlagBirthday uint32 = 0x00080000 // Birthday flag
 	ICQLegacyStatusFlagWebFront uint32 = 0x00200000 // Web front
-	ICQLegacyStatusFlagDCAuth   uint32 = 0x10000000 // DC requires auth
-	ICQLegacyStatusFlagDCCont   uint32 = 0x20000000 // DC only contacts
+	// ICQLegacyStatusFlagDCDisabled says the user takes no direct
+	// connections, so the client sends to them through the server.
+	ICQLegacyStatusFlagDCDisabled uint32 = 0x01000000
+	ICQLegacyStatusFlagDCAuth     uint32 = 0x10000000 // DC requires auth
+	ICQLegacyStatusFlagDCCont     uint32 = 0x20000000 // DC only contacts
 )
 
 // Login Error Codes
