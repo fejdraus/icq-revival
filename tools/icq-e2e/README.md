@@ -62,7 +62,8 @@ The plan is `docs/e2e/STAGE-3-CLIENT-CRYPTO.md`, the design is
   client without the add-on right now (see "The contact's current client"
   below) has their unencrypted messages shown, with "A message from <uin>
   arrived unencrypted: <uin> is using a client without end-to-end
-  encryption" once per change of their client.
+  encryption" once per change of their client - unless the chat is under
+  `/e2e on`, which stays strict: their unencrypted messages are not shown.
 - The same holds for what a protected contact does without writing
   (`docs/e2e/AUDIT-2026-10.md`, sixth audit): an incoming call or file
   proposal reaches the client only once the key offer their add-on sends
@@ -185,10 +186,10 @@ stream, so the contact never gets it, and answers with a note in that chat.
 
 | Command | What it does |
 |---|---|
-| `/e2e on` | Encryption on for this contact, by hand: nothing ever goes to them in clear. Without their keys the message is held and the chat says why. |
-| `/e2e off` | Encryption off for this contact: messages go in clear. An encrypted message from them is still read, and gives one hint. |
-| `/e2e auto` | Back to the default: the manual on/off is forgotten; whether the contact was seen encrypting is kept, so downgrade protection stays. |
-| `/e2e status` | The setting (auto/on/off), whether the contact was seen encrypting, their signed devices in the key directory, and what the next message will do. |
+| `/e2e on` | Only encrypted, held otherwise - until `/e2e auto` or `/e2e off`. Nothing ever goes to the contact in clear: without their keys, with the key directory unreachable, with this add-on's keys not published yet, or while they are signed in with a client without the add-on, the message is held and the chat says why and that `/e2e auto` or `/e2e off` lets it go unencrypted. Their unencrypted messages are not shown; calls and files go only encrypted; a tZer is shown only when announced. |
+| `/e2e off` | Never encrypted: messages go in clear and their unencrypted messages are shown. An encrypted message from them is still read, and gives one hint. |
+| `/e2e auto` | The default: encrypted whenever their client can - ordinary text with a note while they use a client without the add-on. The manual on/off is forgotten; whether the contact was seen encrypting is kept, so downgrade protection stays. |
+| `/e2e status` | The setting - "on (only encrypted; held otherwise)", "auto (encrypted whenever their client can)" or "off" - whether the contact was seen encrypting, their signed devices in the key directory, their current client, and what the next message will do. |
 | `/e2e plain` | The next message goes in clear, once - for a contact that encrypted before and now shows no keys. Refused when encryption is on by hand. |
 | `/e2e safety` | The safety number with this contact - 60 digits in twelve groups of five, as Signal shows it - whether the contact is verified, and how to compare. |
 | `/e2e verify` | Marks the contact verified, for the number `/e2e safety` showed last in this sign-on (the key behind it, not the contact). Refused if the number was not shown, or changed since. |
@@ -215,18 +216,28 @@ capability list at all, means a client without it.
 
 | Contact | Messages out | Unencrypted messages in | Calls, files, tZers |
 |---|---|---|---|
-| Online, client without the add-on | ordinary text, with a note | shown, with a warning | as without the add-on |
+| Online, client without the add-on, `/e2e auto` (verified too) | ordinary text, with a note | shown, with a warning | as without the add-on |
+| Online, client without the add-on, `/e2e on` | held, not sent, with a note | not shown, with a warning | calls and files only encrypted (blocked otherwise); tZers only when announced |
+| Online, client without the add-on, `/e2e off` | ordinary text | shown | as without the add-on |
 | Online with the add-on, unknown, or offline | encrypted to their keys in the directory | as above: not shown for a protected contact | encrypted / announced as usual |
 
-The notes come once per change of the contact's client per sign-on: "<uin> is
-signed in with a client without end-to-end encryption; this message went
-unencrypted" and "A message from <uin> arrived unencrypted: <uin> is using a
-client without end-to-end encryption". This holds for every contact, verified
-and `/e2e on` ones too; for those the notes start with WARNING and the security
-box comes up, since a server that strips the capability from a contact's
-presence could do this to read the conversation. That downgrade is the price of
-working with old clients, and it is never silent. `/e2e status` shows which
-client the contact is on ("their current client: ...").
+Under `/e2e auto` the notes come once per change of the contact's client per
+sign-on: "<uin> is signed in with a client without end-to-end encryption; this
+message went unencrypted" and "A message from <uin> arrived unencrypted: <uin>
+is using a client without end-to-end encryption". For a verified contact the
+notes start with WARNING and the security box comes up, since a server that
+strips the capability from a contact's presence could do this to read the
+conversation. That downgrade is the price of working with old clients, and it
+is never silent.
+
+`/e2e on` stays strict whatever the contact's client: every message is held
+with "The message to <uin> was NOT sent: <uin> is signed in with a client
+without end-to-end encryption, which could not read it", followed by how to let
+it go (`/e2e auto` to send unencrypted whenever they cannot receive encrypted
+messages, `/e2e off` to switch encryption off in the chat; `/e2e plain` does
+nothing under `/e2e on`), and their unencrypted messages are dropped with the
+usual warning naming them and the reason. `/e2e status` shows which client the
+contact is on ("their current client: ...").
 
 ## Safety numbers (CHECKLIST 4.2, 4.3, 10.10)
 

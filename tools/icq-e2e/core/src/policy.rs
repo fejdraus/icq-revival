@@ -22,7 +22,10 @@ pub enum Setting {
     /// switched on by an incoming encrypted message (10.5).
     #[default]
     Auto,
-    /// Switched on by hand: nothing ever goes to this contact in clear (10.8).
+    /// Switched on by hand: nothing ever goes to this contact in clear (10.8),
+    /// whatever client they are signed in with now (10.6): a message that
+    /// cannot be encrypted is held until the user types `/e2e auto` or
+    /// `/e2e off`, and their unencrypted messages are not shown.
     On,
     /// Switched off by hand: messages go in clear, and an incoming encrypted
     /// message does not change that, it only gives a hint (10.5).
@@ -169,7 +172,7 @@ pub fn status_note(peer: &str, status: Status) -> String {
     match status {
         Status::On => format!("{PREFIX}Encryption is on in this chat: messages to {peer} are end-to-end encrypted."),
         Status::Off => format!(
-            "{PREFIX}Encryption is off in this chat (switched off by you): messages to {peer} are sent unencrypted. Type /e2e on to switch it on."
+            "{PREFIX}Encryption is off in this chat (/e2e off): messages to {peer} are never encrypted, and their unencrypted messages are shown. Type /e2e auto to encrypt whenever their client can, or /e2e on to send only encrypted."
         ),
         Status::Unavailable => format!(
             "{PREFIX}Messages to {peer} are sent unencrypted: they do not have the add-on."
@@ -265,6 +268,10 @@ pub enum Held {
     Unreachable(String),
     /// Our own keys are not in the directory yet.
     NotPublished,
+    /// Switched on by hand, and the contact is signed in with a client that
+    /// does not announce the add-on, so it could not read an encrypted
+    /// message (10.6, the owner's decision: `/e2e on` stays strict).
+    OtherClient,
     /// The contact was verified and their safety number has changed since:
     /// nothing goes to the new key until the user says so (CHECKLIST 10.10).
     SafetyChanged,
@@ -279,11 +286,33 @@ pub enum Held {
     NotYet(String),
 }
 
-/// The note for a message that was held.
-pub fn held_note(peer: &str, why: &Held) -> String {
+/// What a held message's note ends with in a chat under `/e2e on`: only
+/// the user's own switch lets messages go unencrypted (`/e2e plain` does
+/// not, 10.8).
+fn on_hold_way_out(peer: &str) -> String {
+    format!("Encryption is on in this chat (/e2e on), so messages to {peer} only ever go encrypted and are held otherwise: type /e2e auto to send unencrypted whenever {peer} cannot receive encrypted messages, or /e2e off to switch encryption off in this chat.")
+}
+
+/// The note for a message that was held. `on`: the chat is under `/e2e on`,
+/// where `/e2e plain` does nothing and the way out is `/e2e auto` or
+/// `/e2e off`.
+pub fn held_note(peer: &str, why: &Held, on: bool) -> String {
     match why {
         Held::OnByHand => format!(
-            "{PREFIX}The message to {peer} was NOT sent: encryption is on in this chat (switched on by you) and {peer} has no encryption keys in the key directory. Type /e2e off to send unencrypted."
+            "{PREFIX}The message to {peer} was NOT sent: {peer} has no encryption keys in the key directory. {}",
+            on_hold_way_out(peer)
+        ),
+        Held::OtherClient => format!(
+            "{PREFIX}The message to {peer} was NOT sent: {peer} is signed in with a client without end-to-end encryption, which could not read it. {} If {peer} did not switch clients, the server may be hiding their add-on.",
+            on_hold_way_out(peer)
+        ),
+        Held::Unreachable(e) if on => format!(
+            "{PREFIX}The message to {peer} was NOT sent: the key directory could not be reached ({e}). Send it again later. {}",
+            on_hold_way_out(peer)
+        ),
+        Held::NotPublished if on => format!(
+            "{PREFIX}The message to {peer} was NOT sent: this add-on's keys are not in the key directory yet. Send it again in a moment. {}",
+            on_hold_way_out(peer)
         ),
         Held::Downgrade => format!(
             "{PREFIX}The message to {peer} was NOT sent: {peer} used encryption before, but the server now shows no encryption keys for them. This can be a server or network attack, or {peer} removed the add-on - ask them another way. Type /e2e plain to send the next message unencrypted once, or /e2e off to switch encryption off."
@@ -786,11 +815,14 @@ mod tests {
             status_note("100002", Status::Unavailable),
             switched_on_note("100002"),
             encrypts_while_off_note("100002"),
-            held_note("100002", &Held::OnByHand),
-            held_note("100002", &Held::Downgrade),
-            held_note("100002", &Held::Unreachable("x".into())),
-            held_note("100002", &Held::NotPublished),
-            held_note("100002", &Held::SafetyChanged),
+            held_note("100002", &Held::OnByHand, true),
+            held_note("100002", &Held::OtherClient, true),
+            held_note("100002", &Held::Downgrade, false),
+            held_note("100002", &Held::Unreachable("x".into()), false),
+            held_note("100002", &Held::Unreachable("x".into()), true),
+            held_note("100002", &Held::NotPublished, false),
+            held_note("100002", &Held::NotPublished, true),
+            held_note("100002", &Held::SafetyChanged, false),
             safety_changed_note("100002", true),
             safety_changed_note("100002", false),
             safety_note("100002", "12345 12345", true),
