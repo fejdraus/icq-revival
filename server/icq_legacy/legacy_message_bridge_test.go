@@ -173,7 +173,7 @@ func TestLegacyMessageBridge_handleBuddyArrived_directConnection(t *testing.T) {
 		{
 			name:       "V5 recipient, OSCAR contact",
 			version:    ICQLegacyVersionV5,
-			wantOnline: presenceFields{DCType: ICQLegacyDCTypeIndirect, Status: oscarSide},
+			wantOnline: presenceFields{Status: oscarSide},
 			wantStatus: oscarSide,
 		},
 		{

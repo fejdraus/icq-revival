@@ -1300,10 +1300,6 @@ func (h *V5Handler) sendV5UserOnline(session *LegacySession, uin uint32, status 
 		dcVersion = uint32(onlineSession.GetDCVersion())
 	}
 	// else: V3/V4 clients or unknown - keep zeros for privacy
-	if onlineSession == nil {
-		// A user on the OSCAR side: no legacy client can reach them directly.
-		dcType = ICQLegacyDCTypeIndirect
-	}
 
 	// IP address
 	binary.LittleEndian.PutUint32(data[offset:], externalIP)

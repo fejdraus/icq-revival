@@ -211,12 +211,6 @@ const (
 	ICQLegacyStatusFlagDCCont     uint32 = 0x20000000 // DC only contacts
 )
 
-// ICQLegacyDCTypeIndirect is the direct-connection mode byte of a user who
-// cannot be reached directly (behind a firewall): the client sends to them
-// through the server at once instead of trying a connection first. Users
-// on the OSCAR side get it, since no legacy client can connect to them.
-const ICQLegacyDCTypeIndirect uint8 = 0x02
-
 // Login Error Codes
 const (
 	ICQLegacyLoginErrSuccess       uint8 = 0x00 // Success
