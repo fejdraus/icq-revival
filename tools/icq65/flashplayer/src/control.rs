@@ -1297,6 +1297,10 @@ impl Control {
             SourceConstantAlpha: 255,
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
+        // Diagnostics: the host's pixel at the centre of the rectangle before
+        // and after the frame goes in, and the frame's own centre pixel.
+        let (cx, cy) = (r.left + w / 2, r.top + h / 2);
+        let host_before = unsafe { windows_sys::Win32::Graphics::Gdi::GetPixel(hdc, cx, cy) };
         let ok = unsafe {
             AlphaBlend(
                 hdc,
@@ -1311,6 +1315,16 @@ impl Control {
                 frame.height as i32,
                 blend,
             )
+        };
+        let host_after = unsafe { windows_sys::Win32::Graphics::Gdi::GetPixel(hdc, cx, cy) };
+        let frame_centre = {
+            let (fx, fy) = (frame.width as usize / 2, frame.height as usize / 2);
+            let i = (fy * frame.width as usize + fx) * 4;
+            frame
+                .pixels
+                .get(i..i + 4)
+                .map(|p| format!("BGRA {:?}", p))
+                .unwrap_or_default()
         };
         let first_after_wait = self.drawn_serial.get() < serial && self.retries.get() > 0;
         if serial > self.drawn_serial.get() {
@@ -1328,6 +1342,9 @@ impl Control {
                 pixel_summary(&frame.pixels),
                 dc_summary(hdc),
                 if ok != 0 { "ok" } else { "FAILED" }
+            ));
+            self.clog(&format!(
+                "Draw #{n}: host pixel at the centre ({cx},{cy}): before {host_before:#08x}, after {host_after:#08x} (COLORREF 0x00BBGGRR); frame centre {frame_centre}"
             ));
             if n <= 4 {
                 if let Some(path) = dump_frame(self.id, serial, &frame) {
