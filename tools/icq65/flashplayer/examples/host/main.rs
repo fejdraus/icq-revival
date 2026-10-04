@@ -57,6 +57,7 @@ mod avatar;
 mod ax72;
 mod axfirst;
 mod axhost;
+mod replay;
 mod stacks;
 
 // ---------------------------------------------------------------------------
@@ -1048,6 +1049,54 @@ fn main() {
             let atl = axhost::atl_host(&args[3], &args[4], &names[..names.len().min(3)]);
             say!("result: container ok {}, ATL host ok {atl}", r.ok);
             std::process::exit(if r.ok && atl { 0 } else { 1 });
+        }
+        // axreplay <base dir|url> <out> <rounds> <variants...>: ICQ 6.5's
+        // call sequence from a client log, step by step.
+        "axreplay" => {
+            axhost::register_class(&args[1]);
+            let rounds = args[5].parse().unwrap_or(3);
+            let ok = replay::run(&args[3], &args[4], rounds, &args[6..]);
+            std::process::exit(if ok { 0 } else { 1 });
+        }
+        // axsession <base> <out> <rounds>: the owner's whole ICQ session.
+        "axsession" => {
+            axhost::register_class(&args[1]);
+            let ok = replay::session(&args[3], &args[4], args[5].parse().unwrap_or(3));
+            std::process::exit(if ok { 0 } else { 1 });
+        }
+        // axanim <base> <out> <file> <ms> <emotions...>: an emotion's animation.
+        "axanim" => {
+            axhost::register_class(&args[1]);
+            let ok = replay::anim(
+                &args[3],
+                &args[4],
+                &args[5],
+                &args[7..],
+                args[6].parse().unwrap_or(3000),
+                50,
+                60,
+            );
+            std::process::exit(if ok { 0 } else { 1 });
+        }
+        // axstress <base> <out> <iterations>: controls of both movies opened
+        // and closed at random, checked for each other's colours.
+        "axstress" => {
+            axhost::register_class(&args[1]);
+            let ok = replay::stress(&args[3], &args[4], args[5].parse().unwrap_or(100));
+            std::process::exit(if ok { 0 } else { 1 });
+        }
+        // axframes <base> <out> <file> <target> <w> <h>: every frame of a clip.
+        "axframes" => {
+            axhost::register_class(&args[1]);
+            let ok = replay::frames(
+                &args[3],
+                &args[4],
+                &args[5],
+                &args[6],
+                args[7].parse().unwrap_or(50),
+                args[8].parse().unwrap_or(60),
+            );
+            std::process::exit(if ok { 0 } else { 1 });
         }
         // ax72 <base dir|url> <out> <names...>: ICQ 7.2's devil host
         // (windowed activation in a frame window per avatar).

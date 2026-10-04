@@ -1102,7 +1102,15 @@ pub struct Report {
 /// All avatars at once in one container, every emotion in turn.
 pub fn avatars_emotions(base: &str, out: &str, names: &[String]) -> Report {
     let _ = std::fs::create_dir_all(out);
-    let (cw, ch) = (87, 109);
+    // AX_SIZE=<w>x<h>: the size ICQ gives a control (87x109 by default);
+    // ICQ 6.5 hosts some at 50x60 and 38x49.
+    let (cw, ch) = std::env::var("AX_SIZE")
+        .ok()
+        .and_then(|v| {
+            let (w, h) = v.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+        .unwrap_or((87, 109));
     let cols = 8;
     let rows = names.len().div_ceil(cols) as i32;
     let win = container_window(

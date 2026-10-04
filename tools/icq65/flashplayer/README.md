@@ -302,6 +302,15 @@ bytes. D3D12 aligns them to pointer size, which is 4 on 32-bit, so every DX12
 pipeline in this x86 DLL failed with `E_INVALIDARG`, WARP included. Drop the
 patch once wgpu fixes `RenderPipelineStateStream::add_object`.
 
+A second change turns DX12 suballocation off on WARP (`Microsoft Basic Render
+Driver`), as wgpu does for Intel Iris Xe (wgpu#3552): every buffer and texture
+is a committed resource of its own. In a virtual machine on WARP, ICQ 6.5
+showed Flash avatars zoomed in at random; the saved frames held one movie's
+shapes drawn with another movie's colours (one player's mesh data in
+another's), on a device all players share. Not reproduced on Windows 11's
+WARP; the owner's VM tells whether this is the cure. The test host's
+`axstress` mode looks for exactly that mix.
+
 ## When something fails
 
 No failure may crash the client:

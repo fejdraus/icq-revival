@@ -449,8 +449,13 @@ impl super::Adapter {
             },
             heap_create_not_zeroed,
             casting_fully_typed_format_supported,
-            // See https://github.com/gfx-rs/wgpu/issues/3552
-            suballocation_supported: !info.name.contains("Iris(R) Xe"),
+            // See https://github.com/gfx-rs/wgpu/issues/3552. ICQ Revival:
+            // not on WARP either. In a VM on WARP (ICQ 6.5, several Flash
+            // avatars on one device) a player's frame was drawn with another
+            // player's mesh data; with committed resources no two buffers
+            // share a heap.
+            suballocation_supported: !info.name.contains("Iris(R) Xe")
+                && !info.name.contains("Microsoft Basic Render Driver"),
             shader_model,
             max_sampler_descriptor_heap_size,
             unrestricted_buffer_texture_copy_pitch_supported,
