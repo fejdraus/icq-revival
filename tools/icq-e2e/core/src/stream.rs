@@ -2687,6 +2687,48 @@ next"]);
         bytes.windows(16).any(|w| w == CAP_DIRECT_ICBM)
     }
 
+    fn names_e2e(bytes: &[u8]) -> bool {
+        bytes.windows(16).any(|w| w == crate::caps::CAP_E2E)
+    }
+
+    /// The owner's live test of 2026-10-04: with a session open, a SetInfo
+    /// carried the account key but never the add-on's capability, so every
+    /// contact's add-on took this client for one without encryption. Both
+    /// paths announce it now, while encrypting; e2e=off does not.
+    #[test]
+    fn the_e2e_capability_is_announced_with_a_session_and_without_one() {
+        let (mut r, mut out) = opened(Direction::Outbound);
+        r.push_crypto(
+            &set_info_with_direct_im(),
+            &mut Fake::new(),
+            1,
+            &encrypt(),
+            &mut out,
+        );
+        assert!(names_e2e(&out), "with a session");
+        assert!(!names_direct_im(&out));
+
+        let mut r = StreamRewriter::new(Direction::Outbound);
+        let mut out = Vec::new();
+        r.push(
+            &[hello(), set_info_with_direct_im()].concat(),
+            &encrypt(),
+            &mut out,
+        );
+        assert!(names_e2e(&out), "without one");
+
+        let mut r = StreamRewriter::new(Direction::Outbound);
+        let mut out = Vec::new();
+        r.push_crypto(
+            &[hello(), set_info_with_direct_im()].concat(),
+            &mut crate::crypto::Disabled::default(),
+            1,
+            &encrypt(),
+            &mut out,
+        );
+        assert!(!names_e2e(&out), "e2e=off");
+    }
+
     #[test]
     fn the_direct_im_capability_is_not_announced_while_encrypting_and_is_otherwise() {
         // Encrypting, with a session and without one.

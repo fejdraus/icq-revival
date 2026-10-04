@@ -470,9 +470,31 @@ fn process_crypto_snac(
                 p.lines
                     .push("OUT capabilities: direct IM left out while encrypting".to_string());
             }
-            let base = stripped.as_deref().unwrap_or(s.body);
+            let mut base = stripped.unwrap_or_else(|| s.body.to_vec());
+            // The add-on's capability, which tells a contact's add-on that
+            // this client reads encrypted messages (CHECKLIST 10.6). This path
+            // is the one every SetInfo takes once the account's session is
+            // open; it announced the account key only, so no client ever sent
+            // the capability, and once messages followed the contact's current
+            // client every contact looked like one without the add-on.
+            if encrypting {
+                match caps::announce(&base) {
+                    Announce::Added(body) => {
+                        base = body;
+                        let header_len = payload.len() - s.body.len();
+                        p.payload = Some([&payload[..header_len], &base[..]].concat());
+                        p.lines
+                            .push("OUT capabilities: E2E add-on announced (+16 bytes)".to_string());
+                    }
+                    Announce::Malformed => p.lines.push(
+                        "OUT capabilities: list is not whole GUIDs; E2E add-on not announced"
+                            .to_string(),
+                    ),
+                    Announce::AlreadyThere | Announce::NoList => {}
+                }
+            }
             if let Some(key) = crypto.account_key() {
-                match caps::announce_key(base, &key) {
+                match caps::announce_key(&base, &key) {
                     caps::KeyAnnounce::Added(body) => {
                         let header_len = payload.len() - s.body.len();
                         let mut out = Vec::with_capacity(header_len + body.len());
