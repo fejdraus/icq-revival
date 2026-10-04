@@ -775,6 +775,7 @@ mod tests {
                     form: form(),
                     text: b"hello a".to_vec(),
                     now: NOW,
+                    max_wire: crate::rewrite::MAX_TEXT,
                 },
                 &to_a,
             )

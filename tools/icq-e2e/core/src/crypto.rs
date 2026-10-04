@@ -1194,6 +1194,7 @@ impl Engine {
             },
             text: payload.to_vec(),
             now,
+            max_wire: crate::rewrite::MAX_TEXT,
         };
         self.changed = true;
         match self
@@ -2420,6 +2421,7 @@ impl Crypto for Engine {
             form,
             text: text.to_vec(),
             now,
+            max_wire: crate::rewrite::MAX_TEXT,
         };
         let Some(bearer) = self.bearer() else {
             return self.hold(peer, Held::NotPublished);
@@ -2658,6 +2660,7 @@ impl Crypto for Engine {
             },
             text: Vec::new(),
             now: unix_now(),
+            max_wire: crate::rewrite::MAX_TEXT,
         };
         if self.waits_for_save(peer).is_some() {
             return None;
@@ -3128,6 +3131,7 @@ mod tests {
                 },
                 text: format!("claim {i}").into_bytes(),
                 now: NOW,
+                max_wire: crate::rewrite::MAX_TEXT,
             };
             // The peer encrypts to us and we open it, which is what spends one
             // of our one-time keys.
@@ -5120,6 +5124,7 @@ mod tests {
                 form: form(),
                 text: b"it is me".to_vec(),
                 now: NOW,
+                max_wire: crate::rewrite::MAX_TEXT,
             },
             &keys::fetch_contact(&*dir, "100001").unwrap(),
         );
@@ -5254,6 +5259,7 @@ mod tests {
                     form: form(),
                     text: b"hello".to_vec(),
                     now: later,
+                    max_wire: crate::rewrite::MAX_TEXT,
                 },
                 &keys::fetch_contact(&*dir, "100001").unwrap(),
             )
@@ -5644,6 +5650,7 @@ mod tests {
                     form: form(),
                     text: text.to_vec(),
                     now,
+                    max_wire: crate::rewrite::MAX_TEXT,
                 },
                 &keys::fetch_contact(&**dir, to).unwrap(),
             )

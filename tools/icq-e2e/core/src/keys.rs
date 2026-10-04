@@ -299,6 +299,11 @@ pub struct Outgoing {
     pub text: Vec<u8>,
     /// The send time, Unix seconds.
     pub now: u64,
+    /// The longest wire text the carrier takes, in bytes: the limit of the
+    /// protocol the message goes out on, set by the code that sends it
+    /// (OSCAR: [`crate::rewrite::MAX_TEXT`]). A container longer than this is
+    /// refused rather than sent.
+    pub max_wire: usize,
 }
 
 /// What became of an outbound message.
@@ -953,7 +958,7 @@ impl OwnKeys {
         let pad = vec![0u8; container::padding_len(out.text.len(), random_u32())];
         c.ciphertext = container::seal(&payload_key, &c.header(), &envelope.to_bytes(&pad));
         let wire = container::armor(&c.to_bytes());
-        if wire.len() > crate::rewrite::MAX_TEXT {
+        if wire.len() > out.max_wire {
             return Ok(Outbound::Refused(format!(
                 "[ICQ E2E] The message to {peer} is too long to send encrypted ({} bytes on the wire).",
                 wire.len()
@@ -1490,6 +1495,7 @@ mod tests {
             },
             text: text.to_vec(),
             now: NOW,
+            max_wire: crate::rewrite::MAX_TEXT,
         }
     }
 
@@ -1946,6 +1952,29 @@ mod tests {
         assert!(k.note_once("k", "hello").is_none());
         assert_eq!(k.already_said("k"), Some("hello"));
         assert_eq!(k.already_said("other"), None);
+    }
+
+    /// The wire limit is the sender's, not a constant of this module: the
+    /// same message goes out under a large limit and is refused, with nothing
+    /// sent, under one far shorter than its container (random padding makes
+    /// the length vary, so not one byte short).
+    #[test]
+    fn the_wire_limit_comes_from_the_message() {
+        let (dir, mut a, _b) = talking();
+        let contact = fetch_contact(&dir, "100002").unwrap();
+        let bearer = token(&dir, "100001");
+        let mut out = outgoing("100002", b"hello");
+        let wire = match a.encrypt(&dir, &bearer, &out, &contact).unwrap() {
+            Outbound::Encrypted(w) => w,
+            other => panic!("expected an encrypted message, got {other:?}"),
+        };
+        assert!(wire.len() <= out.max_wire);
+
+        out.max_wire = wire.len() / 2;
+        match a.encrypt(&dir, &bearer, &out, &contact).unwrap() {
+            Outbound::Refused(note) => assert!(note.contains("too long"), "{note}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
     }
 
     /// `a` and `b` published, and a session between them that has heard
