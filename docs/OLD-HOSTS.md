@@ -154,3 +154,15 @@ The patch sources changed, so rebuild the three exes with
 `tools/common/Build-Patches.ps1` (it also builds the gitignored player and E2E
 add-on DLLs it ships beside them). Apply to a copy of each client and confirm a
 second Apply reports no changes and Restore is byte-identical.
+
+
+## Correction (2026-10-04)
+
+ICQ 7.2's sign-in hosts are no longer overwritten: `api.login.aol.com` in
+`coolcore59.dll` and `api.login.icq.net`, `api.icq.net`, `login.icq.com`,
+`api.oscar.aol.com`, `my.screenname.aol.com` in `acccore.dll`/`coolcore59.dll`.
+With them overwritten, a sign-in with a typed password stopped after
+`getChallenge` and never sent `clientLogin` (a saved token still worked): the
+client builds its web sign-in requests from these names and the AppConfig.xml
+host. The client does not connect to them itself (the DNS cache after normal
+use showed only the server's own name).

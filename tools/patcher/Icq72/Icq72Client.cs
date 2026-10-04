@@ -967,31 +967,30 @@ namespace IcqRevival.Patch
             // Build 3525.
             CodeStrings.W(AccCore, Code, "http://api.icq.net/buddyfeed/getUser", Nowhere + "/buddyfeed/getUser"),
             CodeStrings.W(AccCore, Code, "http://api.icq.net/buddyfeed/getBuddylist", Nowhere + "/buddyfeed/getBuddylist"),
-            CodeStrings.W(AccCore, Code, "api.login.icq.net", CodeStrings.NoHost),
             CodeStrings.W(AccCore, "sign-in", "ars.icq.com", CodeStrings.NoHost),
             CodeStrings.W(AccCore, "sign-in", "http.proxy.icq.com", CodeStrings.NoHost),
             CodeStrings.W(AccCore, "sign-in", "turn.icq.com", CodeStrings.NoHost),
-            CodeStrings.W(AccCore, "sign-in", "api.icq.net", CodeStrings.NoHost),
-            CodeStrings.W(AccCore, "sign-in", "login.icq.com", CodeStrings.NoHost),
             // Build 3143.
             CodeStrings.W(AccCore, Code, "http://api.oscar.aol.com/buddyfeed/getUser", Nowhere + "/buddyfeed/getUser"),
             CodeStrings.W(AccCore, Code, "http://api.oscar.aol.com/buddyfeed/getBuddylist", Nowhere + "/buddyfeed/getBuddylist"),
             CodeStrings.W(AccCore, "sign-in", "ars.oscar.aol.com", CodeStrings.NoHost),
             CodeStrings.W(AccCore, "sign-in", "aimhttp.oscar.aol.com", CodeStrings.NoHost),
             CodeStrings.W(AccCore, "sign-in", "turn.oscar.aol.com", CodeStrings.NoHost),
-            CodeStrings.W(AccCore, "sign-in", "api.oscar.aol.com", CodeStrings.NoHost),
             // Both.
             CodeStrings.W(AccCore, Code, "http://buddyupdates.aim.com/updates/%s", Nowhere + "/updates/%s"),
 
+            // The sign-in hosts themselves (api.login.aol.com, api.login.icq.net,
+            // api.icq.net, login.icq.com, api.oscar.aol.com, my.screenname)
+            // are left as they are: the client builds its web sign-in requests
+            // from them and the AppConfig.xml host, and with them overwritten
+            // a typed password never reached our server. It does not connect
+            // to them itself (checked against the DNS cache).
             CodeStrings.W(CoolCore, "sign-in", "http.proxy.icq.com", CodeStrings.NoHost),
             CodeStrings.A(CoolCore, "sign-in", "sip:sq.mediator.icq.com", "sip:" + CodeStrings.NoHost),
             CodeStrings.A(CoolCore, "sign-in", "sip:sq.mediator.aol.com", "sip:" + CodeStrings.NoHost),
             CodeStrings.W(CoolCore, "sign-in", "snatmap.mac.com", CodeStrings.NoHost),
-            CodeStrings.A(CoolCore, "sign-in", "https://api.login.aol.com", Nowhere),
             // Build 3143's ACC/COOL auth and portal hosts; 3525 has none of
             // these (it signs in through api.login.aol.com above).
-            CodeStrings.W(CoolCore, "sign-in", "http://my.screenname.aol.com/_cqr/login/login.psp", Nowhere + "/_cqr/login/login.psp"),
-            CodeStrings.W(CoolCore, "sign-in", "my.screenname.aol.com", CodeStrings.NoHost),
             CodeStrings.W(CoolCore, "sign-in", "aimhttp.oscar.aol.com", CodeStrings.NoHost),
             CodeStrings.W(CoolCore, "sign-in", "startpage.aol.com", CodeStrings.NoHost),
             CodeStrings.W(CoolCore, "sign-in", "start.aimpages.com", CodeStrings.NoHost),
