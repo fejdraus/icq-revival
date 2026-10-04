@@ -3858,6 +3858,13 @@ mod fourth_review {
             .set_read_timeout(Some(Duration::from_millis(60)))
             .unwrap();
         let s = client.as_raw_socket() as Socket;
+        // The connect above is not the hooked one, which would drop what an
+        // earlier connection left under this handle. Tests running alongside
+        // close their sockets past the hooks, and Windows reuses handles, so
+        // a case could inherit another test's socket state; drop it here as
+        // the hooked connect does.
+        lock(sockets()).remove(&s);
+        lock(panic_sockets()).remove(&s);
         (client, server, s)
     }
 
