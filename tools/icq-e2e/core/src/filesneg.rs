@@ -54,6 +54,7 @@ use std::sync::{Arc, Mutex};
 use ring::hkdf;
 use vodozemac::{Curve25519PublicKey, Curve25519SecretKey};
 
+use crate::actions::BurnedIds;
 use crate::callneg::{Me, PeerInfo};
 use crate::crypto::Note;
 use crate::files::{self, Rendezvous, RDV_ACCEPT, RDV_CANCEL, RDV_PROPOSE};
@@ -91,9 +92,8 @@ pub const ENDED_GRACE_MS: u64 = 30_000;
 const MAX_OFFERS: usize = 16;
 const MAX_FACTS: usize = 64;
 /// How long the cookie of a transfer that ended, or of a proposal that was
-/// not let through, vouches for nothing (seventh audit of 2026-10).
-pub const BURN_KEEP_MS: u64 = 10 * 60 * 1000;
-const MAX_BURNED: usize = 256;
+/// not let through, vouches for nothing ([`crate::actions::BurnedIds`]).
+pub use crate::actions::BURN_KEEP_MS;
 /// Proposal announcements kept per transfer.
 const MAX_ANNOUNCED: usize = 8;
 
@@ -463,7 +463,7 @@ pub struct FileTable {
     offers: HashMap<[u8; 8], PendingOffer>,
     /// Cookies of transfers that ended and of proposals that were not let
     /// through, with when: nothing vouches for them again (seventh audit).
-    burned: HashMap<[u8; 8], u64>,
+    burned: BurnedIds<[u8; 8]>,
     notes: Vec<Note>,
     log: Vec<String>,
     /// `files_encrypt = required`: every contact is strict - a transfer that
@@ -477,7 +477,7 @@ impl Default for FileTable {
             facts: HashMap::new(),
             transfers: HashMap::new(),
             offers: HashMap::new(),
-            burned: HashMap::new(),
+            burned: BurnedIds::default(),
             notes: Vec::new(),
             log: Vec::new(),
             required: false,
@@ -724,7 +724,7 @@ impl FileTable {
         // an add-on before the audit, which only an automatic contact's
         // proposal gets here with (a protected contact's is let through
         // only when [`Self::vouched`] says so).
-        let burned = self.burned.contains_key(&rdv.cookie);
+        let burned = self.burned.contains(&rdv.cookie);
         let offer = self.offers.remove(&rdv.cookie).filter(|o| o.peer == peer);
         let unfit = offer.as_ref().and_then(|o| {
             if burned {
@@ -877,7 +877,7 @@ impl FileTable {
     /// ([`Self::icbm`]).
     pub fn vouched(&self, peer: &str, cookie: &[u8; 8], digest: &[u8; 16], now: u64) -> bool {
         let p = sign::ident(peer);
-        if self.burned.contains_key(cookie) {
+        if self.burned.contains(cookie) {
             return false;
         }
         match self.transfers.get(cookie) {
@@ -903,17 +903,7 @@ impl FileTable {
     }
 
     fn burn(&mut self, c: [u8; 8], now: u64) {
-        if !self.burned.contains_key(&c) && self.burned.len() >= MAX_BURNED {
-            if let Some(old) = self
-                .burned
-                .iter()
-                .min_by_key(|(_, at)| **at)
-                .map(|(k, _)| *k)
-            {
-                self.burned.remove(&old);
-            }
-        }
-        self.burned.insert(c, now);
+        self.burned.burn(c, now);
     }
 
     /// A file control message from `peer`, sent by its device `sender`;
@@ -941,7 +931,7 @@ impl FileTable {
                     ));
                     return;
                 }
-                if self.burned.contains_key(&c) {
+                if self.burned.contains(&c) {
                     self.log.push(format!(
                         "file key offer from {peer} ignored: its cookie already ended or was refused"
                     ));
@@ -1191,8 +1181,7 @@ impl FileTable {
     pub fn tick(&mut self, now: u64) {
         self.offers
             .retain(|_, o| now.saturating_sub(o.at) < OFFER_TTL_MS);
-        self.burned
-            .retain(|_, at| now.saturating_sub(*at) < BURN_KEEP_MS);
+        self.burned.expire(now);
         let done: Vec<[u8; 8]> = self
             .transfers
             .iter()

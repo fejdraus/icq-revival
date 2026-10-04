@@ -68,6 +68,7 @@ use std::sync::{Arc, Mutex};
 use ring::agreement::{self, EphemeralPrivateKey, UnparsedPublicKey, X25519};
 use ring::rand::SystemRandom;
 
+use crate::actions::BurnedIds;
 use crate::callmedia::{self, Media, Party, Verdict, SUITE_AES128GCM};
 use crate::crypto::Note;
 use crate::icbm::Direction;
@@ -105,12 +106,8 @@ pub const IDLE_TTL_MS: u64 = 4 * 3600 * 1000;
 /// Offers kept for INVITEs not seen yet.
 const MAX_OFFERS: usize = 16;
 /// How long the Call-ID of a call that ended, or of an INVITE that was not
-/// let through, vouches for nothing any more (seventh audit of 2026-10): an
-/// announcement is fresh for [`crate::crypto::ANNOUNCE_MAX_AGE`] at most, so
-/// this outlasts every one that could still name it.
-pub const BURN_KEEP_MS: u64 = 10 * 60 * 1000;
-/// Call-IDs kept burned at most; the oldest goes first.
-const MAX_BURNED: usize = 256;
+/// let through, vouches for nothing ([`crate::actions::BurnedIds`]).
+pub use crate::actions::BURN_KEEP_MS;
 /// Re-INVITE announcements kept per call.
 const MAX_ANNOUNCED: usize = 8;
 
@@ -598,7 +595,7 @@ pub struct CallTable {
     /// not let through, with when: nothing vouches for them again, so an
     /// old announcement or a finished call cannot authorise a new INVITE
     /// (seventh audit of 2026-10).
-    burned: HashMap<[u8; 16], u64>,
+    burned: BurnedIds<[u8; 16]>,
     notes: Vec<Note>,
     log: Vec<String>,
     rng: SystemRandom,
@@ -612,7 +609,7 @@ impl Default for CallTable {
         CallTable {
             calls: HashMap::new(),
             offers: HashMap::new(),
-            burned: HashMap::new(),
+            burned: BurnedIds::default(),
             notes: Vec::new(),
             log: Vec::new(),
             rng: SystemRandom::new(),
@@ -913,7 +910,7 @@ impl CallTable {
     ) {
         let mut c = Call::new(sip, peer, Role::Callee, info, now);
         c.invite_sdp = Some(sdp);
-        let burned = self.burned.contains_key(&h);
+        let burned = self.burned.contains(&h);
         let offer = self.offers.remove(&h).filter(|o| o.peer == c.peer);
         let how = match &offer {
             None => "without a key offer".to_string(),
@@ -1164,7 +1161,7 @@ impl CallTable {
     pub fn vouched(&self, peer: &str, call_id: &str, sdp: &[u8; 16], now: u64) -> bool {
         let h = short(&call_digest(call_id));
         let p = sign::ident(peer);
-        if self.burned.contains_key(&h) {
+        if self.burned.contains(&h) {
             return false;
         }
         match self.calls.get(&h) {
@@ -1206,17 +1203,7 @@ impl CallTable {
     }
 
     fn burn(&mut self, h: [u8; 16], now: u64) {
-        if !self.burned.contains_key(&h) && self.burned.len() >= MAX_BURNED {
-            if let Some(old) = self
-                .burned
-                .iter()
-                .min_by_key(|(_, at)| **at)
-                .map(|(k, _)| *k)
-            {
-                self.burned.remove(&old);
-            }
-        }
-        self.burned.insert(h, now);
+        self.burned.burn(h, now);
     }
 
     /// A call control message from `peer`, sent by its device `sender`;
@@ -1243,7 +1230,7 @@ impl CallTable {
                     ));
                     return;
                 }
-                if self.burned.contains_key(&h) {
+                if self.burned.contains(&h) {
                     self.log.push(format!(
                         "call key offer from {peer} ignored: its Call-ID already ended or was refused"
                     ));
@@ -1620,8 +1607,7 @@ impl CallTable {
     pub fn tick(&mut self, now: u64) {
         self.offers
             .retain(|_, o| now.saturating_sub(o.at) < OFFER_TTL_MS);
-        self.burned
-            .retain(|_, at| now.saturating_sub(*at) < BURN_KEEP_MS);
+        self.burned.expire(now);
         self.expire_confirm(now);
         // An end the network asked for takes effect once the call's media
         // has stopped for the grace (the client did end it), or when our

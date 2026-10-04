@@ -198,23 +198,8 @@ pub trait Crypto {
     }
 }
 
-/// How old an announcement (`IQC1`, `IQF1`, `IQT1`) may be, by its sender's
-/// clock, and still vouch for an action (seventh audit of 2026-10), in
-/// seconds. The sender's time is the authenticated `time` of the Olm
-/// envelope the announcement came in, which the server cannot change; the
-/// envelope check alone lets a message be up to
-/// [`crate::keys::TIME_SKEW_PAST`] (14 days) old, for offline messages.
-pub const ANNOUNCE_MAX_AGE: u64 = 120;
-/// How far an announcement's sender's clock may be ahead of ours.
-pub const ANNOUNCE_MAX_AHEAD: u64 = 60;
-
-/// Whether an announcement written at `sent` by its sender's clock is fresh
-/// at `now` by ours (both seconds): less than [`ANNOUNCE_MAX_AGE`] old and at
-/// most [`ANNOUNCE_MAX_AHEAD`] in the future. A server that holds a genuine
-/// announcement back can present it later only within this window.
-pub fn announcement_fresh(sent: u64, now: u64) -> bool {
-    sent <= now.saturating_add(ANNOUNCE_MAX_AHEAD) && now.saturating_sub(sent) < ANNOUNCE_MAX_AGE
-}
+/// Announcement freshness, kept here under its old paths ([`crate::actions`]).
+pub use crate::actions::{announcement_fresh, ANNOUNCE_MAX_AGE, ANNOUNCE_MAX_AHEAD};
 
 /// Something a contact does that is not a message, which the client shows as
 /// theirs and which their add-on announces over the Olm session before it

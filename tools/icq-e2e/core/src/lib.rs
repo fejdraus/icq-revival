@@ -28,6 +28,7 @@
 // The same name inside the crate and from outside it, so code shared between
 // the library's unit tests and the integration tests can name it either way.
 extern crate self as icqe2e_core;
+pub mod actions;
 pub mod alert;
 pub mod authz;
 pub mod bytes;
