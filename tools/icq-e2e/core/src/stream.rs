@@ -1740,6 +1740,10 @@ mod tests {
             self.key
         }
 
+        fn can_receive_e2e(&self) -> bool {
+            self.key.is_some()
+        }
+
         fn outbound(&mut self, peer: &str, _: Form, _: &[u8], _: u64) -> Outbound {
             self.seen.push(peer.to_string());
             self.next_out()
@@ -2702,10 +2706,12 @@ next"]);
 
     /// The owner's live test of 2026-10-04: with a session open, a SetInfo
     /// carried the account key but never the add-on's capability, so every
-    /// contact's add-on took this client for one without encryption. Both
-    /// paths announce it now, while encrypting; e2e=off does not.
+    /// contact's add-on took this client for one without encryption. It is
+    /// announced now when the engine can read what contacts encrypt for it,
+    /// and only then: not by the path without an engine, not with e2e=off,
+    /// not while held.
     #[test]
-    fn the_e2e_capability_is_announced_with_a_session_and_without_one() {
+    fn the_e2e_capability_is_announced_only_by_an_engine_that_can_read() {
         let (mut r, mut out) = opened(Direction::Outbound);
         r.push_crypto(
             &set_info_with_direct_im(),
@@ -2724,7 +2730,8 @@ next"]);
             &encrypt(),
             &mut out,
         );
-        assert!(names_e2e(&out), "without one");
+        assert!(!names_e2e(&out), "the path without an engine");
+        assert!(!names_direct_im(&out));
 
         let mut r = StreamRewriter::new(Direction::Outbound);
         let mut out = Vec::new();

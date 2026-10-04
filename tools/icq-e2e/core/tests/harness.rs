@@ -284,27 +284,19 @@ fn a_conversation_survives_the_trip() {
 
 const MOOD: [u8; 16] = [0x22; 16];
 
+/// The harness cannot read an encrypted message, so it does not tell
+/// contacts that it can: the capability is the engine's word (crypto path),
+/// never a mode's. Its SetInfo goes out as the client wrote it, as in observe.
 #[test]
-fn the_capability_is_announced_in_place() {
-    use icqe2e_core::caps::CAP_E2E;
+fn the_harness_does_not_announce_the_capability() {
     let frame = [
         set_info(7, &[CAP_SERVER_RELAY, MOOD]),
         set_info(8, &[CAP_SERVER_RELAY]),
     ]
     .concat();
-    let (wire, lines) = send_all(&mut harness(), &frame);
-    assert_eq!(
-        wire,
-        [
-            set_info(7, &[CAP_SERVER_RELAY, MOOD, CAP_E2E]),
-            set_info(8, &[CAP_SERVER_RELAY, CAP_E2E]),
-        ]
-        .concat()
-    );
-    assert_eq!(lines.len(), 2, "{lines:?}");
-    assert!(lines[0].contains("E2E add-on announced"), "{}", lines[0]);
+    let (wire, _) = send_all(&mut harness(), &frame);
+    assert_eq!(wire, frame);
 
-    // Not in observe mode.
     let (wire, _) = send_all(&mut Engine::new(), &set_info(7, &[MOOD]));
     assert_eq!(wire, set_info(7, &[MOOD]));
 }

@@ -49,6 +49,17 @@ pub trait Crypto {
     /// key announced on the connection the token belongs to.
     fn account_key(&self) -> Option<[u8; 32]>;
 
+    /// Whether contacts may be told this client reads end-to-end encrypted
+    /// messages (the add-on's capability in `LocateSetInfo`, CHECKLIST 10.6):
+    /// it has its own usable keys. Not [`Self::ready`]: the first SetInfo,
+    /// which carries the capability with the account key, comes before the
+    /// directory has taken the keys, and is what lets it take them. `false`
+    /// by default: an engine that holds messages, is off or is locked out
+    /// cannot read what a contact would encrypt for it.
+    fn can_receive_e2e(&self) -> bool {
+        false
+    }
+
     /// Encrypts `out` for `peer`, or explains why it will not go. A contact
     /// without the add-on gets clear text and a note, not an error.
     fn outbound(&mut self, peer: &str, form: Form, text: &[u8], now: u64) -> Outbound;
@@ -2197,6 +2208,11 @@ impl Crypto for Engine {
             return None;
         }
         Some(self.keys.account_key_bytes())
+    }
+
+    /// Own keys loaded and not locked out.
+    fn can_receive_e2e(&self) -> bool {
+        self.locked_out.is_none()
     }
 
     fn command(&mut self, peer: &str, text: &str, now: u64) -> bool {

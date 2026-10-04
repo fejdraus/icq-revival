@@ -305,41 +305,16 @@ fn process_snac(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
             p.e2e_departed = caps::departed(s.body);
             return p;
         }
-        // The capability goes out in every mode, not only harness. It is how a
-        // contact learns this add-on exists: ICQ 6.5 reads it out of the
-        // capability list in the user info it is given, and a client that
-        // never sends it looks to every other client exactly like one without
-        // the add-on - which is what made 6.5 answer "they do not have the
-        // add-on" about a 7.2 that was publishing keys the whole time.
-        (Direction::Outbound, snac::FOOD_LOCATE, snac::LOCATE_SET_INFO)
-            if matches!(policy.mode, Mode::Harness | Mode::Encrypt) =>
-        {
-            let header_len = payload.len() - s.body.len();
-            // Encrypting, the client does not offer direct IM.
-            let stripped = encrypting
-                .then(|| crate::direct::strip_cap(s.body))
-                .flatten();
-            if stripped.is_some() {
+        // This path has no engine, so it never announces the add-on's
+        // capability: telling contacts this client reads encrypted messages
+        // is the engine's word ([`Crypto::can_receive_e2e`], on the crypto
+        // path), never the mode's. Encrypting, it still leaves direct IM out.
+        (Direction::Outbound, snac::FOOD_LOCATE, snac::LOCATE_SET_INFO) if encrypting => {
+            if let Some(body) = crate::direct::strip_cap(s.body) {
+                let header_len = payload.len() - s.body.len();
+                p.payload = Some([&payload[..header_len], &body[..]].concat());
                 p.lines
                     .push("OUT capabilities: direct IM left out while encrypting".to_string());
-            }
-            let base = stripped.as_deref().unwrap_or(s.body);
-            match caps::announce(base) {
-                Announce::Added(body) => {
-                    p.payload = Some([&payload[..header_len], &body[..]].concat());
-                    p.lines
-                        .push("OUT capabilities: E2E add-on announced (+16 bytes)".to_string());
-                }
-                Announce::Malformed => p.lines.push(
-                    "OUT capabilities: list is not whole GUIDs; E2E add-on not announced"
-                        .to_string(),
-                ),
-                Announce::AlreadyThere | Announce::NoList => {}
-            }
-            if p.payload.is_none() {
-                if let Some(body) = stripped {
-                    p.payload = Some([&payload[..header_len], &body[..]].concat());
-                }
             }
         }
         _ => {}
@@ -477,11 +452,11 @@ fn process_crypto_snac(
             // open; it announced the account key only, so no client ever sent
             // the capability, and once messages followed the contact's current
             // client every contact looked like one without the add-on.
-            // Only with keys, as for the account key below: an engine that
-            // holds messages ([`crate::gate::Withheld`] - another account
-            // signed on, a state file that cannot be used) cannot read what a
-            // contact would encrypt for it, so it announces nothing.
-            if encrypting && crypto.account_key().is_some() {
+            // Only when the engine says it can read what contacts encrypt
+            // for it: one that holds messages ([`crate::gate::Withheld`] -
+            // another account signed on, a state file that cannot be used),
+            // is off or is locked out announces nothing.
+            if encrypting && crypto.can_receive_e2e() {
                 match caps::announce(&base) {
                     Announce::Added(body) => {
                         base = body;

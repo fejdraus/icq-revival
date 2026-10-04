@@ -595,17 +595,26 @@ fn an_encrypting_client_announces_the_add_on_to_its_contacts() {
         mode: Some("encrypt"),
         ..Default::default()
     });
+    let (dir, a, _) = two_published();
+    let mut ea = engine(&dir, a, "100001");
 
-    // What the client sends: its own capability list.
+    // What the client sends: its own capability list. One SetInfo carries
+    // the capability and the account key together.
     let frame = set_info(7, &[[9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6]]);
-    let p = rewrite::process(Direction::Outbound, payload(&frame), &policy);
+    let p = rewrite::process_crypto(Direction::Outbound, payload(&frame), &mut ea, NOW);
     let sent = p
         .payload
         .expect("the capability list is rewritten in place");
     assert!(
-        p.lines.iter().any(|l| l.contains("capabilities")),
+        p.lines.iter().any(|l| l.contains("E2E add-on announced")),
         "and said so: {:?}",
         p.lines
+    );
+    let key = ea.keys().account_key_bytes();
+    assert!(
+        sent.windows(4 + key.len())
+            .any(|w| w[..2] == [0x0E, 0x2E] && w[4..] == key[..]),
+        "with the account key in the same SNAC"
     );
 
     // The server keeps that list per session and hands it to contacts in the
@@ -618,6 +627,48 @@ fn an_encrypting_client_announces_the_add_on_to_its_contacts() {
         "the contact announces the add-on: {:?}",
         p.lines
     );
+}
+
+/// Nothing that cannot read what contacts would encrypt for it tells them it
+/// can: the path without an engine, a locked-out engine, the engine that
+/// holds messages (another account signed on, a state file that cannot be
+/// used). None of them sends an account key either.
+#[test]
+fn only_an_engine_that_can_read_announces_the_add_on() {
+    let frame = set_info(7, &[[9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4, 5, 6]]);
+    let names_e2e = |sent: &[u8]| caps_from(sent).contains(&caps::CAP_E2E);
+    let has_key_tlv = |sent: &[u8]| {
+        let s = icqe2e_core::snac::parse(sent).expect("a whole SNAC");
+        icqe2e_core::snac::split_tlvs(s.body)
+            .0
+            .iter()
+            .any(|t| t.tag == 0x0E2E)
+    };
+    let sent_of = |p: rewrite::Processed| p.payload.unwrap_or_else(|| payload(&frame).to_vec());
+
+    let p = rewrite::process(Direction::Outbound, payload(&frame), &encrypting(false));
+    let sent = sent_of(p);
+    assert!(!names_e2e(&sent) && !has_key_tlv(&sent), "no engine");
+
+    let (dir, a, _) = two_published();
+    let mut locked = engine(&dir, a, "100001");
+    locked.lock_out("another ICQ holds the state file".into());
+    let sent = sent_of(rewrite::process_crypto(
+        Direction::Outbound,
+        payload(&frame),
+        &mut locked,
+        NOW,
+    ));
+    assert!(!names_e2e(&sent) && !has_key_tlv(&sent), "locked out");
+
+    let mut held = icqe2e_core::gate::Withheld::new("another account signed on".into());
+    let sent = sent_of(rewrite::process_crypto(
+        Direction::Outbound,
+        payload(&frame),
+        &mut held,
+        NOW,
+    ));
+    assert!(!names_e2e(&sent) && !has_key_tlv(&sent), "held");
 }
 
 /// The capability GUIDs in a `LocateSetInfo` body this add-on sent out.
