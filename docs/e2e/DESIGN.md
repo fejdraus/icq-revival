@@ -1,9 +1,25 @@
 # End-to-end encryption add-on for ICQ 6.5 and ICQ 7.2
 
-Status: design only. No code in the repo, no commits. Read-only research against
-copies of the clients (never the live install). All findings below are backed by
-import tables, string tables and disassembly of the pristine copies in the
-scratchpad (`icq65-pristine`, `icq72copy` build 3143).
+> **Historical document.** This is the initial design, written before any code.
+> It is kept for the reasoning behind the first choices; much of it has since
+> changed. In particular: the add-on now also encrypts voice and video calls
+> and file transfers, wraps the connection to the server in TLS 1.3, checks
+> keys against a transparency log with independent auditors, and has no local
+> management page (status is shown as chat notes and `/e2e` commands).
+>
+> Current documents:
+> - `tools/icq-e2e/README.md` - what the add-on does, its settings and commands
+> - `docs/e2e/CHECKLIST.md` - the feature and decision list, with status
+> - `docs/e2e/AUDIT-2026-10.md` - the seven audit passes and their fixes
+> - `docs/e2e/KEY-DIRECTORY-API.md`, `docs/e2e/KEY-TRANSPARENCY.md` - the key
+>   directory, its log and the auditors
+> - `docs/e2e/STAGE-TLS.md` - the connection to the server
+> - `docs/e2e/CALLS-RESEARCH.md`, `docs/e2e/FILES-RESEARCH.md` - calls and files
+
+Original status line: design only. No code in the repo, no commits. Read-only
+research against copies of the clients (never the live install). All findings
+below are backed by import tables, string tables and disassembly of the pristine
+copies in the scratchpad (`icq65-pristine`, `icq72copy` build 3143).
 
 ---
 
