@@ -1346,7 +1346,7 @@ impl Control {
             self.clog(&format!(
                 "Draw #{n}: host pixel at the centre ({cx},{cy}): before {host_before:#08x}, after {host_after:#08x} (COLORREF 0x00BBGGRR); frame centre {frame_centre}"
             ));
-            if n <= 4 {
+            if n <= 4 || n % 240 == 0 {
                 if let Some(path) = dump_frame(self.id, serial, &frame) {
                     self.clog(&format!("Draw #{n}: frame saved to {path}"));
                 }
