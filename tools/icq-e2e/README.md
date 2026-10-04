@@ -90,6 +90,12 @@ history only. The key directory's API is
   action was refused, vouches for nothing again. A BYE, CANCEL or error
   answer from the network never turns an encrypted call plain: its keys
   stay while its media goes on.
+- One account per ICQ run. Signing on as another account without closing
+  ICQ turns end-to-end encryption off until ICQ is restarted: messages are
+  held with a note saying so, never sent in clear, and the second account's
+  key directory token is never applied to the first account's keys (it made
+  the directory refuse the first account's key as a bad signature, every
+  30 seconds, while messages went out in clear).
 
 ## Two jobs, two rows
 

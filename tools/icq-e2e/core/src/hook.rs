@@ -212,6 +212,7 @@ mod test_env {
         static DIRECTORY: RefCell<Option<Option<Arc<dyn crate::directory::DirectoryApi>>>> =
             const { RefCell::new(None) };
         static UIN: RefCell<Option<Option<String>>> = const { RefCell::new(None) };
+        static SWITCHED: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
     }
 
     pub(super) fn policy() -> Option<&'static Policy> {
@@ -226,6 +227,17 @@ mod test_env {
         UIN.with(|u| u.borrow().clone())
     }
 
+    pub(super) fn switched() -> Option<(String, String)> {
+        SWITCHED.with(|s| s.borrow().clone())
+    }
+
+    pub(super) fn set_switched(from: &str, to: &str) {
+        SWITCHED.with(|s| {
+            s.borrow_mut()
+                .get_or_insert_with(|| (from.to_string(), to.to_string()));
+        });
+    }
+
     /// This thread's policy, key directory and account.
     pub(super) fn set(
         p: Policy,
@@ -235,12 +247,14 @@ mod test_env {
         POLICY.with(|t| *t.borrow_mut() = Some(Box::leak(Box::new(p))));
         DIRECTORY.with(|t| *t.borrow_mut() = Some(dir));
         UIN.with(|t| *t.borrow_mut() = Some(uin.map(str::to_string)));
+        SWITCHED.with(|t| *t.borrow_mut() = None);
     }
 
     pub(super) fn clear() {
         POLICY.with(|t| *t.borrow_mut() = None);
         DIRECTORY.with(|t| *t.borrow_mut() = None);
         UIN.with(|t| *t.borrow_mut() = None);
+        SWITCHED.with(|t| *t.borrow_mut() = None);
     }
 }
 
@@ -496,12 +510,71 @@ fn signed_on_uin() -> Option<String> {
         .or_else(|| lock(signed_on_slot()).clone())
 }
 
-/// Remembers the UIN an outgoing sign-on named.
+/// Remembers the UIN a sign-on or the server's own user info named. Another
+/// account than the one this process already signed on as means the user
+/// switched accounts without restarting ICQ: see [`account_switch`].
 fn remember_signed_on_uin(uin: String) {
+    if let Some(known) = signed_on_uin() {
+        if other_account(&known, &uin) {
+            note_account_switch(&known, &uin);
+        }
+        return;
+    }
     let mut slot = lock(signed_on_slot());
     if slot.is_none() {
         log::line(&format!("[ICQ E2E] signed on as {uin}"));
         *slot = Some(uin);
+    }
+}
+
+/// Whether `seen` names another account than `known` (screen names compare
+/// in ident form: case and spaces do not count).
+fn other_account(known: &str, seen: &str) -> bool {
+    crate::sign::ident(known) != crate::sign::ident(seen)
+}
+
+/// Where the first account switch of this process is kept: the account it
+/// signed on as, and the other one.
+fn switch_slot() -> &'static Mutex<Option<(String, String)>> {
+    static S: std::sync::LazyLock<Mutex<Option<(String, String)>>> =
+        std::sync::LazyLock::new(|| Mutex::new(None));
+    &S
+}
+
+/// The account this process signed on as and another it signed on as later
+/// without a restart, if that happened.
+///
+/// The keys, the state file and the published account key belong to the
+/// first account; a key directory token is the server's word for the
+/// account of the connection that carried it. After a switch the two no
+/// longer match: the first account's key went out under the second one's
+/// token, and the directory refused it as a bad signature, every 30 seconds
+/// until ICQ was closed, while messages went out in clear. So a switch turns
+/// end-to-end encryption off for the rest of the process - messages are
+/// held with a note saying to restart ICQ, never sent in clear, and no token
+/// is applied to the first account's keys.
+fn account_switch() -> Option<(String, String)> {
+    #[cfg(test)]
+    if test_env::uin().is_some() {
+        return test_env::switched();
+    }
+    lock(switch_slot()).clone()
+}
+
+fn note_account_switch(from: &str, to: &str) {
+    #[cfg(test)]
+    if test_env::uin().is_some() {
+        test_env::set_switched(from, to);
+        return;
+    }
+    let mut slot = lock(switch_slot());
+    if slot.is_none() {
+        log::line(&format!(
+            "[ICQ E2E] this ICQ signed on as {to} after {from} without a restart: \
+             end-to-end encryption is off until ICQ is restarted; messages are held, \
+             not sent in clear"
+        ));
+        *slot = Some((from.to_string(), to.to_string()));
     }
 }
 
@@ -740,6 +813,16 @@ fn state_of(s: Arc<Mutex<Session>>) -> CryptoState<Arc<Mutex<Session>>> {
 /// directory, an account not known yet, a state file that cannot be read.
 /// The gate then holds the messages ([`push_without_session`]).
 fn ensure_session(sock: &Sock) -> CryptoState<Arc<Mutex<Session>>> {
+    if let Some((from, to)) = account_switch() {
+        // Before any session: a socket that has one keeps it only while it
+        // lives, and a new connection after the switch gets none, so no
+        // token of the second account reaches the first one's keys.
+        *lock(&sock.session) = None;
+        return CryptoState::Unavailable(format!(
+            "this ICQ signed on as {to} after {from} without a restart; \
+             restart ICQ to use end-to-end encryption"
+        ));
+    }
     if let Some(s) = lock(&sock.session).clone() {
         return state_of(s);
     }
@@ -3385,6 +3468,86 @@ mod socket_tests {
         assert!(buf.iter().all(|&b| b == 0));
         let n = unsafe { hook_send(s, wire.as_ptr(), wire.len() as i32, 0) };
         assert_eq!(n, SOCKET_ERROR);
+    }
+}
+
+/// Signing on as another account in the same ICQ (owner's test, 2026-10-04):
+/// the first account's keys must never meet the second one's token.
+#[cfg(test)]
+mod account_switch_tests {
+    use super::*;
+    use crate::config::{Settings, TlsPolicy};
+    use crate::directory::MemoryDirectory;
+
+    fn encrypt_policy(home: &std::path::Path) -> Policy {
+        let mut p = Policy::from_settings(Settings {
+            mode: Some("encrypt"),
+            e2e: Some("on"),
+            directory: Some("https://example.invalid/e2e/v1/"),
+            home: Some(home.to_str().unwrap()),
+            server: Some(""),
+            no_inject: Some("0"),
+            ..Default::default()
+        });
+        p.peers = None;
+        p.tls = TlsPolicy::NoServer;
+        p
+    }
+
+    #[test]
+    fn another_account_in_the_same_icq_turns_encryption_off_and_takes_no_token() {
+        let home = std::env::temp_dir().join("icqe2e-account-switch");
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let dir: Arc<dyn crate::directory::DirectoryApi> = Arc::new(MemoryDirectory::new());
+        test_env::set(encrypt_policy(&home), Some(dir), Some("700001"));
+
+        let first = Sock::new();
+        assert!(matches!(ensure_session(&first), CryptoState::Ready(_)));
+
+        // The same account again, written another way: no switch.
+        remember_signed_on_uin(" 700001".to_string());
+        assert!(account_switch().is_none());
+        assert!(matches!(ensure_session(&first), CryptoState::Ready(_)));
+
+        // Another account signs on in this process.
+        remember_signed_on_uin("700002".to_string());
+        assert_eq!(
+            account_switch(),
+            Some(("700001".to_string(), "700002".to_string()))
+        );
+        match ensure_session(&first) {
+            CryptoState::Unavailable(why) => assert!(why.contains("restart ICQ"), "{why}"),
+            _ => panic!("encryption must be off after a switch"),
+        }
+        assert!(lock(&first.session).is_none(), "the old session is let go");
+
+        // The second account's connection brings its token: it is not applied
+        // to anything, and its connection gets no session.
+        let second = Sock::new();
+        *lock(&second.pending_token) = Some(crate::token::unsigned("700002", u32::MAX));
+        assert!(matches!(
+            ensure_session(&second),
+            CryptoState::Unavailable(_)
+        ));
+        assert!(drain_pending_token(&second).is_empty());
+        assert!(
+            lock(&second.pending_token).is_some(),
+            "the token was not applied"
+        );
+        assert!(lock(&second.session).is_none());
+
+        // Signing back on as the first account does not turn it on again:
+        // only a restart does.
+        remember_signed_on_uin("700001".to_string());
+        assert!(matches!(
+            ensure_session(&second),
+            CryptoState::Unavailable(_)
+        ));
+
+        test_env::clear();
+        lock(sessions_by_account()).remove("700001");
+        let _ = std::fs::remove_dir_all(&home);
     }
 }
 
