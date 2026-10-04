@@ -107,6 +107,16 @@ pub trait Crypto {
     /// default: an engine that cannot tell the contact's policy refuses.
     fn plain_inbound(&mut self, peer: &str, now: u64) -> Option<String>;
 
+    /// Something unencrypted in `peer`'s name (`what`: "message", "call",
+    /// "file transfer", "tZer") is being shown because the client `peer` is
+    /// signed in with now does not announce the add-on (the owner's decision
+    /// on the current client, CHECKLIST 10.6): the warning, once per change
+    /// of that state, for a contact that would otherwise be protected.
+    /// Nothing by default.
+    fn shown_unencrypted(&mut self, peer: &str, what: &str, now: u64) {
+        let _ = (peer, what, now);
+    }
+
     /// Whether `peer` is protected, and why: `None` when they are not.
     /// Protected means nothing is shown to the user as an action or words of
     /// theirs that did not pass end-to-end authentication - the rule of
@@ -765,6 +775,9 @@ enum ClearWhy {
     /// The directory could not be reached, for a contact never seen
     /// encrypting and not announcing the add-on.
     Unreachable(String),
+    /// The contact is signed in with a client that does not announce the
+    /// add-on (CHECKLIST 10.6).
+    OtherClient,
 }
 
 /// The [`Crypto`] the stream actually runs against: our own keys, a directory,
@@ -793,10 +806,20 @@ pub struct Engine {
     /// Contacts the directory has no keys for, this sign-on, so a contact
     /// never seen encrypting costs one directory call and not one per message.
     known_clear: HashSet<String>,
-    /// Contacts whose user info announces the add-on. Only a hint (CHECKLIST
-    /// 10.6): a server can strip it, so it never decides that a message goes
-    /// in clear, only that an unreachable directory holds a message back.
-    announces: HashSet<String>,
+    /// What each contact's current client announces, from the latest "buddy
+    /// arrived" or user info for them on this connection: `true` with the
+    /// add-on's capability, `false` without; no entry while unknown or after
+    /// they signed off. Without the capability, everything to and from the
+    /// contact goes as the client would without the add-on, with a note (the
+    /// owner's decision, CHECKLIST 10.6). The server can strip the
+    /// capability, so that is a downgrade it can make - visibly, with a
+    /// note each time, and a security alert for a contact under `/e2e on`
+    /// or verified. With it, an unreachable directory holds a message back.
+    presence: HashMap<String, bool>,
+    /// The warnings about something unencrypted shown in a contact's name
+    /// because of their current client, said since that client last
+    /// changed ([`Crypto::shown_unencrypted`]).
+    warned_in: HashSet<String>,
     /// The status last shown in each chat this sign-on (CHECKLIST 10.3).
     shown: HashMap<String, Status>,
     /// Notes already shown this sign-on that are only worth saying once.
@@ -871,7 +894,8 @@ impl Engine {
             owed_control: Vec::new(),
             counted: HashMap::new(),
             known_clear: HashSet::new(),
-            announces: HashSet::new(),
+            presence: HashMap::new(),
+            warned_in: HashSet::new(),
             shown: HashMap::new(),
             said: HashSet::new(),
             plain_once: HashSet::new(),
@@ -1017,12 +1041,69 @@ impl Engine {
 
     /// What a call note needs to know about `peer`: under `/e2e on`, or
     /// verified.
+    /// A contact whose current client does not announce the add-on is not
+    /// strict: a call or a transfer goes as it always did, with the note.
     fn peer_info(&self, peer: &str) -> crate::callneg::PeerInfo {
         let verified = self.keys.pinned(peer).is_some_and(|p| p.is_verified());
         crate::callneg::PeerInfo {
-            strict: verified || self.remembered(peer).setting == Setting::On,
+            strict: !self.other_client(peer)
+                && (verified || self.remembered(peer).setting == Setting::On),
             verified,
         }
+    }
+
+    /// Whether `peer` is online with a client whose presence does not
+    /// announce the add-on (CHECKLIST 10.6, the owner's decision). Unknown
+    /// presence, or offline, is not: their keys are used as ever.
+    fn other_client(&self, peer: &str) -> bool {
+        self.presence.get(&sign::ident(peer)) == Some(&false)
+    }
+
+    /// Why `peer` is held to encryption by the user's own choice - under
+    /// `/e2e on`, or verified (also a verified contact whose key changed and
+    /// is held) - or `None`.
+    fn chosen_strict(&self, peer: &str) -> Option<String> {
+        let verified = self
+            .keys
+            .pinned(peer)
+            .is_some_and(|p| p.is_verified() || p.held);
+        if verified {
+            Some(format!("{peer} is verified"))
+        } else if self.remembered(peer).setting == Setting::On {
+            Some(format!(
+                "encryption is on for {peer} in this chat (/e2e on)"
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Why nothing unauthenticated may be shown in `peer`'s name by their
+    /// policy alone (fifth audit of 2026-10, finding 1), whatever their
+    /// current client: `/e2e on`, seen encrypting, verified.
+    fn protected_by_policy(&self, peer: &str) -> Option<String> {
+        let verified = self
+            .keys
+            .pinned(peer)
+            .is_some_and(|p| p.is_verified() || p.held);
+        policy::plain_inbound_refusal(peer, Some(self.remembered(peer)), verified)
+    }
+
+    /// The note that what goes to `peer` goes unencrypted because of their
+    /// current client: once per change of the chat's state, and for a
+    /// contact under `/e2e on` or verified a warning and a security alert.
+    fn say_other_client(&mut self, peer: &str, now: u64) -> String {
+        let strict = self.chosen_strict(peer);
+        let note = policy::other_client_note(peer, strict.as_deref());
+        let p = sign::ident(peer);
+        if self.shown.get(&p) != Some(&Status::OtherClient) {
+            self.shown.insert(p.clone(), Status::OtherClient);
+            self.queue(Note::to(peer, note.clone()));
+            if strict.is_some() {
+                crate::alert::raise(&format!("client:{p}"), &note, now);
+            }
+        }
+        note
     }
 
     /// This device, for a call key exchange with `peer`, or why there is
@@ -1031,6 +1112,12 @@ impl Engine {
     fn call_me(&mut self, peer: &str, now: u64) -> Result<crate::callneg::Me, String> {
         if self.remembered(peer).setting == Setting::Off {
             return Err("encryption is off in this chat (/e2e off)".into());
+        }
+        if self.other_client(peer) {
+            self.say_other_client(peer, now);
+            return Err(format!(
+                "{peer} is signed in with a client without end-to-end encryption"
+            ));
         }
         if !self.ready || self.token.is_none() {
             return Err("this add-on's keys are not in the key directory yet".into());
@@ -1677,17 +1764,34 @@ impl Engine {
         }
     }
 
-    /// Records what a contact's user info said about the add-on. Only a hint
-    /// (CHECKLIST 10.6): it never sends a message in clear.
+    /// Records what a contact's current client announces, from a "buddy
+    /// arrived" or a user info (CHECKLIST 10.6): without the add-on's
+    /// capability, messages to them go in clear with a note.
     pub fn note_contacts(&mut self, contacts: &[(String, bool)]) {
         for (name, has_addon) in contacts {
             let p = sign::ident(name);
-            if *has_addon {
-                self.announces.insert(p);
-            } else {
-                self.announces.remove(&p);
+            if self.presence.insert(p.clone(), *has_addon) != Some(*has_addon) {
+                self.client_changed(&p);
             }
         }
+    }
+
+    /// Records that contacts signed off: what their client announced is
+    /// unknown again, and their keys are used as before.
+    pub fn note_departed(&mut self, contacts: &[String]) {
+        for name in contacts {
+            let p = sign::ident(name);
+            if self.presence.remove(&p).is_some() {
+                self.client_changed(&p);
+            }
+        }
+    }
+
+    /// A contact's current client changed: the warnings about it may be
+    /// said again.
+    fn client_changed(&mut self, p: &str) {
+        let suffix = format!(":{p}");
+        self.warned_in.retain(|k| !k.ends_with(&suffix));
     }
 
     /// Queues a note about no contact in particular, shown in the chat last
@@ -1825,6 +1929,12 @@ impl Engine {
             }
             return Decision::Clear(ClearWhy::Plain);
         }
+        // The client the contact is signed in with now does not announce the
+        // add-on: what is sent goes as it would without it, for every
+        // contact, with a note (the owner's decision, CHECKLIST 10.6).
+        if self.other_client(peer) {
+            return Decision::Clear(ClearWhy::OtherClient);
+        }
         if !self.ready || self.token.is_none() {
             return if rem.strict() {
                 Decision::Hold(Held::NotPublished)
@@ -1856,7 +1966,7 @@ impl Engine {
             }
             // An outage is not remembered: it is not the contact's doing.
             Err(Lookup::Transient(e)) => {
-                if rem.strict() || self.announces.contains(&p) {
+                if rem.strict() || self.presence.get(&p) == Some(&true) {
                     Decision::Hold(Held::Unreachable(e))
                 } else {
                     Decision::Clear(ClearWhy::Unreachable(e))
@@ -1957,8 +2067,15 @@ impl Engine {
         } else {
             "; seen encrypting: no"
         };
+        let client = match self.presence.get(&sign::ident(peer)) {
+            Some(true) => "; their current client: with the add-on",
+            Some(false) => {
+                "; their current client: WITHOUT end-to-end encryption, so messages, calls and files go unencrypted while they use it"
+            }
+            None => "; their current client: not known (offline, or not seen yet)",
+        };
         format!(
-            "{}Encryption with {peer}: {setting}; {keys}{log}{verified}{seen}. The next message goes {next}. Commands: {}.",
+            "{}Encryption with {peer}: {setting}; {keys}{log}{verified}{seen}{client}. The next message goes {next}. Commands: {}.",
             policy::PREFIX,
             policy::COMMANDS
         )
@@ -2223,6 +2340,7 @@ impl Crypto for Engine {
                         self.show_status(peer, Status::Unavailable);
                         policy::status_note(peer, Status::Unavailable)
                     }
+                    ClearWhy::OtherClient => self.say_other_client(peer, now),
                     ClearWhy::Plain => {
                         let n = format!(
                             "{}This message to {peer} was sent unencrypted, as asked with /e2e plain.",
@@ -2539,7 +2657,11 @@ impl Crypto for Engine {
     /// contact's name; `/e2e off` shows it; a contact never seen encrypting
     /// is shown, as without the add-on. Locked out, the contact's settings
     /// are in a state file this engine cannot read: refused.
+    ///
+    /// A contact online with a client that does not announce the add-on is
+    /// shown, with a warning instead (the owner's decision, CHECKLIST 10.6).
     fn plain_inbound(&mut self, peer: &str, now: u64) -> Option<String> {
+        self.shown_unencrypted(peer, "message", now);
         let why = self.protected(peer)?;
         plain_dropped(&mut self.plain_said, &mut self.notes, peer, &why, now);
         Some(why)
@@ -2550,12 +2672,26 @@ impl Crypto for Engine {
             Some(locked) => Some(format!(
                 "the add-on cannot read its settings for {peer}: {locked}"
             )),
-            None => {
-                let verified = self
-                    .keys
-                    .pinned(peer)
-                    .is_some_and(|p| p.is_verified() || p.held);
-                policy::plain_inbound_refusal(peer, Some(self.remembered(peer)), verified)
+            None if self.other_client(peer) => None,
+            None => self.protected_by_policy(peer),
+        }
+    }
+
+    fn shown_unencrypted(&mut self, peer: &str, what: &str, now: u64) {
+        if self.locked_out.is_some() || !self.other_client(peer) {
+            return;
+        }
+        let Some(why) = self.protected_by_policy(peer) else {
+            // A contact never protected: shown as without the add-on.
+            return;
+        };
+        let strong = self.chosen_strict(peer).is_some();
+        let p = sign::ident(peer);
+        if self.warned_in.insert(format!("{what}:{p}")) {
+            let note = policy::arrived_unencrypted_note(peer, what, &why, strong);
+            self.queue(Note::to(peer, note.clone()));
+            if strong {
+                crate::alert::raise(&format!("client-in:{what}:{p}"), &note, now);
             }
         }
     }
@@ -2620,7 +2756,7 @@ impl Crypto for Engine {
     }
 
     fn tzer_notice(&mut self, peer: &str, hash: [u8; 16], now: u64) -> Option<Vec<u8>> {
-        if self.locked_out.is_some() {
+        if self.locked_out.is_some() || self.other_client(peer) {
             return None;
         }
         let payload = crate::tzer::Notice { hash }.encode();
@@ -3688,17 +3824,14 @@ mod tests {
     }
 
     #[test]
-    fn the_capability_alone_decides_nothing() {
+    fn an_unreachable_directory_holds_only_strict_or_announcing_contacts() {
         let (dir, a, _) = two_published();
         let mut e = running(&dir, a);
-        // The server strips the capability from the user info of 100002: the
-        // directory still has their signed device, so it is encrypted.
-        e.note_contacts(&[("100002".to_string(), false)]);
+        // Seen encrypting, presence not known.
         assert!(matches!(
             e.outbound("100002", form(), b"hi", NOW),
             Outbound::Encrypted(_)
         ));
-
         // A contact announcing the add-on, with the directory down: held, not
         // sent in clear.
         e.note_contacts(&[("100007".to_string(), true)]);
@@ -3717,6 +3850,205 @@ mod tests {
             e.outbound("100008", form(), b"hi", NOW),
             Outbound::Clear { .. }
         ));
+    }
+
+    // --- the contact's current client (the owner's decision, CHECKLIST 10.6)
+
+    /// An engine of 100001 that has encrypted to 100002 once (seen
+    /// encrypting), its notes and alerts taken.
+    fn seen_pair() -> (Arc<MemoryDirectory>, Engine) {
+        let (dir, a, _) = two_published();
+        let mut e = running(&dir, a);
+        assert!(matches!(
+            e.outbound("100002", form(), b"first", NOW),
+            Outbound::Encrypted(_)
+        ));
+        assert!(e.remembered("100002").seen_encrypting);
+        notes(&mut e);
+        let _ = crate::alert::take_shown();
+        (dir, e)
+    }
+
+    fn texts_of(e: &mut Engine) -> Vec<String> {
+        notes(e).into_iter().map(|n| n.text).collect()
+    }
+
+    #[test]
+    fn a_seen_contact_on_a_client_without_the_add_on_gets_plain_text_with_one_note() {
+        let (_dir, mut e) = seen_pair();
+        // 100002 signs in with ICQ 99b: no capability list at all.
+        e.note_contacts(&[("100002".to_string(), false)]);
+        match e.outbound("100002", form(), b"hello 99b", NOW) {
+            Outbound::Clear { text, note } => {
+                assert_eq!(text, "hello 99b");
+                assert!(
+                    note.contains("client without end-to-end encryption"),
+                    "{note}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        let n = texts_of(&mut e);
+        assert_eq!(n.len(), 1, "{n:?}");
+        assert!(n[0].contains("this message went unencrypted"), "{n:?}");
+        assert!(
+            !n[0].contains("WARNING"),
+            "an automatic contact is not warned"
+        );
+        // The next messages say nothing more.
+        assert!(matches!(
+            e.outbound("100002", form(), b"again", NOW),
+            Outbound::Clear { .. }
+        ));
+        assert!(notes(&mut e).is_empty());
+        assert!(crate::alert::take_shown().is_empty());
+
+        // Their unencrypted messages are shown, with one warning.
+        assert_eq!(e.plain_inbound("100002", NOW), None);
+        let n = texts_of(&mut e);
+        assert_eq!(n.len(), 1, "{n:?}");
+        assert!(n[0].contains("arrived unencrypted"), "{n:?}");
+        assert!(n[0].contains("using a client without end-to-end encryption"));
+        assert_eq!(e.plain_inbound("100002", NOW + 1), None);
+        assert!(notes(&mut e).is_empty(), "once per change of client");
+        // Nor is anything else of theirs held for an announcement.
+        assert_eq!(e.protected("100002"), None);
+        assert_eq!(e.strictness("100002"), Some(false));
+        assert!(e.tzer_notice("100002", [7; 16], NOW).is_none());
+        assert!(e.call_me("100002", NOW).is_err());
+    }
+
+    #[test]
+    fn a_seen_contact_whose_client_announces_the_add_on_is_encrypted_and_protected() {
+        let (_dir, mut e) = seen_pair();
+        e.note_contacts(&[("100002".to_string(), true)]);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Encrypted(_)
+        ));
+        assert!(
+            e.plain_inbound("100002", NOW).is_some(),
+            "dropped as before"
+        );
+        let n = texts_of(&mut e);
+        assert!(n.iter().any(|t| t.contains("was not shown")), "{n:?}");
+    }
+
+    #[test]
+    fn verified_on_a_client_without_the_add_on_is_warned_and_alerted() {
+        strict_on_another_client("verify");
+    }
+
+    #[test]
+    fn on_by_hand_on_a_client_without_the_add_on_is_warned_and_alerted() {
+        strict_on_another_client("on");
+    }
+
+    /// One test thread each: the alerts' rate limit is per thread.
+    fn strict_on_another_client(strict: &str) {
+        {
+            let (_dir, mut e) = seen_pair();
+            if strict == "verify" {
+                safety_of(&mut e, "100002");
+                assert!(e.command("100002", "/e2e verify", NOW));
+            } else {
+                assert!(e.command("100002", "/e2e on", NOW));
+            }
+            notes(&mut e);
+            let _ = crate::alert::take_shown();
+            e.note_contacts(&[("100002".to_string(), false)]);
+
+            assert!(matches!(
+                e.outbound("100002", form(), b"hi", NOW),
+                Outbound::Clear { .. }
+            ));
+            let n = texts_of(&mut e);
+            assert_eq!(n.len(), 1, "{strict}: {n:?}");
+            assert!(n[0].contains("WARNING"), "{n:?}");
+            let why = if strict == "verify" {
+                "100002 is verified"
+            } else {
+                "(/e2e on)"
+            };
+            assert!(n[0].contains(why), "{n:?}");
+            assert_eq!(crate::alert::take_shown().len(), 1, "{strict}");
+            // Once per change, not per message.
+            assert!(matches!(
+                e.outbound("100002", form(), b"again", NOW),
+                Outbound::Clear { .. }
+            ));
+            assert!(notes(&mut e).is_empty());
+            assert!(crate::alert::take_shown().is_empty());
+
+            // Inbound: shown, with the strong warning and an alert.
+            assert_eq!(e.plain_inbound("100002", NOW), None);
+            let n = texts_of(&mut e);
+            assert_eq!(n.len(), 1, "{n:?}");
+            assert!(n[0].contains("WARNING") && n[0].contains(why), "{n:?}");
+            assert_eq!(crate::alert::take_shown().len(), 1);
+            assert_eq!(e.strictness("100002"), Some(false));
+
+            // Back on a client with the add-on: the strict rules again.
+            e.note_contacts(&[("100002".to_string(), true)]);
+            assert!(e.plain_inbound("100002", NOW).is_some());
+            assert_eq!(e.strictness("100002"), Some(true));
+        }
+    }
+
+    #[test]
+    fn an_offline_or_unknown_contact_is_encrypted_to_the_directory() {
+        let (_dir, mut e) = seen_pair();
+        e.note_contacts(&[("100002".to_string(), false)]);
+        assert!(matches!(
+            e.outbound("100002", form(), b"hi", NOW),
+            Outbound::Clear { .. }
+        ));
+        // They sign off: their keys are used, they read it when they are back.
+        e.note_departed(&["100002".to_string()]);
+        assert!(matches!(
+            e.outbound("100002", form(), b"offline", NOW),
+            Outbound::Encrypted(_)
+        ));
+        assert!(e.plain_inbound("100002", NOW).is_some(), "protected again");
+    }
+
+    #[test]
+    fn a_change_of_client_mid_session_is_said_each_time() {
+        let (_dir, mut e) = seen_pair();
+        // 6.5 with the add-on, then 99b, then 6.5 again, then 99b again.
+        e.note_contacts(&[("100002".to_string(), true)]);
+        assert!(matches!(
+            e.outbound("100002", form(), b"1", NOW),
+            Outbound::Encrypted(_)
+        ));
+        assert!(notes(&mut e).is_empty(), "still on, nothing new to say");
+
+        e.note_contacts(&[("100002".to_string(), false)]);
+        assert!(matches!(
+            e.outbound("100002", form(), b"2", NOW),
+            Outbound::Clear { .. }
+        ));
+        assert_eq!(e.plain_inbound("100002", NOW), None);
+        assert_eq!(texts_of(&mut e).len(), 2, "one note each way");
+
+        e.note_contacts(&[("100002".to_string(), true)]);
+        assert!(matches!(
+            e.outbound("100002", form(), b"3", NOW),
+            Outbound::Encrypted(_)
+        ));
+        let n = texts_of(&mut e);
+        assert!(n.iter().any(|t| t.contains("Encryption is on")), "{n:?}");
+        assert!(e.plain_inbound("100002", NOW).is_some());
+        notes(&mut e);
+
+        e.note_contacts(&[("100002".to_string(), false)]);
+        assert!(matches!(
+            e.outbound("100002", form(), b"4", NOW),
+            Outbound::Clear { .. }
+        ));
+        assert_eq!(e.plain_inbound("100002", NOW), None);
+        let n = texts_of(&mut e);
+        assert_eq!(n.len(), 2, "said again after the change: {n:?}");
     }
 
     #[test]

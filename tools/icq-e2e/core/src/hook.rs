@@ -301,7 +301,7 @@ fn push_without_session(
         }
         Mode::Harness | Mode::Observe => return rw.push(bytes, p, out),
     };
-    let _ = (rw.take_contacts(), rw.take_announce());
+    let _ = (rw.take_contacts(), rw.take_departed(), rw.take_announce());
     lines
 }
 

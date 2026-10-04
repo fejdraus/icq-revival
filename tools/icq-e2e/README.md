@@ -58,6 +58,11 @@ The plan is `docs/e2e/STAGE-3-CLIENT-CRYPTO.md`, the design is
   usable keys (no state file, locked out) every contact counts as protected.
   Text that merely contains the armor tag (`IQE1:...`) without a whole
   container in it is unencrypted text like any other.
+- The exception, by the owner's decision: a contact who is online with a
+  client without the add-on right now (see "The contact's current client"
+  below) has their unencrypted messages shown, with "A message from <uin>
+  arrived unencrypted: <uin> is using a client without end-to-end
+  encryption" once per change of their client.
 - The same holds for what a protected contact does without writing
   (`docs/e2e/AUDIT-2026-10.md`, sixth audit): an incoming call or file
   proposal reaches the client only once the key offer their add-on sends
@@ -193,10 +198,35 @@ stream, so the contact never gets it, and answers with a note in that chat.
 
 The setting is kept per contact in the state file, with whether the contact was
 ever seen encrypting. Without a setting a contact is encrypted whenever the key
-directory has a signed device of theirs; the OSCAR capability is only a hint.
-Once a contact has encrypted, the add-on never falls back to clear text by
-itself: if the server later shows no keys for them, the message is held and the
-chat says so (downgrade protection).
+directory has a signed device of theirs. Once a contact has encrypted, the
+add-on never falls back to clear text by itself: if the server later shows no
+keys for them, the message is held and the chat says so (downgrade protection).
+
+### The contact's current client
+
+An account can have the add-on on one computer and sign in with an old client
+without it on another - ICQ 99b, say - while its keys stay in the key directory.
+Encrypting to those keys would give the old client "Encrypted message - install
+the add-on". So the add-on follows the client the contact is signed in with
+now (the owner's decision, CHECKLIST 10.6): the capability list of the latest
+"buddy arrived" or user info for that contact on this connection, forgotten
+when they sign off. A user info without the add-on's capability, or with no
+capability list at all, means a client without it.
+
+| Contact | Messages out | Unencrypted messages in | Calls, files, tZers |
+|---|---|---|---|
+| Online, client without the add-on | ordinary text, with a note | shown, with a warning | as without the add-on |
+| Online with the add-on, unknown, or offline | encrypted to their keys in the directory | as above: not shown for a protected contact | encrypted / announced as usual |
+
+The notes come once per change of the contact's client per sign-on: "<uin> is
+signed in with a client without end-to-end encryption; this message went
+unencrypted" and "A message from <uin> arrived unencrypted: <uin> is using a
+client without end-to-end encryption". This holds for every contact, verified
+and `/e2e on` ones too; for those the notes start with WARNING and the security
+box comes up, since a server that strips the capability from a contact's
+presence could do this to read the conversation. That downgrade is the price of
+working with old clients, and it is never silent. `/e2e status` shows which
+client the contact is on ("their current client: ...").
 
 ## Safety numbers (CHECKLIST 4.2, 4.3, 10.10)
 

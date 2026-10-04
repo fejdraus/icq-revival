@@ -119,6 +119,8 @@ pub struct Detected {
     /// Contacts whose user info said whether they announce the add-on, in the
     /// order they were seen.
     pub contacts: Vec<(String, bool)>,
+    /// Contacts that signed off since last taken.
+    pub departed: Vec<String>,
 }
 
 /// The server's answers to the client's requests that the add-on looks after,
@@ -325,6 +327,11 @@ impl StreamRewriter {
     /// the caller can tell the engine once per contact.
     pub fn take_contacts(&mut self) -> Vec<(String, bool)> {
         std::mem::take(&mut self.detected.contacts)
+    }
+
+    /// Takes the contacts that signed off since last asked.
+    pub fn take_departed(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.detected.departed)
     }
 
     /// Takes the token, so it is handed to the engine once and not again on
@@ -601,9 +608,9 @@ impl StreamRewriter {
                         })
                     };
                     if let Some(action) = action {
-                        if c.crypto.protected(&peer).is_some()
-                            && !c.crypto.authenticated(&action, false, c.now)
-                        {
+                        if c.crypto.protected(&peer).is_none() {
+                            c.crypto.shown_unencrypted(&peer, "call", c.now);
+                        } else if !c.crypto.authenticated(&action, false, c.now) {
                             self.hold(frame, action, c, lines);
                             return;
                         }
@@ -679,9 +686,10 @@ impl StreamRewriter {
                                 cookie: rdv.cookie,
                                 digest: rdv.digest,
                             };
-                            if c.crypto.protected(&rdv.peer).is_some()
-                                && !c.crypto.authenticated(&action, false, c.now)
-                            {
+                            if c.crypto.protected(&rdv.peer).is_none() {
+                                c.crypto
+                                    .shown_unencrypted(&rdv.peer, "file transfer", c.now);
+                            } else if !c.crypto.authenticated(&action, false, c.now) {
                                 self.hold(frame, action, c, lines);
                                 return;
                             }
@@ -741,6 +749,12 @@ impl StreamRewriter {
                 )),
                 _ => {}
             }
+        }
+        for contact in processed.e2e_departed {
+            if self.e2e_contacts.remove(&contact).is_some() {
+                lines.push(format!("contact {contact} signed off"));
+            }
+            self.detected.departed.push(contact);
         }
         if processed.sign_on_uin.is_some() {
             self.detected.sign_on_uin = processed.sign_on_uin;

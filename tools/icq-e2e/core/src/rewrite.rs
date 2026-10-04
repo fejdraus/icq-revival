@@ -57,6 +57,9 @@ pub struct Processed {
     pub lines: Vec<String>,
     /// Contacts whose user info said whether they announce the add-on.
     pub e2e_contacts: Vec<(String, bool)>,
+    /// Contacts that signed off ("buddy departed"): what their client
+    /// announced no longer holds.
+    pub e2e_departed: Vec<String>,
     /// A message SNAC to drop instead of sending: a container that would be too
     /// long, one to a contact who must not get clear text but cannot be
     /// encrypted for (CHECKLIST 10.7, 10.8), or a `/e2e` command (10.2).
@@ -298,6 +301,10 @@ fn process_snac(dir: Direction, payload: &[u8], policy: &Policy) -> Processed {
             p.e2e_contacts = caps::contacts(s.body);
             return p;
         }
+        (Direction::Inbound, snac::FOOD_BUDDY, crate::direct::BUDDY_DEPARTED) => {
+            p.e2e_departed = caps::departed(s.body);
+            return p;
+        }
         // The capability goes out in every mode, not only harness. It is how a
         // contact learns this add-on exists: ICQ 6.5 reads it out of the
         // capability list in the user info it is given, and a client that
@@ -496,8 +503,18 @@ fn process_crypto_snac(
             unmark_user_texts(payload, &mut p);
             return p;
         }
-        (Direction::Inbound, snac::FOOD_LOCATE, authz::LOCATE_USER_INFO_REPLY)
-        | (Direction::Inbound, snac::FOOD_ICBM, authz::ICBM_AUTO_RESPONSE) => {
+        (Direction::Inbound, snac::FOOD_BUDDY, crate::direct::BUDDY_DEPARTED) => {
+            p.e2e_departed = caps::departed(s.body);
+            return p;
+        }
+        // The contact's user info as the server has it now, capabilities
+        // included: as current as an arrival.
+        (Direction::Inbound, snac::FOOD_LOCATE, authz::LOCATE_USER_INFO_REPLY) => {
+            p.e2e_contacts = caps::user_info_reply(s.body).into_iter().collect();
+            unmark_user_texts(payload, &mut p);
+            return p;
+        }
+        (Direction::Inbound, snac::FOOD_ICBM, authz::ICBM_AUTO_RESPONSE) => {
             unmark_user_texts(payload, &mut p);
             return p;
         }
@@ -1049,6 +1066,7 @@ fn tzer_in(
     mut p: Processed,
 ) -> Processed {
     let Some(why) = crypto.protected(peer) else {
+        crypto.shown_unencrypted(peer, "tZer", now);
         p.lines
             .push(format!("IN  peer={peer} tZer: shown as it came"));
         return p;

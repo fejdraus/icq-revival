@@ -173,8 +173,8 @@ impl Session {
         lines
     }
 
-    /// Tells the engine which contacts announce the add-on - a hint only
-    /// (CHECKLIST 10.6) - and remembers who has been reported.
+    /// Tells the engine which contacts' current clients announce the add-on
+    /// (CHECKLIST 10.6) and remembers who has been reported.
     pub fn on_contacts(&mut self, contacts: &[(String, bool)]) {
         self.engine.note_contacts(contacts);
         for (screen_name, _has) in contacts {
@@ -182,6 +182,12 @@ impl Session {
                 self.told.push(screen_name.clone());
             }
         }
+    }
+
+    /// Tells the engine which contacts signed off: what their client
+    /// announced is forgotten until they arrive again.
+    pub fn on_departed(&mut self, contacts: &[String]) {
+        self.engine.note_departed(contacts);
     }
 
     /// Does the next publish or refill step if one is due.
@@ -286,6 +292,10 @@ pub fn pump(
     let contacts = rw.take_contacts();
     if !contacts.is_empty() {
         session.on_contacts(&contacts);
+    }
+    let departed = rw.take_departed();
+    if !departed.is_empty() {
+        session.on_departed(&departed);
     }
     if let Err(why) = session.save() {
         lines.push(format!("[ICQ E2E] {why}"));

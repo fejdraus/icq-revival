@@ -58,6 +58,10 @@ pub enum Status {
     /// The contact cannot receive encrypted messages and was never seen
     /// encrypting, so messages go in clear (trust on first use).
     Unavailable,
+    /// The contact is signed in with a client whose presence does not
+    /// announce the add-on, so messages go in clear while it does (the
+    /// owner's decision on the current client, CHECKLIST 10.6).
+    OtherClient,
 }
 
 /// A command typed in the chat input.
@@ -170,6 +174,41 @@ pub fn status_note(peer: &str, status: Status) -> String {
         Status::Unavailable => format!(
             "{PREFIX}Messages to {peer} are sent unencrypted: they do not have the add-on."
         ),
+        Status::OtherClient => other_client_note(peer, None),
+    }
+}
+
+// --- the contact's current client (owner's decision, CHECKLIST 10.6) ---------
+
+/// The note when a message to `peer` went unencrypted because the client
+/// `peer` is signed in with now does not announce the add-on. Once per
+/// change of state per sign-on. `strict` is why the contact would otherwise
+/// be held to encryption (`/e2e on`, verified), which makes it a warning.
+pub fn other_client_note(peer: &str, strict: Option<&str>) -> String {
+    match strict {
+        None => format!(
+            "{PREFIX}{peer} is signed in with a client without end-to-end encryption; this message went unencrypted, and so do the next ones while {peer} uses that client."
+        ),
+        Some(why) => format!(
+            "{PREFIX}WARNING: {why}, but {peer} is now signed in with a client without end-to-end encryption; this message went unencrypted, and so do the next ones while {peer} uses that client. If {peer} did not switch clients, the server may be hiding their add-on to read the conversation: ask them another way, or type /e2e off only once you know."
+        ),
+    }
+}
+
+/// The note when something unencrypted from `peer` (`what`: "message",
+/// "call", "file transfer", "tZer") was shown because the client `peer` is
+/// signed in with now does not announce the add-on, though `peer` is
+/// otherwise protected (`why`). `strong`: under `/e2e on` or verified.
+pub fn arrived_unencrypted_note(peer: &str, what: &str, why: &str, strong: bool) -> String {
+    let why = why.trim_end_matches('.');
+    if strong {
+        format!(
+            "{PREFIX}WARNING: a {what} from {peer} arrived unencrypted and was shown: {why}, but {peer} is using a client without end-to-end encryption. If {peer} did not switch clients, the server may have written it in their name."
+        )
+    } else {
+        format!(
+            "{PREFIX}A {what} from {peer} arrived unencrypted: {peer} is using a client without end-to-end encryption ({why})."
+        )
     }
 }
 

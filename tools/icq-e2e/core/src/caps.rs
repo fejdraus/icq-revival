@@ -191,33 +191,55 @@ pub fn announce(body: &[u8]) -> Announce {
 
 /// Reads a "buddy arrived" body - one or more user info blocks, each a screen
 /// name (len8), a warning level (u16) and a counted TLV block - and returns each
-/// contact with whether its capabilities name [`CAP_E2E`]. Blocks without a
-/// capability list are left out: they say nothing either way.
+/// contact with whether its capabilities name [`CAP_E2E`].
+///
+/// A block without a capability list counts as not announcing it: the server
+/// puts the list in every user info whose client set one, and a client with
+/// the add-on always sets one (with [`CAP_E2E`] in it). A client that sends
+/// none at all - ICQ 99b, through the server's legacy bridge - is exactly a
+/// client without end-to-end encryption (the owner's decision on the current
+/// client, CHECKLIST 10.6).
 pub fn contacts(body: &[u8]) -> Vec<(String, bool)> {
     let mut out = Vec::new();
     let mut r = Reader::new(body);
     while r.remaining() > 0 {
-        let Some(sn) = r.len8() else { break };
-        let (Some(_warning), Some(count)) = (r.u16(), r.u16()) else {
-            break;
-        };
-        let mut has = None;
-        for _ in 0..count {
-            let (Some(tag), Some(len)) = (r.u16(), r.u16()) else {
-                return out;
-            };
-            let Some(value) = r.bytes(len as usize) else {
-                return out;
-            };
-            if tag == TLV_USER_INFO_CAPS {
-                has = Some(names_e2e(value));
-            }
-        }
-        if let Some(has) = has {
-            out.push((String::from_utf8_lossy(sn).into_owned(), has));
+        match user_info(&mut r) {
+            Some(c) => out.push(c),
+            None => break,
         }
     }
     out
+}
+
+/// The contact of a `LocateUserInfoReply` (`0x0002/0x0006`) body and whether
+/// its capabilities name [`CAP_E2E`], as for [`contacts`]. Only the first
+/// block is a user info block: the profile and away message TLVs follow it.
+pub fn user_info_reply(body: &[u8]) -> Option<(String, bool)> {
+    user_info(&mut Reader::new(body))
+}
+
+/// The contacts of a "buddy departed" (`0x0003/0x000C`) body: user info
+/// blocks like an arrival's, of which only the names count.
+pub fn departed(body: &[u8]) -> Vec<String> {
+    contacts(body).into_iter().map(|(name, _)| name).collect()
+}
+
+/// One user info block off `r`: the screen name and whether its capability
+/// list names [`CAP_E2E`] (no list: not).
+fn user_info(r: &mut Reader) -> Option<(String, bool)> {
+    let sn = r.len8()?;
+    r.u16()?; // warning level
+    let count = r.u16()?;
+    let mut has = false;
+    for _ in 0..count {
+        let tag = r.u16()?;
+        let len = r.u16()?;
+        let value = r.bytes(len as usize)?;
+        if tag == TLV_USER_INFO_CAPS {
+            has = names_e2e(value);
+        }
+    }
+    Some((String::from_utf8_lossy(sn).into_owned(), has))
 }
 
 fn names_e2e(list: &[u8]) -> bool {
@@ -287,7 +309,24 @@ mod tests {
         .concat();
         assert_eq!(
             contacts(&body),
-            vec![("100001".to_string(), true), ("100002".to_string(), false)]
+            vec![
+                ("100001".to_string(), true),
+                ("100002".to_string(), false),
+                // No capability list at all (ICQ 99b): no add-on.
+                ("100003".to_string(), false),
+            ]
+        );
+        assert_eq!(departed(&body), vec!["100001", "100002", "100003"]);
+        // A user info reply: the first block, then the profile's TLVs.
+        let reply = [
+            info("100001", &[tlv(0x000D, &[CAP_E2E, OTHER].concat())]),
+            tlv(0x0002, b"profile"),
+        ]
+        .concat();
+        assert_eq!(user_info_reply(&reply), Some(("100001".to_string(), true)));
+        assert_eq!(
+            user_info_reply(&info("100009", &[])),
+            Some(("100009".to_string(), false))
         );
     }
 }
