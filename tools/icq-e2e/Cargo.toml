@@ -1,11 +1,10 @@
-# Workspace for the ICQ end-to-end-encryption add-on (Phase 1: rewrite harness).
+# Workspace for the ICQ end-to-end-encryption add-on.
 #
 # Two per-client loader stubs, tbdiag.dll (ICQ 7.2) and msimg32.dll (ICQ 6.5),
 # each statically linking one shared engine crate (icqe2e_core). The engine
-# hooks the client's own Winsock send/recv in coolcore5x/coolcore4x, reassembles
-# FLAP, and rewrites the text of ICBM/offline messages in place with a trivial
-# reversible transform, fixing every length. No crypto in this phase;
-# ICQE2E_MODE=observe gives the Phase 0 log-only behaviour.
+# hooks the client's Winsock calls, wraps its server connections in TLS 1.3,
+# and encrypts messages, calls and file transfers end to end. What it does and
+# how it is configured: README.md.
 #
 # Built for i686-pc-windows-msvc with a static CRT (the ICQ folder has no modern
 # VC++ runtime), the same way tools\icq65\flashplayer builds its DLL.

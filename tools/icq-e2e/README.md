@@ -1,4 +1,4 @@
-# ICQ E2E add-on — stage 3 (end-to-end encryption)
+# ICQ E2E add-on (end-to-end encryption)
 
 A native add-on for the classic ICQ 6.5 and 7.2 clients that **encrypts instant
 messages end to end** with Olm (the [vodozemac] Rust implementation, Apache-2.0).
@@ -6,11 +6,10 @@ A message leaves the sender's client as an opaque container, travels through the
 ICQ server unreadable, and is opened on the recipient's device. The server never
 holds anything it could read.
 
-This is the third stage. Stage 1 proved the transport by rewriting message text
-in place with a reversible transform; stage 3 replaces that with real crypto.
-The plan is `docs/e2e/STAGE-3-CLIENT-CRYPTO.md`, the design is
-`docs/e2e/DESIGN.md`, and the requirement list with its status is
-`docs/e2e/CHECKLIST.md`. The key directory's API is
+The requirement list with its status is `docs/e2e/CHECKLIST.md`, and the
+audit record is `docs/e2e/AUDIT-2026-10.md`. The original design
+(`docs/e2e/DESIGN.md`) and the stage plans (`docs/e2e/STAGE-*.md`) are kept as
+history only. The key directory's API is
 `docs/e2e/KEY-DIRECTORY-API.md`.
 
 [vodozemac]: https://github.com/matrix-org/vodozemac

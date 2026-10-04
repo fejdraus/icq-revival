@@ -14,12 +14,14 @@ kind - we do not aim at XMPP compatibility, we use them so nothing is forgotten:
 - For sections 7 and 8: XEP-0450, 0454, 0334, 0184, 0333, 0392, 0388, 0440, 0474,
   0484 and RFC 7677 (SCRAM-SHA-256)
 
-Our design (`DESIGN.md`) differs from OMEMO on purpose in one point: one account
+The add-on differs from OMEMO on purpose in one point: one account
 key per UIN signs every device (Signal-like), so the server cannot add a device.
 Crypto is vodozemac (Olm), not the OMEMO wire format.
 
 Status: **done** (in the repository), **stage N** (planned there), **open** (no
-stage owns it yet - decide before the stage that needs it).
+stage owns it yet - decide before the stage that needs it). "Stage N" refers to
+the original development plan (`STAGE-*.md`, now history); a "stage N" item
+that is not marked done is still open, whatever that plan said.
 
 ## 1. Keys and bundles (XEP-0384 §4.2, §5.3.2)
 
